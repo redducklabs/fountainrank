@@ -2,7 +2,7 @@ import asyncio
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import MetaData, text
+from sqlalchemy import MetaData
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.config import get_settings
@@ -52,10 +52,12 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection) -> None:
-    # Pin search_path to public so autogenerate ignores PostGIS extension schemas
-    # (tiger, topology) that the postgis/postgis Docker image adds to the DB-level
-    # search_path. Without this, every Tiger-geocoder table appears as a pending DROP.
-    connection.execute(text("SET search_path TO public"))
+    # search_path is pinned to "public" at connection time via asyncpg server_settings
+    # (see run_migrations_online) so autogenerate ignores the PostGIS extension schemas
+    # (tiger, topology) the postgis/postgis Docker image adds to the DB-level search_path.
+    # It is NOT set with an in-band `SET` here: that statement auto-begins a SQLAlchemy
+    # 2.0 transaction, which makes Alembic's begin_transaction() a no-op (it assumes the
+    # caller owns the commit) and leaves the migration uncommitted under engine.connect().
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
@@ -66,7 +68,12 @@ def do_run_migrations(connection) -> None:
 
 
 async def run_migrations_online() -> None:
-    engine = create_async_engine(get_url())
+    # server_settings sets search_path at connection establishment (a libpq connection
+    # parameter), without issuing SQL that would open a transaction before Alembic does.
+    engine = create_async_engine(
+        get_url(),
+        connect_args={"server_settings": {"search_path": "public"}},
+    )
     async with engine.connect() as connection:
         await connection.run_sync(do_run_migrations)
     await engine.dispose()
