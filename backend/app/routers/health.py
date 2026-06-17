@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -7,13 +8,23 @@ from app.db import get_session
 router = APIRouter()
 
 
+class HealthResponse(BaseModel):
+    status: str
+
+
+class ReadyzResponse(BaseModel):
+    status: str
+    postgis_version: str
+    sf_to_nyc_m: float
+
+
 @router.get("/healthz")
-async def healthz() -> dict[str, str]:
-    return {"status": "ok"}
+async def healthz() -> HealthResponse:
+    return HealthResponse(status="ok")
 
 
 @router.get("/readyz")
-async def readyz(session: AsyncSession = Depends(get_session)) -> dict[str, str | float]:
+async def readyz(session: AsyncSession = Depends(get_session)) -> ReadyzResponse:
     version = (await session.execute(text("SELECT PostGIS_version()"))).scalar_one()
     distance_m = (
         await session.execute(
@@ -24,4 +35,4 @@ async def readyz(session: AsyncSession = Depends(get_session)) -> dict[str, str 
             )
         )
     ).scalar_one()
-    return {"status": "ok", "postgis_version": version, "sf_to_nyc_m": float(distance_m)}
+    return ReadyzResponse(status="ok", postgis_version=version, sf_to_nyc_m=float(distance_m))
