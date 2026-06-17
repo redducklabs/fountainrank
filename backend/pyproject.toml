@@ -1,0 +1,50 @@
+[project]
+name = "fountainrank-backend"
+version = "0.0.0"
+description = "FountainRank FastAPI + PostGIS backend (walking skeleton)"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "fastapi==0.137.1",
+    "uvicorn[standard]==0.49.0",
+    "pydantic==2.13.4",
+    "pydantic-settings==2.14.1",
+    "sqlalchemy[asyncio]==2.0.51",
+    "asyncpg==0.31.0",
+    "alembic==1.18.4",
+    "geoalchemy2==0.20.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest==9.1.0",
+    "pytest-asyncio==1.4.0",
+    "httpx==0.28.1",
+    "ruff==0.15.17",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI uses these as argument defaults by design; don't flag B008 for them.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Path",
+    "fastapi.Header",
+    "fastapi.Body",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
