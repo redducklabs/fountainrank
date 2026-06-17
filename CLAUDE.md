@@ -152,4 +152,5 @@
 | `claude_help/github-environments.md` | BEFORE touching CI environments or secrets |
 | `claude_help/oauth-sso.md` | BEFORE any auth / Logto / SSO work (external-registrations checklist) |
 | `claude_help/email.md` | BEFORE touching email sending, templates, or the Logto email connector |
+| `docs/setup/README.md` | The owner runbook for external accounts/credentials (DigitalOcean, DNS, Google OAuth + Gmail, Apple, GitHub secrets, Logto) + master secret inventory |
 | `docs/style-guide.md` | BEFORE creating any new UI element (created in the UI phase) |
