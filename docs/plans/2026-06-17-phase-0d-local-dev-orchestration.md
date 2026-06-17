@@ -365,6 +365,14 @@ function Get-UpProfiles {
     return , $p
 }
 
+function Get-AllProfiles {
+    # All defined profiles, so `down`/`reset` tear down the WHOLE stack (db + logto +
+    # backend). `docker compose down` WITHOUT these flags leaves profiled services
+    # (logto/backend) running; they then hold the project network and cause
+    # "network ... not found / resource is still in use" errors on the next `up`.
+    return @('--profile', 'auth', '--profile', 'full')
+}
+
 function Start-Db {
     # Idempotent: ensure the db service is up before DB-dependent steps.
     Invoke-Compose -Arguments @('up', '-d', 'db')
@@ -473,12 +481,12 @@ switch ($Command.ToLowerInvariant()) {
         Write-Host "Stack up. db:5436  logto:3001/3002 (if -Auth)  backend:8000 (if -Full)" -ForegroundColor Green
     }
     'down' {
-        $args = @('down')
-        if ($Volumes) { $args += '-v' }
-        Invoke-Compose -Arguments $args
+        $downArgs = (Get-AllProfiles) + @('down')
+        if ($Volumes) { $downArgs += '-v' }
+        Invoke-Compose -Arguments $downArgs
     }
     'reset' {
-        Invoke-Compose -Arguments @('down', '-v')
+        Invoke-Compose -Arguments ((Get-AllProfiles) + @('down', '-v'))
         Start-Db
         Write-Host "Database volume reset; db is starting fresh (initdb re-ran)." -ForegroundColor Green
     }
