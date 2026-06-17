@@ -360,7 +360,7 @@ git commit -m "feat(backend): add FastAPI app and /healthz liveness endpoint"
 
 **Interfaces:**
 - Consumes: `app.config.get_settings` (Task 2) for the DB URL.
-- Produces: a runnable async Alembic setup whose head migration `0001_enable_postgis` enables PostGIS. `target_metadata` is an empty `MetaData()` plus an `include_object` filter that excludes PostGIS's `spatial_ref_sys`, so `alembic check` runs the autogenerate path and reports no drift on an extension-only database. Task 5's `/readyz` relies on the extension being present.
+- Produces: a runnable async Alembic setup whose head migration `0001_enable_postgis` enables PostGIS. `target_metadata` is an empty `MetaData()`; an `include_object` filter excludes PostGIS's `spatial_ref_sys`, and `do_run_migrations` pins `search_path` to `public` (the `postgis/postgis` image installs tiger/topology schemas), so `alembic check` runs the autogenerate path and reports no drift on an extension-only database. Task 5's `/readyz` relies on the extension being present.
 
 - [ ] **Step 1: Start a local PostGIS container** (needed for Steps 4–5)
 
@@ -391,7 +391,7 @@ import asyncio
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import MetaData
+from sqlalchemy import MetaData, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.config import get_settings
@@ -408,6 +408,12 @@ target_metadata = MetaData()
 # PostGIS's own objects (from CREATE EXTENSION postgis) must be excluded from
 # autogenerate/check, or an extension-only DB looks like a pending DROP of
 # spatial_ref_sys. geometry_columns/geography_columns are views, already ignored.
+#
+# The postgis/postgis Docker image sets the DB-level search_path to include
+# "tiger" and "topology" schemas (installed by postgis_tiger_geocoder and
+# postgis_topology). Alembic autogenerate then sees those schemas' tables as
+# pending DROPs; we pin search_path to "public" in do_run_migrations (below) and
+# also filter by known managed table names as a belt-and-suspenders guard.
 _POSTGIS_MANAGED_TABLES = {"spatial_ref_sys"}
 
 
@@ -434,6 +440,10 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection) -> None:
+    # Pin search_path to public so autogenerate ignores PostGIS extension schemas
+    # (tiger, topology) that the postgis/postgis Docker image adds to the DB-level
+    # search_path. Without this, every Tiger-geocoder table appears as a pending DROP.
+    connection.execute(text("SET search_path TO public"))
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
