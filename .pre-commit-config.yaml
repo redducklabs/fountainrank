@@ -24,3 +24,17 @@ repos:
         files: ^backend/
       - id: ruff-format
         files: ^backend/
+  - repo: local
+    hooks:
+      - id: prettier
+        name: prettier (frontend)
+        entry: pnpm run format:check
+        language: system
+        pass_filenames: false
+        files: ^(web|mobile|packages)/.*\.(ts|tsx|js|jsx|mjs|cjs|json|css|md)$
+      - id: eslint
+        name: eslint (frontend)
+        entry: pnpm run lint
+        language: system
+        pass_filenames: false
+        files: ^(web|mobile|packages)/.*\.(ts|tsx|js|jsx|mjs|cjs)$

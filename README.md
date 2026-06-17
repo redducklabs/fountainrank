@@ -76,14 +76,21 @@ to track the latest stable release. Pinned dependency versions live in
 | Component | Version | Last checked |
 |---|---|---|
 | Python | 3.13.14 | 2026-06-17 |
-| Node.js | 22.x | _pending 0c_ |
+| Node.js | 22.22.3 | 2026-06-17 |
+| pnpm | 11.7.0 | 2026-06-17 |
+| Turborepo | 2.9.18 | 2026-06-17 |
+| TypeScript | 6.0.3 (api-client 5.9.3) | 2026-06-17 |
+| Next.js | 16.2.9 | 2026-06-17 |
+| React | 19.2.7 (web) / 19.2.3 (mobile) | 2026-06-17 |
+| Expo SDK / React Native | 56 (expo 56.0.12) / 0.85.3 | 2026-06-17 |
+| Tailwind CSS | 4.3.1 | 2026-06-17 |
 | PostgreSQL / PostGIS | 17 / 3.5.2 | 2026-06-17 |
 | uv | 0.11.21 | 2026-06-17 |
 | FastAPI | 0.137.1 | 2026-06-17 |
 | SQLAlchemy | 2.0.51 | 2026-06-17 |
 | Alembic | 1.18.4 | 2026-06-17 |
 | ruff | 0.15.17 | 2026-06-17 |
-| (full backend pins) | see `backend/pyproject.toml` + `backend/uv.lock` | — |
+| (full pins) | `backend/pyproject.toml` + `backend/uv.lock`; workspace `package.json` + `pnpm-lock.yaml` | — |
 
 ## Getting started
 
