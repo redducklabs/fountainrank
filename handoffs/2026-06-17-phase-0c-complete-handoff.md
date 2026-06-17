@@ -15,10 +15,12 @@ FountainRank is a modern rebuild of an old C#/Xamarin fountain-rating app into:
 mobile, **self-hosted Logto** auth, **MapLibre + Protomaps** maps, on
 **DigitalOcean Kubernetes (DOKS)**. Public OSS repo `redducklabs/fountainrank`.
 
-**Done and on `main` (HEAD `f03eb43`):** Phase 0a (repo foundation + AI tooling),
+**Done and pushed on `main`:** Phase 0a (repo foundation + AI tooling),
 the `docs/setup/` runbook, the **DigitalOcean account bootstrap**, **Phase 0b
 (backend walking skeleton)**, and now **Phase 0c (frontend monorepo)** — all
-committed and pushed.
+committed and pushed. The 0c implementation is commits `2e557da`…`f03eb43`; this
+handoff commit sits on top as the current `main` HEAD. Run `git log --oneline -8`
+to confirm the state described here.
 
 **Next:** Phase 0d (local dev orchestration: `docker-compose.yml` + `run.ps1`),
 then 0e (infra Terraform), 0f (CI/CD + security), then feature phases 1–5.
