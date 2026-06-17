@@ -1,0 +1,20 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "tasks": {
+    "generate": {
+      "cache": false,
+      "outputs": ["openapi.json", "src/schema.d.ts"]
+    },
+    "lint": {},
+    "typecheck": {
+      "dependsOn": ["generate", "^generate"]
+    },
+    "test": {
+      "dependsOn": ["generate", "^generate"]
+    },
+    "build": {
+      "dependsOn": ["generate", "^generate"],
+      "outputs": [".next/**", "!.next/cache/**"]
+    }
+  }
+}

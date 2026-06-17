@@ -1,0 +1,10 @@
+node_modules
+.next
+.expo
+.turbo
+dist
+out
+coverage
+pnpm-lock.yaml
+packages/api-client/openapi.json
+packages/api-client/src/schema.d.ts

@@ -61,3 +61,8 @@ Thumbs.db
 *.swp
 
 .env
+
+# ---- Generated frontend artifacts (Phase 0c) ----
+packages/api-client/openapi.json
+packages/api-client/src/schema.d.ts
+mobile/expo-env.d.ts

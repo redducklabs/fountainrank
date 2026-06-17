@@ -1,0 +1,22 @@
+{
+  "name": "fountainrank",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@11.7.0",
+  "engines": {
+    "node": ">=22.0.0 <23.0.0"
+  },
+  "scripts": {
+    "generate": "turbo run generate",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "build": "turbo run build",
+    "format": "prettier --write \"{web,mobile,packages}/**/*.{ts,tsx,js,jsx,mjs,cjs,json,css,md}\"",
+    "format:check": "prettier --check \"{web,mobile,packages}/**/*.{ts,tsx,js,jsx,mjs,cjs,json,css,md}\""
+  },
+  "devDependencies": {
+    "prettier": "3.8.4",
+    "turbo": "2.9.18"
+  }
+}
