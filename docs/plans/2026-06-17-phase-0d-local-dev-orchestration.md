@@ -29,20 +29,22 @@
 
 ---
 
-### Task 1: Docker Compose stack + Logto DB init
+### Task 1: Docker Compose stack + Logto DB init (+ alembic-commit fix)
 
 **Files:**
 - Create: `D:\repos\fountainrank\docker\docker-compose.yml`
 - Create: `D:\repos\fountainrank\docker\initdb\99-create-logto-db.sql`
+- Modify: `D:\repos\fountainrank\backend\migrations\env.py` (fix a pre-existing bug where online migrations never commit — see Step 3; **discovered during 0d verification, owner-approved to fold into 0d**)
 
 **Interfaces:**
 - Consumes: existing `backend/Dockerfile` (build context `../backend`); existing `backend/migrations` (Alembic `0001_enable_postgis`, idempotent); existing default `DATABASE_URL` shape from `backend/app/config.py`.
 - Produces (relied on by Task 2 & Task 3):
   - Compose project **`fountainrank`** with services `db` (no profile), `logto` (profile `auth`), `backend` (profile `full`); named volume `db-data`.
-  - `db`: `postgis/postgis:17-3.5`, env `POSTGRES_USER=fountainrank` / `POSTGRES_PASSWORD=fountainrank_dev` / `POSTGRES_DB=fountainrank`, host port `5436:5432`, `pg_isready` healthcheck, init dir `./initdb` mounted at `/docker-entrypoint-initdb.d`.
+  - `db`: `postgis/postgis:17-3.5`, env `POSTGRES_USER=fountainrank` / `POSTGRES_PASSWORD=fountainrank_dev` / `POSTGRES_DB=fountainrank`, host port `5436:5432`, `pg_isready` healthcheck. The logto init SQL is mounted as a **single file** at `/docker-entrypoint-initdb.d/99-create-logto-db.sql` (a directory mount would shadow the image's own `10_postgis.sh` and PostGIS would never be enabled).
   - A `logto` role (`LOGIN PASSWORD 'logto_dev'`) and `logto` database (owned by `logto`) created on first volume init.
   - `logto`: `svhd/logto:1.40.1`, `DB_URL=postgres://logto:logto_dev@db:5432/logto`, ports `3001:3001` (app) + `3002:3002` (admin), `depends_on db: service_healthy`.
   - `backend`: built from `../backend`, `DATABASE_URL=postgresql+asyncpg://fountainrank:fountainrank_dev@db:5432/fountainrank`, command `alembic upgrade head && uvicorn …`, port `8000:8000`, `depends_on db: service_healthy`.
+  - `backend/migrations/env.py`: `alembic upgrade head` now **commits** (relied on by the `backend` service's startup command, by `run.ps1 migrate`/`backend`, and by the `check` verb's `alembic check`).
 
 - [ ] **Step 1: Create the Logto DB init script**
 
@@ -91,7 +93,12 @@ services:
       - "5436:5432"
     volumes:
       - db-data:/var/lib/postgresql/data
-      - ./initdb:/docker-entrypoint-initdb.d:ro
+      # Mount ONLY our file into the init dir. A directory mount of ./initdb here
+      # would SHADOW the postgis image's own /docker-entrypoint-initdb.d/10_postgis.sh
+      # (which creates template_postgis and loads PostGIS into the app DB), leaving
+      # the database without PostGIS. Our file sorts after 10_postgis.sh, so the
+      # extension is enabled first, then the logto DB/role are created.
+      - ./initdb/99-create-logto-db.sql:/docker-entrypoint-initdb.d/99-create-logto-db.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U fountainrank -d fountainrank"]
       interval: 5s
@@ -133,7 +140,60 @@ volumes:
   db-data:
 ```
 
-- [ ] **Step 3: Verify the default (db-only) profile end to end**
+- [ ] **Step 3: Fix the alembic online-migration commit bug in `env.py`**
+
+**Why (discovered during 0d verification):** `backend/migrations/env.py`'s `do_run_migrations` runs `connection.execute(text("SET search_path TO public"))` **before** `context.begin_transaction()`. In SQLAlchemy 2.0 that statement auto-begins a transaction, so Alembic sees an in-progress transaction and makes its own `begin_transaction()` a **no-op** (it assumes the caller will commit). The outer `async with engine.connect()` (commit-as-you-go, no `begin()`) then **rolls back** on close — so `alembic upgrade head` runs the migration, prints "Running upgrade", exits 0, but **never persists** (`alembic_version` is not created). This was masked in 0b/0c because PostGIS is enabled by the image regardless; it would silently break every Phase 1 migration and makes the `check` verb's `alembic check` meaningless. Fix: set `search_path` via asyncpg `server_settings` at connect time (a libpq connection parameter — no SQL, no transaction) and let Alembic own/commit its transaction.
+
+In `D:\repos\fountainrank\backend\migrations\env.py`:
+
+Change the import (drop now-unused `text`):
+```python
+from sqlalchemy import MetaData
+```
+
+Replace `do_run_migrations` + `run_migrations_online` with:
+```python
+def do_run_migrations(connection) -> None:
+    # search_path is pinned to "public" at connection time via asyncpg server_settings
+    # (see run_migrations_online) so autogenerate ignores the PostGIS extension schemas
+    # (tiger, topology) the postgis/postgis Docker image adds to the DB-level search_path.
+    # It is NOT set with an in-band `SET` here: that statement auto-begins a SQLAlchemy
+    # 2.0 transaction, which makes Alembic's begin_transaction() a no-op (it assumes the
+    # caller owns the commit) and leaves the migration uncommitted under engine.connect().
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        include_object=include_object,
+    )
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+async def run_migrations_online() -> None:
+    # server_settings sets search_path at connection establishment (a libpq connection
+    # parameter), without issuing SQL that would open a transaction before Alembic does.
+    engine = create_async_engine(
+        get_url(),
+        connect_args={"server_settings": {"search_path": "public"}},
+    )
+    async with engine.connect() as connection:
+        await connection.run_sync(do_run_migrations)
+    await engine.dispose()
+```
+
+Verify the fix (Git Bash; db must be up from Step 4's bring-up, or run `docker compose -f docker/docker-compose.yml up -d`):
+```bash
+cd /d/repos/fountainrank/backend
+uv run alembic upgrade head
+docker compose -f ../docker/docker-compose.yml exec -T db psql -U fountainrank -d fountainrank -tAc "SELECT version_num FROM alembic_version;"
+uv run alembic current 2>&1 | tail -1
+uv run alembic check
+uv run ruff check migrations/env.py
+uv run pytest -q
+```
+Expected: `alembic_version` prints `0001_enable_postgis`; `alembic current` shows `0001_enable_postgis (head)`; `alembic check` prints `No new upgrade operations detected.`; ruff passes; pytest is all-green (incl. `/readyz`). Commit this fix **separately** in Step 8.
+
+- [ ] **Step 4: Verify the default (db-only) profile end to end**
 
 Run (Git Bash):
 ```bash
@@ -147,10 +207,13 @@ for i in $(seq 1 30); do
   sleep 1
 done
 cd backend && uv run alembic upgrade head && cd ..
+# PostGIS MUST be enabled (image's 10_postgis.sh ran; the single-file initdb mount did not shadow it):
+docker compose -f docker/docker-compose.yml exec -T db psql -U fountainrank -d fountainrank -tAc "SELECT extname FROM pg_extension WHERE extname='postgis';"
+docker compose -f docker/docker-compose.yml exec -T db psql -U fountainrank -d fountainrank -tAc "SELECT version_num FROM alembic_version;"
 ```
-Expected: only the `db` container starts (no `logto`, no `backend`); `pg_isready` succeeds; `0001_enable_postgis` reports "Running upgrade" or already-at-head with no error.
+Expected: only the `db` container starts (no `logto`, no `backend`); `pg_isready` succeeds; `0001_enable_postgis` reports "Running upgrade" or already-at-head with no error; the extension query prints `postgis` (NOT empty — empty means the init mount shadowed `10_postgis.sh`); `alembic_version` prints `0001_enable_postgis`.
 
-- [ ] **Step 4: Verify the `logto` database + role were created by initdb**
+- [ ] **Step 5: Verify the `logto` database + role were created by initdb**
 
 Run (Git Bash):
 ```bash
@@ -160,7 +223,7 @@ docker compose -f docker/docker-compose.yml exec -T db psql -U fountainrank -d f
 ```
 Expected: `\l logto` lists a `logto` database owned by `logto`; the role query returns a single line `logto`. (The app DB's PostGIS path — the `/readyz` query — is exercised by backend `pytest` in Task 2's `check`.)
 
-- [ ] **Step 5: Verify the `auth` profile (Logto boots and seeds)**
+- [ ] **Step 6: Verify the `auth` profile (Logto boots and seeds)**
 
 Run (Git Bash):
 ```bash
@@ -177,7 +240,7 @@ docker compose -f docker/docker-compose.yml logs --no-color --tail=20 logto
 ```
 Expected: the `logto` container is `Up`; `http://localhost:3002` eventually returns a 2xx/3xx; logs show the seed completing and the server listening (no DB connection errors). The app endpoint `http://localhost:3001` is also reachable.
 
-- [ ] **Step 6: Verify the `full` profile (containerized backend)**
+- [ ] **Step 7: Verify the `full` profile (containerized backend)**
 
 Run (Git Bash):
 ```bash
@@ -200,12 +263,16 @@ docker compose -f docker/docker-compose.yml down
 docker compose -f docker/docker-compose.yml up -d   # db only
 ```
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit (two commits — keep the backend fix separate)**
 
 ```bash
 cd /d/repos/fountainrank
+# (1) the compose stack
 git add docker/docker-compose.yml docker/initdb/99-create-logto-db.sql
 git commit -m "build(dev): add docker compose stack with db/logto/backend profiles"
+# (2) the alembic-commit fix, on its own so the backend change is isolated and bisectable
+git add backend/migrations/env.py
+git commit -m "fix(backend): commit alembic online migrations (search_path via server_settings)"
 ```
 
 ---
@@ -695,7 +762,8 @@ git push origin main
 - "`run.ps1` task runner" → Task 2. ✓
 - "Finalize the per-subsystem local checks in `claude_help/testing-ci.md`" → Task 3 Step 1. ✓
 - "Consider wiring the api-client `generate` into the dev flow" → `run.ps1 generate` verb + `check` runs generate via turbo deps. ✓
-- "replaces the manual `fr-postgis` container" → Task 1 Step 3 retires it; Task 3 removes the `docker run` instructions from `backend/README.md`. ✓
+- "replaces the manual `fr-postgis` container" → Task 1 Step 4 retires it; Task 3 removes the `docker run` instructions from `backend/README.md`. ✓
+- **Added in 0d (owner-approved, found during verification):** Task 1 Step 3 fixes a pre-existing `env.py` bug where `alembic upgrade head` never committed (masked in 0b/0c by image-provided PostGIS). Required for the `check` verb's `alembic check` to be meaningful and to unblock Phase 1 migrations. Committed separately as `fix(backend):`. ✓
 
 **Placeholder scan:** No "TBD"/"TODO"/"handle edge cases". All file contents are complete and copy-paste-ready; every verification step runs a concrete command with a stated expected result.
 
@@ -708,4 +776,4 @@ git push origin main
 
 **Known residual risks (call out, don't hide):**
 - `pnpm dlx expo-doctor` fetches `expo-doctor` over the network (unpinned by design — Expo ships it to be run via dlx/npx and self-checks against the installed SDK). If offline, `check -Mobile` / full `check` will fail at the doctor step; use `-Fast` to skip.
-- `svhd/logto:1.40.1`'s first boot pulls a sizeable image and runs migrations; Task 1 Steps 5–6 poll with generous retries. This is a one-time cost per fresh volume.
+- `svhd/logto:1.40.1`'s first boot pulls a sizeable image and runs migrations; Task 1 Steps 6–7 poll with generous retries. This is a one-time cost per fresh volume.
