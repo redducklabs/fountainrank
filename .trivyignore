@@ -1,0 +1,5 @@
+# Trivy ignore file — container vulnerability suppressions.
+# RULE: every entry MUST carry a justification + a revisit condition.
+# Format:
+#   CVE-XXXX-YYYY  # <why not exploitable in our runtime> — revisit when <condition>
+# No suppressions yet.

@@ -1,0 +1,61 @@
+# ---- Python / backend ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# ---- Node / web / mobile ----
+node_modules/
+.pnpm-store/
+.next/
+out/
+.expo/
+.expo-shared/
+*.tsbuildinfo
+.turbo/
+coverage/
+playwright-report/
+test-results/
+.playwright-mcp/
+
+# ---- Terraform ----
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfvars
+!*.tfvars.example
+backend-config.tfbackend
+
+# ---- Secrets / env (NEVER commit) ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.jwk
+kubeconfig
+*.kubeconfig
+
+# ---- AI tooling runtime ----
+.claude/scheduled_tasks.lock
+.claude/worktrees/
+.worktrees/
+.superpowers/
+temp/
+temp/codex-reviews/
+
+# ---- OS / editor ----
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
