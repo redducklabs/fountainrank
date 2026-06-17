@@ -75,10 +75,15 @@ to track the latest stable release. Pinned dependency versions live in
 
 | Component | Version | Last checked |
 |---|---|---|
-| Python | 3.13.x | _pending 0b_ |
+| Python | 3.13.14 | 2026-06-17 |
 | Node.js | 22.x | _pending 0c_ |
-| PostgreSQL / PostGIS | 17 / 3.x | _pending 0e_ |
-| (others) | see `backend/` and `web/` | — |
+| PostgreSQL / PostGIS | 17 / 3.5.2 | 2026-06-17 |
+| uv | 0.11.21 | 2026-06-17 |
+| FastAPI | 0.137.1 | 2026-06-17 |
+| SQLAlchemy | 2.0.51 | 2026-06-17 |
+| Alembic | 1.18.4 | 2026-06-17 |
+| ruff | 0.15.17 | 2026-06-17 |
+| (full backend pins) | see `backend/pyproject.toml` + `backend/uv.lock` | — |
 
 ## Getting started
 
