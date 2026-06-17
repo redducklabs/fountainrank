@@ -41,7 +41,7 @@
 - Produces (relied on by Task 2 & Task 3):
   - Compose project **`fountainrank`** with services `db` (no profile), `logto` (profile `auth`), `backend` (profile `full`); named volume `db-data`.
   - `db`: `postgis/postgis:17-3.5`, env `POSTGRES_USER=fountainrank` / `POSTGRES_PASSWORD=fountainrank_dev` / `POSTGRES_DB=fountainrank`, host port `5436:5432`, `pg_isready` healthcheck. The logto init SQL is mounted as a **single file** at `/docker-entrypoint-initdb.d/99-create-logto-db.sql` (a directory mount would shadow the image's own `10_postgis.sh` and PostGIS would never be enabled).
-  - A `logto` role (`LOGIN PASSWORD 'logto_dev'`) and `logto` database (owned by `logto`) created on first volume init.
+  - A `logto` role (`LOGIN CREATEROLE PASSWORD 'logto_dev'` — CREATEROLE is required for Logto's first-boot seed) and `logto` database (owned by `logto`) created on first volume init.
   - `logto`: `svhd/logto:1.40.1`, `DB_URL=postgres://logto:logto_dev@db:5432/logto`, ports `3001:3001` (app) + `3002:3002` (admin), `depends_on db: service_healthy`.
   - `backend`: built from `../backend`, `DATABASE_URL=postgresql+asyncpg://fountainrank:fountainrank_dev@db:5432/fountainrank`, command `alembic upgrade head && uvicorn …`, port `8000:8000`, `depends_on db: service_healthy`.
   - `backend/migrations/env.py`: `alembic upgrade head` now **commits** (relied on by the `backend` service's startup command, by `run.ps1 migrate`/`backend`, and by the `check` verb's `alembic check`).
@@ -58,7 +58,11 @@
 -- Logto needs no PostGIS / extensions in its own database.
 --
 -- Local-dev-only throwaway credentials. NOT a secret. Do not reuse anywhere real.
-CREATE ROLE logto WITH LOGIN PASSWORD 'logto_dev';
+--
+-- CREATEROLE is required: Logto's first-boot `db seed` creates Postgres roles for
+-- tenant/row-level-security isolation and fails with "Only roles with the CREATEROLE
+-- attribute may create roles" otherwise. The managed-Postgres user in prod has this.
+CREATE ROLE logto WITH LOGIN CREATEROLE PASSWORD 'logto_dev';
 CREATE DATABASE logto OWNER logto;
 ```
 
