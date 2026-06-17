@@ -1,0 +1,71 @@
+# FountainRank local development stack. Driven by ../run.ps1.
+#
+# Profiles:
+#   (default)  db only            -> docker compose up -d
+#   auth       db + logto         -> docker compose --profile auth up -d
+#   full       db + logto + backend (whole containerizable stack)
+#                                 -> docker compose --profile auth --profile full up -d
+#
+# The web app is intentionally NOT containerized in Phase 0d (no web image yet;
+# host-coupled api-client codegen). Run it on the host: `..\run.ps1 web`.
+#
+# All credentials here are local-dev throwaways (already documented in
+# backend/README.md). They are NOT secrets. Do not add a .env file.
+name: fountainrank
+
+services:
+  db:
+    image: postgis/postgis:17-3.5
+    environment:
+      POSTGRES_USER: fountainrank
+      POSTGRES_PASSWORD: fountainrank_dev
+      POSTGRES_DB: fountainrank
+    ports:
+      - "5436:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      # Mount ONLY our file into the init dir. A directory mount of ./initdb here
+      # would SHADOW the postgis image's own /docker-entrypoint-initdb.d/10_postgis.sh
+      # (which creates template_postgis and loads PostGIS into the app DB), leaving
+      # the database without PostGIS. Our file sorts after 10_postgis.sh, so the
+      # extension is enabled first, then the logto DB/role are created.
+      - ./initdb/99-create-logto-db.sql:/docker-entrypoint-initdb.d/99-create-logto-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fountainrank -d fountainrank"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  logto:
+    image: svhd/logto:1.40.1
+    profiles: ["auth"]
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint: ["sh", "-c", "npm run cli db seed -- --swe && npm start"]
+    environment:
+      # Standard libpq URL to Logto's own database (created by initdb).
+      DB_URL: postgres://logto:logto_dev@db:5432/logto
+      # ENDPOINT / ADMIN_ENDPOINT intentionally unset for localhost dev
+      # (setting them wrong triggers logto-io/logto#6755). App: 3001, Admin: 3002.
+    ports:
+      - "3001:3001"
+      - "3002:3002"
+
+  backend:
+    profiles: ["full"]
+    build:
+      context: ../backend
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Container talks to the db service over the compose network (not 5436).
+      DATABASE_URL: postgresql+asyncpg://fountainrank:fountainrank_dev@db:5432/fountainrank
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+    ports:
+      - "8000:8000"
+
+volumes:
+  db-data:
