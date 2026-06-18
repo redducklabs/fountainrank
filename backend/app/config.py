@@ -16,6 +16,19 @@ class Settings(BaseSettings):
     # in production (env DB_SSL_ROOT_CERT). Unset locally -> plaintext, no SSL.
     db_ssl_root_cert: str | None = None
 
+    # --- Phase 1 ---
+    # Dev-only write-auth seam. FALSE in production so add/rate stay closed until
+    # Phase 2's Logto JWT validation lands. Local dev + tests set this True.
+    dev_auth_enabled: bool = False
+    # Bayesian ranking confidence constant `m` (see ranking.py / spec §8).
+    ranking_confidence_m: int = 5
+    # Reject a new fountain if one already exists within this many meters (spec §7).
+    duplicate_threshold_m: float = 10.0
+    # Map-read guardrails.
+    nearby_default_radius_m: float = 1000.0
+    nearby_max_radius_m: float = 50_000.0
+    max_results: int = 500
+
 
 @lru_cache
 def get_settings() -> Settings:
