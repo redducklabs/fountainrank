@@ -10,10 +10,13 @@ Terraform and deployed via GitHub Actions. See spec §15 for the full design.
   infrastructure locally. All applies happen in CI.
 
   **Local read-only commands (the only ones allowed locally):**
-  `terraform fmt -check`, `terraform init -backend=false`, `terraform validate`
-  (Terraform); for k8s manifests, render with `envsubst` and validate with
-  `kubeconform` (cluster-independent) — **not** `kubectl apply --dry-run=client`, which
-  in this environment reaches the live cluster for OpenAPI. The first-apply
+  `terraform fmt -check`, `terraform init -backend=false`, `terraform validate`, and
+  `terraform providers lock -platform=...` (Terraform). `providers lock` only contacts
+  the provider registry — no backend/state/cloud access — so it is read-only against
+  infrastructure and safe locally (it is how the committed multi-platform
+  `.terraform.lock.hcl` is generated). For k8s manifests, render with `envsubst` and
+  validate with `kubeconform` (cluster-independent) — **not** `kubectl apply
+  --dry-run=client`, which in this environment reaches the live cluster for OpenAPI. The first-apply
   reconciliation steps (provider lock, registry import, sizing, the blocking
   asyncpg-SSL backend change) are in `infra/terraform/README.md`.
 

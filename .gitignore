@@ -76,8 +76,6 @@ infra/terraform/*.tfvars.json
 infra/terraform/*.tfplan
 infra/terraform/crash.log
 infra/terraform/crash.*.log
-# Lock file: a LOCAL `init -backend=false` writes a single-platform (Windows) lock.
-# Do NOT commit that — CI generates and commits the authoritative MULTI-platform lock
-# in Phase 0f (`terraform providers lock -platform=linux_amd64 -platform=darwin_arm64
-# -platform=windows_amd64`). Un-ignore + commit it then.
-infra/terraform/.terraform.lock.hcl
+# .terraform.lock.hcl IS committed (Phase 0f) — a multi-platform lock generated via
+# `terraform providers lock -platform=linux_amd64 -platform=darwin_arm64 -platform=windows_amd64 -platform=windows_386`
+# (registry-only, safe to run locally). Do NOT add it back to this ignore list.

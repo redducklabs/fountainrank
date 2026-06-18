@@ -37,10 +37,12 @@ environment secrets (`DIGITALOCEAN_ACCESS_TOKEN`, `SPACES_ACCESS_KEY`,
 
 ## Pre-first-apply checklist (Phase 0f, in CI)
 
-1. **Provider lock:** generate + commit the multi-platform lock in CI
-   (`terraform providers lock -platform=linux_amd64 -platform=darwin_arm64 -platform=windows_amd64`),
-   then un-ignore `.terraform.lock.hcl`. (It is gitignored until then — a local
-   `init -backend=false` writes only a Windows-platform lock, which must not be committed.)
+1. **Provider lock:** ✅ done (Phase 0f). `.terraform.lock.hcl` is committed with a
+   multi-platform lock (`linux_amd64`, `darwin_arm64`, `windows_amd64`, `windows_386`),
+   generated via `terraform providers lock -platform=...`. That command is registry-only
+   (no backend/state/cloud access), so it is safe to run locally; CI `terraform init`
+   verifies the lock. `windows_386` is included because the repo's local Terraform is the
+   32-bit Windows build — omitting it would break local `init -backend=false`.
 2. **Registry:** the shared RDL account uses DO's multiple-registries feature. Confirm
    `fountainrank` does not already exist; `terraform import digitalocean_container_registry.main fountainrank` if it does.
 3. **Sizing:** review `node_*` / `db_*` defaults for cost.
