@@ -2,19 +2,18 @@ import asyncio
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import MetaData
+from geoalchemy2 import alembic_helpers
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.config import get_settings
+from app.db import engine_connect_args
+from app.models import Base
 
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# No ORM models yet (Phase 1 introduces them). An empty MetaData gives Alembic a
-# valid comparison target so `alembic check` runs the autogenerate path and can
-# report no drift.
-target_metadata = MetaData()
+target_metadata = Base.metadata
 
 # PostGIS's own objects (from CREATE EXTENSION postgis) must be excluded from
 # autogenerate/check, or an extension-only DB looks like a pending DROP of
@@ -30,9 +29,12 @@ _POSTGIS_MANAGED_TABLES = {"spatial_ref_sys"}
 
 
 def include_object(obj, name, type_, reflected, compare_to) -> bool:
+    # Drop PostGIS's own managed table from comparison...
     if type_ == "table" and name in _POSTGIS_MANAGED_TABLES:
         return False
-    return True
+    # ...then defer to GeoAlchemy2 (filters spatial system views + the auto gist
+    # index so `alembic check` does not see them as drift).
+    return alembic_helpers.include_object(obj, name, type_, reflected, compare_to)
 
 
 def get_url() -> str:
@@ -44,6 +46,8 @@ def run_migrations_offline() -> None:
         url=get_url(),
         target_metadata=target_metadata,
         include_object=include_object,
+        render_item=alembic_helpers.render_item,
+        process_revision_directives=alembic_helpers.writer,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
     )
@@ -62,17 +66,23 @@ def do_run_migrations(connection) -> None:
         connection=connection,
         target_metadata=target_metadata,
         include_object=include_object,
+        render_item=alembic_helpers.render_item,
+        process_revision_directives=alembic_helpers.writer,
     )
     with context.begin_transaction():
         context.run_migrations()
 
 
 async def run_migrations_online() -> None:
-    # server_settings sets search_path at connection establishment (a libpq connection
-    # parameter), without issuing SQL that would open a transaction before Alembic does.
+    settings = get_settings()
     engine = create_async_engine(
         get_url(),
-        connect_args={"server_settings": {"search_path": "public"}},
+        connect_args={
+            # asyncpg TLS (an ssl.SSLContext) when DB_SSL_ROOT_CERT is set (prod); {} locally.
+            **engine_connect_args(settings),
+            # search_path pinned at connection establishment (no SQL before Alembic's txn).
+            "server_settings": {"search_path": "public"},
+        },
     )
     async with engine.connect() as connection:
         await connection.run_sync(do_run_migrations)
