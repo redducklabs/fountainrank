@@ -21,8 +21,16 @@ to confirm the tip. **Local == `origin/main`; tree clean apart from the pre-exis
 untracked/owner-modified `docs/setup/04-apple-and-app-stores.md` (your open IDE file —
 left untouched) and `docs/logos/`.**
 
-**Next:** **Phase 1** (data model + fountains API). Plus, when ready, the **first live
-cloud apply + deploy** (owner-gated; prerequisites below).
+**Next:** **Phase 1** (data model + fountains API).
+
+> **⚡ UPDATE — the first live apply + deploy was DONE on 2026-06-18; the system is LIVE.**
+> Infra provisioned on DOKS (cluster + Managed Postgres + LB + verified LE cert + DNS),
+> the `fountainrank` registry created, the `production` DB secrets set, and the app
+> deployed (tag `v0.1.1`). All four pods Ready; live over HTTPS:
+> `https://api.fountainrank.com/healthz`=200, `/readyz`=200 (PostGIS 3.6, TLS to Managed PG),
+> `https://fountainrank.com`/`www`=200, `https://auth.fountainrank.com`=302 (Logto). See the
+> "First live deploy" section below for what was done, the deviations, and remaining hardening.
+> The "🔴 First-live-apply prerequisites" section further down is now historical (all cleared).
 
 ---
 
@@ -94,24 +102,43 @@ cloud apply + deploy** (owner-gated; prerequisites below).
 
 ---
 
-## 🔴 First-live-apply / deploy prerequisites (owner-gated — NOT done this phase)
+## First live deploy — DONE (2026-06-18). System is LIVE.
 
-The CI + security layer is green now; the **live cloud apply + deploy is a separate, deliberate owner action**
-(spec §21). Before firing it:
+The full apply + deploy ran the same day. What happened (so a fresh instance knows the real state):
 
-1. **`production` Environment secret VALUES** (names already wired; values owner-supplied):
-   `DATABASE_URL`, `LOGTO_DB_URL`, and **`DATABASE_CA_CERT`** (the DO Managed-Postgres CA PEM — `doctl databases
-   get <id>` / console). Set via `gh secret set … --env production`. See `docs/setup/05-github.md`.
-2. **verify-full gotcha:** `DATABASE_URL` (and `LOGTO_DB_URL`) **must use the DO-assigned DB hostname, not an IP** —
-   `ssl.create_default_context` does hostname verification against the cert SAN.
-3. **Terraform first apply** (dispatch `terraform.yml` with `apply`): relies on the variable **defaults**
-   (confirmed: `project_name=fountainrank`, `environment=production`, `region=sfo3` → cluster
-   `fountainrank-production-cluster`, which matches `deploy.yml`'s `CLUSTER_NAME`). **Review sizing/cost** and
-   **check the `fountainrank` DOCR doesn't already exist** (`terraform import` it if it does) before applying.
-4. **First deploy** (push a `v*.*.*` tag, or dispatch `deploy.yml`): confirm the **web container actually serves**
-   (controller smoke-tested HTTP 200 locally, but it's never run in a gating CI job) and that the web `/` probe +
-   `rollout status` pass. PostGIS is enabled by Alembic `0001` (the migration step runs before the rollout gate).
-5. **Runner access:** confirm `redducklabs/fountainrank` can use the `redducklabs-runners` group (org Settings).
+**Infra (DOKS, sfo3):** DOKS cluster `fountainrank-production-cluster` + Managed Postgres `fountainrank-production-db`
+(`db-s-1vcpu-1gb`, single node) with `fountainrank` + `logto` databases; LB `fountainrank-production-lb`
+(IP `146.190.0.127`); LE SAN cert **verified** (apex/www/api/auth); four A records → LB. Provisioned via
+`terraform.yml` (workflow_dispatch `apply`). State is in the `fountainrank-terraform-state` Spaces bucket.
+
+**Three first-apply failures and how they were cleared (see commits + PR #4/#5):**
+1. **Registry** — the DO provider can't manage registries on this multiple-registries account. Removed from
+   Terraform (PR #4); `fountainrank` registry created out-of-band via `POST /v2/registries`
+   (`subscription_tier_slug: professional` — the account's tier; `basic` is rejected). No extra cost (within the
+   account's Professional plan, 10 registries included).
+2. **Spaces buckets** — the `SPACES_ACCESS_KEY` is scoped to the TF-state bucket only (403 on create). Removed from
+   Terraform (PR #4); deferred to Phase 3 (pmtiles) / Phase 4 (photos) — re-add with a bucket-create-capable key.
+3. **LE cert** — blocked by **DNSSEC** (a stale orphaned DS record at GoDaddy; the DO-hosted zone was unsigned).
+   Owner removed the DS record at GoDaddy → cert issued. (Registrar = GoDaddy; DNS host = DigitalOcean.)
+
+**Secrets set** (`production` env): `DATABASE_URL` (asyncpg, `fountainrank` DB, `doadmin@…:25060`, **no** `?sslmode`),
+`LOGTO_DB_URL` (libpq, `logto` DB, `?sslmode=require`), `DATABASE_CA_CERT` (DO CA PEM). Host is the DO hostname
+(verify-full works).
+
+**App deploy** (`deploy.yml`, tags `v0.1.0` → `v0.1.1`): `v0.1.0` brought backend+web+healthz up; **Logto
+crash-looped** (`SELF_SIGNED_CERT_IN_CHAIN` — Node didn't trust the DO CA). **PR #5** mounted the DO CA into the
+Logto pod + set `NODE_EXTRA_CA_CERTS` (mirrors the backend). `v0.1.1` → all four pods Ready.
+
+**Live (verified, HTTPS):** `api.fountainrank.com/healthz`=200, `/readyz`=200 (PostGIS 3.6, geo query over TLS),
+`fountainrank.com`/`www`=200, `auth.fountainrank.com`=302.
+
+**Remaining hardening (non-blocking, future):**
+- Dedicated least-privilege DB users (app + Logto currently use `doadmin`).
+- Apex DNS cleanup: a duplicate `A @` + an `AAAA @` (IPs `…005`/`…006`) pre-date Terraform and aren't in its state.
+- `deploy.yml` tags images with the git SHA even on a `v*` tag push — could map the tag name instead.
+- Add **required reviewers** to the `production` GitHub Environment (currently none — apply/deploy run unattended).
+- Re-add the Spaces buckets (Phase 3/4) with a capable key.
+- `redducklabs-runners` access confirmed working (Class A jobs ran).
 
 ---
 
