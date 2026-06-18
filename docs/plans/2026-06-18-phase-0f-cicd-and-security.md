@@ -479,12 +479,15 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v8.2.0
-      - name: Export locked backend deps
+      - name: Export locked backend deps (no hashes; pip-audit --no-deps audits the pinned set)
         working-directory: backend
-        run: uv export --frozen --no-dev --format requirements-txt -o requirements.txt
+        # --no-hashes: `uv export` emits a cross-platform hash SUBSET that pip's
+        # installer rejects on a single platform (greenlet wheel mismatch). --no-deps
+        # makes pip-audit audit exactly the pinned lines without an install/resolve step.
+        run: uv export --frozen --no-dev --no-hashes --format requirements-txt -o requirements.txt
       - name: pip-audit (locked runtime deps) — GATE
         working-directory: backend
-        run: uvx pip-audit --requirement requirements.txt --strict
+        run: uvx pip-audit --requirement requirements.txt --no-deps --strict
 
   pnpm-audit:
     runs-on: redducklabs-runners
@@ -539,8 +542,8 @@ jobs:
 
 - [ ] **Step 2: Confirm the gating audits pass locally (controller)**
 
-Run: `cd backend && uv export --frozen --no-dev --format requirements-txt -o requirements.txt && uvx pip-audit --requirement requirements.txt --strict`
-Expected: "No known vulnerabilities found" (clean exit). If a CVE appears, surface it — do **not** suppress without a justification + revisit condition.
+Run: `cd backend && uv export --frozen --no-dev --no-hashes --format requirements-txt -o requirements.txt && uvx pip-audit --requirement requirements.txt --no-deps --strict`
+Expected: "No known vulnerabilities found" (clean exit; two advisory hash warnings are fine). If a CVE appears, surface it — do **not** suppress without a justification + revisit condition.
 Run: `pnpm audit --audit-level high`
 Expected: exit 0 (no high/critical).
 Run: `actionlint .github/workflows/security-audit.yml`
