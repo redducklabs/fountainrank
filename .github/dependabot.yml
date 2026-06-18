@@ -1,0 +1,36 @@
+version: 2
+updates:
+  # `uv` (not `pip`): this is a uv.lock project gated by `uv sync --frozen`, so
+  # Dependabot must update pyproject.toml AND uv.lock together. The `pip` ecosystem
+  # would update pyproject without maintaining uv.lock -> `uv sync --frozen` fails CI.
+  - package-ecosystem: uv
+    directory: "/backend"
+    schedule:
+      interval: weekly
+    groups:
+      backend-python:
+        patterns: ["*"]
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "build"
+
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      frontend-js:
+        patterns: ["*"]
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "build"
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      gha:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci"
