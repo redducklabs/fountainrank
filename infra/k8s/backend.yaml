@@ -25,9 +25,17 @@ spec:
       labels:
         app: fountainrank-backend
         component: backend
+        version: ${IMAGE_TAG}
     spec:
       imagePullSecrets:
         - name: regcred
+      volumes:
+        - name: db-ca
+          secret:
+            secretName: fountainrank-secrets
+            items:
+              - key: database-ca.crt
+                path: database-ca.crt
       containers:
         - name: backend
           image: ${REGISTRY}/fountainrank-backend:${IMAGE_TAG}
@@ -39,6 +47,15 @@ spec:
                 secretKeyRef:
                   name: fountainrank-secrets
                   key: database-url
+            # asyncpg verify-full TLS to DO Managed Postgres. The CA is mounted from
+            # fountainrank-secrets.database-ca.crt; the backend builds the SSLContext
+            # from this path (app/db.py::engine_connect_args). Required in prod.
+            - name: DB_SSL_ROOT_CERT
+              value: /var/run/secrets/fountainrank/database-ca.crt
+          volumeMounts:
+            - name: db-ca
+              mountPath: /var/run/secrets/fountainrank
+              readOnly: true
           resources:
             requests:
               memory: "256Mi"

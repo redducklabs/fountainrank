@@ -1,0 +1,201 @@
+name: Deploy
+
+on:
+  push:
+    tags: ["v*.*.*"] # release TAG push only — never routine pushes to main
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to build/deploy (defaults to the git SHA)"
+        required: false
+        default: ""
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CLUSTER_NAME: fountainrank-production-cluster
+  NAMESPACE: fountainrank
+  ENVIRONMENT: production
+  DOMAIN: fountainrank.com
+
+jobs:
+  build-push:
+    name: Build + push images
+    runs-on: ubuntu-latest # Class B: handles registry credentials
+    environment: production
+    permissions:
+      contents: read
+      security-events: write
+    outputs:
+      image_tag: ${{ steps.tag.outputs.image_tag }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Resolve image tag
+        id: tag
+        env:
+          INPUT_TAG: ${{ github.event.inputs.image_tag }}
+        run: |
+          TAG="$INPUT_TAG"
+          if [ -z "$TAG" ]; then TAG="${GITHUB_SHA::12}"; fi
+          # IMAGE_TAG is reused as a Docker tag AND a k8s label value (backend pod
+          # `version` label). Enforce the intersection: a valid k8s label value
+          # (<=63 chars, alnum + -._, alnum ends). Tag pushes (v1.2.3) + SHAs pass;
+          # a malformed manual workflow_dispatch image_tag fails fast here.
+          if ! printf '%s' "$TAG" | grep -Eq '^[A-Za-z0-9]([A-Za-z0-9._-]{0,61}[A-Za-z0-9])?$'; then
+            echo "::error::image_tag '$TAG' is not a valid Docker tag / k8s label value"; exit 1
+          fi
+          echo "image_tag=$TAG" >> "$GITHUB_OUTPUT"
+      - uses: digitalocean/action-doctl@v2.5.2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+      - name: Registry login
+        run: doctl registry login --expiry-seconds 1200
+      # Frontend codegen (Python+uv) must run before the web image build, since the
+      # web Dockerfile expects packages/api-client/{openapi.json,schema.d.ts} in context.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - uses: pnpm/action-setup@v6.0.9
+      - uses: astral-sh/setup-uv@v8.2.0
+      - run: uv sync --frozen
+        working-directory: backend
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run generate
+      - name: Build + push backend
+        env:
+          REGISTRY: registry.digitalocean.com/${{ vars.DO_REGISTRY }}
+          IMAGE_TAG: ${{ steps.tag.outputs.image_tag }}
+        run: |
+          docker build -t "$REGISTRY/fountainrank-backend:$IMAGE_TAG" backend
+          docker push "$REGISTRY/fountainrank-backend:$IMAGE_TAG"
+      - name: Build + push web
+        env:
+          REGISTRY: registry.digitalocean.com/${{ vars.DO_REGISTRY }}
+          IMAGE_TAG: ${{ steps.tag.outputs.image_tag }}
+        run: |
+          docker build -f web/Dockerfile \
+            --build-arg NEXT_PUBLIC_API_BASE_URL="https://api.${DOMAIN}" \
+            -t "$REGISTRY/fountainrank-web:$IMAGE_TAG" .
+          docker push "$REGISTRY/fountainrank-web:$IMAGE_TAG"
+      # Image scans are report-only (ignore-unfixed) — see Task 5's scanning policy.
+      - name: Trivy image scan (backend) — report -> SARIF
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: registry.digitalocean.com/${{ vars.DO_REGISTRY }}/fountainrank-backend:${{ steps.tag.outputs.image_tag }}
+          format: sarif
+          output: trivy-backend.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+          version: v0.71.1
+      - name: Upload backend image SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-backend.sarif
+          category: trivy-image-backend
+      - name: Trivy image scan (web) — report -> SARIF
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: registry.digitalocean.com/${{ vars.DO_REGISTRY }}/fountainrank-web:${{ steps.tag.outputs.image_tag }}
+          format: sarif
+          output: trivy-web.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+          version: v0.71.1
+      - name: Upload web image SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-web.sarif
+          category: trivy-image-web
+
+  deploy:
+    name: Deploy to DOKS
+    needs: build-push
+    runs-on: ubuntu-latest # Class B: handles cluster + DB credentials
+    environment: production
+    env:
+      IMAGE_TAG: ${{ needs.build-push.outputs.image_tag }}
+      REGISTRY: registry.digitalocean.com/${{ vars.DO_REGISTRY }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: digitalocean/action-doctl@v2.5.2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+      - name: Save kubeconfig
+        run: doctl kubernetes cluster kubeconfig save "$CLUSTER_NAME"
+      - uses: azure/setup-helm@v5
+        with:
+          version: v3.21.1
+      - name: Install/upgrade ingress-nginx (NodePort 30080/30443)
+        run: |
+          helm upgrade --install ingress-nginx ingress-nginx \
+            --repo https://kubernetes.github.io/ingress-nginx \
+            --version 4.15.1 \
+            --namespace ingress-nginx --create-namespace \
+            --set controller.service.type=NodePort \
+            --set controller.service.nodePorts.http=30080 \
+            --set controller.service.nodePorts.https=30443 \
+            --set controller.config.use-forwarded-headers="true" \
+            --set controller.config.compute-full-forwarded-for="true" \
+            --set controller.config.use-proxy-protocol="false" \
+            --wait
+      - name: Render + apply namespace first
+        run: |
+          export NAMESPACE ENVIRONMENT IMAGE_TAG REGISTRY DOMAIN
+          envsubst < infra/k8s/namespace.yaml | kubectl apply -f -
+      # Secrets are passed via env (never interpolated into the shell — DATABASE_CA_CERT
+      # is a multiline PEM; URLs can contain shell-significant chars). The CA PEM is
+      # written to a temp file and loaded with --from-file so newlines survive intact.
+      - name: Create app + registry secrets imperatively
+        env:
+          DATABASE_URL_SECRET: ${{ secrets.DATABASE_URL }}
+          LOGTO_DB_URL_SECRET: ${{ secrets.LOGTO_DB_URL }}
+          DATABASE_CA_CERT: ${{ secrets.DATABASE_CA_CERT }}
+          DO_REGISTRY: ${{ vars.DO_REGISTRY }}
+        run: |
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          printf '%s\n' "$DATABASE_CA_CERT" > "$tmp/database-ca.crt"
+          kubectl create secret generic fountainrank-secrets \
+            -n "$NAMESPACE" \
+            --from-literal=database-url="$DATABASE_URL_SECRET" \
+            --from-literal=logto-db-url="$LOGTO_DB_URL_SECRET" \
+            --from-file=database-ca.crt="$tmp/database-ca.crt" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          doctl registry kubernetes-manifest "$DO_REGISTRY" \
+            --name regcred --namespace "$NAMESPACE" | kubectl apply -f -
+      - name: Render + apply workloads
+        run: |
+          export NAMESPACE ENVIRONMENT IMAGE_TAG REGISTRY DOMAIN
+          for f in backend web logto ingress; do
+            envsubst < "infra/k8s/$f.yaml" | kubectl apply -f -
+          done
+      # Migrations run BEFORE gating backend readiness: /readyz runs a PostGIS query,
+      # and PostGIS is enabled by migration 0001. The pod reaches Running (DB-free
+      # /healthz startup probe) but is NOT Ready until the migration runs — so gating
+      # rollout first would deadlock. Select the NEW image's pod by its `version`
+      # label (= IMAGE_TAG) so re-deploys never exec the old pod / old image.
+      - name: Run DB migrations (before rollout gate)
+        run: |
+          kubectl -n "$NAMESPACE" wait --for=jsonpath='{.status.phase}'=Running \
+            pod -l "app=fountainrank-backend,version=$IMAGE_TAG" --timeout=150s
+          POD="$(kubectl -n "$NAMESPACE" get pod \
+            -l "app=fountainrank-backend,version=$IMAGE_TAG" \
+            -o jsonpath='{.items[0].metadata.name}')"
+          kubectl -n "$NAMESPACE" exec "$POD" -- alembic upgrade head
+      - name: Wait for rollouts
+        run: |
+          kubectl -n "$NAMESPACE" rollout status deploy/fountainrank-backend --timeout=180s
+          kubectl -n "$NAMESPACE" rollout status deploy/fountainrank-web --timeout=180s
+          kubectl -n "$NAMESPACE" rollout status deploy/logto --timeout=180s
+          kubectl -n "$NAMESPACE" rollout status deploy/healthz --timeout=120s
