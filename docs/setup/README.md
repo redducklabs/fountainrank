@@ -68,8 +68,9 @@ Names match `claude_help/github-environments.md`; some are finalized in plan 0f
 | `DO_REGISTRY` | `01-digitalocean.md` | GitHub Env **variable** | ✅ set (`fountainrank`) |
 | `DO_REGION` | `01-digitalocean.md` | GitHub Env **variable** | ✅ set (`sfo3`) |
 | `CLUSTER_NAME` | `01-digitalocean.md` / Terraform | GitHub Env **variable** | TBD-0f |
-| `DATABASE_URL` | DO Managed Postgres (Terraform) | GitHub Env secret | TBD-0f |
-| `LOGTO_DB_URL` | DO Managed Postgres (Logto DB) | GitHub Env secret | TBD-0f |
+| `DATABASE_URL` | DO Managed Postgres (Terraform) | GitHub Env secret | TBD (first deploy) |
+| `LOGTO_DB_URL` | DO Managed Postgres (Logto DB) | GitHub Env secret | TBD (first deploy) |
+| `DATABASE_CA_CERT` | DO Managed Postgres CA PEM (`doctl databases get`) | GitHub Env secret → mounted `database-ca.crt` | TBD (first deploy) — backend asyncpg verify-full TLS |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | `03-google-cloud.md` | GitHub Env secret | Ready to create |
 | `GOOGLE_WORKSPACE_DOMAIN` | `03-google-cloud.md` | GitHub Env **variable** | Ready to create |
 | `GOOGLE_DELEGATED_USER` | `03-google-cloud.md` | GitHub Env **variable** | Ready to create |
@@ -97,7 +98,7 @@ Tick these off as you go (edit this file, or just tell me and I'll update it):
 - [ ] **Google Workspace** — service account + domain-wide delegation for Gmail sending (`03`)
 - [ ] **Apple** — Developer Program enrolled; App ID; Sign in with Apple (Services ID + key) (`04`)
 - [ ] **Google Play** — Console account enrolled (`04`)
-- [ ] **GitHub** — security features enabled; Environments created; secrets/variables set (`05`)
+- [x] **GitHub** — security features enabled (secret scanning + push protection, Dependabot alerts/updates, vulnerability alerts — confirmed 2026-06-18); CI/security workflows landed (0f). Remaining: set the first-deploy secret values `DATABASE_URL`/`LOGTO_DB_URL`/`DATABASE_CA_CERT` in the `production` env (`05`)
 - [ ] **Logto** — app registrations + connectors (after Logto is deployed) (`06`)
 
 ---

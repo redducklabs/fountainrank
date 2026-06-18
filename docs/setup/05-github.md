@@ -7,9 +7,17 @@ repo-level security features the project requires. Repo: `redducklabs/fountainra
 **Unblocks:** plan 0f CI/CD (every deploy job reads these) and the security
 posture the spec mandates.
 
-> The **workflow files** (CodeQL, Dependabot config, deploy) are added by plan
-> 0f. This guide is the **repo-settings + secrets** half that only an owner can
-> do.
+> The **workflow files** (CI, security audit, gated deploy/terraform) are added
+> by plan 0f. This guide is the **repo-settings + secrets** half that only an
+> owner can do.
+
+> **Status (Phase 0f landed, 2026-06-18):** the repo security features below are
+> **confirmed enabled** (`gh api … --jq '.security_and_analysis'`: secret scanning,
+> push protection, Dependabot alerts + security updates; vulnerability alerts on).
+> CI provides: CodeQL (**default setup** — see Step 1), Trivy (fs gate on secrets +
+> report-only image scans), `pip-audit`/`pnpm audit` (daily), Dependabot version PRs.
+> What's still owner-only: creating the `production` Environment secret **values**
+> (`DATABASE_URL`, `LOGTO_DB_URL`, `DATABASE_CA_CERT`) before the first live deploy.
 
 ---
 
@@ -20,9 +28,10 @@ posture the spec mandates.
 - **Dependabot alerts** + **Dependabot security updates**.
 - **Secret scanning** + **Push protection** (blocks pushing a detected secret —
   critical for a public repo).
-- **Code scanning / CodeQL** — you can enable **default setup** now for quick
-  coverage; plan 0f may switch to an advanced workflow (Python + JS/TS). Either
-  is fine to start.
+- **Code scanning / CodeQL** — **default setup is enabled** and is what Phase 0f
+  uses (analyzes `python` + `javascript-typescript` + `actions`, weekly). Plan 0f
+  deliberately did **not** add an advanced `codeql.yml` — it would conflict with
+  default setup (mutually exclusive), and default setup is broader + zero-maintenance.
 - Confirm **Private vulnerability reporting** is on (pairs with `SECURITY.md`).
 
 These can also be checked via `gh`:
@@ -67,6 +76,7 @@ available (you don't need them all at once — 0e/0f tell you when each is read)
 | `SPACES_ACCESS_KEY` / `SPACES_SECRET_KEY` | `01-digitalocean.md` |
 | `DATABASE_URL` | DO Managed Postgres (0e/0f) |
 | `LOGTO_DB_URL` | DO Managed Postgres / Logto DB (0e/0f) |
+| `DATABASE_CA_CERT` | DO Managed Postgres CA PEM (`doctl databases get <id>` / console) — mounted as `database-ca.crt` for the backend's asyncpg verify-full TLS |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | `03-google-cloud.md` |
 | `LOGTO_*` (endpoint/app/secret as needed) | `06-logto.md` |
 
