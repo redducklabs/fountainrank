@@ -23,16 +23,17 @@ jobs:
           POSTGRES_USER: fountainrank
           POSTGRES_PASSWORD: fountainrank_dev
           POSTGRES_DB: fountainrank
+        # Publish on 5436 so the backend's DEFAULT database_url (…@localhost:5436/…)
+        # reaches it. This makes CI mirror `run.ps1 check -Backend` exactly, which
+        # uses the default URL (no DATABASE_URL override) against the compose db on
+        # 5436 — so test_config's ":5436/" default assertion holds.
         ports:
-          - 5432:5432
+          - 5436:5432
         options: >-
           --health-cmd "pg_isready -U fountainrank -d fountainrank"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 12
-    env:
-      # asyncpg over the service container. No SSL locally (matches dev/compose).
-      DATABASE_URL: postgresql+asyncpg://fountainrank:fountainrank_dev@localhost:5432/fountainrank
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v8.2.0
