@@ -16,11 +16,14 @@ Kubernetes (DOKS)**. Public OSS repo `redducklabs/fountainrank`.
 
 **Done and pushed on `main`:** Phase 0a (repo foundation + AI tooling), the `docs/setup/`
 runbook, the **DigitalOcean account bootstrap**, **0b** (backend walking skeleton), **0c**
-(frontend monorepo), and now **0d (local dev orchestration)**. The 0d work is commits
-`81cc071`…`e87ff45` (pushed to `origin/main`). Run `git log --oneline -10` to confirm.
+(frontend monorepo), and now **0d (local dev orchestration)** — including an owner-requested
+**302x host-port move** (web 3020, backend 3021, Logto 3022/3023, db 5436). The 0d work is commits
+`81cc071`…`932ea02` (pushed to `origin/main`; `932ea02` is the port move, `9b5324e` this handoff).
+Run `git log --oneline -12` to confirm. `origin/main` HEAD = `932ea02`, tree clean.
 
-**Next:** Phase 0e (infra Terraform skeleton), then 0f (CI/CD + security), then feature
-phases 1–5.
+**Next:** **Phase 0e** (infra Terraform skeleton + the deferred Dockerfile non-root `USER`/`HEALTHCHECK`),
+then **0f** (CI/CD + security), then feature phases 1–5. **Start by writing the 0e plan with
+`superpowers:writing-plans`, run Codex Loop A to APPROVED, then implement subagent-driven.**
 
 ---
 
@@ -117,6 +120,10 @@ PS 5.1 dual-runtime; failed-build `finally`-restore negative test; `down` full t
 - **`run.ps1` lives at the repo root** (matches the README; `scripts/` keeps `launch-codex.sh`).
 - **The alembic-commit fix (env.py) was folded into 0d** (owner-approved) because the `check` verb's
   `alembic check` depends on it and it would break Phase 1.
+- **302x host-port block** (owner-requested 2026-06-17): **web 3020, backend 3021, Logto 3022/3023,
+  db 5436**. This box runs other projects on the defaults. Backend container stays internal `8000`
+  (host-published `3021:8000`); Logto actually listens on 3022/3023 via `PORT`/`ADMIN_PORT`. The web
+  app's default backend URL is `http://localhost:3021`. See the gotchas section for the full rationale.
 
 ---
 
@@ -174,5 +181,6 @@ Then the **feature phases** (each gets its own spec + plan): 1) data model + fou
 - **Pre-existing nit (deferred):** `.gitignore` has a duplicate `.env` line from Phase 0a — harmless.
 - **Untracked `docs/logos/`** is still in the working tree (not produced by 0a–0d work) — left
   untracked/unpushed. Decide what it is before staging it.
-- **At the end of this session the stack was left running** (`db` + `logto` via `run.ps1 up`; db
-  migrated to head). `docker compose -f docker/docker-compose.yml ps` to check; `run.ps1 down` to stop.
+- **At the end of this session the full stack was left running** on the new ports (`db` + `logto` +
+  `backend` via `run.ps1 up -Full`; db migrated to head; backend reachable at `http://localhost:3021`).
+  `docker compose -f docker/docker-compose.yml ps` to check; `run.ps1 down` to stop.
