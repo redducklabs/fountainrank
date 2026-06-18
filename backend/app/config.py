@@ -12,6 +12,9 @@ class Settings(BaseSettings):
         "postgresql+asyncpg://fountainrank:fountainrank_dev@localhost:5436/fountainrank"
     )
     app_name: str = "fountainrank-backend"
+    # Path to the CA cert (PEM) for DO Managed Postgres TLS, mounted as a k8s secret
+    # in production (env DB_SSL_ROOT_CERT). Unset locally -> plaintext, no SSL.
+    db_ssl_root_cert: str | None = None
 
 
 @lru_cache
