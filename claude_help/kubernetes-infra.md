@@ -8,6 +8,15 @@ Terraform and deployed via GitHub Actions. See spec §15 for the full design.
 - **Local Terraform is READ-ONLY:** `init`, `validate`, `fmt`, `plan` only.
   **NEVER** run `apply`, `destroy`, `import`, or `state` against real
   infrastructure locally. All applies happen in CI.
+
+  **Local read-only commands (the only ones allowed locally):**
+  `terraform fmt -check`, `terraform init -backend=false`, `terraform validate`
+  (Terraform); for k8s manifests, render with `envsubst` and validate with
+  `kubeconform` (cluster-independent) — **not** `kubectl apply --dry-run=client`, which
+  in this environment reaches the live cluster for OpenAPI. The first-apply
+  reconciliation steps (provider lock, registry import, sizing, the blocking
+  asyncpg-SSL backend change) are in `infra/terraform/README.md`.
+
 - **NEVER** run `kubectl apply` / `helm upgrade` against a cluster by hand.
   Deployment is CI-only (idempotent, represents desired state).
 - **ALWAYS** verify context before any kubectl read:

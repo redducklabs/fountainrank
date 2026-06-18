@@ -91,6 +91,10 @@ to track the latest stable release. Pinned dependency versions live in
 | SQLAlchemy | 2.0.51 | 2026-06-17 |
 | Alembic | 1.18.4 | 2026-06-17 |
 | ruff | 0.15.17 | 2026-06-17 |
+| Terraform | 1.12.2 (pin `>= 1.6`) | 2026-06-17 |
+| DigitalOcean TF provider | `~> 2.0` | 2026-06-17 |
+| DOKS (Kubernetes) | 1.34.x (DO offers 1.33–1.36) | 2026-06-17 |
+| Logto (self-hosted) | 1.40.1 | 2026-06-17 |
 | (full pins) | `backend/pyproject.toml` + `backend/uv.lock`; workspace `package.json` + `pnpm-lock.yaml` | — |
 
 ## Getting started
@@ -109,6 +113,15 @@ self-hosted Logto (app `:3022`, admin `:3023`); `.\run.ps1 up -Full` also runs t
 backend in a container. Mirror CI locally with `.\run.ps1 check` (see
 [`claude_help/testing-ci.md`](claude_help/testing-ci.md)). Run `.\run.ps1 help`
 for the full command list.
+
+## Infrastructure
+
+Infrastructure-as-code lives in [`infra/`](infra/README.md): Terraform for the
+DigitalOcean stack (DOKS, Managed Postgres + PostGIS, Spaces, Load Balancer +
+Let's Encrypt TLS, DNS, registry) and `envsubst`-templated Kubernetes manifests.
+**Applies and deploys happen only in CI** — locally these are read-only
+(`terraform validate`; `envsubst` + `kubeconform` for manifests). See
+[`claude_help/kubernetes-infra.md`](claude_help/kubernetes-infra.md).
 
 ## Contributing & security
 
