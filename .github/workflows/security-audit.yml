@@ -1,0 +1,80 @@
+name: Security audit
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "17 5 * * *" # daily 05:17 UTC — catches CVEs on unchanged deps
+
+concurrency:
+  group: security-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pip-audit:
+    runs-on: redducklabs-runners
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v8.2.0
+      - name: Export locked backend deps (no hashes; pip-audit --no-deps audits the pinned set)
+        working-directory: backend
+        # --no-hashes: `uv export` emits a cross-platform hash SUBSET that pip's
+        # installer rejects on a single platform (greenlet wheel mismatch). --no-deps
+        # makes pip-audit audit exactly the pinned lines without an install/resolve step.
+        run: uv export --frozen --no-dev --no-hashes --format requirements-txt -o requirements.txt
+      - name: pip-audit (locked runtime deps) — GATE
+        working-directory: backend
+        run: uvx pip-audit --requirement requirements.txt --no-deps --strict
+
+  pnpm-audit:
+    runs-on: redducklabs-runners
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - uses: pnpm/action-setup@v6.0.9
+      - name: Install workspace deps
+        run: pnpm install --frozen-lockfile
+      - name: pnpm audit (GATE — fail on high/critical)
+        run: pnpm audit --audit-level high
+
+  trivy-fs:
+    runs-on: redducklabs-runners
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v6
+      - name: Trivy filesystem scan (report -> SARIF)
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          scan-type: fs
+          scanners: vuln,secret,misconfig
+          scan-ref: .
+          format: sarif
+          output: trivy-fs.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+          version: v0.71.1
+      - name: Upload Trivy SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs
+      - name: Trivy secret scan (GATE — fail on any committed secret)
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          scan-type: fs
+          scanners: secret
+          scan-ref: .
+          format: table
+          exit-code: "1"
+          version: v0.71.1
