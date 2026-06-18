@@ -19,7 +19,7 @@ Copied verbatim from `CLAUDE.md` / spec / the spokes. Every task implicitly incl
 - **Local IaC is READ-ONLY:** `terraform fmt`/`init -backend=false`/`validate` and (registry-only) `terraform providers lock`; render k8s with `envsubst` + validate with `kubeconform`. **Never** `apply`/`plan`-against-backend/`import`/`state`, **never** `kubectl apply`/`helm upgrade` by hand. All applies/deploys happen in CI.
 - **CD is authored but NOT fired this phase.** `deploy.yml` triggers on `push: tags: ['v*.*.*']` + `workflow_dispatch`; `terraform.yml` triggers on `workflow_dispatch` (+ `fmt`/`validate` on infra PRs). Neither fires on routine pushes to `main`.
 - **Pinned versions (researched 2026-06-18, latest stable):**
-  - Actions: `actions/checkout@v6`, `actions/setup-node@v6`, `pnpm/action-setup@v6.0.9`, `astral-sh/setup-uv@v8.2.0`, `github/codeql-action/*@v4`, `aquasecurity/trivy-action@0.36.0`, `digitalocean/action-doctl@v2.5.2`, `azure/setup-helm@v5`, `hashicorp/setup-terraform@v4`, `actions/upload-artifact@v7`.
+  - Actions: `actions/checkout@v6`, `actions/setup-node@v6`, `pnpm/action-setup@v6.0.9`, `astral-sh/setup-uv@v8.2.0`, `github/codeql-action/*@v4`, `aquasecurity/trivy-action@v0.36.0`, `digitalocean/action-doctl@v2.5.2`, `azure/setup-helm@v5`, `hashicorp/setup-terraform@v4`, `actions/upload-artifact@v7`.
   - Tools: Trivy CLI `0.71.1`, `actionlint` pre-commit `rev: v1.7.12`, `kubeconform v0.8.0`, ingress-nginx chart `4.15.1` (appVersion 1.15.1), Helm CLI `v3.21.1`, Terraform CLI `1.15.6`, Node `22`, pnpm read from `package.json#packageManager` (`pnpm@11.7.0`).
   - CodeQL `languages`: `python` and `javascript` (the `javascript` analysis covers TypeScript; do **not** use `javascript-typescript`).
 - **Repo facts:** repo `redducklabs/fountainrank` (owner is the `redducklabs` org); the owner's GitHub login is `aronweiler`. Domain `fountainrank.com`. DO region `sfo3`. Registry name `fountainrank`. k8s namespace `fountainrank`, environment `production`.
@@ -510,7 +510,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Trivy filesystem scan (report -> SARIF)
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scanners: vuln,secret,misconfig
@@ -528,7 +528,7 @@ jobs:
           sarif_file: trivy-fs.sarif
           category: trivy-fs
       - name: Trivy secret scan (GATE — fail on any committed secret)
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scanners: secret
@@ -707,7 +707,7 @@ Now that `web/Dockerfile` exists, add the report-only image scan to the workflow
             --build-arg NEXT_PUBLIC_API_BASE_URL=https://api.fountainrank.com \
             -t fountainrank-web:scan .
       - name: Trivy scan backend image (report -> SARIF)
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: image
           image-ref: fountainrank-backend:scan
@@ -724,7 +724,7 @@ Now that `web/Dockerfile` exists, add the report-only image scan to the workflow
           sarif_file: trivy-backend.sarif
           category: trivy-image-backend
       - name: Trivy scan web image (report -> SARIF)
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: image
           image-ref: fountainrank-web:scan
@@ -929,7 +929,7 @@ jobs:
           docker push "$REGISTRY/fountainrank-web:$IMAGE_TAG"
       # Image scans are report-only (ignore-unfixed) — see Task 5's scanning policy.
       - name: Trivy image scan (backend) — report -> SARIF
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: image
           image-ref: registry.digitalocean.com/${{ vars.DO_REGISTRY }}/fountainrank-backend:${{ steps.tag.outputs.image_tag }}
@@ -946,7 +946,7 @@ jobs:
           sarif_file: trivy-backend.sarif
           category: trivy-image-backend
       - name: Trivy image scan (web) — report -> SARIF
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: image
           image-ref: registry.digitalocean.com/${{ vars.DO_REGISTRY }}/fountainrank-web:${{ steps.tag.outputs.image_tag }}
