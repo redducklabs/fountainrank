@@ -119,7 +119,11 @@ def upgrade() -> None:
         sa.UniqueConstraint(
             "fountain_id", "user_id", "rating_type_id", name="uq_ratings_fountain_user_type"
         ),
-        sa.CheckConstraint("stars >= 1 AND stars <= 5", name="ck_ratings_stars_range"),
+        # Bare name: Alembic applies target_metadata's `ck` convention
+        # (ck_%(table_name)s_%(constraint_name)s) here too, so "stars_range" renders as
+        # ck_ratings_stars_range — matching the ORM model. The full name would
+        # double-prefix to ck_ratings_ck_ratings_stars_range.
+        sa.CheckConstraint("stars >= 1 AND stars <= 5", name="stars_range"),
     )
     op.create_index("ix_ratings_fountain_id", "ratings", ["fountain_id"], unique=False)
 

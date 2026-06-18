@@ -363,7 +363,10 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE", name="fk_ratings_user_id_users"),
         sa.ForeignKeyConstraint(["rating_type_id"], ["rating_types.id"], name="fk_ratings_rating_type_id_rating_types"),
         sa.UniqueConstraint("fountain_id", "user_id", "rating_type_id", name="uq_ratings_fountain_user_type"),
-        sa.CheckConstraint("stars >= 1 AND stars <= 5", name="ck_ratings_stars_range"),
+        # Bare name: Alembic applies target_metadata's `ck` convention here too, so
+        # "stars_range" renders as ck_ratings_stars_range — matching the ORM model. The
+        # full name would double-prefix to ck_ratings_ck_ratings_stars_range.
+        sa.CheckConstraint("stars >= 1 AND stars <= 5", name="stars_range"),
     )
     op.create_index("ix_ratings_fountain_id", "ratings", ["fountain_id"], unique=False)
 
@@ -1894,3 +1897,8 @@ Addressed all 8 findings of `temp/codex-reviews/phase-1-data-model-and-fountains
 6. [MAJOR] `_upsert_ratings` uses `INSERT … ON CONFLICT DO UPDATE` with in-request dedupe (atomic, no 500 race); added a duplicate-in-one-request test.
 7. [MINOR] bbox handler rejects inverted bounds with 422; added a test.
 8. [NIT] Removed the stale `gen_random_uuid` claim — PKs are Python-side `uuid.uuid4` by design.
+
+## Task 1 implementation follow-ups (caught during controller verification)
+
+- **Check-constraint name (both sides bare):** since `env.py` sets `target_metadata = Base.metadata`, Alembic applies the `ck_%(table_name)s_%(constraint_name)s` convention to the **migration's** `CheckConstraint` too. The migration must therefore also pass the bare `name="stars_range"` (not the full `ck_ratings_stars_range`), or it renders `ck_ratings_ck_ratings_stars_range`. Both model and migration now use the bare name → DB constraint is `ck_ratings_stars_range`. (`alembic check` does not compare CHECK constraints, so this would otherwise have shipped silently.)
+- **Spatial index:** GeoAlchemy2 0.20.0 auto-creates `idx_fountains_location` during `op.create_table` (the Geography column's `spatial_index=True` `after_create` event), so the explicit `op.create_index`/`op.drop_index` were removed to avoid a `DuplicateTableError`; `alembic_helpers.include_object` filters the auto index from drift checks. Verified the GiST index exists in the DB.
