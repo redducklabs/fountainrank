@@ -1,0 +1,23 @@
+# Root build context for the web image (built from repo root — pnpm workspace).
+# WITHOUT this, `COPY web web` / `COPY packages/... ` would drag the host's
+# node_modules (with host-specific pnpm symlinks) + build output into the image,
+# clobbering the freshly pnpm-installed modules and breaking resolution (next build
+# -> MODULE_NOT_FOUND). It also keeps the context small/fast. The codegen artifacts
+# (packages/api-client/openapi.json + src/schema.d.ts) are intentionally NOT ignored.
+**/node_modules
+**/.next
+**/.turbo
+**/.expo
+**/.expo-shared
+**/dist
+**/build
+**/.venv
+**/__pycache__
+**/*.tsbuildinfo
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+.git
+.github
+infra/terraform/.terraform
+temp
