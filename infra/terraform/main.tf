@@ -7,11 +7,15 @@
 #    then `validate`/`fmt`. Never `plan` against the real backend, never apply/destroy/
 #    import/state. See claude_help/kubernetes-infra.md.
 #
-# Phase 0e SKELETON — never applied. Before the first apply (Phase 0f, in CI):
-#   (a) generate + commit a multi-platform provider lock (.terraform.lock.hcl);
-#   (b) the shared RDL account uses DO's multiple-registries feature — confirm the
-#       `fountainrank` registry does not already exist and `terraform import` it if it does;
-#   (c) review every size/count default for cost.
+# First applied 2026-06-18 (Phase 0f). State of the prerequisites:
+#   (a) multi-platform provider lock (.terraform.lock.hcl) — committed. ✅
+#   (b) container registry — NOT managed by Terraform (provider uses the legacy
+#       single-registry endpoint, incompatible with this account's multiple registries);
+#       `fountainrank` is created out-of-band via /v2/registries. See below. ✅
+#   (c) sizing/cost reviewed (cheapest defaults, owner-approved). ✅
+#   (d) Spaces buckets deferred (scoped key can't create them) — see below.
+#   (e) 🔴 DNSSEC must be OFF on the domain or DO refuses the LE cert (422) — the
+#       owner removed the GoDaddy DS record on 2026-06-18.
 
 terraform {
   required_version = ">= 1.6"
@@ -202,40 +206,24 @@ resource "digitalocean_database_db" "logto" {
 }
 
 # ---------------------------------------------------------------------------
-# Container Registry
+# Container Registry — NOT managed by Terraform on this account.
 # ---------------------------------------------------------------------------
-# NOTE: the shared RDL account uses DO's multiple-registries feature. Before first
-# apply, confirm `fountainrank` does not already exist; `terraform import` it if it does.
-resource "digitalocean_container_registry" "main" {
-  name                   = var.registry_name
-  subscription_tier_slug = "basic" # >=2 repos (backend, web); starter allows only 1
-  region                 = var.region
-}
+# The shared RDL account uses DO's "multiple registries" feature. The DO Terraform
+# provider's `digitalocean_container_registry` resource still targets the LEGACY
+# single-registry endpoint (`POST /v2/registry`), which returns 422 "invalid
+# subscription plan" on a multiple-registries account — so Terraform cannot create
+# or import it. The `fountainrank` registry is created out-of-band via the
+# `/v2/registries` API (see infra/terraform/README.md) and referenced everywhere by
+# the `DO_REGISTRY` CI variable. `var.registry_name` is retained for documentation.
 
 # ---------------------------------------------------------------------------
-# Spaces — photos + pmtiles basemap (the TF-state bucket is NOT managed here)
+# Spaces — photos + pmtiles basemap: DEFERRED (not managed here yet).
 # ---------------------------------------------------------------------------
-resource "digitalocean_spaces_bucket" "photos" {
-  name   = "${var.project_name}-photos"
-  region = var.region
-  acl    = "private" # served via signed URLs / CDN; not publicly listable
-
-  lifecycle {
-    prevent_destroy = true # user-generated content — never let an apply destroy it
-  }
-}
-
-resource "digitalocean_spaces_bucket" "pmtiles" {
-  name   = "${var.project_name}-pmtiles"
-  region = var.region
-  acl    = "public-read" # the Protomaps basemap is public, fetched directly by clients
-}
-
-# CDN in front of the public basemap bucket (lower latency; no per-load map cost).
-resource "digitalocean_cdn" "pmtiles" {
-  origin = digitalocean_spaces_bucket.pmtiles.bucket_domain_name
-  ttl    = 3600
-}
+# These buckets are only needed in Phase 3 (pmtiles basemap) / Phase 4 (photos), and
+# the current `SPACES_ACCESS_KEY` is scoped to only the TF-state bucket (it returns
+# 403 AccessDenied when creating new buckets). They will be added back with a
+# bucket-create-capable key (or created out-of-band) when those phases land. The
+# TF-state bucket is NOT managed here either.
 
 # ---------------------------------------------------------------------------
 # TLS — LB-terminated Let's Encrypt SAN cert (apex / www / api / auth)
@@ -330,10 +318,10 @@ resource "digitalocean_record" "auth" {
 # Assign resources to the FountainRank DO project.
 # DO project-resource supported URN types are: app, database, domain, droplet,
 # floating IP, Kubernetes cluster, load balancer, Spaces bucket, volume. So we
-# assign the cluster, DB, LB, both buckets, and the (pre-existing) domain — but
-# NOT the container registry or certificate (account/region-scoped, not
-# project-assignable). Assigning the domain only GROUPS it under the project; it
-# does not manage or alter its DNS records.
+# assign the cluster, DB, LB, and the (pre-existing) domain — but NOT the container
+# registry or certificate (account/region-scoped, not project-assignable), and NOT
+# the Spaces buckets (deferred — see above). Assigning the domain only GROUPS it
+# under the project; it does not manage or alter its DNS records.
 # ---------------------------------------------------------------------------
 resource "digitalocean_project_resources" "main" {
   project = data.digitalocean_project.main.id
@@ -341,8 +329,6 @@ resource "digitalocean_project_resources" "main" {
     digitalocean_kubernetes_cluster.main.urn,
     digitalocean_database_cluster.postgres.urn,
     digitalocean_loadbalancer.main.urn,
-    digitalocean_spaces_bucket.photos.urn,
-    digitalocean_spaces_bucket.pmtiles.urn,
     data.digitalocean_domain.main.urn,
   ]
 }
@@ -384,21 +370,9 @@ output "loadbalancer_ip" {
   value       = digitalocean_loadbalancer.main.ip
 }
 
-output "registry_endpoint" {
-  value = digitalocean_container_registry.main.endpoint
-}
-
-output "photos_bucket" {
-  value = digitalocean_spaces_bucket.photos.name
-}
-
-output "pmtiles_bucket" {
-  value = digitalocean_spaces_bucket.pmtiles.name
-}
-
-output "pmtiles_cdn_endpoint" {
-  value = digitalocean_cdn.pmtiles.endpoint
-}
+# NOTE: registry endpoint, Spaces bucket names, and the CDN endpoint outputs were
+# removed — the registry is managed out-of-band and the buckets are deferred (see above).
+# The registry endpoint is `registry.digitalocean.com/${DO_REGISTRY}` (a CI variable).
 
 output "certificate_id" {
   value = digitalocean_certificate.main.id
