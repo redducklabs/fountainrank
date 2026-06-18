@@ -32,7 +32,7 @@ Copied verbatim from `CLAUDE.md` / spec / the spokes. Every task implicitly incl
 Three tiers — each task states which applies:
 
 1. **Locally runnable (authoritative now):** backend SSL unit tests (`uv run pytest`), `run.ps1 check`, `docker build`/`docker run` for the web image, `uvx pip-audit`/`pnpm audit`/`trivy fs`, `terraform fmt`/`validate`/`providers lock`, `envsubst | kubeconform`. The **controller** runs these (subagents lack a reliable docker/terraform/uv/gh runtime — same pattern as Phases 0d/0e).
-2. **CI-authoritative (the real proof for the workflow files):** Phase 0 commits go to `main`; pushing `ci.yml`/`codeql.yml`/`security-audit.yml` triggers them. **Verify with `gh run watch` / `gh run list` until green**, fixing root causes. CI — not local — is the source of truth.
+2. **CI-authoritative (the real proof for the workflow files):** Phase 0 commits go to `main`; pushing `ci.yml`/`security-audit.yml` triggers them. **Verify with `gh run watch` / `gh run list` until green**, fixing root causes. CI — not local — is the source of truth. (CodeQL is GitHub default setup, not a workflow file — verify via `gh api .../code-scanning/default-setup`.)
 3. **Gated, not fired (authored only):** `deploy.yml`, `terraform.yml`, the web image build-arg path, the Trivy *image* scan. Verified by `actionlint` (syntax/expressions) + rendering the k8s apply set with `envsubst | kubeconform` + `terraform fmt`/`validate`. They will not run until an owner pushes a release tag / dispatches them after the prerequisites in `infra/terraform/README.md`.
 
 **Tooling the controller installs once (Go is on PATH) — pin to the recorded versions, not `@latest`, so the local tools match the README/pre-commit pins:**
@@ -44,7 +44,7 @@ Three tiers — each task states which applies:
 
 **Create:**
 - `.github/workflows/ci.yml` — PR/push checks (Class A): `backend`, `workspace-js`, `mobile-doctor`.
-- `.github/workflows/codeql.yml` — CodeQL (Class A): `python` + `javascript`.
+- ~~`.github/workflows/codeql.yml`~~ — **NOT created** (REVISED): CodeQL **default setup** is already enabled/green (python + js-ts + actions). See Task 3.
 - `.github/workflows/security-audit.yml` — Class A: `pip-audit`, `pnpm-audit`, `trivy-fs`; PR + push + daily.
 - `.github/workflows/deploy.yml` — Class B, gated: `build-push` + `deploy`; `push: tags` + dispatch.
 - `.github/workflows/terraform.yml` — Class B dispatch `apply` + Class A `fmt`/`validate` on infra PRs.
@@ -355,78 +355,20 @@ Expected: all three jobs conclude `success`. If red, `gh run view <id> --log-fai
 
 ---
 
-### Task 3: CodeQL workflow (`codeql.yml`)
+### Task 3: CodeQL — keep GitHub default setup (REVISED; CONTROLLER, no workflow file)
 
-Static analysis for Python + JS/TS (advanced setup via workflow, not default setup — they are mutually exclusive). Class A.
+**Revised at implementation (owner-approved 2026-06-18).** CodeQL **default setup is already enabled and green** on the repo, analyzing `python`, `javascript-typescript`, **and** `actions` weekly. GitHub does not allow an advanced `codeql.yml` to run while default setup is enabled (mutually exclusive). Adding the advanced workflow would mean disabling a working, broader scanner — so we **keep default setup** and do **not** create `codeql.yml`. This satisfies spec §17 ("CodeQL for Python + JS/TS, enabled in repo settings"). Default setup runs on GitHub-managed runners — a deliberate exception to the RDL-runner preference, which governs the Class-A jobs we author, not GitHub's managed analysis.
 
-**Files:**
-- Create: `.github/workflows/codeql.yml`
+**Files:** none created.
 
-**Interfaces:**
-- Produces: a `CodeQL` workflow with a `analyze (python)` and `analyze (javascript)` matrix; results upload to the repo's code-scanning tab.
+- [ ] **Step 1: Confirm default setup is active (controller)**
 
-- [ ] **Step 1: Write the workflow**
+Run: `gh api repos/redducklabs/fountainrank/code-scanning/default-setup --jq '{state,languages,schedule}'`
+Expected: `state: configured`, languages include `python` + `javascript-typescript`.
+Run: `gh api 'repos/redducklabs/fountainrank/code-scanning/analyses?per_page=3' --jq '.[].tool.name'`
+Expected: recent `CodeQL` analyses exist (green). No workflow file, commit, or push for this task.
 
-Create `.github/workflows/codeql.yml`:
-
-```yaml
-name: CodeQL
-
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-  schedule:
-    - cron: "27 4 * * 1" # weekly, Monday 04:27 UTC
-
-concurrency:
-  group: codeql-${{ github.ref }}
-  cancel-in-progress: true
-
-jobs:
-  analyze:
-    name: Analyze (${{ matrix.language }})
-    runs-on: redducklabs-runners
-    permissions:
-      actions: read
-      contents: read
-      security-events: write
-    strategy:
-      fail-fast: false
-      matrix:
-        # `javascript` covers TypeScript too. `python` is import/syntax analysis
-        # (no build needed).
-        language: [python, javascript]
-    steps:
-      - uses: actions/checkout@v6
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v4
-        with:
-          languages: ${{ matrix.language }}
-      - name: Perform CodeQL analysis
-        uses: github/codeql-action/analyze@v4
-        with:
-          category: "/language:${{ matrix.language }}"
-```
-
-- [ ] **Step 2: Lint + commit (controller)**
-
-Run: `actionlint .github/workflows/codeql.yml`
-Expected: no errors.
-
-```bash
-git add .github/workflows/codeql.yml
-git commit -m "ci: add CodeQL analysis (python + javascript/typescript)"
-```
-
-- [ ] **Step 3: Push and verify (CI-authoritative)**
-
-```bash
-git push origin main
-gh run watch $(gh run list --workflow=codeql.yml --limit 1 --json databaseId --jq '.[0].databaseId') --exit-status
-```
-Expected: both matrix jobs `success`. (CodeQL must succeed; findings appear in the Security tab and do not fail the run unless they trip a code-scanning gate, which is not configured here.) Fix root causes if the run errors.
+(Plan File Structure no longer lists `codeql.yml`; the README CodeQL badge in Task 12 references the code-scanning page, not a workflow file.)
 
 ---
 
@@ -1459,9 +1401,10 @@ At the top of `README.md` (under the title), add:
 
 ```markdown
 [![CI](https://github.com/redducklabs/fountainrank/actions/workflows/ci.yml/badge.svg)](https://github.com/redducklabs/fountainrank/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/redducklabs/fountainrank/actions/workflows/codeql.yml/badge.svg)](https://github.com/redducklabs/fountainrank/actions/workflows/codeql.yml)
 [![Security audit](https://github.com/redducklabs/fountainrank/actions/workflows/security-audit.yml/badge.svg)](https://github.com/redducklabs/fountainrank/actions/workflows/security-audit.yml)
 ```
+
+(No CodeQL workflow-file badge — CodeQL uses GitHub **default setup**, which has no `codeql.yml`. The security prose in Step 3 names CodeQL as active; link "Code scanning" to `https://github.com/redducklabs/fountainrank/security/code-scanning` if a link is wanted.)
 
 - [ ] **Step 2: Software Versions rows**
 
@@ -1507,7 +1450,7 @@ Expected: latest `CI`, `CodeQL`, `Security audit` runs on `main` all `success`. 
 - §16 PR checks (backend/web/mobile lint+type+test) → Task 2. ✅
 - §16 image build/push to DOCR + DOKS deploy via `doctl` + `envsubst | kubectl apply` + `rollout status` + `kubectl exec` migrations → Task 7. ✅
 - §16 rollout gate (not `wait --for=available`) → Task 7 uses `rollout status`. ✅
-- §17 CodeQL (Python + JS/TS) → Task 3. ✅
+- §17 CodeQL (Python + JS/TS) → Task 3: GitHub **default setup** (already enabled/green; python + js-ts + actions). No advanced workflow (would conflict). ✅
 - §17 Dependabot (uv/npm/github-actions, grouped) → Task 4. ✅
 - §17 secret scanning + push protection, advisories → Task 11. ✅
 - §17 Trivy + `.trivyignore`; pip-audit + pnpm audit in CI + daily → Task 5: `pip-audit`/`pnpm audit` **gate**; `trivy fs` secret **gate** + vuln/misconfig report. Both images scanned **report-only** (`ignore-unfixed`) via the `image-scan` job appended in Task 6 (push+daily) and at release (Task 7). Scanning policy accepted by Codex (review 2). ✅
