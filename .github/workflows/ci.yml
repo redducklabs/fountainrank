@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: redducklabs-runners
+    services:
+      postgres:
+        image: postgis/postgis:17-3.5
+        env:
+          POSTGRES_USER: fountainrank
+          POSTGRES_PASSWORD: fountainrank_dev
+          POSTGRES_DB: fountainrank
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U fountainrank -d fountainrank"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      # asyncpg over the service container. No SSL locally (matches dev/compose).
+      DATABASE_URL: postgresql+asyncpg://fountainrank:fountainrank_dev@localhost:5432/fountainrank
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v8.2.0
+      - name: Sync backend deps (installs Python 3.13 via uv)
+        working-directory: backend
+        run: uv sync --frozen
+      - name: ruff check
+        working-directory: backend
+        run: uv run ruff check .
+      - name: ruff format --check
+        working-directory: backend
+        run: uv run ruff format --check .
+      - name: alembic upgrade head
+        working-directory: backend
+        run: uv run alembic upgrade head
+      - name: alembic check (no model drift)
+        working-directory: backend
+        run: uv run alembic check
+      - name: pytest
+        working-directory: backend
+        run: uv run pytest
+
+  # Whole JS/TS workspace: web + mobile + api-client + packages. The workspace-wide
+  # turbo run enforces mobile lint+typecheck here (mobile-doctor only adds expo-doctor).
+  workspace-js:
+    runs-on: redducklabs-runners
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - uses: pnpm/action-setup@v6.0.9
+      - uses: astral-sh/setup-uv@v8.2.0
+      - name: Sync backend deps (the `generate` turbo-dep runs the OpenAPI export)
+        working-directory: backend
+        run: uv sync --frozen
+      - name: Install workspace deps
+        run: pnpm install --frozen-lockfile
+      - name: Lint + type-check + test (turbo across the workspace; runs `generate` first)
+        run: pnpm exec turbo run lint typecheck test
+      - name: Prettier format check
+        run: pnpm run format:check
+      - name: Web build
+        run: pnpm exec turbo run build --filter=web
+
+  mobile-doctor:
+    runs-on: redducklabs-runners
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - uses: pnpm/action-setup@v6.0.9
+      - name: Install workspace deps
+        run: pnpm install --frozen-lockfile
+      - name: expo-doctor
+        working-directory: mobile
+        run: pnpm dlx expo-doctor

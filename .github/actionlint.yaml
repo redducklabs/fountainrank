@@ -1,0 +1,6 @@
+# Register the self-hosted runner label so actionlint doesn't flag `runs-on:
+# redducklabs-runners` as an unknown label (keeps the actionlint pre-commit hook
+# + local checks clean). `self-hosted` is built in and need not be listed.
+self-hosted-runner:
+  labels:
+    - redducklabs-runners
