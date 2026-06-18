@@ -66,3 +66,18 @@ Thumbs.db
 packages/api-client/openapi.json
 packages/api-client/src/schema.d.ts
 mobile/expo-env.d.ts
+
+# Terraform (infra/terraform) — never commit state, provider binaries, or tfvars.
+infra/terraform/.terraform/
+infra/terraform/*.tfstate
+infra/terraform/*.tfstate.*
+infra/terraform/*.tfvars
+infra/terraform/*.tfvars.json
+infra/terraform/*.tfplan
+infra/terraform/crash.log
+infra/terraform/crash.*.log
+# Lock file: a LOCAL `init -backend=false` writes a single-platform (Windows) lock.
+# Do NOT commit that — CI generates and commits the authoritative MULTI-platform lock
+# in Phase 0f (`terraform providers lock -platform=linux_amd64 -platform=darwin_arm64
+# -platform=windows_amd64`). Un-ignore + commit it then.
+infra/terraform/.terraform.lock.hcl
