@@ -1,9 +1,12 @@
 # infra/terraform
 
 Single-file (`main.tf`) DigitalOcean infrastructure for FountainRank: DOKS cluster,
-Managed Postgres + PostGIS (app DB + a separate Logto DB), app Spaces buckets +
-CDN, the LB-terminated Let's Encrypt SAN cert, DNS A records, and the container
-registry — all assigned to the `FountainRank` DO project.
+Managed Postgres + PostGIS (app DB + a separate Logto DB), the LB-terminated Let's
+Encrypt SAN cert, and DNS A records — with the cluster, DB, LB, and domain assigned
+to the `FountainRank` DO project. **Not managed here:** the container registry (DO
+multiple-registries feature is incompatible with the provider's legacy endpoint —
+created out-of-band) and the photos/pmtiles Spaces buckets + CDN (deferred to Phase
+3/4 — the scoped Spaces key can't create them). See the pre-apply checklist below.
 
 ## 🔴 Local use is READ-ONLY
 
