@@ -17,10 +17,10 @@ Kubernetes (DOKS)**. Public OSS repo `redducklabs/fountainrank`.
 **Done and pushed on `main`:** Phase 0a (repo foundation + AI tooling), the `docs/setup/`
 runbook, the **DigitalOcean account bootstrap**, **0b** (backend walking skeleton), **0c**
 (frontend monorepo), **0d** (local dev orchestration), and now **0e (infra Terraform skeleton
-+ deferred Dockerfile hardening)**. The 0e work is commits `edfdf6e`…`5c7ab55` (pushed to
-`origin/main`; `5c7ab55` is the plan doc, on top of the four task commits). Run
-`git log --oneline -8` to confirm. **`origin/main` HEAD = `5c7ab55`; local == remote; tree
-clean apart from the pre-existing untracked `docs/logos/`.**
++ deferred Dockerfile hardening)**. The 0e implementation is commits `edfdf6e`…`c5f4467`; the
+plan doc (`5c7ab55`) and **this handoff commit sit on top as the current `main` HEAD** — run
+`git log --oneline -8` to confirm the exact tip. **Local == `origin/main`; tree clean apart
+from the pre-existing untracked `docs/logos/`.**
 
 **Next:** **Phase 0f** (CI/CD + security) — see "Next steps". Then feature phases 1–5.
 **Start by writing the 0f plan with `superpowers:writing-plans`, run Codex Loop A to APPROVED,
