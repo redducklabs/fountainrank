@@ -26,7 +26,6 @@ def settings_override():
     app.dependency_overrides.pop(get_settings, None)
 
 
-@pytest.mark.skip(reason="enabled in Task 5")
 async def test_write_rejected_when_dev_auth_disabled(settings_override):
     settings_override(dev_auth_enabled=False)
     transport = ASGITransport(app=app)
@@ -39,7 +38,6 @@ async def test_write_rejected_when_dev_auth_disabled(settings_override):
     assert resp.status_code == 401
 
 
-@pytest.mark.skip(reason="enabled in Task 5")
 async def test_write_rejected_when_header_missing(settings_override):
     settings_override(dev_auth_enabled=True)
     transport = ASGITransport(app=app)

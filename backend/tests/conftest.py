@@ -4,15 +4,10 @@ from sqlalchemy import text as _sa_text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import app.db as _app_db
+from app.auth import get_current_user
 from app.config import get_settings
 from app.main import app
-
-
-@pytest.fixture
-async def client():
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        yield ac
+from app.models import User
 
 
 @pytest.fixture
@@ -31,8 +26,6 @@ async def session(engine):
 
 @pytest.fixture(autouse=True)
 async def clean_db(engine):
-    # Isolation: wipe mutable domain tables before each test. rating_types is
-    # migration-seeded reference data and is intentionally preserved.
     async with engine.begin() as conn:
         await conn.execute(_sa_text("TRUNCATE ratings, fountains, users RESTART IDENTITY CASCADE"))
     yield
@@ -49,3 +42,26 @@ async def reset_app_engine():
         await _app_db._engine.dispose()
         _app_db._engine = None
         _app_db._sessionmaker = None
+
+
+@pytest.fixture
+async def test_user(clean_db, session) -> User:
+    user = User(logto_user_id="dev-user-1", email="dev1@example.com", display_name="Dev One")
+    session.add(user)
+    await session.commit()
+    await session.refresh(user)
+    return user
+
+
+@pytest.fixture
+async def client(test_user) -> AsyncClient:
+    # API tests run with the write-auth seam pinned to a known user. The seam's own
+    # gating/provisioning is covered separately in tests/test_auth_seam.py.
+    async def override_current_user() -> User:
+        return test_user
+
+    app.dependency_overrides[get_current_user] = override_current_user
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        yield ac
+    app.dependency_overrides.pop(get_current_user, None)
