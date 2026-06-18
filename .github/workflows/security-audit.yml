@@ -78,3 +78,63 @@ jobs:
           format: table
           exit-code: "1"
           version: v0.71.1
+
+  image-scan:
+    # Report-only (ignore-unfixed) — see Task 5's scanning policy. Active on push +
+    # daily, NOT every PR (image builds are heavy — web needs codegen + a full Next build).
+    if: github.event_name != 'pull_request'
+    runs-on: redducklabs-runners
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - uses: pnpm/action-setup@v6.0.9
+      - uses: astral-sh/setup-uv@v8.2.0
+      - run: uv sync --frozen
+        working-directory: backend
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run generate # web image needs the api-client codegen artifacts in context
+      - name: Build images (no push)
+        run: |
+          docker build -t fountainrank-backend:scan backend
+          docker build -f web/Dockerfile \
+            --build-arg NEXT_PUBLIC_API_BASE_URL=https://api.fountainrank.com \
+            -t fountainrank-web:scan .
+      - name: Trivy scan backend image (report -> SARIF)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: fountainrank-backend:scan
+          format: sarif
+          output: trivy-backend.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+          version: v0.71.1
+      - name: Upload backend image SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-backend.sarif
+          category: trivy-image-backend
+      - name: Trivy scan web image (report -> SARIF)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: fountainrank-web:scan
+          format: sarif
+          output: trivy-web.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+          version: v0.71.1
+      - name: Upload web image SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-web.sarif
+          category: trivy-image-web

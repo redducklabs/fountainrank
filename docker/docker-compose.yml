@@ -6,8 +6,9 @@
 #   full       db + logto + backend (whole containerizable stack)
 #                                 -> docker compose --profile auth --profile full up -d
 #
-# The web app is intentionally NOT containerized in Phase 0d (no web image yet;
-# host-coupled api-client codegen). Run it on the host: `..\run.ps1 web`.
+# The web app is now containerized under the `full` profile (web service below).
+# Requires `..\run.ps1 generate` first so the api-client codegen artifacts exist in
+# the build context. For fast iteration without Docker, run on the host: `..\run.ps1 web`.
 #
 # All credentials here are local-dev throwaways (already documented in
 # backend/README.md). They are NOT secrets. Do not add a .env file.
@@ -73,6 +74,21 @@ services:
     # only the HOST port moves to 3021 to avoid collisions with other local projects.
     ports:
       - "3021:8000"
+
+  web:
+    profiles: ["full"]
+    build:
+      context: ..
+      dockerfile: web/Dockerfile
+      args:
+        # NEXT_PUBLIC_* is inlined at BUILD time. For local, the browser calls the
+        # host-published backend on :3021. Run `..\run.ps1 generate` BEFORE building
+        # so the api-client codegen artifacts exist in the build context.
+        NEXT_PUBLIC_API_BASE_URL: "http://localhost:3021"
+    depends_on:
+      - backend
+    ports:
+      - "3020:3000"
 
 volumes:
   db-data:
