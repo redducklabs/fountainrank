@@ -3,6 +3,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text as _sa_text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+import app.db as _app_db
 from app.config import get_settings
 from app.main import app
 
@@ -35,3 +36,16 @@ async def clean_db(engine):
     async with engine.begin() as conn:
         await conn.execute(_sa_text("TRUNCATE ratings, fountains, users RESTART IDENTITY CASCADE"))
     yield
+
+
+@pytest.fixture(autouse=True)
+async def reset_app_engine():
+    """Dispose and reset the app-global engine singleton after each test.
+    Each test runs in its own event loop (pytest-asyncio default); without
+    this the shared engine retains connections bound to the previous loop,
+    causing RuntimeError('Event loop is closed') on the next test."""
+    yield
+    if _app_db._engine is not None:
+        await _app_db._engine.dispose()
+        _app_db._engine = None
+        _app_db._sessionmaker = None
