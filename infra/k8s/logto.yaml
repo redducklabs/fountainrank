@@ -28,6 +28,13 @@ spec:
         app: logto
         component: auth
     spec:
+      volumes:
+        - name: db-ca
+          secret:
+            secretName: fountainrank-secrets
+            items:
+              - key: database-ca.crt
+                path: database-ca.crt
       containers:
         - name: logto
           image: svhd/logto:1.40.1
@@ -41,12 +48,22 @@ spec:
                 secretKeyRef:
                   name: fountainrank-secrets
                   key: logto-db-url
+            # DO Managed Postgres presents a custom-CA chain that Node doesn't trust by
+            # default -> Logto's pg client fails with SELF_SIGNED_CERT_IN_CHAIN. Mount the
+            # DO CA (same one the backend uses) and add it to Node's trust store so the
+            # sslmode=require connection verifies. Mirrors backend.yaml's db-ca mount.
+            - name: NODE_EXTRA_CA_CERTS
+              value: /var/run/secrets/fountainrank/database-ca.crt
             - name: ENDPOINT
               value: "https://auth.${DOMAIN}"
             - name: PORT
               value: "3001"
             - name: ADMIN_PORT
               value: "3002"
+          volumeMounts:
+            - name: db-ca
+              mountPath: /var/run/secrets/fountainrank
+              readOnly: true
           resources:
             requests:
               memory: "256Mi"
