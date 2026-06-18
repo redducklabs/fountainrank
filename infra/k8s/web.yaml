@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fountainrank-web
+  namespace: ${NAMESPACE}
+  labels:
+    app: fountainrank-web
+    component: web
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: fountainrank-web
+  template:
+    metadata:
+      labels:
+        app: fountainrank-web
+        component: web
+    spec:
+      imagePullSecrets:
+        - name: regcred
+      containers:
+        - name: web
+          # The web image + its Dockerfile land in Phase 0f.
+          image: ${REGISTRY}/fountainrank-web:${IMAGE_TAG}
+          ports:
+            - containerPort: 3000
+          env:
+            # NOTE: NEXT_PUBLIC_* is inlined at BUILD time, not read at runtime. The
+            # real value must be passed as a build arg when the web image is built
+            # (Phase 0f). This runtime env only helps server-side reads.
+            - name: NEXT_PUBLIC_API_BASE_URL
+              value: "https://api.${DOMAIN}"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fountainrank-web-service
+  namespace: ${NAMESPACE}
+  labels:
+    app: fountainrank-web
+spec:
+  selector:
+    app: fountainrank-web
+  ports:
+    - port: 80
+      targetPort: 3000
+      protocol: TCP
+  type: ClusterIP

@@ -1,0 +1,85 @@
+# Self-hosted Logto. This manifest is in the Phase 0f apply set, so a healthy topology
+# requires the `fountainrank-secrets.logto-db-url` secret (Logto's URL to its own `logto`
+# DB) to be present + non-empty at deploy time — it is a REQUIRED Phase 0f secret. What
+# stays Phase 2: connectors (Google/Apple/email), app registrations, admin-endpoint
+# exposure, and any seed/migrate-lifecycle refinement. ENDPOINT must be the real public
+# URL in prod (an unset/incorrect ENDPOINT 500s — logto-io/logto#6755).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: logto
+  namespace: ${NAMESPACE}
+  labels:
+    app: logto
+    component: auth
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: logto
+  template:
+    metadata:
+      labels:
+        app: logto
+        component: auth
+    spec:
+      containers:
+        - name: logto
+          image: svhd/logto:1.40.1
+          command: ["sh", "-c", "npm run cli db seed -- --swe && npm start"]
+          ports:
+            - containerPort: 3001 # app/OIDC
+            - containerPort: 3002 # admin
+          env:
+            - name: DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: fountainrank-secrets
+                  key: logto-db-url
+            - name: ENDPOINT
+              value: "https://auth.${DOMAIN}"
+            - name: PORT
+              value: "3001"
+            - name: ADMIN_PORT
+              value: "3002"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          readinessProbe:
+            tcpSocket:
+              port: 3001
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            tcpSocket:
+              port: 3001
+            initialDelaySeconds: 40
+            periodSeconds: 15
+            failureThreshold: 4
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: logto-service
+  namespace: ${NAMESPACE}
+  labels:
+    app: logto
+spec:
+  selector:
+    app: logto
+  ports:
+    - name: app
+      port: 80
+      targetPort: 3001
+      protocol: TCP
+  type: ClusterIP

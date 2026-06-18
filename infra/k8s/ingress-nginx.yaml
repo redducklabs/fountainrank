@@ -1,0 +1,13 @@
+# ingress-nginx is installed via Helm in the Phase 0f deploy workflow (NOT via kubectl
+# apply). NodePorts are pinned to the Terraform LB forwarding rules (30080/30443), and
+# forwarded-header behavior is set via controller.config.* (the chart's own ConfigMap):
+#
+#   helm upgrade --install ingress-nginx ingress-nginx \
+#     --repo https://kubernetes.github.io/ingress-nginx \
+#     --namespace ingress-nginx --create-namespace \
+#     --set controller.service.type=NodePort \
+#     --set controller.service.nodePorts.http=30080 \
+#     --set controller.service.nodePorts.https=30443 \
+#     --set controller.config.use-forwarded-headers="true" \
+#     --set controller.config.compute-full-forwarded-for="true" \
+#     --set controller.config.use-proxy-protocol="false"

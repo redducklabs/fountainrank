@@ -1,0 +1,146 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fountainrank-ingress
+  namespace: ${NAMESPACE}
+  annotations:
+    # TLS is terminated at the DO Load Balancer; force https via X-Forwarded-Proto.
+    nginx.ingress.kubernetes.io/use-forwarded-headers: "true"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "25m"
+  labels:
+    app: fountainrank
+spec:
+  ingressClassName: nginx
+  # No TLS section — the DO Load Balancer holds the Let's Encrypt cert.
+  rules:
+    # Hostless rule — matches any Host NOT matched by the host rules below. The DO LB
+    # health-checks https NodePort 30443 path /healthz with a Host that is NOT one of our
+    # app hostnames (it uses the node/LB target), so /healthz must resolve host-independently
+    # to a 200, or the LB marks every node unhealthy before any app traffic works.
+    - http:
+        paths:
+          - path: /healthz
+            pathType: Prefix
+            backend:
+              service:
+                name: healthz-service
+                port:
+                  number: 80
+    - host: api.${DOMAIN}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: fountainrank-backend-service
+                port:
+                  number: 80
+    - host: auth.${DOMAIN}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: logto-service
+                port:
+                  number: 80
+    - host: ${DOMAIN}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: fountainrank-web-service
+                port:
+                  number: 80
+    - host: www.${DOMAIN}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: fountainrank-web-service
+                port:
+                  number: 80
+---
+# Tiny always-200 /healthz target for the LB health check (host-independent;
+# the LB probes https NodePort 30443 path /healthz regardless of Host header).
+apiVersion: v1
+kind: Service
+metadata:
+  name: healthz-service
+  namespace: ${NAMESPACE}
+  labels:
+    app: healthz
+spec:
+  selector:
+    app: healthz
+  ports:
+    - port: 80
+      targetPort: 8080
+      protocol: TCP
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: healthz
+  namespace: ${NAMESPACE}
+  labels:
+    app: healthz
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: healthz
+  template:
+    metadata:
+      labels:
+        app: healthz
+    spec:
+      containers:
+        - name: healthz
+          image: nginx:alpine
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: healthz-config
+              mountPath: /etc/nginx/conf.d/default.conf
+              subPath: nginx.conf
+          resources:
+            requests:
+              memory: "16Mi"
+              cpu: "10m"
+            limits:
+              memory: "32Mi"
+              cpu: "50m"
+      volumes:
+        - name: healthz-config
+          configMap:
+            name: healthz-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: healthz-config
+  namespace: ${NAMESPACE}
+data:
+  nginx.conf: |
+    server {
+        listen 8080;
+        server_name _;
+        location /healthz {
+            access_log off;
+            return 200 "healthy\n";
+            add_header Content-Type text/plain;
+        }
+        location / {
+            return 404;
+        }
+    }
