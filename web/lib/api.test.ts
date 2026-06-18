@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 import { resolveApiBaseUrl } from "./api";
 
 describe("resolveApiBaseUrl", () => {
-  it("defaults to localhost:8000", () => {
-    expect(resolveApiBaseUrl({})).toBe("http://localhost:8000");
+  it("defaults to localhost:3021", () => {
+    expect(resolveApiBaseUrl({})).toBe("http://localhost:3021");
   });
 
   it("uses NEXT_PUBLIC_API_BASE_URL when set", () => {

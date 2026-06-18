@@ -68,11 +68,11 @@ review 3; env.py/mount delta review 4). All 3 task reviews Approved; final opus 
   - default `up` → **`db`** only (`postgis/postgis:17-3.5`, host **5436**→5432, `pg_isready`
     healthcheck, named volume `db-data`).
   - `--profile auth` → adds **`logto`** (`svhd/logto:1.40.1`, `DB_URL=postgres://logto:logto_dev@db:5432/logto`,
-    ports 3001 app / 3002 admin, entrypoint `sh -c "npm run cli db seed -- --swe && npm start"`,
+    listens on **3022 app / 3023 admin** via `PORT`/`ADMIN_PORT`, entrypoint `sh -c "npm run cli db seed -- --swe && npm start"`,
     `ENDPOINT`/`ADMIN_ENDPOINT` intentionally unset). **Topology only — no connectors/secrets
     (that's Phase 2).**
   - `--profile full` → adds **`backend`** (built from `../backend`, `DATABASE_URL=…@db:5432/…`,
-    command `alembic upgrade head && uvicorn …`, 8000:8000).
+    command `alembic upgrade head && uvicorn …`, published **host 3021 → container 8000**).
 - **`docker/initdb/99-create-logto-db.sql`** — creates a **separate `logto` database + role
   (`LOGIN CREATEROLE`)** in the same instance (mirrors prod "separate DB, same cluster"). Mounted as
   a **single file** (a directory mount would shadow the image's own `10_postgis.sh`).
@@ -99,7 +99,7 @@ review 3; env.py/mount delta review 4). All 3 task reviews Approved; final opus 
 
 **Verified (controller, main session — all green):** db profile (postgis 3.5.2 + topology; logto
 db/role); env.py fix (`alembic upgrade head` persists; `alembic check` clean; pytest 5/5);
-auth profile (Logto seeds; 3001/3002 reachable); full backend (`/healthz`+`/readyz` ok, via an
+auth profile (Logto seeds; 3022/3023 reachable); full backend (`/healthz`+`/readyz` ok, via an
 ephemeral port — see gotcha); full `run.ps1 check` EXIT=0 incl. expo-doctor 21/21; subset checks;
 PS 5.1 dual-runtime; failed-build `finally`-restore negative test; `down` full teardown.
 
@@ -147,12 +147,14 @@ Then the **feature phases** (each gets its own spec + plan): 1) data model + fou
 
 ## Gotchas / environment notes (0d additions; see the 0b/0c handoffs for the rest)
 
-- **Host port 8000 collides with another project on this box.** The dev machine runs the owner's
-  **TherapyLink** containers, and `therapy-link-backend-1` publishes host **8000**. So `run.ps1 up
-  -Full` (backend `8000:8000`) and the web app's expected `localhost:8000` backend collide here. This
-  is **not a FountainRank defect** — 8000 is FR's chosen backend port (`web/lib/api.ts` default). On
-  this box, either stop TherapyLink's backend or skip `-Full`. The FR backend container itself was
-  verified on an **ephemeral host port (18000→8000)** to prove the image/command/db-connectivity.
+- **FountainRank uses a `302x` host-port block** (this box runs other projects on the default ports —
+  e.g. TherapyLink held host 8000). Owner-requested 2026-06-17, applied across the stack:
+  **web 3020, backend 3021, Logto 3022 (app) / 3023 (admin), db 5436 (unchanged).** Backend keeps its
+  container/Dockerfile-internal `8000` (matches prod) and is only host-published as `3021:8000`; the
+  host-run backend (`run.ps1 backend`) listens on `3021` directly; Logto actually listens on 3022/3023
+  via `PORT`/`ADMIN_PORT` (it builds self-referential URLs from its port). The web app's default backend
+  URL (`web/lib/api.ts`, `mobile/App.tsx`) is `http://localhost:3021`. This resolved the earlier 8000
+  collision with TherapyLink.
 - **`docker compose down -v` can wedge the network.** Mid-session, a `down -v` followed by `up` hit
   `network … not found` because a profiled container (logto) survived a plain `down` and held the
   network. **`run.ps1 down`/`reset` now pass `--profile auth --profile full`** so they fully tear down.

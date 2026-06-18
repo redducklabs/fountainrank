@@ -21,6 +21,13 @@
 
 ## Decisions (owner-approved 2026-06-17 — keep these)
 
+> **Post-implementation port change (owner-requested 2026-06-17):** the live config now uses a `302x`
+> host-port block — **web 3020, backend 3021 (host) → 8000 (container), Logto 3022 app / 3023 admin, db
+> 5436 (unchanged)** — because this dev box runs other projects on the default ports. The port numbers
+> embedded in the compose/run.ps1/verification snippets below are the **original** 0d values; the live
+> files use the 302x scheme. See the Phase 0d-complete handoff for the rationale.
+
+
 - **Compose topology = profiles.** `up` → `db` only (fast everyday loop). `up -Auth` → `db` + `logto`. `up -Full` → `db` + `logto` + `backend` (the whole containerizable stack). Apps run on the host for daily dev.
 - **`check` = full CI mirror by default**, with `-Backend` / `-Web` / `-Mobile` / `-ApiClient` subset selectors and a `-Fast` switch (skips `next build` + `expo-doctor`). "Green locally" must mean "green in CI."
 - **Web is NOT containerized in 0d.** There is no `web/Dockerfile` yet (that is a 0f deliverable), and a dev web container is genuinely problematic here: the pnpm workspace `node_modules` is built for **Windows** (native deps `sharp`, `unrs-resolver`) and cannot be bind-mounted into a Linux container, while the api-client `generate` flow is host-coupled. So `-Full` containerizes **db + logto + backend**; **web runs on the host** (`run.ps1 web`) against the composed backend. The walking skeleton still "runs locally via docker-compose" (db + backend in containers); the real web image + web Compose service land in **0f**.

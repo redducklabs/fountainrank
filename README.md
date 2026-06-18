@@ -100,12 +100,12 @@ Local development uses Docker Compose plus a PowerShell task runner (`run.ps1`):
 ```powershell
 .\run.ps1 bootstrap   # install backend (uv) + workspace (pnpm) deps
 .\run.ps1 up          # start Postgres/PostGIS (db only) on host port 5436
-.\run.ps1 backend     # migrate + serve the API on http://localhost:8000 (host, --reload)
-.\run.ps1 web         # serve the Next.js app on http://localhost:3000 (host)
+.\run.ps1 backend     # migrate + serve the API on http://localhost:3021 (host, --reload)
+.\run.ps1 web         # serve the Next.js app on http://localhost:3020 (host)
 ```
 
 Optional services are behind Compose profiles: `.\run.ps1 up -Auth` adds
-self-hosted Logto (app `:3001`, admin `:3002`); `.\run.ps1 up -Full` also runs the
+self-hosted Logto (app `:3022`, admin `:3023`); `.\run.ps1 up -Full` also runs the
 backend in a container. Mirror CI locally with `.\run.ps1 check` (see
 [`claude_help/testing-ci.md`](claude_help/testing-ci.md)). Run `.\run.ps1 help`
 for the full command list.

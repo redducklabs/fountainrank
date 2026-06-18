@@ -47,11 +47,16 @@ services:
     environment:
       # Standard libpq URL to Logto's own database (created by initdb).
       DB_URL: postgres://logto:logto_dev@db:5432/logto
+      # This box runs other projects on the default ports, so FountainRank uses a
+      # 302x block. Logto builds self-referential URLs from PORT/ADMIN_PORT, so it
+      # must actually LISTEN on the published ports (not just be host-remapped).
+      PORT: "3022"
+      ADMIN_PORT: "3023"
       # ENDPOINT / ADMIN_ENDPOINT intentionally unset for localhost dev
-      # (setting them wrong triggers logto-io/logto#6755). App: 3001, Admin: 3002.
+      # (setting them wrong triggers logto-io/logto#6755). App: 3022, Admin: 3023.
     ports:
-      - "3001:3001"
-      - "3002:3002"
+      - "3022:3022"
+      - "3023:3023"
 
   backend:
     profiles: ["full"]
@@ -64,8 +69,10 @@ services:
       # Container talks to the db service over the compose network (not 5436).
       DATABASE_URL: postgresql+asyncpg://fountainrank:fountainrank_dev@db:5432/fountainrank
     command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+    # Container keeps the image's conventional 8000 (matches the Dockerfile/prod);
+    # only the HOST port moves to 3021 to avoid collisions with other local projects.
     ports:
-      - "8000:8000"
+      - "3021:8000"
 
 volumes:
   db-data:

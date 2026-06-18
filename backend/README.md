@@ -27,7 +27,7 @@ Override with the `DATABASE_URL` env var. **Do not** put `sslmode` in the URL
 ```bash
 uv sync                              # install deps (creates .venv)
 uv run alembic upgrade head          # apply migrations (enables PostGIS)
-uv run uvicorn app.main:app --reload # serve on http://localhost:8000
+uv run uvicorn app.main:app --port 3021 --reload # serve on http://localhost:3021
 uv run pytest                        # run tests (needs the DB for /readyz)
 uv run ruff check . && uv run ruff format --check .
 ```

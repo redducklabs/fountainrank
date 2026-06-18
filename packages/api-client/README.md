@@ -23,6 +23,6 @@ locally and in CI).
 ```ts
 import { makeClient } from "@fountainrank/api-client";
 
-const api = makeClient("http://localhost:8000");
+const api = makeClient("http://localhost:3021");
 const { data } = await api.GET("/healthz"); // data: { status: string }
 ```

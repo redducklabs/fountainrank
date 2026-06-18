@@ -3,7 +3,7 @@ import { StyleSheet, Text, View } from "react-native";
 
 import { makeClient } from "@fountainrank/api-client";
 
-const API_BASE_URL = "http://localhost:8000";
+const API_BASE_URL = "http://localhost:3021";
 
 type Status = "loading" | "ok" | "error";
 

@@ -177,7 +177,7 @@ Conveniences:
 switch ($Command.ToLowerInvariant()) {
     'up' {
         Invoke-Compose -Arguments ((Get-UpProfiles) + @('up', '-d'))
-        Write-Host "Stack up. db:5436  logto:3001/3002 (if -Auth)  backend:8000 (if -Full)" -ForegroundColor Green
+        Write-Host "Stack up. db:5436  logto:3022/3023 (if -Auth)  backend:3021 (if -Full)" -ForegroundColor Green
     }
     'down' {
         $downArgs = (Get-AllProfiles) + @('down')
@@ -192,7 +192,7 @@ switch ($Command.ToLowerInvariant()) {
     'backend' {
         Start-Db
         Invoke-Native -Exe 'uv' -Arguments @('run', 'alembic', 'upgrade', 'head') -WorkingDir $BackendDir
-        Invoke-Native -Exe 'uv' -Arguments @('run', 'uvicorn', 'app.main:app', '--reload') -WorkingDir $BackendDir
+        Invoke-Native -Exe 'uv' -Arguments @('run', 'uvicorn', 'app.main:app', '--port', '3021', '--reload') -WorkingDir $BackendDir
     }
     'web' {
         Invoke-Native -Exe 'pnpm' -Arguments @('--filter', 'web', 'run', 'dev') -WorkingDir $RepoRoot
