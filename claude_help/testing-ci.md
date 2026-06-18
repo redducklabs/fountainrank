@@ -10,18 +10,21 @@ a status. Run it, read the output, then report what actually happened.
 
 ## Local checks (mirror CI)
 
-Exact commands are finalized as each subsystem lands (plans 0b/0c/0f). The
-intended per-subsystem checks:
+Run them through the root task runner — `./run.ps1 check` is the full CI mirror:
 
-- **Backend** (`backend/`): `ruff check` + `ruff format --check`, type-check, and
-  `pytest` (with a Postgres+PostGIS service or container). Migrations: `alembic
-  upgrade head` then `alembic check` (no drift).
-- **Web** (`web/`): ESLint + Prettier, `vitest`, and `next build`.
-- **Mobile** (`mobile/`): `tsc --noEmit` + ESLint (and Expo checks).
-- **Shared** (`packages/`): type-check + unit tests.
+| Scope | Command | Runs |
+|---|---|---|
+| Everything | `./run.ps1 check` | backend + frontend + mobile (= CI) |
+| Backend | `./run.ps1 check -Backend` | `ruff check` + `ruff format --check` + `alembic upgrade head` + `alembic check` (no drift) + `pytest` |
+| Web | `./run.ps1 check -Web` | ESLint + Prettier + `tsc --noEmit` + `vitest run` + `next build` |
+| Mobile | `./run.ps1 check -Mobile` | `tsc --noEmit` + ESLint + `expo-doctor` |
+| api-client | `./run.ps1 check -ApiClient` | ESLint + `tsc --noEmit` + `vitest run` |
+| Fast loop | `./run.ps1 check -Fast` | as above but skips `next build` + `expo-doctor` |
 
-`run.ps1` (added in plan 0d) wraps these for local use. Prefer running checks in
-the Docker Compose environment so they match CI.
+`check` auto-starts the `db` container for backend steps and restores the files
+`next build` rewrites (`web/next-env.d.ts`, `web/tsconfig.json`) so it never
+dirties the tree. The backend `pytest` and `alembic check` need the database;
+`./run.ps1 up` (db only) is enough. The frontend `generate` step is DB-free.
 
 ## Runner policy
 

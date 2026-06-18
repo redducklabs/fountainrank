@@ -6,14 +6,15 @@ Async SQLAlchemy 2.0 over asyncpg; migrations via Alembic.
 ## Prerequisites
 
 - uv 0.11.x
-- Docker (for a local PostGIS database until `docker-compose.yml` lands in 0d)
+- Docker (the local Postgres/PostGIS database runs via `docker compose`)
 
 ## Local database
 
-```bash
-docker run -d --name fr-postgis \
-  -e POSTGRES_USER=fountainrank -e POSTGRES_PASSWORD=fountainrank_dev -e POSTGRES_DB=fountainrank \
-  -p 5436:5432 postgis/postgis:17-3.5
+From the repo root, start Postgres/PostGIS via the task runner:
+
+```powershell
+.\run.ps1 up        # starts the `db` service (postgis/postgis:17-3.5) on host port 5436
+.\run.ps1 migrate   # applies migrations (enables PostGIS)
 ```
 
 The default `DATABASE_URL` points at this container

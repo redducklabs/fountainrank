@@ -40,7 +40,8 @@ fountainrank/
 │   ├── terraform/           # DOKS, Managed Postgres+PostGIS, Spaces, LB, DNS, registry
 │   └── k8s/                 # raw YAML (envsubst): backend, web, logto, ingress, secrets
 ├── docker/  docker-compose.yml
-├── scripts/  run.ps1  launch-codex.sh
+├── scripts/  launch-codex.sh
+├── run.ps1                   # local dev task runner (repo root)
 └── .github/                 # workflows (CI + deploy), dependabot, CodeQL, CODEOWNERS
 ```
 
@@ -94,14 +95,20 @@ to track the latest stable release. Pinned dependency versions live in
 
 ## Getting started
 
-Local development uses Docker Compose plus a PowerShell task runner (added in the
-local-dev plan, `docs/plans/` 0d):
+Local development uses Docker Compose plus a PowerShell task runner (`run.ps1`):
 
 ```powershell
-.\run.ps1 up      # start the local stack (postgres+postgis, logto, backend, web)
+.\run.ps1 bootstrap   # install backend (uv) + workspace (pnpm) deps
+.\run.ps1 up          # start Postgres/PostGIS (db only) on host port 5436
+.\run.ps1 backend     # migrate + serve the API on http://localhost:8000 (host, --reload)
+.\run.ps1 web         # serve the Next.js app on http://localhost:3000 (host)
 ```
 
-Until then, the foundation work is documentation and configuration only.
+Optional services are behind Compose profiles: `.\run.ps1 up -Auth` adds
+self-hosted Logto (app `:3001`, admin `:3002`); `.\run.ps1 up -Full` also runs the
+backend in a container. Mirror CI locally with `.\run.ps1 check` (see
+[`claude_help/testing-ci.md`](claude_help/testing-ci.md)). Run `.\run.ps1 help`
+for the full command list.
 
 ## Contributing & security
 
