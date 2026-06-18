@@ -26,6 +26,20 @@ Run them through the root task runner — `./run.ps1 check` is the full CI mirro
 dirties the tree. The backend `pytest` and `alembic check` need the database;
 `./run.ps1 up` (db only) is enough. The frontend `generate` step is DB-free.
 
+**The authoritative mirror is [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)**
+(landed in Phase 0f). Job ↔ local parity:
+- `backend` = `check -Backend` (ruff + format + `alembic upgrade head` + `alembic check` +
+  pytest, against a `postgis/postgis:17-3.5` service published on **5436** so the backend's
+  default `DATABASE_URL` reaches it — no env override, exactly like `run.ps1`).
+- `workspace-js` = the workspace-wide `turbo run lint typecheck test` (enforces **mobile**
+  lint+typecheck too) + `pnpm run format:check` + `turbo run build --filter=web`.
+- `mobile-doctor` = `expo-doctor`.
+
+CodeQL runs via GitHub **default setup** (no workflow file). Security scanning lives in
+[`.github/workflows/security-audit.yml`](../.github/workflows/security-audit.yml)
+(`pip-audit`/`pnpm audit`/Trivy). Deploy + Terraform workflows are gated (release-tag /
+manual dispatch) and do not run on routine pushes.
+
 ## Runner policy
 
 Two classes of CI jobs, by whether they touch secrets:

@@ -2,7 +2,11 @@
 
 > Find, rate, and rank public drinking fountains.
 
-<!-- Badges (CI / CodeQL) are wired in Phase 0f. -->
+[![CI](https://github.com/redducklabs/fountainrank/actions/workflows/ci.yml/badge.svg)](https://github.com/redducklabs/fountainrank/actions/workflows/ci.yml)
+[![Security audit](https://github.com/redducklabs/fountainrank/actions/workflows/security-audit.yml/badge.svg)](https://github.com/redducklabs/fountainrank/actions/workflows/security-audit.yml)
+[![Code scanning](https://img.shields.io/badge/CodeQL-default%20setup-blue?logo=github)](https://github.com/redducklabs/fountainrank/security/code-scanning)
+
+<!-- CodeQL uses GitHub default setup (no codeql.yml workflow) — the badge links to the code-scanning page. -->
 
 **Status:** Walking skeleton — under active development.
 
@@ -91,7 +95,14 @@ to track the latest stable release. Pinned dependency versions live in
 | SQLAlchemy | 2.0.51 | 2026-06-17 |
 | Alembic | 1.18.4 | 2026-06-17 |
 | ruff | 0.15.17 | 2026-06-17 |
-| Terraform | 1.12.2 (pin `>= 1.6`) | 2026-06-17 |
+| Terraform | 1.12.2 local / 1.15.6 in CI (pin `>= 1.6`) | 2026-06-18 |
+| GitHub Actions (checkout / setup-node / setup-uv / pnpm) | v6 / v6 / v8.2.0 / v6.0.9 | 2026-06-18 |
+| CodeQL | GitHub default setup (action `*@v4` for SARIF upload) | 2026-06-18 |
+| Trivy (aquasecurity/trivy-action) | 0.71.1 (action `v0.36.0`) | 2026-06-18 |
+| actionlint | v1.7.12 | 2026-06-18 |
+| kubeconform | v0.8.0 | 2026-06-18 |
+| ingress-nginx Helm chart | 4.15.1 (app 1.15.1) | 2026-06-18 |
+| Helm | v3.21.1 | 2026-06-18 |
 | DigitalOcean TF provider | `~> 2.0` | 2026-06-17 |
 | DOKS (Kubernetes) | 1.34.x (DO offers 1.33–1.36) | 2026-06-17 |
 | Logto (self-hosted) | 1.40.1 | 2026-06-17 |
@@ -130,6 +141,11 @@ Let's Encrypt TLS, DNS, registry) and `envsubst`-templated Kubernetes manifests.
   ([`codex-review-process.md`](claude_help/codex-review-process.md),
   [`testing-ci.md`](claude_help/testing-ci.md)).
 - Changes must pass CI and a Codex review before merge.
+- **Active security scanning:** CodeQL (default setup — Python + JS/TS + Actions),
+  Trivy (filesystem secret gate + report-only image scans), `pip-audit` + `pnpm audit`
+  (PR + daily), Dependabot (grouped version PRs), and GitHub secret scanning + push
+  protection. Image/container deploys run **only in CI** — never from a local machine —
+  and the deploy/Terraform workflows are gated (release-tag / manual dispatch).
 - To report a vulnerability, see [`SECURITY.md`](SECURITY.md).
 
 ## License
