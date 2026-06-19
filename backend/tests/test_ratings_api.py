@@ -1,3 +1,11 @@
+import asyncio
+
+from httpx import ASGITransport, AsyncClient
+
+from app.config import Settings, get_settings
+from app.main import app
+
+
 async def _add_fountain(client) -> str:
     resp = await client.post(
         "/api/v1/fountains", json={"location": {"latitude": 37.7749, "longitude": -122.4194}}
@@ -66,3 +74,41 @@ async def test_submit_ratings_dedupes_same_type_in_one_request(client):
     clarity = next(d for d in body["dimensions"] if d["rating_type_id"] == 1)
     assert clarity["vote_count"] == 1
     assert clarity["average_rating"] == 5.0
+
+
+async def test_concurrent_ratings_keep_aggregates_consistent():
+    # Two different users rating the same fountain at once must end with BOTH votes
+    # reflected in the denormalized aggregates. The FOR UPDATE lock in submit_ratings
+    # serializes the recompute so the later commit can't persist a snapshot that
+    # missed the other rating. Runs the real dev-auth seam (distinct X-Dev-User per
+    # request) so each concurrent call is a distinct user.
+    app.dependency_overrides[get_settings] = lambda: Settings(dev_auth_enabled=True)
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            created = await ac.post(
+                "/api/v1/fountains",
+                json={"location": {"latitude": 37.7749, "longitude": -122.4194}},
+                headers={"X-Dev-User": "creator"},
+            )
+            assert created.status_code == 201
+            fid = created.json()["id"]
+
+            async def rate(subject: str, stars: int):
+                return await ac.post(
+                    f"/api/v1/fountains/{fid}/ratings",
+                    json={"ratings": [{"rating_type_id": 1, "stars": stars}]},
+                    headers={"X-Dev-User": subject},
+                )
+
+            r_a, r_b = await asyncio.gather(rate("rater-a", 5), rate("rater-b", 1))
+            assert r_a.status_code == 200
+            assert r_b.status_code == 200
+
+            detail = await ac.get(f"/api/v1/fountains/{fid}")
+    finally:
+        app.dependency_overrides.pop(get_settings, None)
+
+    body = detail.json()
+    assert body["rating_count"] == 2  # both distinct users counted
+    assert abs(body["average_rating"] - 3.0) < 1e-9  # mean of 5 and 1

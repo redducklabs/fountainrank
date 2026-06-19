@@ -268,8 +268,14 @@ async def submit_ratings(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> FountainDetail:
+    # Lock the parent fountain row for the txn so concurrent raters serialize their
+    # aggregate recompute. The per-rating ON CONFLICT keeps the rating ROWS race-safe,
+    # but two concurrent recomputes could each read a snapshot missing the other's
+    # rating and persist stale rating_count/average_rating/ranking_score. FOR UPDATE
+    # makes the upsert+recompute atomic per fountain (the second waits for the first
+    # to commit, then recomputes over both rows).
     fountain = (
-        await session.execute(select(Fountain).where(Fountain.id == fountain_id))
+        await session.execute(select(Fountain).where(Fountain.id == fountain_id).with_for_update())
     ).scalar_one_or_none()
     if fountain is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="fountain not found")

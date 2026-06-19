@@ -14,8 +14,14 @@ def test_env_override(monkeypatch):
 
 
 def test_cors_origins_default_is_list():
+    # Exact list equality (not `"url" in settings...`, which CodeQL flags as
+    # incomplete-URL-substring-sanitization even though this is list membership).
     settings = Settings()
-    assert "https://fountainrank.com" in settings.cors_allow_origins
+    assert settings.cors_allow_origins == [
+        "https://fountainrank.com",
+        "https://www.fountainrank.com",
+        "http://localhost:3020",
+    ]
 
 
 def test_cors_origins_parses_comma_separated_env(monkeypatch):
