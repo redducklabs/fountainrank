@@ -91,6 +91,9 @@ async def get_current_user(
             logger.warning("auth failed", extra={"reason": exc.reason, "kid": exc.kid})
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="invalid token") from exc
         sub = claims["sub"]
+        # Validated sub only (safe — signature/iss/aud/exp all verified). DEBUG so it does
+        # not add a line to every authenticated request in prod (default INFO).
+        logger.debug("authenticated request", extra={"sub": sub})
         email = claims.get("email") or f"{sub}@users.noreply.fountainrank.com"
         display_name = claims.get("name") or claims.get("username") or sub
         return await get_or_create_user(
