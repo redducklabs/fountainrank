@@ -40,13 +40,13 @@ def settings(sa_json):
 
 def _transport(captured, *, token_status=200, send_status=200):
     def handler(request: httpx.Request) -> httpx.Response:
-        if "oauth2.googleapis.com" in str(request.url):
+        if request.url.host == "oauth2.googleapis.com":
             captured["token_count"] = captured.get("token_count", 0) + 1
             captured["token_body"] = parse_qs(request.content.decode())
             if token_status != 200:
                 return httpx.Response(token_status, json={"error": "bad"})
             return httpx.Response(200, json={"access_token": "ya29.test", "expires_in": 3600})
-        if "gmail.googleapis.com" in str(request.url):
+        if request.url.host == "gmail.googleapis.com":
             captured["send_auth"] = request.headers.get("authorization")
             captured["send_body"] = json.loads(request.content.decode())
             captured["send_count"] = captured.get("send_count", 0) + 1
@@ -134,7 +134,7 @@ async def test_invalid_pem_raises():
 
 async def test_token_response_invalid_raises(settings):
     def handler(request):
-        if "oauth2.googleapis.com" in str(request.url):
+        if request.url.host == "oauth2.googleapis.com":
             return httpx.Response(200, text="<html>not json</html>")
         return httpx.Response(404)
 
@@ -146,7 +146,7 @@ async def test_token_response_invalid_raises(settings):
 
 async def test_token_response_without_access_token_raises(settings):
     def handler(request):
-        if "oauth2.googleapis.com" in str(request.url):
+        if request.url.host == "oauth2.googleapis.com":
             return httpx.Response(200, json={"no_token": True})
         return httpx.Response(404)
 
