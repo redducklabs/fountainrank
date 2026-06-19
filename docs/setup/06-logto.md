@@ -70,14 +70,16 @@ In the Logto admin console → **Applications → Create**:
   - Copy Logto's Apple callback URI back into the Apple **Services ID** return
     URLs (`04`).
 
-- **Email (passwordless magic link):**
-  - **Primary:** the **custom Gmail-API connector** using
-    `GOOGLE_SERVICE_ACCOUNT_JSON` + `GOOGLE_DELEGATED_USER` (built in Phase 2 per
-    `claude_help/email.md`).
-  - **Fallback:** Logto's built-in **SMTP connector** pointed at Workspace, if
-    the custom connector is deferred.
-  - Verify a test magic-link email actually sends and lands in the inbox (SPF/
-    DKIM/DMARC from `02-dns.md` must be passing).
+- **Email (passwordless verification code) — HTTP email connector:**
+  - Logto OSS has no Gmail-API connector. Use the built-in **HTTP email connector**: it
+    POSTs `{to, type, payload:{code,locale}}` to an endpoint we host on the backend.
+  - **Endpoint:** `http://fountainrank-backend-service/internal/email` (in-cluster; email
+    traffic never leaves the cluster).
+  - **Authorization token:** set it to the same value as the `LOGTO_EMAIL_WEBHOOK_TOKEN`
+    GitHub secret — the backend constant-time compares it.
+  - Sending is via the Gmail API (service account + domain-wide delegation impersonating
+    `noreply@fountainrank.com`); no SMTP, no app password.
+  - Verify a test code email sends and lands (SPF/DKIM/DMARC from `02-dns.md` must pass).
 
 ## Step 3 — Sign-in experience
 

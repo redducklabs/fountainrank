@@ -82,6 +82,24 @@ class Settings(BaseSettings):
     def logto_jwks_uri(self) -> str:
         return f"{self.logto_issuer}/jwks"
 
+    # --- Email (Logto HTTP email connector -> Gmail API) ---
+    # The Google service-account JSON key (whole file, as a string), the impersonated
+    # Workspace mailbox (domain-wide delegation), the visible From, and the shared bearer
+    # token Logto's HTTP email connector sends. All default None so local dev/tests do not
+    # send (the webhook returns 503 unless these are set).
+    google_service_account_json: str | None = None
+    google_delegated_user: str | None = None
+    from_email: str | None = None
+    logto_email_webhook_token: str | None = None
+
+    @property
+    def email_configured(self) -> bool:
+        return bool(
+            self.logto_email_webhook_token
+            and self.google_service_account_json
+            and self.google_delegated_user
+        )
+
 
 @lru_cache
 def get_settings() -> Settings:

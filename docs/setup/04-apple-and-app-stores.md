@@ -59,6 +59,11 @@ ready to submit builds. Not needed for auth.
 
 1. Enroll at <https://play.google.com/console> (one-time fee + identity
    verification).
+   - If you are using a Google Workspace account and Play Console is blocked,
+     sign in as a Workspace super admin at <https://admin.google.com/> and turn
+     on **Google Play Console** for your user or organizational unit under
+     **Apps → Additional Google services**. Workspace can disable access to
+     Play Console even when the Google account itself is valid.
 2. Create the **app** entry when ready; set up **Play App Signing** (Google
    manages the signing key). The resulting **signing certificate SHA-1** is what
    the Android OAuth client in `03-google-cloud.md` needs — capture it from Play

@@ -103,3 +103,15 @@ A small gold-bordered status pill used to communicate launch state.
 - Gold border at 70% opacity over a faint gold fill (`bg-[#F2C200]/10`).
 - A solid gold dot precedes the label (decorative, `aria-hidden`).
 - Pill-shaped (`rounded-full`), uppercase, wide letter-spacing.
+
+### Legal text pages (`web/app/privacy/page.tsx`, `web/app/terms/page.tsx`)
+
+Static, readable policy pages for app-store and OAuth registration URLs.
+
+- White background, dark slate text, constrained content width (`max-w-3xl`).
+- Small brand-blue text link back to the landing page.
+- Header includes an uppercase brand-blue page label, a compact title, last-updated
+  date, and one lead sentence.
+- Body is sectioned with `h2` headings and simple disc lists for scanability.
+- These pages intentionally avoid the landing page gradient so long policy text
+  remains comfortable to read.

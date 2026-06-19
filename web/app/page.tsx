@@ -1,4 +1,5 @@
 import Image from "next/image";
+import Link from "next/link";
 
 export default function Home() {
   return (
@@ -35,8 +36,14 @@ export default function Home() {
         </p>
       </div>
 
-      <footer className="absolute bottom-6 text-xs text-white/50">
-        &copy; {new Date().getFullYear()} FountainRank
+      <footer className="absolute bottom-6 flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-xs text-white/60">
+        <span>&copy; {new Date().getFullYear()} FountainRank</span>
+        <Link className="underline-offset-4 hover:text-white hover:underline" href="/privacy">
+          Privacy
+        </Link>
+        <Link className="underline-offset-4 hover:text-white hover:underline" href="/terms">
+          Terms
+        </Link>
       </footer>
     </main>
   );

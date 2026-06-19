@@ -75,6 +75,7 @@ Names match `claude_help/github-environments.md`; some are finalized in plan 0f
 | `GOOGLE_WORKSPACE_DOMAIN` | `03-google-cloud.md` | GitHub Env **variable** | Ready to create |
 | `GOOGLE_DELEGATED_USER` | `03-google-cloud.md` | GitHub Env **variable** | Ready to create |
 | `FROM_EMAIL` | `02-dns.md` / `03-google-cloud.md` | GitHub Env **variable** | Ready to create |
+| `LOGTO_EMAIL_WEBHOOK_TOKEN` | self-generated random (≥32 chars) | GitHub Env **secret** + Logto HTTP email connector auth token | Ready to create |
 | `BASE_URL` | decided per environment | GitHub Env **variable** | TBD-0f |
 | Google OAuth client id/secret (web/iOS/Android) | `03-google-cloud.md` | **Logto** Google connector | Ready to create |
 | Apple Services ID / Team ID / Key ID / `.p8` key | `04-apple-and-app-stores.md` | **Logto** Apple connector | Ready to create |

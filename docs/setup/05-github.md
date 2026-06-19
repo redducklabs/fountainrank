@@ -78,6 +78,7 @@ available (you don't need them all at once — 0e/0f tell you when each is read)
 | `LOGTO_DB_URL` | DO Managed Postgres / Logto DB (0e/0f) |
 | `DATABASE_CA_CERT` | DO Managed Postgres CA PEM (`doctl databases get <id>` / console) — mounted as `database-ca.crt` for the backend's asyncpg verify-full TLS |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | `03-google-cloud.md` |
+| `LOGTO_EMAIL_WEBHOOK_TOKEN` | self-generated random (≥32 chars); also set as the Logto HTTP email connector auth token (`06-logto.md`). Consumed by `deploy.yml` |
 | `LOGTO_*` (endpoint/app/secret as needed) | `06-logto.md` |
 
 **Variables** (non-sensitive):
