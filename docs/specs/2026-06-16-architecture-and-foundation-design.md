@@ -127,18 +127,22 @@ Relationships: Fountain 1→many Rating, 1→many Photo; User 1→many Rating/Ph
 
 ## 9. API surface (REST, `/api/v1`)
 
-Indicative endpoints (full contract defined in Phase 1):
+**Implemented in Phase 1** (see `backend/README.md` for the request/response detail):
+- `GET /api/v1/rating-types` — list the four seeded dimensions (Clarity/Taste/Pressure/Appearance). Public.
 - `GET /api/v1/fountains?lat&lng&radius_m` — nearby fountains (map pins: id, location, is_working, average_rating, rating_count, distance_m). Public.
 - `GET /api/v1/fountains/bbox?min_lat&min_lng&max_lat&max_lng` — fountains in viewport. Public.
-- `GET /api/v1/fountains/{id}` — detail incl. per-dimension averages, vote counts, photos, comments. Public.
-- `POST /api/v1/fountains` — add a fountain (location, is_working, ratings, comment). Auth required. 409 on proximity conflict.
+- `GET /api/v1/fountains/{id}` — detail incl. per-dimension averages, vote counts, and comments (photos added in Phase 4). Public.
+- `POST /api/v1/fountains` — add a fountain (location, is_working, comment, optional inline ratings). Auth required. 409 on proximity conflict.
 - `POST /api/v1/fountains/{id}/ratings` — create/update the caller's ratings for a fountain (upsert). Auth required.
-- `POST /api/v1/fountains/{id}/photos` — upload a photo (presigned Spaces flow). Auth required.
-- `GET /api/v1/rating-types` — list dimensions. Public.
-- `GET /api/v1/leaderboard?scope=global|area` — top fountains. Public.
-- `GET /api/v1/leaderboard/contributors` — top contributors. Public.
-- `GET /api/v1/me` — current user profile. Auth required.
-- `GET /healthz` — liveness for the load balancer.
+- `GET /healthz`, `GET /readyz` — liveness/readiness for the load balancer.
+
+In Phase 1 the write endpoints sit behind a **dev-auth seam that is disabled in production** (`dev_auth_enabled=False`); Phase 2 swaps in Logto JWT validation with no change to the just-in-time user provisioning.
+
+**Deferred to later phases:**
+- `POST /api/v1/fountains/{id}/photos` — upload a photo (presigned Spaces flow). Auth required. **Phase 4.**
+- `GET /api/v1/me` — current user profile. Auth required. **Phase 2** (lands with Logto auth).
+- `GET /api/v1/leaderboard?scope=global|area` — top fountains. Public. **Phase 5.**
+- `GET /api/v1/leaderboard/contributors` — top contributors. Public. **Phase 5.**
 
 The OpenAPI schema is the single source of truth; `packages/api-client` is generated from it.
 

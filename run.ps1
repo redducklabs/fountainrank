@@ -192,6 +192,10 @@ switch ($Command.ToLowerInvariant()) {
     'backend' {
         Start-Db
         Invoke-Native -Exe 'uv' -Arguments @('run', 'alembic', 'upgrade', 'head') -WorkingDir $BackendDir
+        # Enable the Phase 1 dev-auth seam for local manual write testing only.
+        # Production defaults dev_auth_enabled=False, so add/rate stay closed until
+        # Phase 2's Logto JWT validation lands. This affects only this host dev server.
+        $env:DEV_AUTH_ENABLED = 'true'
         Invoke-Native -Exe 'uv' -Arguments @('run', 'uvicorn', 'app.main:app', '--port', '3021', '--reload') -WorkingDir $BackendDir
     }
     'web' {
