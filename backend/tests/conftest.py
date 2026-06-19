@@ -75,3 +75,12 @@ def reset_jwks_cache():
     import app.auth as _app_auth
 
     _app_auth._jwks_cache = None
+
+
+@pytest.fixture(autouse=True)
+def reset_email_sender():
+    """Reset the process-singleton Gmail sender after each test (order-independence)."""
+    yield
+    import app.routers.email_webhook as _ew
+
+    _ew._sender = None
