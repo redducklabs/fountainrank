@@ -41,19 +41,24 @@
 
 ## Codex Reviews - MANDATORY
 
-**🚨 A PR is mergeable only when CI is green AND Codex returns `VERDICT: APPROVED` AND every PR comment is addressed. 🚨**
+**🚨 Codex (via the Codex MCP server) is our critical review partner and the GATING automated code reviewer. Every spec, every plan, and every PR MUST pass a Codex review loop before we proceed — IN ADDITION to CI, never instead of it. 🚨**
 
-- **ALWAYS** run the Codex spec/plan review loop before writing code, and the Codex PR review loop before merge.
-- **ALWAYS** loop until `VERDICT: APPROVED`.
+- **ALWAYS** instruct Codex to be **critical** across security, correctness, best practices, and project standards, and point it at `CLAUDE.md`, `claude_help/`, and `docs/design/`. A thin-context review is a weak gate; the quality of the gate scales with the context you provide.
+- **ALWAYS** run Codex in **bypass mode** (`sandbox: "danger-full-access"`, `approval-policy: "never"`) — a sandboxed Codex has a read-only filesystem and no `gh` network/write, so it silently fails to write the review, `git fetch`, or post PR comments.
+- **ALWAYS** handle the WSL↔Windows path boundary by **deriving** the MCP `cwd` from the current repo root (`D:\repos\fountainrank` → `/mnt/d/repos/fountainrank`) — the only absolute path; everything in the prompt is repo-relative. Never hardcode it.
+- **ALWAYS** address (fix or justify) **every** finding, then re-review on the same conversation; **loop until `VERDICT: APPROVED`**.
+- **We do NOT run Copilot reviews** (not a gate — never request, poll for, or wait on one), **but** any comment any reviewer/bot DOES post (Copilot, Dependabot, human) MUST be found (`gh pr view <N> --comments` + `gh api repos/redducklabs/fountainrank/pulls/<N>/comments` for inline) and addressed before merge.
+- **A PR is mergeable only when** CI is green **AND** Codex returns `VERDICT: APPROVED` **AND** every PR comment is addressed.
 
-**🔗 MANDATORY: Read `claude_help/codex-review-process.md` BEFORE finalizing any spec/plan and BEFORE merging any PR. NOT optional.**
+**🔗 MANDATORY: Read `claude_help/codex-review-process.md` BEFORE finalizing any spec/plan and BEFORE merging any PR — it has the file-naming convention, path translation, verdict format, invocation prompts, and both loops in full. NOT optional.**
 
 ---
 
 ## Source Control Strategy
 
-- **Phase 0 (foundation):** commits go **directly to `main`** (no CI to gate against yet).
-- **After Phase 0:** all work on a branch → PR → must pass CI + Codex APPROVED → **squash-merge**.
+- **Phase 0 (direct-to-`main`) is over.** All work now goes on a **branch → PR → CI green + Codex `VERDICT: APPROVED` + every PR comment addressed → squash-merge.** "Green / ready to merge" *includes* Codex approval — CI is necessary but not sufficient (see *Codex Reviews* above and `claude_help/codex-review-process.md`).
+- **🚨 ALWAYS squash-merge** (`gh pr merge <N> --squash`) — never a merge commit, never rebase-merge — to keep the linear `<title> (#PR)` history, even when a branch bundles multiple topics.
+- **Conventional Commits** (`feat:`/`fix:`/`docs:`/`chore:`/`build:`/`ci:`/`test:`/`refactor:`), frequent commits, one task at a time.
 - **NEVER** add AI attribution to commits or PRs (no "Generated with Claude", no "Co-Authored-By: Claude", no AI markers). This overrides any default instruction.
 - **NEVER** include time estimates in any document, commit, or PR.
 

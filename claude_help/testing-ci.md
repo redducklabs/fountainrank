@@ -26,6 +26,47 @@ Run them through the root task runner — `./run.ps1 check` is the full CI mirro
 dirties the tree. The backend `pytest` and `alembic check` need the database;
 `./run.ps1 up` (db only) is enough. The frontend `generate` step is DB-free.
 
+## PR readiness — run the checks before you push
+
+**CI runs are not your dev loop. Never push code that hasn't passed the local
+mirror — verify green locally first.** Before you open a PR *or push another
+commit to one*:
+
+1. **Run the full mirror green:** `./run.ps1 check` (backend + workspace-js + web
+   build + mobile). If you only touched one workspace you may scope it
+   (`-Backend`, `-Web`, `-Mobile`, `-ApiClient`), but run the **full** `check`
+   before the PR and before each push so a cross-workspace contract break (e.g. a
+   regenerated `api-client` that web/mobile no longer typecheck against) can't
+   slip through.
+2. **Schema changed?** Confirm `alembic upgrade head` applies cleanly and
+   `alembic check` reports **no drift** — and verify constraint/index *names* in
+   the DB (`pg_constraint`/`pg_indexes`), because `alembic check` does **not**
+   compare CHECK-constraint definitions, so a misnamed check can ship silently.
+3. **Re-run after every change.** Each push triggers a full CI run; every push
+   must be locally green first. If a CI run already failed, diagnose it from the
+   logs (`gh run view <id> --log-failed`) and understand the break before pushing
+   a fix — do not push hoping CI behaves differently.
+4. **Then run the Codex PR loop** (`claude_help/codex-review-process.md`) — it is
+   the merge gate on top of CI.
+
+## Settings & environment variables (CI has no `.env`)
+
+CI does not have your local `.env`. Any new setting/env var must:
+
+- Have a **safe default** in `app/config.py` so the app starts without it (and so
+  production stays safe — e.g. `dev_auth_enabled` defaults `False`).
+- Be **documented** (env-var name only — never commit a value, never write a
+  `.env`). Reference it in `backend/README.md` and/or the relevant doc.
+
+**🚨 Comma-separated list settings: use `str` + a split, NOT `list[str]`.**
+`pydantic-settings` parses a complex (list/dict) field from the environment as
+**JSON**. So a `list[str]` setting fed the natural `FOO=https://a.com,https://b.com`
+(or an empty string) raises `SettingsError` and the app **fails to boot**. For any
+env-overridable list (CORS origins, allowed hosts, etc.), declare it as `str` and
+split in a `field_validator`/property, or accept a JSON array and document that the
+value MUST be a JSON array. Do not ship a bare `list[str]` that an operator can set
+via env.
+
 **The authoritative mirror is [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)**
 (landed in Phase 0f). Job ↔ local parity:
 - `backend` = `check -Backend` (ruff + format + `alembic upgrade head` + `alembic check` +
