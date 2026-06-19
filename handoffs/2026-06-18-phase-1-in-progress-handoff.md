@@ -13,19 +13,16 @@
 Three workstreams ran this session:
 
 1. **Phase 1 (data model + fountains API)** — Codex Loop A **APPROVED**; implemented Tasks 1–9 + a logging/CORS addition on branch **`feat/phase-1-fountains-api`** (13 commits, `55ed26e`…`85651e6`). **40 backend tests green**, `alembic check` clean. **NOT yet PR'd.** Remaining: plan Tasks 10–11 (OpenAPI client regen + docs), final whole-branch review, then PR → CI → Codex Loop B → squash-merge.
-2. **Temporary landing page** — built, reviewed (Codex Loop B APPROVED, no findings), **merged to `main` (PR #6 → `caf2138`)**, tagged **`v0.1.2`**. **Deploy is IN PROGRESS** (run `27806752882`).
+2. **Temporary landing page** — built, reviewed (Codex Loop B APPROVED, no findings), **merged to `main` (PR #6 → `caf2138`)**, tagged **`v0.1.2`**, **deployed + verified LIVE** (run `27806752882` = success). `https://fountainrank.com`=200 now serves the new page and the **"Backend status: error" is GONE**; www/api/auth all healthy.
 3. **Live-site debugging + comprehensive logging** — diagnosed the live "Backend status: error" and mobile "Secure Connection Failed"; added comprehensive backend logging + CORS (in the Phase 1 branch) and a mandatory Logging standard to `CLAUDE.md`.
 
 ---
 
 ## ▶ RESUME HERE (in order)
 
-1. **Finish + verify the v0.1.2 deploy.** It was in progress at handoff:
-   - `gh run watch 27806752882 --exit-status` (deploy.yml; builds backend+web images, Trivy-scans, deploys to DOKS, runs migrations, gates on rollout). Prior v0.1.1 took ~4 min.
-   - On success, **verify live**: `curl -sS -o /dev/null -w "%{http_code}\n" https://fountainrank.com` (expect 200) and confirm the page is the **new landing page** (no "Backend status: error"). Also sanity-check nothing regressed: `https://www.fountainrank.com`=200, `https://api.fountainrank.com/healthz`=200, `https://auth.fountainrank.com`=302. (The deploy rebuilds backend from `main`, which is still v0.1.1 backend code — Phase 1 is NOT in this deploy.)
-   - If the deploy FAILS: read the failed job (`gh run view 27806752882 --log-failed`). The deploy contract + gotchas are in the 0f handoff.
-2. **Resume Phase 1** on `feat/phase-1-fountains-api` (see "Phase 1 remaining" below).
-3. **Mobile SSL:** the owner is re-testing on their phone (their choice). Server TLS is verified-good — do nothing unless they report it still fails (then the option is dropping the apex `AAAA`; see "Live site / SSL" below).
+1. **✅ v0.1.2 deploy is DONE + verified LIVE** (run `27806752882` = success). `https://fountainrank.com`=200 serves the new landing page; "Backend status: error" is gone; `www`=200, `api/healthz`=200, `auth`=302. Nothing further needed here. *(Optional cleanup: remove the now-merged landing-page worktree — `git worktree remove .claude/worktrees/landing-page` + `git branch -D worktree-landing-page` — which also stops the shell-cwd drift gotcha.)*
+2. **Resume Phase 1** on `feat/phase-1-fountains-api` — **the main remaining work**: plan **Task 10** (OpenAPI guard test + regen api-client) → **Task 11** (run.ps1 dev-auth + README/spec docs) → **final whole-branch review** → `./run.ps1 check` (full) → **open the Phase 1 PR** → CI green → **Codex Loop B APPROVED** (explicitly review the logging/CORS addition) → squash-merge. Details in "Phase 1 remaining" below.
+3. **Mobile SSL:** owner is re-testing (their choice). Server TLS verified-good — act only if they report it still fails (option: drop apex `AAAA`; see "Live site / SSL").
 
 ---
 
