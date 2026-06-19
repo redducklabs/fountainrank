@@ -21,11 +21,11 @@
 
 ---
 
-### Task 1: Config — email settings + `email_configured`
+### Task 1: Config — email settings + `email_configured` + startup log
 
 **Files:**
-- Modify: `backend/app/config.py`
-- Test: `backend/tests/test_config.py`
+- Modify: `backend/app/config.py`, `backend/app/logging_config.py`
+- Test: `backend/tests/test_config.py`, `backend/tests/test_logging.py`
 
 **Interfaces:**
 - Produces: `Settings.google_service_account_json: str | None`, `Settings.google_delegated_user: str | None`, `Settings.from_email: str | None`, `Settings.google_workspace_domain: str | None`, `Settings.logto_email_webhook_token: str | None`, and `Settings.email_configured -> bool`.
@@ -66,13 +66,12 @@ Expected: FAIL — `AttributeError: 'Settings' object has no attribute 'google_s
 ```python
     # --- Email (Logto HTTP email connector -> Gmail API) ---
     # The Google service-account JSON key (whole file, as a string), the impersonated
-    # Workspace mailbox (domain-wide delegation), the visible From, the domain (reference),
-    # and the shared bearer token Logto's HTTP email connector sends. All default None so
-    # local dev/tests do not send (the webhook returns 503 unless these are set).
+    # Workspace mailbox (domain-wide delegation), the visible From, and the shared bearer
+    # token Logto's HTTP email connector sends. All default None so local dev/tests do not
+    # send (the webhook returns 503 unless these are set).
     google_service_account_json: str | None = None
     google_delegated_user: str | None = None
     from_email: str | None = None
-    google_workspace_domain: str | None = None
     logto_email_webhook_token: str | None = None
 
     @property
@@ -89,12 +88,50 @@ Expected: FAIL — `AttributeError: 'Settings' object has no attribute 'google_s
 Run: `cd /d/repos/fountainrank/backend && uv run pytest tests/test_config.py -v`
 Expected: PASS. Then `uv run ruff check app/config.py tests/test_config.py` + `uv run ruff format --check app/config.py tests/test_config.py` — clean.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Surface the non-secret email config in the startup log (+ test)**
+
+In `backend/app/logging_config.py::log_startup`, add three non-secret fields to the `extra`
+dict (right after `"dev_auth_enabled": settings.dev_auth_enabled,`):
+
+```python
+            "email_configured": settings.email_configured,
+            "from_email": settings.from_email,
+            "google_delegated_user": settings.google_delegated_user,
+```
+
+Append a test to `backend/tests/test_logging.py` (it already imports `log_startup`/logging
+helpers and uses `caplog`; match the existing test style — if `log_startup` is not imported
+there, add `from app.logging_config import log_startup` to its import block):
+
+```python
+def test_startup_log_includes_email_config_without_secrets(caplog):
+    from app.config import Settings
+
+    s = Settings(
+        google_service_account_json='{"client_email":"x","private_key":"secretpem"}',
+        logto_email_webhook_token="supersecrettoken",
+        google_delegated_user="noreply@fountainrank.com",
+        from_email="noreply@fountainrank.com",
+    )
+    with caplog.at_level("INFO"):
+        log_startup(s)
+    rec = next(r for r in caplog.records if r.getMessage() == "starting backend")
+    assert rec.email_configured is True
+    assert rec.google_delegated_user == "noreply@fountainrank.com"
+    # The SA key and the webhook token must never appear in the startup line.
+    assert all("secretpem" not in str(v) for v in rec.__dict__.values())
+    assert all("supersecrettoken" not in str(v) for v in rec.__dict__.values())
+```
+
+Run: `cd /d/repos/fountainrank/backend && uv run pytest tests/test_logging.py -v` → PASS;
+then `uv run ruff check app/logging_config.py tests/test_logging.py` + `format --check` clean.
+
+- [ ] **Step 6: Commit**
 
 ```bash
 cd /d/repos/fountainrank
-git add backend/app/config.py backend/tests/test_config.py
-git commit -m "feat(backend): add email (Gmail connector) settings + email_configured"
+git add backend/app/config.py backend/app/logging_config.py backend/tests/test_config.py backend/tests/test_logging.py
+git commit -m "feat(backend): add email (Gmail connector) settings + email_configured + startup log"
 ```
 
 ---
@@ -243,9 +280,9 @@ git commit -m "feat(backend): email templates (Jinja2, code/link, autoescaped) +
 - [ ] **Step 1: Write the failing tests** — create `backend/tests/test_email_sender.py`:
 
 ```python
+import asyncio
 import base64
 import json
-import time
 from urllib.parse import parse_qs
 
 import httpx
@@ -314,7 +351,10 @@ async def test_send_builds_correct_assertion_and_sends(settings, sa_json):
     assert claims["sub"] == DELEGATED
     assert claims["scope"] == "https://www.googleapis.com/auth/gmail.send"
     assert claims["aud"] == "https://oauth2.googleapis.com/token"
-    assert captured["token_body"]["grant_type"][0] == "urn:ietf:params:oauth:grant-type:jwt-bearer"
+    assert (
+        captured["token_body"]["grant_type"][0]
+        == "urn:ietf:params:oauth:grant-type:jwt-bearer"
+    )
     # Send used the bearer token and posted a base64url MIME with To + Subject.
     assert captured["send_auth"] == "Bearer ya29.test"
     raw = base64.urlsafe_b64decode(captured["send_body"]["raw"]).decode()
@@ -343,9 +383,84 @@ async def test_gmail_send_failure_raises(settings):
     with pytest.raises(EmailSendError) as ei:
         await sender.send(to="u@x.com", subject="S", html="<b>h</b>", text="t")
     assert ei.value.reason == "gmail_send_failed"
-```
 
-(For the caching test to assert a single token fetch, the handler counts sends; add a token counter analogously if desired. The `sender._token` check confirms a cached token is held.)
+
+def _bad_settings(sa_json: str) -> Settings:
+    return Settings(
+        google_service_account_json=sa_json,
+        google_delegated_user=DELEGATED,
+        from_email=DELEGATED,
+        logto_email_webhook_token="t",
+    )
+
+
+async def test_bad_service_account_json_raises():
+    sender = GmailSender(_bad_settings("not json"), transport=_transport({}))
+    with pytest.raises(EmailSendError) as ei:
+        await sender.send(to="u@x.com", subject="S", html="<b>h</b>", text="t")
+    assert ei.value.reason == "bad_service_account_json"
+
+
+async def test_incomplete_service_account_raises():
+    sender = GmailSender(_bad_settings('{"client_email":"x"}'), transport=_transport({}))
+    with pytest.raises(EmailSendError) as ei:
+        await sender.send(to="u@x.com", subject="S", html="<b>h</b>", text="t")
+    assert ei.value.reason == "incomplete_service_account"
+
+
+async def test_invalid_pem_raises():
+    sender = GmailSender(
+        _bad_settings('{"client_email":"x","private_key":"not-a-pem"}'), transport=_transport({})
+    )
+    with pytest.raises(EmailSendError) as ei:
+        await sender.send(to="u@x.com", subject="S", html="<b>h</b>", text="t")
+    assert ei.value.reason == "assertion_failed"
+
+
+async def test_token_response_invalid_raises(settings):
+    def handler(request):
+        if "oauth2.googleapis.com" in str(request.url):
+            return httpx.Response(200, text="<html>not json</html>")
+        return httpx.Response(404)
+
+    sender = GmailSender(settings, transport=httpx.MockTransport(handler))
+    with pytest.raises(EmailSendError) as ei:
+        await sender.send(to="u@x.com", subject="S", html="<b>h</b>", text="t")
+    assert ei.value.reason == "token_response_invalid"
+
+
+async def test_token_response_without_access_token_raises(settings):
+    def handler(request):
+        if "oauth2.googleapis.com" in str(request.url):
+            return httpx.Response(200, json={"no_token": True})
+        return httpx.Response(404)
+
+    sender = GmailSender(settings, transport=httpx.MockTransport(handler))
+    with pytest.raises(EmailSendError) as ei:
+        await sender.send(to="u@x.com", subject="S", html="<b>h</b>", text="t")
+    assert ei.value.reason == "token_response_invalid"
+
+
+async def test_token_refreshed_after_expiry(settings):
+    captured = {}
+    clock = {"t": 1000.0}
+    sender = GmailSender(settings, transport=_transport(captured), now=lambda: clock["t"])
+    await sender.send(to="a@x.com", subject="S", html="<b>h</b>", text="t")  # exp = 1000 + 3600
+    assert captured["token_count"] == 1
+    clock["t"] = 4600.0 - 30  # within 60s of expiry -> must refresh
+    await sender.send(to="b@x.com", subject="S", html="<b>h</b>", text="t")
+    assert captured["token_count"] == 2
+
+
+async def test_concurrent_sends_make_one_token_request(settings):
+    captured = {}
+    sender = GmailSender(settings, transport=_transport(captured))
+    await asyncio.gather(
+        sender.send(to="a@x.com", subject="S", html="<b>h</b>", text="t"),
+        sender.send(to="b@x.com", subject="S", html="<b>h</b>", text="t"),
+    )
+    assert captured["token_count"] == 1  # lock + double-check prevents a duplicate fetch
+```
 
 - [ ] **Step 2: Run to verify it fails**
 
@@ -359,7 +474,9 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'app.email.sender'`.
 domain-wide delegation (impersonating the configured `noreply@` mailbox). No google-auth:
 we RS256-sign a short assertion with PyJWT and exchange it for an access token over httpx,
 cache the token until ~60s before expiry, then POST a base64url MIME to the Gmail send
-endpoint. The `transport` is injectable so tests run with no network."""
+endpoint. The constructor does no parsing/I/O (it cannot raise — so auth always runs first);
+the service-account JSON is parsed lazily and every credential/token failure becomes a typed
+EmailSendError. The transport is injectable so tests run with no network."""
 
 import asyncio
 import base64
@@ -393,12 +510,11 @@ class GmailSender:
         self,
         settings: Settings,
         *,
-        transport: httpx.BaseTransport | None = None,
+        transport: httpx.AsyncBaseTransport | None = None,
         now: Callable[[], float] = time.time,
     ):
-        sa = json.loads(settings.google_service_account_json or "{}")
-        self._client_email = sa.get("client_email")
-        self._private_key = sa.get("private_key")
+        # No parsing/I/O here — construction must never raise (auth runs before any cred work).
+        self._sa_json = settings.google_service_account_json
         self._delegated = settings.google_delegated_user
         self._from = settings.from_email or settings.google_delegated_user
         self._transport = transport
@@ -410,6 +526,17 @@ class GmailSender:
     def _client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(transport=self._transport, timeout=10.0)
 
+    def _credentials(self) -> tuple[str, str]:
+        try:
+            sa = json.loads(self._sa_json or "{}")
+        except (ValueError, TypeError) as exc:
+            raise EmailSendError("bad_service_account_json") from exc
+        client_email = sa.get("client_email")
+        private_key = sa.get("private_key")
+        if not client_email or not private_key:
+            raise EmailSendError("incomplete_service_account")
+        return client_email, private_key
+
     async def _access_token(self) -> str:
         now = self._now()
         if self._token and now < self._token_exp - 60:
@@ -418,18 +545,22 @@ class GmailSender:
             now = self._now()
             if self._token and now < self._token_exp - 60:
                 return self._token
-            assertion = jwt.encode(
-                {
-                    "iss": self._client_email,
-                    "sub": self._delegated,
-                    "scope": _SCOPE,
-                    "aud": _TOKEN_ENDPOINT,
-                    "iat": int(now),
-                    "exp": int(now) + 3600,
-                },
-                self._private_key,
-                algorithm="RS256",
-            )
+            client_email, private_key = self._credentials()
+            try:
+                assertion = jwt.encode(
+                    {
+                        "iss": client_email,
+                        "sub": self._delegated,
+                        "scope": _SCOPE,
+                        "aud": _TOKEN_ENDPOINT,
+                        "iat": int(now),
+                        "exp": int(now) + 3600,
+                    },
+                    private_key,
+                    algorithm="RS256",
+                )
+            except Exception as exc:  # invalid PEM / unusable key
+                raise EmailSendError("assertion_failed") from exc
             try:
                 async with self._client() as client:
                     resp = await client.post(
@@ -440,10 +571,15 @@ class GmailSender:
                 raise EmailSendError("token_request_failed") from exc
             if resp.status_code != 200:
                 raise EmailSendError("token_request_failed")
-            data = resp.json()
-            self._token = data["access_token"]
-            self._token_exp = now + float(data.get("expires_in", 3600))
-            return self._token
+            try:
+                data = resp.json()
+                token = data["access_token"]
+                expires_in = float(data.get("expires_in", 3600))
+            except (ValueError, KeyError, TypeError) as exc:
+                raise EmailSendError("token_response_invalid") from exc
+            self._token = token
+            self._token_exp = now + expires_in
+            return token
 
     async def send(self, *, to: str, subject: str, html: str, text: str) -> None:
         token = await self._access_token()
@@ -496,7 +632,6 @@ git commit -m "feat(backend): Gmail sender (JWT-bearer service-account delegatio
 - [ ] **Step 1: Write the failing tests** — create `backend/tests/test_email_webhook.py`:
 
 ```python
-import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -506,6 +641,8 @@ from app.main import app
 from app.routers.email_webhook import get_gmail_sender
 
 TOKEN = "secret-webhook-token"
+PRIVATE_KEY_MARKER = "PRIVATEKEYMARKER"
+SA_JSON = '{"client_email":"x","private_key":"' + PRIVATE_KEY_MARKER + '"}'
 
 
 class FakeSender:
@@ -520,11 +657,11 @@ class FakeSender:
 
 
 @pytest.fixture
-def configured(monkeypatch):
+def configured():
     fake = FakeSender()
     app.dependency_overrides[get_settings] = lambda: Settings(
         logto_email_webhook_token=TOKEN,
-        google_service_account_json='{"client_email":"x","private_key":"y"}',
+        google_service_account_json=SA_JSON,
         google_delegated_user="noreply@fountainrank.com",
     )
     app.dependency_overrides[get_gmail_sender] = lambda: fake
@@ -539,7 +676,11 @@ async def _post(headers, body):
         return await ac.post("/internal/email", headers=headers, json=body)
 
 
-VALID_BODY = {"to": "u@example.com", "type": "SignIn", "payload": {"code": "123456", "locale": "en"}}
+VALID_BODY = {
+    "to": "u@example.com",
+    "type": "SignIn",
+    "payload": {"code": "123456", "locale": "en"},
+}
 
 
 async def test_valid_request_sends_and_returns_200(configured):
@@ -589,13 +730,47 @@ async def test_sender_failure_is_502(configured):
     assert resp.status_code == 502
 
 
-async def test_code_not_logged(configured, caplog):
-    with caplog.at_level("INFO", logger="app.email"):
+async def test_secrets_never_logged_on_success_and_failure(configured, caplog):
+    # Capture ALL loggers (not just app.email), across a success AND a sender-failure path.
+    with caplog.at_level("INFO"):
         await _post({"Authorization": f"Bearer {TOKEN}"}, VALID_BODY)
+        configured.raise_reason = "gmail_send_failed"
+        await _post({"Authorization": f"Bearer {TOKEN}"}, VALID_BODY)
+    assert caplog.records  # something was logged
     for rec in caplog.records:
+        for value in rec.__dict__.values():
+            assert "123456" not in str(value)  # the verification code
+            assert TOKEN not in str(value)  # the webhook token
+            assert PRIVATE_KEY_MARKER not in str(value)  # service-account key material
         assert "123456" not in rec.getMessage()
-        assert all("123456" not in str(v) for v in rec.__dict__.values())
-        assert all(TOKEN not in str(v) for v in rec.__dict__.values())
+
+
+async def test_auth_checked_before_body_parse(configured):
+    # A bad token with a NON-JSON body must be 401 (auth first), never 422 (parse first).
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        resp = await ac.post(
+            "/internal/email",
+            headers={"Authorization": "Bearer wrong", "Content-Type": "application/json"},
+            content=b"not-json{{{",
+        )
+    assert resp.status_code == 401
+    assert not configured.sent
+
+
+async def test_malformed_creds_with_bad_token_is_401_not_500():
+    # email_configured is True but the SA JSON is malformed; a bad token must still be 401.
+    # get_gmail_sender is NOT overridden -> the real (lazy) sender is built and must not 500.
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        logto_email_webhook_token=TOKEN,
+        google_service_account_json="not json",
+        google_delegated_user="noreply@fountainrank.com",
+    )
+    try:
+        resp = await _post({"Authorization": "Bearer wrong"}, VALID_BODY)
+        assert resp.status_code == 401
+    finally:
+        app.dependency_overrides.pop(get_settings, None)
 ```
 
 - [ ] **Step 2: Run to verify it fails**
@@ -613,9 +788,10 @@ token, 422 bad payload, 502 send failure, 200 sent. Never logs the code/token/ke
 
 import hmac
 import logging
+import time
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from app.config import Settings, get_settings
 from app.email.sender import EmailSendError, GmailSender
@@ -628,6 +804,8 @@ _sender: GmailSender | None = None
 
 
 def get_gmail_sender(settings: Settings = Depends(get_settings)) -> GmailSender | None:
+    # Construction does no parsing/I/O (lazy creds), so resolving this dependency before the
+    # in-handler auth check cannot raise or leak — auth still gates the actual send.
     global _sender
     if not settings.email_configured:
         return None
@@ -655,13 +833,16 @@ def _bearer(authorization: str | None) -> str | None:
     return token.strip() if scheme.lower() == "bearer" and token.strip() else None
 
 
-@router.post("/email")
+# include_in_schema=False keeps this internal webhook out of the OpenAPI doc (and therefore
+# out of the generated api-client) — it is Logto-to-backend only, not a public API.
+@router.post("/email", include_in_schema=False)
 async def send_email(
     request: Request,
     authorization: str | None = Header(default=None),
     settings: Settings = Depends(get_settings),
     sender: GmailSender | None = Depends(get_gmail_sender),
 ) -> dict:
+    # Auth BEFORE any body processing: 503 if unconfigured, 401 on bad/missing token.
     if not settings.email_configured or sender is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="email not configured")
     token = _bearer(authorization)
@@ -670,23 +851,40 @@ async def send_email(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
     try:
         req = _EmailRequest.model_validate(await request.json())
-    except (ValueError, ValidationError):
+    except ValueError:  # JSONDecodeError + pydantic v2 ValidationError are both ValueError
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT, detail="invalid request"
         ) from None
     if not req.to.strip() or "@" not in req.to or not (req.payload.code or req.payload.link):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="invalid request")
     subject, html, text = render(req.type, req.payload.model_dump())
+    to_domain = req.to.rpartition("@")[2]  # log the domain only, never the full address/code
+    start = time.monotonic()
     try:
         await sender.send(to=req.to, subject=subject, html=html, text=text)
     except EmailSendError as exc:
-        logger.error("email send failed", extra={"reason": exc.reason, "email_type": req.type})
+        logger.error(
+            "email send failed",
+            extra={
+                "reason": exc.reason,
+                "email_type": req.type,
+                "to_domain": to_domain,
+                "latency_ms": round((time.monotonic() - start) * 1000),
+            },
+        )
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail="send failed") from exc
-    logger.info("email sent", extra={"email_type": req.type})
+    logger.info(
+        "email sent",
+        extra={
+            "email_type": req.type,
+            "to_domain": to_domain,
+            "latency_ms": round((time.monotonic() - start) * 1000),
+        },
+    )
     return {"message": "sent"}
 ```
 
-`HTTPException` is handled by FastAPI's default handler (before the generic `Exception` handler in `main.py`), so each `raise` returns the intended status with a JSON body. `from None` on the parse path avoids chaining the parse error.
+`HTTPException` is handled by FastAPI's default handler (before the generic `Exception` handler in `main.py`), so each `raise` returns the intended status with a JSON body. `from None` on the parse path avoids chaining the parse error. `except ValueError` covers both a non-JSON body (`json.JSONDecodeError`) and a schema mismatch (Pydantic v2 `ValidationError` subclasses `ValueError`).
 
 - [ ] **Step 4: Register the router** — in `backend/app/main.py`, add `email_webhook` to the routers import and include it:
 
@@ -859,7 +1057,7 @@ Expected: ruff ✓, format ✓, `alembic upgrade` ✓, `alembic check` (drift-fr
 - [ ] **Step 4: Full local CI mirror**
 
 Run: `cd /d/repos/fountainrank && powershell.exe -NoProfile -File run.ps1 check`
-Expected: backend + frontend lint/typecheck/test + web build + mobile all green. (The new `/internal/email` route adds an OpenAPI path; `pnpm run generate` will regenerate the api-client — confirm the tree afterward and commit any `packages/api-client/` change if one appears.)
+Expected: backend + frontend lint/typecheck/test + web build + mobile all green. The `/internal/email` route is registered `include_in_schema=False`, so it does **not** appear in the OpenAPI schema and `pnpm run generate` produces **no** api-client change. Afterward run `git status --short` and confirm the only modified file is the owner's `docs/setup/04-apple-and-app-stores.md` — **no `packages/api-client/` diff**. If a client diff appears, STOP and investigate (the route leaked into the schema); do not blindly commit generated output.
 
 - [ ] **Step 5: Commit**
 

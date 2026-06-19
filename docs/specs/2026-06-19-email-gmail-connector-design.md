@@ -70,7 +70,8 @@ The connector calls the backend over the **in-cluster Service URL** — email tr
 leaves the cluster. The route is on the existing backend app (it is *also* reachable via the
 public ingress at `api.fountainrank.com/internal/email`, so the **auth token is the primary
 gate**, constant-time compared; a future ingress path-exclusion is a noted hardening, not
-required for correctness).
+required for correctness). The route is registered `include_in_schema=False` so it stays out
+of the OpenAPI document and the generated api-client (a Logto→backend webhook, not public API).
 
 ### 4.2 Webhook — `POST /internal/email` (`app/routers/email_webhook.py`)
 
@@ -93,7 +94,12 @@ required for correctness).
 ### 4.3 Gmail sender (`app/email/sender.py`)
 
 OAuth2 **JWT-bearer** service-account flow with domain-wide delegation — no new auth deps
-(reuses `pyjwt[crypto]` for RS256 + `httpx`), fully async:
+(reuses `pyjwt[crypto]` for RS256 + `httpx`), fully async. The sender's constructor does **no**
+parsing or I/O (so building it can never raise — auth always precedes any credential work);
+the service-account JSON is parsed + field-validated lazily at first token mint, and **every**
+credential/assertion/token-shape failure (bad JSON, missing `client_email`/`private_key`,
+invalid PEM, non-JSON or `access_token`-less token response, Gmail non-2xx) is converted to a
+typed `EmailSendError` → `502` — never a `500`. Steps:
 
 1. Parse `settings.google_service_account_json` → dict (client_email, private_key, …).
 2. Build a short-lived assertion: `jwt.encode({iss: client_email, sub: <delegated_user>,
@@ -131,7 +137,6 @@ packaging concerns); easily promoted to per-file branded templates when the styl
 google_service_account_json: str | None = None   # secret (the SA JSON key, as a string)
 google_delegated_user: str | None = None          # e.g. noreply@fountainrank.com (impersonated sub)
 from_email: str | None = None                      # visible From (usually == delegated user)
-google_workspace_domain: str | None = None         # fountainrank.com (reference)
 logto_email_webhook_token: str | None = None       # secret shared with the Logto connector
 ```
 All default `None` so local dev/tests don't send (the webhook returns `503` unless injected).
@@ -157,8 +162,8 @@ the webhook. Startup log includes `from_email` + `google_delegated_user` + `emai
   manifest `envsubst` apply.
 - **`infra/k8s/secrets.yaml`** (reference-only) — document the two new keys.
 - **GitHub `production` env:** secrets `GOOGLE_SERVICE_ACCOUNT_JSON`,
-  `LOGTO_EMAIL_WEBHOOK_TOKEN`; variables `GOOGLE_DELEGATED_USER`, `FROM_EMAIL`,
-  `GOOGLE_WORKSPACE_DOMAIN`. (Placeholders may be pre-created; owner sets real values.)
+  `LOGTO_EMAIL_WEBHOOK_TOKEN`; variables `GOOGLE_DELEGATED_USER`, `FROM_EMAIL`.
+  (Placeholders may be pre-created; owner sets real values.)
 
 ### 4.8 Owner tasks (after merge + deploy)
 
