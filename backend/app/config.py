@@ -64,6 +64,24 @@ class Settings(BaseSettings):
     nearby_max_radius_m: float = 50_000.0
     max_results: int = 500
 
+    # --- Phase 2a (Logto auth) ---
+    # Logto OIDC authority. Issuer + JWKS are DERIVED from this so the backend never
+    # depends on the OIDC discovery document (which emits http:// until TRUST_PROXY_HEADER
+    # is deployed). Local dev/tests use the dev-auth seam instead of Logto.
+    logto_endpoint: str = "https://auth.fountainrank.com"
+    # The registered API Resource indicator; becomes the JWT `aud` the backend requires.
+    logto_audience: str = "https://api.fountainrank.com"
+    # How long a fetched JWKS key set is trusted before a refetch is allowed.
+    logto_jwks_cache_ttl_seconds: int = 3600
+
+    @property
+    def logto_issuer(self) -> str:
+        return f"{self.logto_endpoint.rstrip('/')}/oidc"
+
+    @property
+    def logto_jwks_uri(self) -> str:
+        return f"{self.logto_issuer}/jwks"
+
 
 @lru_cache
 def get_settings() -> Settings:
