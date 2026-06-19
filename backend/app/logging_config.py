@@ -123,6 +123,9 @@ def log_startup(settings: Any) -> None:
             "log_level": settings.log_level,
             "log_format": settings.log_format,
             "dev_auth_enabled": settings.dev_auth_enabled,
+            "email_configured": settings.email_configured,
+            "from_email": settings.from_email,
+            "google_delegated_user": settings.google_delegated_user,
             # Non-secret Logto resolved config — surfaced so wrong-issuer/wrong-audience
             # 401s are diagnosable from the startup line alone (no secrets here).
             "logto_issuer": settings.logto_issuer,

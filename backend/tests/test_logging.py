@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from httpx import ASGITransport, AsyncClient
 
-from app.logging_config import JsonFormatter, redact_url, request_id_var
+from app.logging_config import JsonFormatter, log_startup, redact_url, request_id_var
 from app.middleware import RequestContextMiddleware
 
 
@@ -123,3 +123,22 @@ async def test_real_app_stamps_request_id_and_allows_cors(client):
 
     resp = await client.get("/healthz", headers={"Origin": "https://fountainrank.com"})
     assert resp.headers.get("access-control-allow-origin") == "https://fountainrank.com"
+
+
+def test_startup_log_includes_email_config_without_secrets(caplog):
+    from app.config import Settings
+
+    s = Settings(
+        google_service_account_json='{"client_email":"x","private_key":"secretpem"}',
+        logto_email_webhook_token="supersecrettoken",
+        google_delegated_user="noreply@fountainrank.com",
+        from_email="noreply@fountainrank.com",
+    )
+    with caplog.at_level("INFO"):
+        log_startup(s)
+    rec = next(r for r in caplog.records if r.getMessage() == "starting backend")
+    assert rec.email_configured is True
+    assert rec.google_delegated_user == "noreply@fountainrank.com"
+    # The SA key and the webhook token must never appear in the startup line.
+    assert all("secretpem" not in str(v) for v in rec.__dict__.values())
+    assert all("supersecrettoken" not in str(v) for v in rec.__dict__.values())

@@ -58,3 +58,29 @@ def test_logto_derived_urls_strip_trailing_slash():
     s = Settings(logto_endpoint="https://auth.example.com/")
     assert s.logto_issuer == "https://auth.example.com/oidc"
     assert s.logto_jwks_uri == "https://auth.example.com/oidc/jwks"
+
+
+def test_email_defaults_are_unset_and_not_configured():
+    s = Settings()
+    assert s.google_service_account_json is None
+    assert s.google_delegated_user is None
+    assert s.from_email is None
+    assert s.logto_email_webhook_token is None
+    assert s.email_configured is False
+
+
+def test_email_configured_requires_token_json_and_delegated_user():
+    s = Settings(
+        google_service_account_json='{"client_email":"x"}',
+        google_delegated_user="noreply@fountainrank.com",
+        logto_email_webhook_token="t",
+    )
+    assert s.email_configured is True
+    # Missing any one of the three -> not configured.
+    assert (
+        Settings(
+            google_service_account_json='{"client_email":"x"}',
+            google_delegated_user="noreply@fountainrank.com",
+        ).email_configured
+        is False
+    )
