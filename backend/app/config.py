@@ -16,6 +16,20 @@ class Settings(BaseSettings):
     # in production (env DB_SSL_ROOT_CERT). Unset locally -> plaintext, no SSL.
     db_ssl_root_cert: str | None = None
 
+    # Logging (see app/logging_config.py + CLAUDE.md "Logging & Observability").
+    # LOG_LEVEL: standard level name. LOG_FORMAT: "json" (structured, default) or
+    # "console" (human-readable for local dev).
+    log_level: str = "INFO"
+    log_format: str = "json"
+
+    # Browser origins allowed to call the API cross-origin (the web client). The
+    # deployed web app at these origins calls api.fountainrank.com from Phase 2 on.
+    cors_allow_origins: list[str] = [
+        "https://fountainrank.com",
+        "https://www.fountainrank.com",
+        "http://localhost:3020",
+    ]
+
     # --- Phase 1 ---
     # Dev-only write-auth seam. FALSE in production so add/rate stay closed until
     # Phase 2's Logto JWT validation lands. Local dev + tests set this True.

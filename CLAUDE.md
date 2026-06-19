@@ -115,6 +115,18 @@
 
 ---
 
+## Logging & Observability - MANDATORY
+
+**🚨 Every service must log comprehensively so any error or issue is diagnosable from logs alone. 🚨**
+
+- **ALWAYS** emit **structured logs to stdout/stderr** (JSON in production, controlled by `LOG_LEVEL`/`LOG_FORMAT` settings) — never to files; the platform (DOKS) captures stdout. Never use bare `print()` for diagnostics.
+- **ALWAYS** log, for the backend: app **startup** (version + resolved config with **secrets redacted**), **every HTTP request/response** (method, path, status, latency, client info, and a per-request **correlation/request id**), and **every unhandled exception with a full stack trace** via a centralized handler — a 500 must never be silent.
+- **ALWAYS** attach context to logs (request id, authenticated user/subject when present, key identifiers) and record notable lifecycle/integration events (DB connect, migrations, external calls to Logto/Gmail, auth failures) at appropriate levels.
+- **NEVER** log secrets, tokens, full JWTs, passwords, raw PII, or full DB URLs — **redact**. Default level `INFO`; `DEBUG` opt-in; `WARNING`/`ERROR` for problems.
+- When adding ANY new feature, code path, or failure branch, **add the logging that lets a future maintainer diagnose it from logs without a debugger**. Treat missing diagnostics as a defect.
+
+---
+
 ## Style Guide - MANDATORY
 
 **🚨 Before creating ANY new UI element, check and update the style guide. 🚨**
