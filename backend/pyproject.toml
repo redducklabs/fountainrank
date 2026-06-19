@@ -12,13 +12,14 @@ dependencies = [
     "asyncpg==0.31.0",
     "alembic==1.18.4",
     "geoalchemy2==0.20.0",
+    "pyjwt[crypto]==2.13.0",
+    "httpx==0.28.1",
 ]
 
 [dependency-groups]
 dev = [
     "pytest==9.1.0",
     "pytest-asyncio==1.4.0",
-    "httpx==0.28.1",
     "ruff==0.15.17",
 ]
 
