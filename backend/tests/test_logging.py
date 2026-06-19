@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from httpx import ASGITransport, AsyncClient
 
-from app.logging_config import JsonFormatter, redact_url
+from app.logging_config import JsonFormatter, redact_url, request_id_var
 from app.middleware import RequestContextMiddleware
 
 
@@ -46,7 +46,14 @@ def _logging_app() -> FastAPI:
     @app.exception_handler(Exception)
     async def handler(request, exc):
         logging.getLogger("app").error("unhandled exception", exc_info=exc)
-        return JSONResponse(status_code=500, content={"detail": "internal server error"})
+        # Mirror app/main.py: stamp the correlation id on the error response too, since
+        # the 500 response is sent by ServerErrorMiddleware (above this middleware), so
+        # the middleware's send_wrapper never gets to add the header on this path.
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "internal server error"},
+            headers={"X-Request-ID": request_id_var.get()},
+        )
 
     @app.get("/ok")
     async def ok():
@@ -84,6 +91,30 @@ async def test_unhandled_exception_returns_500_and_is_logged(caplog):
     assert resp.status_code == 500
     assert resp.json() == {"detail": "internal server error"}
     assert any("unhandled exception" in r.message for r in caplog.records)
+
+
+async def test_unhandled_exception_is_access_logged(caplog):
+    # A 500 must still produce the "request completed" access line (status, latency,
+    # client) — not only the exception log. Regression guard: the middleware previously
+    # skipped the access log when the app raised.
+    transport = ASGITransport(app=_logging_app(), raise_app_exceptions=False)
+    with caplog.at_level(logging.INFO, logger="app.request"):
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.get("/boom")
+    assert resp.status_code == 500
+    completed = [r for r in caplog.records if r.getMessage() == "request completed"]
+    assert completed, "request-completed access log must fire even on a 500"
+    assert completed[0].status_code == 500
+
+
+async def test_unhandled_exception_response_carries_request_id():
+    # The error response must echo the correlation id so a client can tie their failed
+    # request back to the server logs.
+    transport = ASGITransport(app=_logging_app(), raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        resp = await ac.get("/boom", headers={"X-Request-ID": "trace-err"})
+    assert resp.status_code == 500
+    assert resp.headers.get("x-request-id") == "trace-err"
 
 
 async def test_real_app_stamps_request_id_and_allows_cors(client):

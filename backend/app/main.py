@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import get_settings
-from app.logging_config import configure_logging, log_startup
+from app.logging_config import configure_logging, log_startup, request_id_var
 from app.middleware import RequestContextMiddleware
 from app.routers import fountains, health, rating_types
 
@@ -41,7 +41,15 @@ def create_app() -> FastAPI:
             exc_info=exc,
             extra={"method": request.method, "path": request.url.path},
         )
-        return JSONResponse(status_code=500, content={"detail": "internal server error"})
+        # Starlette's ServerErrorMiddleware sends this response from ABOVE
+        # RequestContextMiddleware, so the middleware's send_wrapper never adds the
+        # correlation header on the 500 path — stamp it here so a failed request is
+        # still traceable to its logs (request_id_var is set on this task's context).
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "internal server error"},
+            headers={"X-Request-ID": request_id_var.get()},
+        )
 
     log_startup(settings)
     return app

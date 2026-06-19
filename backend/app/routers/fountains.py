@@ -169,6 +169,9 @@ async def fountains_in_bbox(
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> list[FountainPin]:
+    # Known limitation: a viewport that crosses the antimeridian (e.g. min_lng=170,
+    # max_lng=-170) is rejected here rather than split into two envelopes. Acceptable for
+    # Phase 1 (no usage near ±180°); revisit if the map ever pans across the dateline.
     if min_lat > max_lat or min_lng > max_lng:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,

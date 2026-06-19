@@ -1,6 +1,9 @@
+import json
 from functools import lru_cache
+from typing import Annotated
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -24,11 +27,29 @@ class Settings(BaseSettings):
 
     # Browser origins allowed to call the API cross-origin (the web client). The
     # deployed web app at these origins calls api.fountainrank.com from Phase 2 on.
-    cors_allow_origins: list[str] = [
+    # NoDecode: take the raw env string ourselves rather than letting pydantic-settings
+    # JSON-decode it — a bare list[str] from env crashes startup on a comma-separated or
+    # empty value (see claude_help/testing-ci.md). We accept either form.
+    cors_allow_origins: Annotated[list[str], NoDecode] = [
         "https://fountainrank.com",
         "https://www.fountainrank.com",
         "http://localhost:3020",
     ]
+
+    @field_validator("cors_allow_origins", mode="before")
+    @classmethod
+    def _parse_cors_allow_origins(cls, v: object) -> object:
+        # Env arrives as a raw string (NoDecode). Accept a comma-separated list (the
+        # natural ops form) or a JSON array; empty -> no origins. The Python default
+        # (already a list) passes through untouched.
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                return []
+            if s.startswith("["):
+                return json.loads(s)
+            return [origin.strip() for origin in s.split(",") if origin.strip()]
+        return v
 
     # --- Phase 1 ---
     # Dev-only write-auth seam. FALSE in production so add/rate stay closed until

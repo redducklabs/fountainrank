@@ -3,8 +3,9 @@
 Pure-ASGI (not BaseHTTPMiddleware) so the request-id contextvar it sets is visible
 to the endpoint and to the exception handler that run below it in the same task.
 Assigns/propagates an ``X-Request-ID`` and logs each completed request with method,
-path, status, and latency. Failed requests are logged (with a stack trace) by the
-app's exception handler, so this middleware does not log them again.
+path, status, and latency — including on an unhandled exception, where it logs a
+status of 500 and re-raises so the app's exception handler still logs the stack
+trace (the two logs are complementary: access line + traceback).
 """
 
 import logging
@@ -48,20 +49,23 @@ class RequestContextMiddleware:
                 ]
             await send(message)
 
-        # On exception, propagate: the app's exception handler logs it with a stack
-        # trace (and the same request_id, still set on this task's context).
-        await self.app(scope, receive, send_wrapper)
-
-        duration_ms = round((time.perf_counter() - start) * 1000, 2)
-        client = scope.get("client")
-        logger.log(
-            logging.DEBUG if scope.get("path") in _QUIET_PATHS else logging.INFO,
-            "request completed",
-            extra={
-                "method": scope.get("method"),
-                "path": scope.get("path"),
-                "status_code": status_code,
-                "duration_ms": duration_ms,
-                "client": client[0] if client else None,
-            },
-        )
+        # try/finally so the access line is emitted on EVERY path, including an
+        # unhandled exception (status_code stays 500). We do not swallow the
+        # exception — it propagates to the app's exception handler, which logs the
+        # stack trace (with the same request_id, still set on this task's context).
+        try:
+            await self.app(scope, receive, send_wrapper)
+        finally:
+            duration_ms = round((time.perf_counter() - start) * 1000, 2)
+            client = scope.get("client")
+            logger.log(
+                logging.DEBUG if scope.get("path") in _QUIET_PATHS else logging.INFO,
+                "request completed",
+                extra={
+                    "method": scope.get("method"),
+                    "path": scope.get("path"),
+                    "status_code": status_code,
+                    "duration_ms": duration_ms,
+                    "client": client[0] if client else None,
+                },
+            )
