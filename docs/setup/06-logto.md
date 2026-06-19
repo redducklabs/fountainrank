@@ -9,10 +9,29 @@ configuration** you do once Logto is running.
 
 > **Sequencing:** do this **after** (a) Logto is deployed by 0e, and (b) you've
 > created the Google OAuth client (`03`) and Apple Sign-in artifacts (`04`).
-> Logto's admin lives at `https://auth.fountainrank.com` (you'll set the initial
-> admin credentials on first boot — keep them in your password manager).
+>
+> **Admin console access (port-forward).** The admin console is served on the
+> container's port **3002**, which is intentionally **not** exposed publicly. Reach
+> it over a local port-forward (no internet-facing admin surface):
+>
+> ```bash
+> kubectl config use-context do-sfo3-fountainrank-production-cluster
+> kubectl -n fountainrank port-forward deploy/logto 3002:3002
+> # then open http://localhost:3002
+> ```
+>
+> On first boot you set the initial admin credentials — keep them in your password
+> manager (Logto admin can mint tokens for any user).
 
 ---
+
+## Step 0 — API Resource (backend audience)
+
+In **API resources → Create API resource**, set the **API identifier** to
+`https://api.fountainrank.com`. This indicator becomes the `aud` of the JWT access
+tokens the web/mobile clients request for the backend; the backend validates exactly
+this audience. (No scopes are required for Phase 2a — the backend authenticates the
+subject; per-scope authorization is a later concern.)
 
 ## Step 1 — Applications
 
