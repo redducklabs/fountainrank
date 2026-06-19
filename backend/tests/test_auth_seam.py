@@ -77,3 +77,15 @@ async def test_write_rejected_when_header_missing(settings_override):
             json={"location": {"latitude": 1.0, "longitude": 2.0}, "is_working": True},
         )
     assert resp.status_code == 401
+
+
+async def test_dev_path_used_when_enabled_and_no_authorization_header(settings_override):
+    settings_override(dev_auth_enabled=True)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        resp = await ac.post(
+            "/api/v1/fountains",
+            json={"location": {"latitude": 3.0, "longitude": 4.0}, "is_working": True},
+            headers={"X-Dev-User": "logto-dev-1"},
+        )
+    assert resp.status_code == 201  # dev seam provisions + authorizes when no Bearer

@@ -69,6 +69,12 @@ Writes (require auth — see below):
   `{ "ratings": [{ "rating_type_id", "stars" }] }` (non-empty). Unknown fountain
   → `404`. Returns the updated fountain detail.
 
+**Production auth (Phase 2a):** write endpoints require a Logto JWT access token —
+`Authorization: Bearer <token>` — validated via JWKS (`iss`/`aud`/`exp`, ES384). The
+token must be issued for the API Resource `https://api.fountainrank.com`. The dev-auth
+headers below are a local-only convenience, active solely when `DEV_AUTH_ENABLED=true`
+(default `false` in production) and only when no `Authorization` header is sent.
+
 ### Authentication (Phase 1 dev seam)
 
 Write endpoints depend on `get_current_user`, which in Phase 1 is a **dev-only
