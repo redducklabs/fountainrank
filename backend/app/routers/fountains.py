@@ -16,6 +16,7 @@ from app.schemas import (
     Coordinates,
     DimensionSummary,
     FountainDetail,
+    RateRequest,
     RatingInput,
 )
 
@@ -155,6 +156,29 @@ async def add_fountain(
         )
         await recompute_fountain_ranking(session, fountain.id)
 
+    await session.commit()
+    await session.refresh(fountain)
+    return await serialize_fountain_detail(session, fountain)
+
+
+@router.post("/fountains/{fountain_id}/ratings", response_model=FountainDetail)
+async def submit_ratings(
+    fountain_id: uuid.UUID,
+    payload: RateRequest,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> FountainDetail:
+    fountain = (
+        await session.execute(select(Fountain).where(Fountain.id == fountain_id))
+    ).scalar_one_or_none()
+    if fountain is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="fountain not found")
+
+    await _validate_rating_types(session, payload.ratings)
+    await _upsert_ratings(
+        session, fountain_id=fountain.id, user_id=user.id, ratings=payload.ratings
+    )
+    await recompute_fountain_ranking(session, fountain.id)
     await session.commit()
     await session.refresh(fountain)
     return await serialize_fountain_detail(session, fountain)
