@@ -18,7 +18,7 @@
 - Signing algorithm allowlist: **`ES384` only** — never trust the token header's `alg`.
 - New runtime deps (exact pins, matching repo `==` convention): `pyjwt[crypto]==2.13.0`; promote `httpx==0.28.1` from the dev group to runtime. `cryptography` (49.0.0) arrives transitively via `pyjwt[crypto]` and is pinned in `uv.lock`.
 - `dev_auth_enabled` defaults `False` (production never opens an unauthenticated write path).
-- Every auth failure returns **HTTP 401**, never 500. **Never** log the raw token, full JWT, or signature; log only a reason code + (when decodable) `sub`/`kid`, via the existing structured logger (`logging.getLogger("app.auth")`, `extra={...}`).
+- Every auth failure returns **HTTP 401**, never 500. **Never** log the raw token, full JWT, signature, or the **unverified `sub`** (attacker-controlled); log only a reason code + the `kid` **when decodable** (the request id is auto-stamped by `RequestIdFilter`), via the existing structured logger (`logging.getLogger("app.auth")`, `extra={...}`).
 - No AI attribution in commits/PRs; no time estimates anywhere. Conventional Commits, frequent commits.
 - **Execution environment:** this plan is implemented by a worker on the **Windows host**, where the Bash tool is **Git Bash** (POSIX sh, forward-slash paths under `/d/repos/fountainrank`) and `run.ps1` is invoked as `powershell.exe -NoProfile -File run.ps1 <cmd>` (`pwsh` is not on PATH — per the handoffs). These command forms are correct for that environment; they are **not** meant to run inside Codex's WSL shell. File tools (Read/Write/Edit) use backslash paths.
 - IaC is read-only locally: validate manifests with `kubeconform`; never `kubectl apply`/`helm upgrade` by hand. Deploy is owner-gated (a `v*.*.*` tag).
@@ -330,8 +330,9 @@ async def test_wrong_audience_rejected(keypair, cache, settings):
 
 async def test_wrong_issuer_rejected(keypair, cache, settings):
     priv, _ = keypair
+    token = _mint(priv, iss="https://evil.example.com/oidc")
     with pytest.raises(AuthError):
-        await validate_bearer_token(_mint(priv, iss="https://evil.example.com/oidc"), settings, cache)
+        await validate_bearer_token(token, settings, cache)
 
 
 async def test_tampered_signature_rejected(keypair, cache, settings):
@@ -409,6 +410,32 @@ async def test_rotation_new_kid_resolves_after_refetch(keypair, settings):
         priv2, algorithm="ES384", headers={"kid": "test-key-2"},
     )
     assert (await validate_bearer_token(token2, settings, c))["sub"] == "logto|xyz"
+
+
+async def test_jwks_fetch_failure_is_auth_error(keypair, settings):
+    # Fail closed: if the JWKS fetch errors, reject (-> 401), never raise a 500.
+    priv, _ = keypair
+
+    async def fetch():
+        raise RuntimeError("network down")
+
+    c = JwksCache("https://x/jwks", 3600, fetch=fetch)
+    with pytest.raises(AuthError) as ei:
+        await validate_bearer_token(_mint(priv), settings, c)
+    assert ei.value.reason == "jwks_fetch_failed"
+
+
+async def test_jwks_invalid_body_is_auth_error(keypair, settings):
+    # A malformed JWKS body must surface as a typed AuthError (-> 401), not an uncaught 500.
+    priv, _ = keypair
+
+    async def fetch():
+        return "this is not a jwks object"
+
+    c = JwksCache("https://x/jwks", 3600, fetch=fetch)
+    with pytest.raises(AuthError) as ei:
+        await validate_bearer_token(_mint(priv), settings, c)
+    assert ei.value.reason == "jwks_invalid"
 ```
 
 - [ ] **Step 3: Run it to verify it fails**
@@ -505,24 +532,26 @@ class JwksCache:
             now = time.monotonic()
             if kid in self._keys and self._fresh(now):
                 return self._keys[kid]
-            # First fetch always allowed (_last_attempt is None); after that, rate-limited so
-            # an unknown-kid flood cannot force unbounded fetches (DoS guard).
+            # Reaching here means the key is unknown OR the cache is stale -> a refetch is
+            # required. Rate-limit network fetches so an unknown-kid flood or a JWKS outage
+            # can't hammer Logto. If we cannot refetch yet, FAIL CLOSED — never serve a
+            # stale/expired key (a rotated-out key must stop being accepted once TTL lapses).
+            # The first fetch is always allowed (_last_attempt is None).
             may_refetch = (
                 self._last_attempt is None
                 or (now - self._last_attempt) >= self._min_refetch_interval
             )
             if not may_refetch:
-                # Rate-limited: serve a cached key if we have one, else reject without
-                # touching the network.
-                if kid in self._keys:
-                    return self._keys[kid]
-                raise AuthError("unknown_kid")
+                raise AuthError("jwks_unavailable")
             self._last_attempt = now
             try:
                 raw = await self._fetch()
-            except Exception as exc:  # network/HTTP/JSON error
+            except Exception as exc:  # network / HTTP / JSON decode error
                 raise AuthError("jwks_fetch_failed") from exc
-            key_set = jwt.PyJWKSet.from_dict(raw)
+            try:
+                key_set = jwt.PyJWKSet.from_dict(raw)
+            except Exception as exc:  # malformed/unexpected JWKS body or unusable key
+                raise AuthError("jwks_invalid") from exc
             self._keys = {k.key_id: k for k in key_set.keys if k.key_id}
             self._fetched_at = now
             if kid in self._keys:
@@ -710,6 +739,8 @@ async def test_auth_failure_logs_kid_not_token(keypair, cache, session, caplog):
     assert rec.reason == "unknown_kid"
     assert rec.kid == "rotated-out"
     assert token not in rec.getMessage()
+    # The token must not leak via any structured `extra` field either.
+    assert all(token not in str(v) for v in rec.__dict__.values())
 ```
 
 Note: `clean_db` (from `conftest.py`) resets tables; these tests need the DB up (`./run.ps1 up`).

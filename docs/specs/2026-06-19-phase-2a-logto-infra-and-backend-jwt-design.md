@@ -142,7 +142,10 @@ A focused module with one responsibility: turn a bearer token string into valida
   - On a token whose `kid` is not in cache, refetch (handles key rotation), guarded by an
     `asyncio.Lock` (no thundering herd) and a **minimum refetch interval** (negative caching)
     so a flood of tokens bearing bogus `kid`s cannot force unbounded refetches (DoS guard).
-    If the `kid` is still absent after the allowed refetch → reject. The very first fetch is
+    **Fail closed:** if a refetch is required (unknown or **stale** `kid`) but rate-limited,
+    or the fetch/JWKS-parse fails, reject with a typed `401` — a stale/expired cached key is
+    **never** served (a rotated-out key must stop being accepted once its TTL lapses). If the
+    `kid` is still absent after a successful refetch → reject. The very first fetch is
     always allowed (the "never attempted" state is tracked explicitly, **not** as a
     `monotonic()==0` sentinel — `monotonic()`'s origin is arbitrary). Worst-case lag to
     recognize a **newly rotated** `kid` is one `min_refetch_interval` (~10s) if a fetch
