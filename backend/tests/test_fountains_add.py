@@ -1,3 +1,11 @@
+import asyncio
+
+from httpx import ASGITransport, AsyncClient
+
+from app.config import Settings, get_settings
+from app.main import app
+
+
 async def test_add_fountain_returns_detail(client):
     resp = await client.post(
         "/api/v1/fountains",
@@ -61,3 +69,32 @@ async def test_add_fountain_rejects_out_of_range_stars(client):
         },
     )
     assert resp.status_code == 422
+
+
+async def test_concurrent_add_same_point_dedupes_to_one():
+    # Two concurrent adds at the same coordinates must not both succeed. The
+    # transaction advisory lock serializes the proximity check + insert, so exactly one
+    # gets 201 and the other 409 — and only one fountain is persisted. Runs the real
+    # dev-auth seam so each concurrent request is a distinct user.
+    app.dependency_overrides[get_settings] = lambda: Settings(dev_auth_enabled=True)
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+
+            async def add(subject: str):
+                return await ac.post(
+                    "/api/v1/fountains",
+                    json={"location": {"latitude": 37.7749, "longitude": -122.4194}},
+                    headers={"X-Dev-User": subject},
+                )
+
+            r_a, r_b = await asyncio.gather(add("adder-a"), add("adder-b"))
+            assert sorted([r_a.status_code, r_b.status_code]) == [201, 409]
+
+            nearby = await ac.get(
+                "/api/v1/fountains",
+                params={"lat": 37.7749, "lng": -122.4194, "radius_m": 50},
+            )
+        assert len(nearby.json()) == 1  # only one fountain persisted
+    finally:
+        app.dependency_overrides.pop(get_settings, None)
