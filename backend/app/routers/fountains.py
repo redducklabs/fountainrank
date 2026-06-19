@@ -202,6 +202,19 @@ async def fountains_in_bbox(
     ]
 
 
+@router.get("/fountains/{fountain_id}", response_model=FountainDetail)
+async def fountain_detail(
+    fountain_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+) -> FountainDetail:
+    fountain = (
+        await session.execute(select(Fountain).where(Fountain.id == fountain_id))
+    ).scalar_one_or_none()
+    if fountain is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="fountain not found")
+    return await serialize_fountain_detail(session, fountain)
+
+
 @router.post("/fountains", response_model=FountainDetail, status_code=status.HTTP_201_CREATED)
 async def add_fountain(
     payload: AddFountainRequest,
