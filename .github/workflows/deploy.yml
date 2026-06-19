@@ -162,6 +162,8 @@ jobs:
           LOGTO_DB_URL_SECRET: ${{ secrets.LOGTO_DB_URL }}
           DATABASE_CA_CERT: ${{ secrets.DATABASE_CA_CERT }}
           DO_REGISTRY: ${{ vars.DO_REGISTRY }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          LOGTO_EMAIL_WEBHOOK_TOKEN: ${{ secrets.LOGTO_EMAIL_WEBHOOK_TOKEN }}
         run: |
           tmp="$(mktemp -d)"
           trap 'rm -rf "$tmp"' EXIT
@@ -170,13 +172,18 @@ jobs:
             -n "$NAMESPACE" \
             --from-literal=database-url="$DATABASE_URL_SECRET" \
             --from-literal=logto-db-url="$LOGTO_DB_URL_SECRET" \
+            --from-literal=google-service-account-json="$GOOGLE_SERVICE_ACCOUNT_JSON" \
+            --from-literal=logto-email-webhook-token="$LOGTO_EMAIL_WEBHOOK_TOKEN" \
             --from-file=database-ca.crt="$tmp/database-ca.crt" \
             --dry-run=client -o yaml | kubectl apply -f -
           doctl registry kubernetes-manifest "$DO_REGISTRY" \
             --name regcred --namespace "$NAMESPACE" | kubectl apply -f -
       - name: Render + apply workloads
+        env:
+          GOOGLE_DELEGATED_USER: ${{ vars.GOOGLE_DELEGATED_USER }}
+          FROM_EMAIL: ${{ vars.FROM_EMAIL }}
         run: |
-          export NAMESPACE ENVIRONMENT IMAGE_TAG REGISTRY DOMAIN
+          export NAMESPACE ENVIRONMENT IMAGE_TAG REGISTRY DOMAIN GOOGLE_DELEGATED_USER FROM_EMAIL
           for f in backend web logto ingress; do
             envsubst < "infra/k8s/$f.yaml" | kubectl apply -f -
           done

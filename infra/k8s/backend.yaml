@@ -52,6 +52,22 @@ spec:
             # from this path (app/db.py::engine_connect_args). Required in prod.
             - name: DB_SSL_ROOT_CERT
               value: /var/run/secrets/fountainrank/database-ca.crt
+            # Email (Logto HTTP email connector -> Gmail API). Secrets from fountainrank-secrets;
+            # delegated user + From are non-secret, substituted from GitHub env vars at deploy.
+            - name: GOOGLE_SERVICE_ACCOUNT_JSON
+              valueFrom:
+                secretKeyRef:
+                  name: fountainrank-secrets
+                  key: google-service-account-json
+            - name: LOGTO_EMAIL_WEBHOOK_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: fountainrank-secrets
+                  key: logto-email-webhook-token
+            - name: GOOGLE_DELEGATED_USER
+              value: "${GOOGLE_DELEGATED_USER}"
+            - name: FROM_EMAIL
+              value: "${FROM_EMAIL}"
           volumeMounts:
             - name: db-ca
               mountPath: /var/run/secrets/fountainrank
