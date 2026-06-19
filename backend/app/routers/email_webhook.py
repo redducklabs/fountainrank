@@ -62,8 +62,10 @@ async def send_email(
     # Auth BEFORE any body processing: 503 if unconfigured, 401 on bad/missing token.
     if not settings.email_configured or sender is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="email not configured")
-    token = _bearer(authorization)
-    if not token or not hmac.compare_digest(token, settings.logto_email_webhook_token or ""):
+    # Always run the constant-time compare (even when no/blank token is sent) so the
+    # missing-token and wrong-token paths are indistinguishable by response timing.
+    token = _bearer(authorization) or ""
+    if not hmac.compare_digest(token, settings.logto_email_webhook_token or ""):
         logger.warning("email webhook auth failed")
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
     try:
