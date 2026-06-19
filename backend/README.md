@@ -69,11 +69,20 @@ Writes (require auth — see below):
   `{ "ratings": [{ "rating_type_id", "stars" }] }` (non-empty). Unknown fountain
   → `404`. Returns the updated fountain detail.
 
-### Authentication (Phase 1 dev seam)
+**Production auth (Phase 2a):** write endpoints require a Logto JWT access token —
+`Authorization: Bearer <token>` — validated via JWKS (`iss`/`aud`/`exp`, ES384). The
+token must be issued for the API Resource `https://api.fountainrank.com`. The dev-auth
+headers below are a local-only convenience, active solely when `DEV_AUTH_ENABLED=true`
+(default `false` in production) and only when no `Authorization` header is sent.
 
-Write endpoints depend on `get_current_user`, which in Phase 1 is a **dev-only
-seam that is disabled by default** (`dev_auth_enabled=False`) so production never
-exposes an unauthenticated write path. To exercise writes locally:
+### Local dev-auth fallback
+
+`get_current_user` resolves the Logto Bearer JWT above as the **production** path.
+Alongside it is a **dev-only fallback, disabled by default** (`dev_auth_enabled=False`)
+so production never exposes an unauthenticated write path. The fallback is reachable
+only when `DEV_AUTH_ENABLED=true` **and** no `Authorization` header is present — a
+present-but-invalid Bearer is always `401` and never falls through to it. To exercise
+writes locally without standing up Logto:
 
 1. Set `DEV_AUTH_ENABLED=true` (the `run.ps1 backend` dev command does this for
    you). Never enable it in production.
@@ -81,6 +90,6 @@ exposes an unauthenticated write path. To exercise writes locally:
    `User` is provisioned just-in-time on first sight. `X-Dev-Email` and
    `X-Dev-Name` are optional overrides (defaulted otherwise).
 
-A missing header (when enabled) or any write while disabled returns `401`. In
-Phase 2 this seam is replaced by Logto JWT validation (verify `iss`/`aud` via
-JWKS, take `sub`); the just-in-time provisioning tail is unchanged.
+A missing header (when enabled) or any write while disabled returns `401`. Both the
+Bearer path and this fallback share the same just-in-time provisioning tail
+(`get_or_create_user`).

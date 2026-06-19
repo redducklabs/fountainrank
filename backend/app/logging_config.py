@@ -123,6 +123,11 @@ def log_startup(settings: Any) -> None:
             "log_level": settings.log_level,
             "log_format": settings.log_format,
             "dev_auth_enabled": settings.dev_auth_enabled,
+            # Non-secret Logto resolved config — surfaced so wrong-issuer/wrong-audience
+            # 401s are diagnosable from the startup line alone (no secrets here).
+            "logto_issuer": settings.logto_issuer,
+            "logto_audience": settings.logto_audience,
+            "logto_jwks_cache_ttl_seconds": settings.logto_jwks_cache_ttl_seconds,
             "db_tls": bool(settings.db_ssl_root_cert),
             "database_url": redact_url(settings.database_url),
         },

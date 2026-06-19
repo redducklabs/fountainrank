@@ -56,6 +56,12 @@ spec:
               value: /var/run/secrets/fountainrank/database-ca.crt
             - name: ENDPOINT
               value: "https://auth.${DOMAIN}"
+            # Logto sits behind the DO Load Balancer (TLS terminates there) -> the pod sees
+            # plain HTTP. Without trusting the forwarded proto, node-oidc-provider derives
+            # http:// OIDC endpoints from the request, breaking OAuth/JWKS consumers even
+            # though ENDPOINT is https. Trust the X-Forwarded-Proto the LB/nginx forward.
+            - name: TRUST_PROXY_HEADER
+              value: "1"
             - name: PORT
               value: "3001"
             - name: ADMIN_PORT

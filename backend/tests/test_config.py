@@ -42,3 +42,19 @@ def test_cors_origins_empty_env_is_empty_list(monkeypatch):
     monkeypatch.setenv("CORS_ALLOW_ORIGINS", "")
     settings = Settings()
     assert settings.cors_allow_origins == []
+
+
+def test_logto_defaults_and_derived_urls():
+    s = Settings()
+    assert s.logto_endpoint == "https://auth.fountainrank.com"
+    assert s.logto_audience == "https://api.fountainrank.com"
+    assert s.logto_jwks_cache_ttl_seconds == 3600
+    # Derived from the endpoint — never read from the (pre-fix http) discovery doc.
+    assert s.logto_issuer == "https://auth.fountainrank.com/oidc"
+    assert s.logto_jwks_uri == "https://auth.fountainrank.com/oidc/jwks"
+
+
+def test_logto_derived_urls_strip_trailing_slash():
+    s = Settings(logto_endpoint="https://auth.example.com/")
+    assert s.logto_issuer == "https://auth.example.com/oidc"
+    assert s.logto_jwks_uri == "https://auth.example.com/oidc/jwks"

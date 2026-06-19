@@ -65,3 +65,13 @@ async def client(test_user) -> AsyncClient:
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
     app.dependency_overrides.pop(get_current_user, None)
+
+
+@pytest.fixture(autouse=True)
+def reset_jwks_cache():
+    """Reset the app-global JWKS cache singleton after each test so a cache built from one
+    test's settings can't leak into the next (order-independence)."""
+    yield
+    import app.auth as _app_auth
+
+    _app_auth._jwks_cache = None
