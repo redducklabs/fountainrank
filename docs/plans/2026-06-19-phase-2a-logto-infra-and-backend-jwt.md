@@ -20,7 +20,7 @@
 - `dev_auth_enabled` defaults `False` (production never opens an unauthenticated write path).
 - Every auth failure returns **HTTP 401**, never 500. **Never** log the raw token, full JWT, or signature; log only a reason code + (when decodable) `sub`/`kid`, via the existing structured logger (`logging.getLogger("app.auth")`, `extra={...}`).
 - No AI attribution in commits/PRs; no time estimates anywhere. Conventional Commits, frequent commits.
-- Windows file tools use backslash paths; the Bash tool (Git Bash) uses forward-slash paths under `/d/repos/fountainrank`.
+- **Execution environment:** this plan is implemented by a worker on the **Windows host**, where the Bash tool is **Git Bash** (POSIX sh, forward-slash paths under `/d/repos/fountainrank`) and `run.ps1` is invoked as `powershell.exe -NoProfile -File run.ps1 <cmd>` (`pwsh` is not on PATH — per the handoffs). These command forms are correct for that environment; they are **not** meant to run inside Codex's WSL shell. File tools (Read/Write/Edit) use backslash paths.
 - IaC is read-only locally: validate manifests with `kubeconform`; never `kubectl apply`/`helm upgrade` by hand. Deploy is owner-gated (a `v*.*.*` tag).
 
 ---
@@ -61,7 +61,7 @@ NAMESPACE=fountainrank ENVIRONMENT=production IMAGE_TAG=test \
 
 Expected: `... logto ... Valid` / `... logto-service ... Valid`, 0 Invalid, 0 Errors, and no leftover `${...}` in the rendered output.
 
-If `kubeconform` is not installed (it is not by default — see the Phase 0e handoff): `go install github.com/yannh/kubeconform/cmd/kubeconform@latest` (`go` is on PATH; the binary lands in `$(go env GOPATH)/bin`). Do **not** substitute `kubectl apply --dry-run=client` — in this environment it reaches the live cluster.
+If `kubeconform` is not installed (it is not by default — see the Phase 0e handoff): `go install github.com/yannh/kubeconform/cmd/kubeconform@v0.6.7` (`go` is on PATH; the binary lands in `$(go env GOPATH)/bin`). Pin the tag (not `@latest`) so the gate is reproducible. Do **not** substitute `kubectl apply --dry-run=client` — in this environment it reaches the live cluster.
 
 - [ ] **Step 3: Correct the admin-access + API-resource docs**
 
@@ -315,10 +315,11 @@ async def test_valid_token_returns_claims(keypair, cache, settings):
 
 
 async def test_expired_token_rejected(keypair, cache, settings):
+    # exp must be older than the verifier's 60s leeway, or PyJWT still accepts it.
     priv, _ = keypair
     now = int(time.time())
     with pytest.raises(AuthError):
-        await validate_bearer_token(_mint(priv, exp=now - 10, iat=now - 300), settings, cache)
+        await validate_bearer_token(_mint(priv, exp=now - 120, iat=now - 300), settings, cache)
 
 
 async def test_wrong_audience_rejected(keypair, cache, settings):
@@ -383,6 +384,31 @@ async def test_unknown_kid_flood_is_rate_limited(keypair, settings):
         with pytest.raises(AuthError):
             await validate_bearer_token(_mint(priv, kid="bogus"), settings, c)
     assert calls["n"] == 1  # only the first unknown-kid miss fetched; rest rate-limited
+
+
+async def test_rotation_new_kid_resolves_after_refetch(keypair, settings):
+    priv1, jwks1 = keypair
+    priv2 = ec.generate_private_key(ec.SECP384R1())
+    nums = priv2.public_key().public_numbers()
+    jwk2 = {"kty": "EC", "crv": "P-384", "alg": "ES384", "use": "sig", "kid": "test-key-2",
+            "x": _b64(nums.x, 48), "y": _b64(nums.y, 48)}
+    state = {"set": jwks1}
+
+    async def fetch():
+        return state["set"]
+
+    c = JwksCache("https://x/jwks", 3600, fetch=fetch, min_refetch_interval=0.0)
+    assert (await validate_bearer_token(_mint(priv1), settings, c))["sub"] == "logto|abc"
+
+    # Rotate: the JWKS now serves only KID2. A KID2 token misses the cache and, because
+    # min_refetch_interval=0, triggers a refetch that picks up the rotated key.
+    state["set"] = {"keys": [jwk2]}
+    now = int(time.time())
+    token2 = jwt.encode(
+        {"sub": "logto|xyz", "iss": ISSUER, "aud": AUDIENCE, "iat": now, "exp": now + 300},
+        priv2, algorithm="ES384", headers={"kid": "test-key-2"},
+    )
+    assert (await validate_bearer_token(token2, settings, c))["sub"] == "logto|xyz"
 ```
 
 - [ ] **Step 3: Run it to verify it fails**
@@ -401,7 +427,7 @@ Turns a bearer token string into verified claims: ES384 signature checked agains
 Logto's JWKS, with `iss`/`aud`/`exp` enforced. The algorithm is a hardcoded allowlist
 (never the token header's `alg`) to defeat alg-confusion / `none` attacks. The JWKS is
 cached with a TTL and a minimum refetch interval so unknown-`kid` floods cannot force
-unbounded network fetches. See docs/specs/2026-06-19-phase-2a-logto-infra-and-backend-jwt-design.md.
+unbounded network fetches. See the Phase 2a design spec under docs/specs/.
 """
 
 import asyncio
@@ -421,10 +447,15 @@ class AuthError(Exception):
     """A bearer token could not be validated. The resolver maps this to HTTP 401.
 
     `reason` is a short machine code for logging — never contains token material.
+    `kid` is the (unverified) key id from the token header when known, for log
+    correlation only (distinguishes unknown-kid / rotation misses from generic
+    invalid-token traffic). The unverified `sub` is deliberately NOT carried — it is
+    attacker-controlled and must not be logged as identity.
     """
 
-    def __init__(self, reason: str):
+    def __init__(self, reason: str, *, kid: str | None = None):
         self.reason = reason
+        self.kid = kid
         super().__init__(reason)
 
 
@@ -450,7 +481,9 @@ class JwksCache:
         self._min_refetch_interval = min_refetch_interval
         self._keys: dict[str, jwt.PyJWK] = {}
         self._fetched_at = 0.0
-        self._last_attempt = 0.0
+        # None = never attempted -> the first fetch is always allowed. NOT 0.0: monotonic()'s
+        # origin is arbitrary, so `now - 0.0 < interval` could spuriously block the first fetch.
+        self._last_attempt: float | None = None
         self._lock = asyncio.Lock()
 
     async def _fetch(self) -> dict:
@@ -472,9 +505,15 @@ class JwksCache:
             now = time.monotonic()
             if kid in self._keys and self._fresh(now):
                 return self._keys[kid]
-            if (now - self._last_attempt) < self._min_refetch_interval:
+            # First fetch always allowed (_last_attempt is None); after that, rate-limited so
+            # an unknown-kid flood cannot force unbounded fetches (DoS guard).
+            may_refetch = (
+                self._last_attempt is None
+                or (now - self._last_attempt) >= self._min_refetch_interval
+            )
+            if not may_refetch:
                 # Rate-limited: serve a cached key if we have one, else reject without
-                # touching the network (unknown-kid flood / DoS guard).
+                # touching the network.
                 if kid in self._keys:
                     return self._keys[kid]
                 raise AuthError("unknown_kid")
@@ -498,12 +537,17 @@ async def validate_bearer_token(token: str, settings: Settings, cache: JwksCache
         header = jwt.get_unverified_header(token)
     except jwt.PyJWTError as exc:
         raise AuthError("malformed_token") from exc
-    if header.get("alg") not in _ALGORITHMS:
-        raise AuthError("unexpected_alg")
     kid = header.get("kid")
+    if header.get("alg") not in _ALGORITHMS:
+        raise AuthError("unexpected_alg", kid=kid)
     if not kid:
         raise AuthError("missing_kid")
-    signing_key = await cache.get_key(kid)
+    try:
+        signing_key = await cache.get_key(kid)
+    except AuthError as exc:
+        if exc.kid is None:
+            exc.kid = kid  # annotate cache-raised errors (unknown_kid / jwks_fetch_failed)
+        raise
     try:
         return jwt.decode(
             token,
@@ -515,7 +559,7 @@ async def validate_bearer_token(token: str, settings: Settings, cache: JwksCache
             options={"require": ["exp", "iss", "aud", "sub"]},
         )
     except jwt.PyJWTError as exc:
-        raise AuthError(f"invalid_token:{type(exc).__name__}") from exc
+        raise AuthError(f"invalid_token:{type(exc).__name__}", kid=kid) from exc
 ```
 
 - [ ] **Step 5: Run the tests to verify they pass**
@@ -554,15 +598,16 @@ import time
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
+from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 
-from app.auth import get_jwks_cache
+from app.auth import get_current_user, get_jwks_cache
 from app.config import Settings, get_settings
 from app.logto_auth import AuthError, JwksCache, validate_bearer_token
 from app.main import app
 ```
 
-Then **append** these two functions at the end of the file (no further imports):
+Then **append** these functions at the end of the file (no further imports):
 
 ```python
 async def test_bearer_jwt_provisions_and_authorizes_write(keypair, cache, clean_db):
@@ -597,7 +642,7 @@ async def test_invalid_bearer_does_not_fall_through_to_dev(keypair, cache, clean
                 "/api/v1/fountains",
                 json={"location": {"latitude": 1.0, "longitude": 2.0}, "is_working": True},
                 headers={
-                    "Authorization": f"Bearer {_mint(priv, exp=now - 10, iat=now - 300)}",
+                    "Authorization": f"Bearer {_mint(priv, exp=now - 120, iat=now - 300)}",
                     "X-Dev-User": "logto-abc",
                 },
             )
@@ -605,6 +650,66 @@ async def test_invalid_bearer_does_not_fall_through_to_dev(keypair, cache, clean
     finally:
         app.dependency_overrides.pop(get_jwks_cache, None)
         app.dependency_overrides.pop(get_settings, None)
+
+
+async def test_bearer_without_email_name_uses_fallbacks(keypair, cache, session, clean_db):
+    # A resource JWT carries sub but no email/name -> NOT NULL columns get safe fallbacks.
+    # Call the resolver directly (no HTTP/commit needed): get_or_create_user flushes and
+    # returns the User with the values we provisioned.
+    priv, _ = keypair
+    now = int(time.time())
+    token = jwt.encode(
+        {"sub": "logto|nomail", "iss": ISSUER, "aud": AUDIENCE, "iat": now, "exp": now + 300},
+        priv, algorithm="ES384", headers={"kid": KID},
+    )
+    user = await get_current_user(
+        authorization=f"Bearer {token}",
+        x_dev_user=None, x_dev_email=None, x_dev_name=None,
+        session=session, settings=Settings(dev_auth_enabled=False), jwks_cache=cache,
+    )
+    assert user.logto_user_id == "logto|nomail"
+    assert user.email == "logto|nomail@users.noreply.fountainrank.com"
+    assert user.display_name == "logto|nomail"
+
+
+async def test_malformed_authorization_rejected_without_dev_fallthrough(cache, session):
+    # A present but non-Bearer Authorization header is 401 even with the dev seam enabled
+    # and X-Dev-User set — it must NOT fall through to the dev path.
+    with pytest.raises(HTTPException) as ei:
+        await get_current_user(
+            authorization="Banana xyz",
+            x_dev_user="logto-abc", x_dev_email=None, x_dev_name=None,
+            session=session, settings=Settings(dev_auth_enabled=True), jwks_cache=cache,
+        )
+    assert ei.value.status_code == 401
+
+
+async def test_no_credential_rejected_when_dev_disabled(cache, session):
+    with pytest.raises(HTTPException) as ei:
+        await get_current_user(
+            authorization=None,
+            x_dev_user=None, x_dev_email=None, x_dev_name=None,
+            session=session, settings=Settings(dev_auth_enabled=False), jwks_cache=cache,
+        )
+    assert ei.value.status_code == 401
+
+
+async def test_auth_failure_logs_kid_not_token(keypair, cache, session, caplog):
+    # Observability: an auth failure logs reason + kid (request_id is auto-stamped) and
+    # never the token. Use an unknown kid so the cache annotates it onto the AuthError.
+    priv, _ = keypair
+    token = _mint(priv, kid="rotated-out")
+    with caplog.at_level("WARNING", logger="app.auth"):
+        with pytest.raises(HTTPException):
+            await get_current_user(
+                authorization=f"Bearer {token}",
+                x_dev_user=None, x_dev_email=None, x_dev_name=None,
+                session=session, settings=Settings(dev_auth_enabled=False), jwks_cache=cache,
+            )
+    rec = next(r for r in caplog.records if r.name == "app.auth")
+    assert rec.reason == "unknown_kid"
+    assert rec.kid == "rotated-out"
+    assert token not in rec.getMessage()
 ```
 
 Note: `clean_db` (from `conftest.py`) resets tables; these tests need the DB up (`./run.ps1 up`).
@@ -668,12 +773,17 @@ async def get_current_user(
     if authorization is not None:
         scheme, _, token = authorization.partition(" ")
         if scheme.lower() != "bearer" or not token.strip():
-            logger.warning("auth failed", extra={"reason": "malformed_authorization_header"})
+            logger.warning(
+                "auth failed",
+                extra={"reason": "malformed_authorization_header", "kid": None},
+            )
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="invalid authorization header")
         try:
             claims = await validate_bearer_token(token.strip(), settings, jwks_cache)
         except AuthError as exc:
-            logger.warning("auth failed", extra={"reason": exc.reason})
+            # request_id is auto-stamped by RequestIdFilter; kid aids rotation/flood triage.
+            # Never log the token, full JWT, or the unverified sub.
+            logger.warning("auth failed", extra={"reason": exc.reason, "kid": exc.kid})
             raise HTTPException(
                 status.HTTP_401_UNAUTHORIZED, detail="invalid token"
             ) from exc
@@ -695,6 +805,23 @@ async def get_current_user(
     raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="authentication required")
 ```
 
+Then add an autouse reset fixture to `backend/tests/conftest.py` (append at the end) so the
+process-singleton JWKS cache never leaks between tests — mirroring the existing
+`reset_app_engine` fixture:
+
+```python
+@pytest.fixture(autouse=True)
+def reset_jwks_cache():
+    """Reset the app-global JWKS cache singleton after each test so a cache built from one
+    test's settings can't leak into the next (order-independence)."""
+    yield
+    import app.auth as _app_auth
+
+    _app_auth._jwks_cache = None
+```
+
+(`pytest` is already imported at the top of `conftest.py`.)
+
 - [ ] **Step 4: Run the new tests to verify they pass**
 
 Run: `cd /d/repos/fountainrank/backend && uv run pytest tests/test_logto_auth.py -v`
@@ -704,7 +831,7 @@ Expected: PASS (module + resolver cases all green).
 
 ```bash
 cd /d/repos/fountainrank
-git add backend/app/auth.py backend/tests/test_logto_auth.py
+git add backend/app/auth.py backend/tests/test_logto_auth.py backend/tests/conftest.py
 git commit -m "feat(backend): dual-path get_current_user (Logto JWT real path + gated dev seam)"
 ```
 

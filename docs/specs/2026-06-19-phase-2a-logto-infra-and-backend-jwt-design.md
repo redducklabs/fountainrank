@@ -139,10 +139,14 @@ A focused module with one responsibility: turn a bearer token string into valida
 - **JWKS cache.** An async, `kid`-keyed cache fed by an injectable fetch coroutine
   (`httpx.AsyncClient.get(logto_jwks_uri)`). Behaviour:
   - Cache the full key set with a TTL (`logto_jwks_cache_ttl_seconds`).
-  - On a token whose `kid` is not in cache, refetch **once** (handles key rotation), guarded
-    by an `asyncio.Lock` (no thundering herd) and a **minimum refetch interval** (negative
-    caching) so a flood of tokens bearing bogus `kid`s cannot force unbounded refetches
-    (DoS guard). If the `kid` is still absent after the allowed refetch → reject.
+  - On a token whose `kid` is not in cache, refetch (handles key rotation), guarded by an
+    `asyncio.Lock` (no thundering herd) and a **minimum refetch interval** (negative caching)
+    so a flood of tokens bearing bogus `kid`s cannot force unbounded refetches (DoS guard).
+    If the `kid` is still absent after the allowed refetch → reject. The very first fetch is
+    always allowed (the "never attempted" state is tracked explicitly, **not** as a
+    `monotonic()==0` sentinel — `monotonic()`'s origin is arbitrary). Worst-case lag to
+    recognize a **newly rotated** `kid` is one `min_refetch_interval` (~10s) if a fetch
+    happened immediately prior; acceptable because Logto key rotation is infrequent.
   - The fetch coroutine is injectable so tests supply a synthetic JWKS with **no network**.
 - **Verification.** Build the EC public key from the matching JWK and call
   `jwt.decode(token, key, algorithms=["ES384"], audience=settings.logto_audience,
@@ -206,8 +210,11 @@ These are recorded in `docs/setup/06-logto.md` (updated here).
 - JWKS endpoint unreachable / network error during a required fetch → `401` (auth cannot be
   established) plus a `WARNING` log; never a silent pass and never a `500`.
 - Per the Logging & Observability standard: log every auth failure at `WARNING` with the
-  reason code, request id, and (when decodable) the `sub`/`kid` — **never** the raw token,
-  full JWT, or signature. Success path logs at `DEBUG`/`INFO` with `sub` only.
+  reason code, the request id (auto-stamped by `RequestIdFilter`), and the `kid` **when
+  decodable** — **never** the raw token, full JWT, signature, or the **unverified** `sub`.
+  (The `sub` from an unvalidated token is attacker-controlled; logging it as identity/PII is
+  unsafe, so failure logs carry `kid`+reason only.) The success path logs at `DEBUG`/`INFO`
+  with the **validated** `sub` only.
 
 ## 6. Testing
 
