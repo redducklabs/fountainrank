@@ -137,3 +137,18 @@ async def test_malformed_creds_with_bad_token_is_401_not_500():
         assert resp.status_code == 401
     finally:
         app.dependency_overrides.pop(get_settings, None)
+
+
+async def test_control_chars_in_to_rejected_422_not_500(configured):
+    # A `to` containing CR/LF (header-injection attempt) must be 422 (not a 500), and
+    # must not reach the sender.
+    resp = await _post(
+        {"Authorization": f"Bearer {TOKEN}"},
+        {
+            "to": "u@example.com\r\nBcc: evil@example.com",
+            "type": "SignIn",
+            "payload": {"code": "123456"},
+        },
+    )
+    assert resp.status_code == 422
+    assert not configured.sent

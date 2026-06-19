@@ -175,3 +175,13 @@ async def test_concurrent_sends_make_one_token_request(settings):
         sender.send(to="b@x.com", subject="S", html="<b>h</b>", text="t"),
     )
     assert captured["token_count"] == 1  # lock + double-check prevents a duplicate fetch
+
+
+async def test_header_injection_in_to_raises_typed_error(settings):
+    # A CR/LF in `to` makes EmailMessage raise ValueError; the sender must wrap it as a
+    # typed EmailSendError (-> 502), never let it escape as a 500.
+    captured = {}
+    sender = GmailSender(settings, transport=_transport(captured))
+    with pytest.raises(EmailSendError) as ei:
+        await sender.send(to="u@x.com\r\nBcc: evil@x.com", subject="S", html="<b>h</b>", text="t")
+    assert ei.value.reason == "message_build_failed"

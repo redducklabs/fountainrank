@@ -74,7 +74,12 @@ async def send_email(
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT, detail="invalid request"
         ) from None
-    if not req.to.strip() or "@" not in req.to or not (req.payload.code or req.payload.link):
+    if (
+        not req.to.strip()
+        or "@" not in req.to
+        or any(ord(c) < 32 for c in req.to)  # reject CR/LF/control chars (header injection)
+        or not (req.payload.code or req.payload.link)
+    ):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="invalid request")
     subject, html, text = render(req.type, req.payload.model_dump())
     to_domain = req.to.rpartition("@")[2]  # log the domain only, never the full address/code

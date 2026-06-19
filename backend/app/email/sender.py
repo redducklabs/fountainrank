@@ -111,13 +111,16 @@ class GmailSender:
 
     async def send(self, *, to: str, subject: str, html: str, text: str) -> None:
         token = await self._access_token()
-        msg = EmailMessage()
-        msg["From"] = self._from
-        msg["To"] = to
-        msg["Subject"] = subject
-        msg.set_content(text)
-        msg.add_alternative(html, subtype="html")
-        raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+        try:
+            msg = EmailMessage()
+            msg["From"] = self._from
+            msg["To"] = to
+            msg["Subject"] = subject
+            msg.set_content(text)
+            msg.add_alternative(html, subtype="html")
+            raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+        except ValueError as exc:  # e.g. CR/LF (header injection) in an address/header
+            raise EmailSendError("message_build_failed") from exc
         try:
             async with self._client() as client:
                 resp = await client.post(
