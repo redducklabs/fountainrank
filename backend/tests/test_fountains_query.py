@@ -29,3 +29,24 @@ async def test_nearby_excludes_outside_radius(client):
     )
     body = resp.json()
     assert len(body) == 1
+
+
+async def test_bbox_returns_only_points_inside(client):
+    inside = await _add(client, 37.7749, -122.4194)
+    await _add(client, 40.0, -73.0)  # NYC, far outside an SF box
+    resp = await client.get(
+        "/api/v1/fountains/bbox",
+        params={"min_lat": 37.70, "min_lng": -122.50, "max_lat": 37.80, "max_lng": -122.40},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert [p["id"] for p in body] == [inside]
+    assert body[0]["distance_m"] is None  # no reference point for bbox
+
+
+async def test_bbox_rejects_inverted_bounds(client):
+    resp = await client.get(
+        "/api/v1/fountains/bbox",
+        params={"min_lat": 37.80, "min_lng": -122.40, "max_lat": 37.70, "max_lng": -122.50},
+    )
+    assert resp.status_code == 422

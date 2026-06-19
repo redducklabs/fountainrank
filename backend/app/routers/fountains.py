@@ -1,7 +1,8 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from geoalchemy2 import Geography
+from sqlalchemy import cast, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -156,6 +157,48 @@ async def nearby_fountains(
             distance_m=float(dist),
         )
         for (rid, rlat, rlng, working, avg, count, dist) in rows
+    ]
+
+
+@router.get("/fountains/bbox", response_model=list[FountainPin])
+async def fountains_in_bbox(
+    min_lat: float = Query(ge=-90.0, le=90.0),
+    min_lng: float = Query(ge=-180.0, le=180.0),
+    max_lat: float = Query(ge=-90.0, le=90.0),
+    max_lng: float = Query(ge=-180.0, le=180.0),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> list[FountainPin]:
+    if min_lat > max_lat or min_lng > max_lng:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="min_lat/min_lng must be <= max_lat/max_lng",
+        )
+    envelope = cast(func.ST_MakeEnvelope(min_lng, min_lat, max_lng, max_lat, 4326), Geography)
+    rows = (
+        await session.execute(
+            select(
+                Fountain.id,
+                latitude_of(Fountain.location),
+                longitude_of(Fountain.location),
+                Fountain.is_working,
+                Fountain.average_rating,
+                Fountain.rating_count,
+            )
+            .where(func.ST_Intersects(Fountain.location, envelope))
+            .limit(settings.max_results)
+        )
+    ).all()
+    return [
+        FountainPin(
+            id=rid,
+            location=Coordinates(latitude=float(rlat), longitude=float(rlng)),
+            is_working=working,
+            average_rating=avg,
+            rating_count=count,
+            distance_m=None,
+        )
+        for (rid, rlat, rlng, working, avg, count) in rows
     ]
 
 
