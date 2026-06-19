@@ -28,7 +28,7 @@
 - Test: `backend/tests/test_config.py`, `backend/tests/test_logging.py`
 
 **Interfaces:**
-- Produces: `Settings.google_service_account_json: str | None`, `Settings.google_delegated_user: str | None`, `Settings.from_email: str | None`, `Settings.google_workspace_domain: str | None`, `Settings.logto_email_webhook_token: str | None`, and `Settings.email_configured -> bool`.
+- Produces: `Settings.google_service_account_json: str | None`, `Settings.google_delegated_user: str | None`, `Settings.from_email: str | None`, `Settings.logto_email_webhook_token: str | None`, and `Settings.email_configured -> bool`.
 
 - [ ] **Step 1: Write the failing tests** (append to `backend/tests/test_config.py`; `Settings` is already imported there — add no import)
 
@@ -1057,7 +1057,7 @@ Expected: ruff ✓, format ✓, `alembic upgrade` ✓, `alembic check` (drift-fr
 - [ ] **Step 4: Full local CI mirror**
 
 Run: `cd /d/repos/fountainrank && powershell.exe -NoProfile -File run.ps1 check`
-Expected: backend + frontend lint/typecheck/test + web build + mobile all green. The `/internal/email` route is registered `include_in_schema=False`, so it does **not** appear in the OpenAPI schema and `pnpm run generate` produces **no** api-client change. Afterward run `git status --short` and confirm the only modified file is the owner's `docs/setup/04-apple-and-app-stores.md` — **no `packages/api-client/` diff**. If a client diff appears, STOP and investigate (the route leaked into the schema); do not blindly commit generated output.
+Expected: backend + frontend lint/typecheck/test + web build + mobile all green. The `/internal/email` route is registered `include_in_schema=False`, so it does **not** appear in the OpenAPI schema and `pnpm run generate` produces **no** api-client change. Afterward run `git status --short` and confirm there is **no `packages/api-client/` diff**; do not stage unrelated owner changes (the owner's `docs/setup/04-apple-and-app-stores.md` stays untouched). If a client diff appears, STOP and investigate (the route leaked into the schema); do not blindly commit generated output.
 
 - [ ] **Step 5: Commit**
 
