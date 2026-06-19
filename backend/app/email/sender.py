@@ -105,6 +105,8 @@ class GmailSender:
                 expires_in = float(data.get("expires_in", 3600))
             except (ValueError, KeyError, TypeError) as exc:
                 raise EmailSendError("token_response_invalid") from exc
+            if not isinstance(token, str) or not token.strip():
+                raise EmailSendError("token_response_invalid")
             self._token = token
             self._token_exp = now + expires_in
             return token

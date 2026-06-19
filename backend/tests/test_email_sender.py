@@ -156,6 +156,19 @@ async def test_token_response_without_access_token_raises(settings):
     assert ei.value.reason == "token_response_invalid"
 
 
+async def test_blank_access_token_rejected(settings):
+    # A present-but-blank access_token is a token-shape failure -> typed EmailSendError.
+    def handler(request):
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "  ", "expires_in": 3600})
+        return httpx.Response(404)
+
+    sender = GmailSender(settings, transport=httpx.MockTransport(handler))
+    with pytest.raises(EmailSendError) as ei:
+        await sender.send(to="u@x.com", subject="S", html="<b>h</b>", text="t")
+    assert ei.value.reason == "token_response_invalid"
+
+
 async def test_token_refreshed_after_expiry(settings):
     captured = {}
     clock = {"t": 1000.0}

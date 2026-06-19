@@ -11,8 +11,9 @@ locally everything here is read-only / dry-run (see `claude_help/kubernetes-infr
   `ingress.yaml`. The rest are **not** applied directly:
   - `secrets.yaml` + `registry-secret.yaml` — 📄 reference only (document the key
     contract). CI creates these secrets **imperatively** from GitHub Environment secrets +
-    the Terraform DB outputs. Required keys in `fountainrank-secrets`: `database-url` (app)
-    and `logto-db-url` (Logto). E.g.
+    the Terraform DB outputs. Required keys in `fountainrank-secrets`: `database-url` (app),
+    `logto-db-url` (Logto), and (email) `google-service-account-json` +
+    `logto-email-webhook-token`. E.g.
     `kubectl create secret generic fountainrank-secrets -n "$NAMESPACE" --from-literal=database-url="$DATABASE_URL" --from-literal=logto-db-url="$LOGTO_DB_URL" --dry-run=client -o yaml | kubectl apply -f -`
     and `doctl registry kubernetes-manifest fountainrank --name regcred --namespace "$NAMESPACE" | kubectl apply -f -`
     (the Secret name `regcred` must match `imagePullSecrets`). Applying the committed
@@ -29,6 +30,8 @@ locally everything here is read-only / dry-run (see `claude_help/kubernetes-infr
 | `${IMAGE_TAG}` | git SHA | build job |
 | `${REGISTRY}` | `registry.digitalocean.com/fountainrank` | `DO_REGISTRY` |
 | `${DOMAIN}` | `fountainrank.com` | deploy workflow |
+| `${GOOGLE_DELEGATED_USER}` | `noreply@fountainrank.com` | `GOOGLE_DELEGATED_USER` var (email) |
+| `${FROM_EMAIL}` | `noreply@fountainrank.com` | `FROM_EMAIL` var (email) |
 
 ## Deploy flow (CI, Phase 0f)
 
@@ -45,7 +48,8 @@ backend pod (`alembic upgrade head`).
 cd terraform && terraform fmt -check && terraform init -backend=false && terraform validate
 # k8s manifests — placeholder check + kubeconform (NOT kubectl dry-run, which hits the cluster)
 cd k8s && export NAMESPACE=fountainrank ENVIRONMENT=production IMAGE_TAG=test \
-  REGISTRY=registry.digitalocean.com/fountainrank DOMAIN=fountainrank.com
+  REGISTRY=registry.digitalocean.com/fountainrank DOMAIN=fountainrank.com \
+  GOOGLE_DELEGATED_USER=noreply@fountainrank.com FROM_EMAIL=noreply@fountainrank.com
 for f in *.yaml; do
   r="$(envsubst < "$f")"
   echo "$r" | grep -q '\${' && echo "UNSUBSTITUTED in $f"
