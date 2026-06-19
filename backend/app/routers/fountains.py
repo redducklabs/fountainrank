@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +16,7 @@ from app.schemas import (
     Coordinates,
     DimensionSummary,
     FountainDetail,
+    FountainPin,
     RateRequest,
     RatingInput,
 )
@@ -116,6 +117,46 @@ async def serialize_fountain_detail(session: AsyncSession, fountain: Fountain) -
         last_rated_at=fountain.last_rated_at,
         dimensions=dimensions,
     )
+
+
+@router.get("/fountains", response_model=list[FountainPin])
+async def nearby_fountains(
+    lat: float = Query(ge=-90.0, le=90.0),
+    lng: float = Query(ge=-180.0, le=180.0),
+    radius_m: float | None = Query(default=None, gt=0.0),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> list[FountainPin]:
+    radius = min(radius_m or settings.nearby_default_radius_m, settings.nearby_max_radius_m)
+    point = point_geography(lat, lng)
+    distance = func.ST_Distance(Fountain.location, point)
+    rows = (
+        await session.execute(
+            select(
+                Fountain.id,
+                latitude_of(Fountain.location),
+                longitude_of(Fountain.location),
+                Fountain.is_working,
+                Fountain.average_rating,
+                Fountain.rating_count,
+                distance,
+            )
+            .where(func.ST_DWithin(Fountain.location, point, radius))
+            .order_by(distance)
+            .limit(settings.max_results)
+        )
+    ).all()
+    return [
+        FountainPin(
+            id=rid,
+            location=Coordinates(latitude=float(rlat), longitude=float(rlng)),
+            is_working=working,
+            average_rating=avg,
+            rating_count=count,
+            distance_m=float(dist),
+        )
+        for (rid, rlat, rlng, working, avg, count, dist) in rows
+    ]
 
 
 @router.post("/fountains", response_model=FountainDetail, status_code=status.HTTP_201_CREATED)
