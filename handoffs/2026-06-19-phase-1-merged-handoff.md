@@ -48,6 +48,14 @@ Phase 1 is closed. The next feature phases (from the design, §20) are:
 
 ---
 
+## Source-control policy (decided 2026-06-19) — READ
+
+- The repo has a GitHub **ruleset requiring PRs** for `main` (classic branch-protection API returns 404 — the rule lives in **Repository → Rulesets**, not classic protection; don't be fooled by the 404). The owner's account has **bypass** privileges, so a direct `git push origin main` *succeeds* but prints `remote: - Changes must be made through a pull request.`
+- **Policy (owner decision):** **all code AND governance-doc changes (`CLAUDE.md`, `claude_help/`, specs, plans, infra) go through branch → PR → CI green + Codex `VERDICT: APPROVED` → squash-merge.** The **only** sanctioned direct-to-`main` exception is **session-continuity handoffs** (`handoffs/*.md`) — like this file — so a session can persist its state for an immediate restart. Do **not** direct-push anything else, even though the bypass would let you.
+- **TODO (do via a PR, not a direct push):** update `CLAUDE.md` → *Source Control Strategy* to record this handoff-only direct-to-`main` exception (right now that section reads "all work → branch → PR", which doesn't mention the exception).
+
+---
+
 ## What shipped in Phase 1 (PR #7)
 
 **Backend (`backend/app/…`), all under `/api/v1`:**
