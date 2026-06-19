@@ -1,3 +1,4 @@
+import logging
 import uuid
 
 from fastapi import Depends, Header, HTTPException, status
@@ -7,7 +8,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
 from app.db import get_session
+from app.logto_auth import AuthError, JwksCache, validate_bearer_token
 from app.models import User
+
+logger = logging.getLogger("app.auth")
+
+# Process-wide JWKS cache singleton (keys are fetched once and cached). Exposed as a
+# dependency so tests can override it with a synthetic, network-free cache.
+_jwks_cache: JwksCache | None = None
+
+
+def get_jwks_cache(settings: Settings = Depends(get_settings)) -> JwksCache:
+    global _jwks_cache
+    if _jwks_cache is None:
+        _jwks_cache = JwksCache(settings.logto_jwks_uri, settings.logto_jwks_cache_ttl_seconds)
+    return _jwks_cache
 
 
 async def get_or_create_user(
@@ -45,23 +60,49 @@ async def get_or_create_user(
 
 
 async def get_current_user(
+    authorization: str | None = Header(default=None),
     x_dev_user: str | None = Header(default=None, alias="X-Dev-User"),
     x_dev_email: str | None = Header(default=None, alias="X-Dev-Email"),
     x_dev_name: str | None = Header(default=None, alias="X-Dev-Name"),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
+    jwks_cache: JwksCache = Depends(get_jwks_cache),
 ) -> User:
-    """Phase 1 dev-auth seam. Phase 2 swaps the identity extraction below for
-    Logto JWT validation (verify iss/aud via JWKS, take `sub`); the
-    get_or_create_user tail is identical. Disabled by default so production never
-    exposes an unauthenticated write path before Phase 2."""
-    if not settings.dev_auth_enabled:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="authentication required")
-    if not x_dev_user:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="missing X-Dev-User header")
-    return await get_or_create_user(
-        session,
-        logto_user_id=x_dev_user,
-        email=x_dev_email or f"{x_dev_user}@dev.local",
-        display_name=x_dev_name or x_dev_user,
-    )
+    """Resolve the authenticated user.
+
+    Real path: a Logto `Authorization: Bearer <jwt>` (validated via JWKS, iss/aud/exp).
+    Dev path: the `X-Dev-User` seam, only when `dev_auth_enabled` is True AND no
+    Authorization header is present. A present-but-invalid bearer is a hard 401 and
+    never falls through to the dev path. Production runs with dev_auth_enabled=False,
+    so only the real path can authenticate."""
+    if authorization is not None:
+        scheme, _, token = authorization.partition(" ")
+        if scheme.lower() != "bearer" or not token.strip():
+            logger.warning(
+                "auth failed",
+                extra={"reason": "malformed_authorization_header", "kid": None},
+            )
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="invalid authorization header")
+        try:
+            claims = await validate_bearer_token(token.strip(), settings, jwks_cache)
+        except AuthError as exc:
+            # request_id is auto-stamped by RequestIdFilter; kid aids rotation/flood triage.
+            # Never log the token, full JWT, or the unverified sub.
+            logger.warning("auth failed", extra={"reason": exc.reason, "kid": exc.kid})
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="invalid token") from exc
+        sub = claims["sub"]
+        email = claims.get("email") or f"{sub}@users.noreply.fountainrank.com"
+        display_name = claims.get("name") or claims.get("username") or sub
+        return await get_or_create_user(
+            session, logto_user_id=sub, email=email, display_name=display_name
+        )
+
+    if settings.dev_auth_enabled and x_dev_user:
+        return await get_or_create_user(
+            session,
+            logto_user_id=x_dev_user,
+            email=x_dev_email or f"{x_dev_user}@dev.local",
+            display_name=x_dev_name or x_dev_user,
+        )
+
+    raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="authentication required")

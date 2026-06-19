@@ -4,9 +4,13 @@ import time
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
+from fastapi import HTTPException
+from httpx import ASGITransport, AsyncClient
 
-from app.config import Settings
+from app.auth import get_current_user, get_jwks_cache
+from app.config import Settings, get_settings
 from app.logto_auth import AuthError, JwksCache, validate_bearer_token
+from app.main import app
 
 KID = "test-key-1"
 ISSUER = "https://auth.fountainrank.com/oidc"
@@ -209,3 +213,125 @@ async def test_jwks_invalid_body_is_auth_error(keypair, settings):
     with pytest.raises(AuthError) as ei:
         await validate_bearer_token(_mint(priv), settings, c)
     assert ei.value.reason == "jwks_invalid"
+
+
+async def test_bearer_jwt_provisions_and_authorizes_write(keypair, cache, clean_db):
+    priv, _ = keypair
+    app.dependency_overrides[get_jwks_cache] = lambda: cache
+    app.dependency_overrides[get_settings] = lambda: Settings(dev_auth_enabled=False)
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post(
+                "/api/v1/fountains",
+                json={"location": {"latitude": 1.0, "longitude": 2.0}, "is_working": True},
+                headers={"Authorization": f"Bearer {_mint(priv)}"},
+            )
+        assert resp.status_code == 201
+    finally:
+        app.dependency_overrides.pop(get_jwks_cache, None)
+        app.dependency_overrides.pop(get_settings, None)
+
+
+async def test_invalid_bearer_does_not_fall_through_to_dev(keypair, cache, clean_db):
+    # An Authorization header is present but the token is expired; even with dev auth
+    # ENABLED and X-Dev-User set, this must be 401 — never silently use the dev path.
+    priv, _ = keypair
+    now = int(time.time())
+    app.dependency_overrides[get_jwks_cache] = lambda: cache
+    app.dependency_overrides[get_settings] = lambda: Settings(dev_auth_enabled=True)
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post(
+                "/api/v1/fountains",
+                json={"location": {"latitude": 1.0, "longitude": 2.0}, "is_working": True},
+                headers={
+                    "Authorization": f"Bearer {_mint(priv, exp=now - 120, iat=now - 300)}",
+                    "X-Dev-User": "logto-abc",
+                },
+            )
+        assert resp.status_code == 401
+    finally:
+        app.dependency_overrides.pop(get_jwks_cache, None)
+        app.dependency_overrides.pop(get_settings, None)
+
+
+async def test_bearer_without_email_name_uses_fallbacks(keypair, cache, session, clean_db):
+    # A resource JWT carries sub but no email/name -> NOT NULL columns get safe fallbacks.
+    # Call the resolver directly (no HTTP/commit needed): get_or_create_user flushes and
+    # returns the User with the values we provisioned.
+    priv, _ = keypair
+    now = int(time.time())
+    token = jwt.encode(
+        {"sub": "logto|nomail", "iss": ISSUER, "aud": AUDIENCE, "iat": now, "exp": now + 300},
+        priv,
+        algorithm="ES384",
+        headers={"kid": KID},
+    )
+    user = await get_current_user(
+        authorization=f"Bearer {token}",
+        x_dev_user=None,
+        x_dev_email=None,
+        x_dev_name=None,
+        session=session,
+        settings=Settings(dev_auth_enabled=False),
+        jwks_cache=cache,
+    )
+    assert user.logto_user_id == "logto|nomail"
+    assert user.email == "logto|nomail@users.noreply.fountainrank.com"
+    assert user.display_name == "logto|nomail"
+
+
+async def test_malformed_authorization_rejected_without_dev_fallthrough(cache, session):
+    # A present but non-Bearer Authorization header is 401 even with the dev seam enabled
+    # and X-Dev-User set — it must NOT fall through to the dev path.
+    with pytest.raises(HTTPException) as ei:
+        await get_current_user(
+            authorization="Banana xyz",
+            x_dev_user="logto-abc",
+            x_dev_email=None,
+            x_dev_name=None,
+            session=session,
+            settings=Settings(dev_auth_enabled=True),
+            jwks_cache=cache,
+        )
+    assert ei.value.status_code == 401
+
+
+async def test_no_credential_rejected_when_dev_disabled(cache, session):
+    with pytest.raises(HTTPException) as ei:
+        await get_current_user(
+            authorization=None,
+            x_dev_user=None,
+            x_dev_email=None,
+            x_dev_name=None,
+            session=session,
+            settings=Settings(dev_auth_enabled=False),
+            jwks_cache=cache,
+        )
+    assert ei.value.status_code == 401
+
+
+async def test_auth_failure_logs_kid_not_token(keypair, cache, session, caplog):
+    # Observability: an auth failure logs reason + kid (request_id is auto-stamped) and
+    # never the token. Use an unknown kid so the cache annotates it onto the AuthError.
+    priv, _ = keypair
+    token = _mint(priv, kid="rotated-out")
+    with caplog.at_level("WARNING", logger="app.auth"):
+        with pytest.raises(HTTPException):
+            await get_current_user(
+                authorization=f"Bearer {token}",
+                x_dev_user=None,
+                x_dev_email=None,
+                x_dev_name=None,
+                session=session,
+                settings=Settings(dev_auth_enabled=False),
+                jwks_cache=cache,
+            )
+    rec = next(r for r in caplog.records if r.name == "app.auth")
+    assert rec.reason == "unknown_kid"
+    assert rec.kid == "rotated-out"
+    assert token not in rec.getMessage()
+    # The token must not leak via any structured `extra` field either.
+    assert all(token not in str(v) for v in rec.__dict__.values())
