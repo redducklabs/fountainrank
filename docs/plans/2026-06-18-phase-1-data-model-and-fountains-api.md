@@ -1185,7 +1185,7 @@ async def _validate_rating_types(session: AsyncSession, ratings: list[RatingInpu
     unknown = ids - known
     if unknown:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"unknown rating_type_id(s): {sorted(unknown)}",
         )
 
@@ -1628,7 +1628,7 @@ async def fountains_in_bbox(
 ) -> list[FountainPin]:
     if min_lat > max_lat or min_lng > max_lng:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="min_lat/min_lng must be <= max_lat/max_lng",
         )
     envelope = cast(func.ST_MakeEnvelope(min_lng, min_lat, max_lng, max_lat, 4326), Geography)

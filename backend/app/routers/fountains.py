@@ -33,7 +33,7 @@ async def _validate_rating_types(session: AsyncSession, ratings: list[RatingInpu
     unknown = ids - known
     if unknown:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"unknown rating_type_id(s): {sorted(unknown)}",
         )
 
