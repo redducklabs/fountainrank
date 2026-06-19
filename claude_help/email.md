@@ -5,10 +5,11 @@ delivered through Google. See spec §11.
 
 ## Transport
 
-- **Primary:** a **custom Logto email connector backed by the Gmail API** — a
-  Google **service account with Google Workspace domain-wide delegation**,
-  impersonating a Workspace sender. This mirrors the proven TherapyLink transport
-  (TherapyLink deliberately moved off SendGrid to the Gmail API).
+- **Primary:** Logto's built-in **HTTP email connector** calls an authenticated webhook on
+  the FastAPI backend (`POST /internal/email`, in-cluster, shared bearer token), which sends
+  via the **Gmail API** using a Google **service account with domain-wide delegation**
+  (scope `gmail.send`) impersonating `noreply@fountainrank.com`. No SMTP, no app password,
+  no custom Logto connector image. See `docs/specs/2026-06-19-email-gmail-connector-design.md`.
 - **Fallback:** Logto's built-in **SMTP connector** pointed at Google Workspace,
   if the custom connector is deferred.
 - Any future app-originated email (e.g., notifications) reuses the same Gmail-API
