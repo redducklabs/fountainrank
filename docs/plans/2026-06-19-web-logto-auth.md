@@ -18,7 +18,8 @@
 - **Logging:** new server-side auth paths use the structured `web/lib/server/log.ts` helper (redacted, stdout, `LOG_LEVEL`/`LOG_FORMAT`); no bare `console.*` for diagnostics. Never log tokens, JWTs, the session cookie, secrets, or the raw callback query string.
 - **Deps:** `@logto/next@4.2.10` + `server-only` are the only new web deps; **no** new backend deps. Generated `packages/api-client/openapi.json` + `src/schema.d.ts` are gitignored — never commit them.
 - **No AI attribution** in commits/PRs. **No time estimates** anywhere.
-- **Windows host:** file tools use backslash paths (`D:\repos\fountainrank\...`); the Bash tool is git-bash (forward slashes). Local CI mirror: `powershell.exe -NoProfile -File run.ps1 check` (full) / `run.ps1 check -Backend`. The web local mirror is flaky on Windows (known `eslint-config-next` resolution artifact) — if it fails only on that, CI is the source of truth.
+- **Runtime-specific paths/shell:** use YOUR runtime's convention, never mix them. Claude Code on Windows: file tools use backslash paths (`D:\repos\fountainrank\...`), the Bash tool is Git Bash (forward slashes). Codex in WSL: Linux paths under `/mnt/d/repos/fountainrank` (see `AGENTS.md`). Local CI mirror: `powershell.exe -NoProfile -File run.ps1 check` (full) / `run.ps1 check -Backend`.
+- **Local mirror exception (narrow):** the ONLY sanctioned local-check skip is `web#lint` failing **specifically** with `eslint-config-next` unable to resolve `next/dist/compiled/babel/eslint-parser` (a Windows-only pnpm-linking artifact). EVERY other local check (backend, api-client, web typecheck/test/build, prettier) MUST pass locally, and CI's `workspace-js` (clean Linux install) MUST be green — it is authoritative for that one lint resolution. Any other failure blocks.
 - **Source control:** branch `feat/web-logto-auth` (already created) → PR → CI green + Codex Loop B `VERDICT: APPROVED` + all PR comments addressed → squash-merge. Conventional Commits, frequent commits.
 
 ---
@@ -343,6 +344,24 @@ describe("redact", () => {
     expect(out.code).toBe("[redacted]");
     expect(out.user).toBe("bob");
   });
+
+  it("redacts sensitive keys nested in objects", () => {
+    expect(redact({ error: { accessToken: "x" } })).toEqual({ error: { accessToken: "[redacted]" } });
+  });
+
+  it("redacts sensitive objects inside arrays", () => {
+    expect(redact({ items: [{ token: "x" }, { ok: 1 }] })).toEqual({
+      items: [{ token: "[redacted]" }, { ok: 1 }],
+    });
+  });
+
+  it("redacts JWT-looking string values even under a benign key", () => {
+    expect(redact({ note: "header.eyJhbGc.sig.part" }).note).toBe("[redacted]");
+  });
+
+  it("drops Error message/cause/stack, keeps the name", () => {
+    expect(redact({ err: new TypeError("secret-in-message") })).toEqual({ err: { name: "TypeError" } });
+  });
 });
 
 describe("log", () => {
@@ -377,17 +396,44 @@ import "server-only";
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
 const ORDER: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, error: 40 };
+const MAX_DEPTH = 4;
 
-// Substrings that mark a field as sensitive; matched case-insensitively against the key.
-const SENSITIVE = ["token", "authorization", "cookie", "secret", "jwt", "code", "password", "query"];
+// Substrings that mark a field KEY as sensitive (matched case-insensitively).
+const SENSITIVE = [
+  "token", "authorization", "cookie", "secret", "jwt", "code", "password", "query",
+  "session", "credential", "apikey", "api_key", "clientid", "client_id",
+];
 
-export function redact(fields: Record<string, unknown>): Record<string, unknown> {
+// A JWT-shaped substring — redact such VALUES even under a benign key.
+const JWT_RE = /eyJ[\w-]+\.[\w-]+\.[\w-]+/;
+
+function isSensitiveKey(key: string): boolean {
+  const lower = key.toLowerCase();
+  return SENSITIVE.some((s) => lower.includes(s));
+}
+
+function redactValue(value: unknown, depth: number): unknown {
+  if (depth >= MAX_DEPTH) return "[truncated]";
+  if (typeof value === "string") return JWT_RE.test(value) ? "[redacted]" : value;
+  // Error message/cause/stack can carry secrets — keep only the type name.
+  if (value instanceof Error) return { name: value.name };
+  if (Array.isArray(value)) return value.map((v) => redactValue(v, depth + 1));
+  if (value && typeof value === "object") {
+    return redactObject(value as Record<string, unknown>, depth + 1);
+  }
+  return value;
+}
+
+function redactObject(obj: Record<string, unknown>, depth: number): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(fields)) {
-    const lower = key.toLowerCase();
-    out[key] = SENSITIVE.some((s) => lower.includes(s)) ? "[redacted]" : value;
+  for (const [key, value] of Object.entries(obj)) {
+    out[key] = isSensitiveKey(key) ? "[redacted]" : redactValue(value, depth);
   }
   return out;
+}
+
+export function redact(fields: Record<string, unknown>): Record<string, unknown> {
+  return redactObject(fields, 0);
 }
 
 export function log(
@@ -439,14 +485,32 @@ git commit -m "feat(web): add redacting structured server logger"
 Create `web/lib/server/api.test.ts`:
 
 ```ts
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
-vi.mock("@logto/next/server-actions", () => ({
-  getAccessTokenRSC: vi.fn().mockResolvedValue("tok-123"),
-}));
+
+const getAccessTokenRSC = vi.fn();
+vi.mock("@logto/next/server-actions", () => ({ getAccessTokenRSC }));
+
+const makeClient = vi.fn();
+vi.mock("@fountainrank/api-client", () => ({ makeClient }));
 
 import { authedClientHeaders, getAuthedApiClient } from "./api";
+import { API_RESOURCE } from "../logto";
+
+const ENV = {
+  LOGTO_ENDPOINT: "https://auth.fountainrank.com",
+  LOGTO_APP_ID: "app123",
+  LOGTO_APP_SECRET: "secret",
+  LOGTO_BASE_URL: "https://fountainrank.com",
+  LOGTO_COOKIE_SECRET: "x".repeat(32),
+  NEXT_PUBLIC_API_BASE_URL: "https://api.fountainrank.com",
+};
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.clearAllMocks();
+});
 
 describe("authedClientHeaders", () => {
   it("sets Bearer auth + request id", () => {
@@ -458,14 +522,22 @@ describe("authedClientHeaders", () => {
 });
 
 describe("getAuthedApiClient", () => {
-  it("fetches an RSC token and returns a client", async () => {
-    process.env.LOGTO_ENDPOINT = "https://auth.fountainrank.com";
-    process.env.LOGTO_APP_ID = "app123";
-    process.env.LOGTO_APP_SECRET = "secret";
-    process.env.LOGTO_BASE_URL = "https://fountainrank.com";
-    process.env.LOGTO_COOKIE_SECRET = "x".repeat(32);
+  it("mints an RSC token for the API resource and attaches it to the client", async () => {
+    for (const [k, v] of Object.entries(ENV)) vi.stubEnv(k, v);
+    getAccessTokenRSC.mockResolvedValue("tok-123");
+    const sentinel = { GET: vi.fn() };
+    makeClient.mockReturnValue(sentinel);
+
     const client = await getAuthedApiClient("rid-1");
-    expect(client.GET).toBeTypeOf("function");
+
+    expect(getAccessTokenRSC).toHaveBeenCalledWith(
+      expect.objectContaining({ resources: [API_RESOURCE] }),
+      API_RESOURCE,
+    );
+    expect(makeClient).toHaveBeenCalledWith("https://api.fountainrank.com", {
+      headers: { Authorization: "Bearer tok-123", "X-Request-ID": "rid-1" },
+    });
+    expect(client).toBe(sentinel);
   });
 });
 ```
@@ -565,14 +637,24 @@ import { log } from "../../lib/server/log";
 
 export const dynamic = "force-dynamic";
 
+// A thrown Next redirect carries a `digest` of "NEXT_REDIRECT;...". handleSignIn() in
+// @logto/next can itself redirect internally; that must be rethrown, NOT treated as a
+// callback failure, or a successful sign-in would be turned into an error.
+function isNextRedirect(error: unknown): boolean {
+  const digest = (error as { digest?: unknown }).digest;
+  return typeof digest === "string" && digest.startsWith("NEXT_REDIRECT");
+}
+
 export async function GET(request: NextRequest): Promise<void> {
+  const requestId = crypto.randomUUID();
   let ok = true;
   try {
     await handleSignIn(getLogtoConfig(), request.nextUrl.searchParams);
   } catch (error) {
-    // Never log the callback query string (it carries the auth `code`).
+    if (isNextRedirect(error)) throw error; // a successful internal redirect — let it propagate
     ok = false;
-    log("warn", "logto callback failed", { reason: (error as Error).name });
+    // Never log the callback query string (it carries the auth `code`).
+    log("warn", "logto callback failed", { requestId, reason: (error as Error).name });
   }
   // redirect() throws NEXT_REDIRECT, so it must run OUTSIDE the try/catch above.
   redirect(ok ? "/account" : "/account?error=signin");
@@ -679,10 +761,22 @@ export default async function AccountPage() {
   }
 
   const requestId = crypto.randomUUID();
-  const { data, error } = await (await getAuthedApiClient(requestId)).GET("/api/v1/me");
+  let profile: { display_name: string; email: string } | null = null;
+  try {
+    const { data, error, response } = await (await getAuthedApiClient(requestId)).GET("/api/v1/me");
+    if (error || !data) {
+      log("error", "failed to load profile", { requestId, status: response.status });
+    } else {
+      profile = data;
+      log("debug", "loaded profile", { requestId, status: response.status });
+    }
+  } catch (err) {
+    // getAccessTokenRSC()/network can throw on an expired or broken session — render the
+    // graceful state instead of an unhandled server error (spec §4.5/§5).
+    log("error", "failed to load profile", { requestId, reason: (err as Error).name });
+  }
 
-  if (error || !data) {
-    log("error", "failed to load profile", { requestId, ok: false });
+  if (!profile) {
     return (
       <main className={shell}>
         <h1 className="text-2xl font-bold">Couldn&rsquo;t load your profile</h1>
@@ -692,18 +786,17 @@ export default async function AccountPage() {
     );
   }
 
-  log("debug", "loaded profile", { requestId });
   return (
     <main className={shell}>
       <h1 className="text-2xl font-bold">Signed in</h1>
       <dl className="text-white/90">
         <div className="flex gap-2">
           <dt className="font-semibold">Name:</dt>
-          <dd>{data.display_name}</dd>
+          <dd>{profile.display_name}</dd>
         </div>
         <div className="flex gap-2">
           <dt className="font-semibold">Email:</dt>
-          <dd>{data.email}</dd>
+          <dd>{profile.email}</dd>
         </div>
       </dl>
       <SignOutButton />
@@ -846,10 +939,26 @@ and add `LOGTO_APP_ID` to the `export` line so `envsubst` substitutes it into `w
 
 In `infra/k8s/secrets.yaml`, add `logto-app-secret` and `logto-cookie-secret` to the documented key inventory, following the existing comment/format used for `logto-email-webhook-token`.
 
-- [ ] **Step 5: Validate manifests**
+- [ ] **Step 5: Validate the manifest changes (cluster-independent)**
 
-Run: `powershell.exe -NoProfile -File run.ps1 check` (the infra/kubeconform portion) or the repo's manifest-validation command.
-Expected: `web.yaml` passes `kubeconform`; envsubst with the new vars renders valid YAML; no secret literals appear in rendered/committed YAML.
+`run.ps1 check` does NOT validate manifests and the repo has no kubeconform, so validate by inspection (+ optional render). The authoritative schema gate is the deploy-time `kubectl apply` in `deploy.yml`. Source assertions (Git Bash, from repo root — `! grep` succeeds when the pattern is absent):
+
+```bash
+# Exactly two secretKeyRef entries, both referencing keys in fountainrank-secrets:
+grep -c "secretKeyRef" infra/k8s/web.yaml                       # expect: 2
+grep -E "key: logto-(app|cookie)-secret" infra/k8s/web.yaml     # expect: both lines
+# NO plaintext secret value in the manifest (secrets MUST be secretKeyRef only):
+! grep -iE "logto-app-secret:|logto-cookie-secret:|LOGTO_(APP_SECRET|COOKIE_SECRET).*value:" infra/k8s/web.yaml
+```
+
+Optional schema validation if `envsubst` + `kubeconform` are installed (both pure-local, no cluster contact; install kubeconform only if you want this extra gate):
+
+```bash
+NAMESPACE=fountainrank DOMAIN=fountainrank.com REGISTRY=placeholder IMAGE_TAG=test LOGTO_APP_ID=placeholder \
+  envsubst < infra/k8s/web.yaml | kubeconform -strict -summary -
+```
+
+Expected: two `secretKeyRef`s present, both keys, no plaintext secret in the manifest.
 
 - [ ] **Step 6: Commit**
 
@@ -888,7 +997,7 @@ git commit -m "docs: record web Logto BFF integration + owner secret tasks"
 - [ ] **Step 1: Run the full local CI mirror**
 
 Run: `powershell.exe -NoProfile -File run.ps1 check`
-Expected: backend (107 tests: 105 + 2 new) green; `workspace-js` (web + api-client lint/typecheck/build/test) green. If the web mirror fails only on the known Windows `eslint-config-next` resolution artifact, note it and rely on CI.
+Expected: backend (107 tests: 105 + 2 new) green; `workspace-js` (web + api-client lint/typecheck/build/test) green. The ONLY tolerated local failure is `web#lint` failing **specifically** because `eslint-config-next` cannot resolve `next/dist/compiled/babel/eslint-parser` (the Windows-only pnpm-linking artifact). If that exact failure occurs, every OTHER local check must still be green and CI's `workspace-js` must be green before merge; any other failure blocks.
 
 - [ ] **Step 2: Live verification (owner-assisted, pre-merge)**
 
