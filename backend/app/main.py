@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from app.config import get_settings
 from app.logging_config import configure_logging, log_startup, request_id_var
 from app.middleware import RequestContextMiddleware
-from app.routers import email_webhook, fountains, health, rating_types
+from app.routers import email_webhook, fountains, health, rating_types, users
 
 
 def create_app() -> FastAPI:
@@ -32,6 +32,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(rating_types.router)
     app.include_router(fountains.router)
+    app.include_router(users.router)
     app.include_router(email_webhook.router)
 
     @app.exception_handler(Exception)

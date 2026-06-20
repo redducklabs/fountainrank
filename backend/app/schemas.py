@@ -61,3 +61,14 @@ class AddFountainRequest(BaseModel):
 
 class RateRequest(BaseModel):
     ratings: list[RatingInput] = Field(min_length=1)
+
+
+class MeResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    display_name: str
+    email: str
+    avatar_url: str | None
+    is_admin: bool
+    created_at: datetime
