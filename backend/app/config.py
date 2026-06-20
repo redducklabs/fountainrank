@@ -82,6 +82,10 @@ class Settings(BaseSettings):
     def logto_jwks_uri(self) -> str:
         return f"{self.logto_issuer}/jwks"
 
+    @property
+    def logto_userinfo_uri(self) -> str:
+        return f"{self.logto_issuer}/me"
+
     # --- Email (Logto HTTP email connector -> Gmail API) ---
     # The Google service-account JSON key (whole file, as a string), the impersonated
     # Workspace mailbox (domain-wide delegation), the visible From, and the shared bearer

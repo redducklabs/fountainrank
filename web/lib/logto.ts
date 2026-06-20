@@ -38,6 +38,7 @@ export function getLogtoConfig(
     baseUrl: requireEnv("LOGTO_BASE_URL", env),
     cookieSecret: requireCookieSecret("LOGTO_COOKIE_SECRET", env),
     cookieSecure: env.NODE_ENV === "production",
+    scopes: ["email", "profile"],
     resources: [API_RESOURCE],
   };
 }

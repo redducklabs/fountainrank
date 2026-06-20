@@ -11,6 +11,7 @@ from app.auth import get_current_user, get_jwks_cache
 from app.config import Settings, get_settings
 from app.logto_auth import AuthError, JwksCache, validate_bearer_token
 from app.main import app
+from app.userinfo import UserinfoClaims
 
 KID = "test-key-1"
 ISSUER = "https://auth.fountainrank.com/oidc"
@@ -356,3 +357,146 @@ async def test_auth_failure_logs_kid_not_token(keypair, cache, session, caplog):
     assert token not in rec.getMessage()
     # The token must not leak via any structured `extra` field either.
     assert all(token not in str(v) for v in rec.__dict__.values())
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/me/sync — profile-sync integration tests
+# ---------------------------------------------------------------------------
+
+
+def _sync_overrides(cache, fetcher):
+    from app.userinfo import get_userinfo_fetcher as _guf
+
+    app.dependency_overrides[get_jwks_cache] = lambda: cache
+    app.dependency_overrides[get_settings] = lambda: Settings(dev_auth_enabled=False)
+    app.dependency_overrides[_guf] = lambda: fetcher
+
+
+def _clear_sync_overrides():
+    from app.userinfo import get_userinfo_fetcher as _guf
+
+    for dep in (get_jwks_cache, get_settings, _guf):
+        app.dependency_overrides.pop(dep, None)
+
+
+async def test_me_sync_updates_profile_via_userinfo(keypair, cache, clean_db):
+    priv, _ = keypair
+
+    async def fetcher(token: str) -> UserinfoClaims:
+        return UserinfoClaims(
+            sub="logto|abc",
+            email="real@gmail.com",
+            email_verified=True,
+            name="Real Name",
+            picture="https://img.example/a.png",
+        )
+
+    _sync_overrides(cache, fetcher)
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            headers = {"Authorization": f"Bearer {_mint(priv)}"}
+            resp = await ac.post(
+                "/api/v1/me/sync", json={"userinfo_token": "opaque"}, headers=headers
+            )
+            assert resp.status_code == 200
+            body = resp.json()
+            assert body["email"] == "real@gmail.com"
+            assert body["display_name"] == "Real Name"
+            assert body["avatar_url"] == "https://img.example/a.png"
+            assert "logto_user_id" not in body
+            me = await ac.get("/api/v1/me", headers=headers)  # persisted across requests
+            assert me.json()["email"] == "real@gmail.com"
+    finally:
+        _clear_sync_overrides()
+
+
+async def test_me_sync_sub_mismatch_is_403_and_no_change(keypair, cache, clean_db):
+    priv, _ = keypair
+
+    async def fetcher(token: str) -> UserinfoClaims:
+        return UserinfoClaims(sub="logto|someone-else", email="evil@x.com", email_verified=True)
+
+    _sync_overrides(cache, fetcher)
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            headers = {"Authorization": f"Bearer {_mint(priv)}"}
+            before = (await ac.get("/api/v1/me", headers=headers)).json()["email"]
+            resp = await ac.post(
+                "/api/v1/me/sync", json={"userinfo_token": "opaque"}, headers=headers
+            )
+            assert resp.status_code == 403
+            after = (await ac.get("/api/v1/me", headers=headers)).json()["email"]
+            assert after == before  # unchanged
+    finally:
+        _clear_sync_overrides()
+
+
+async def test_me_sync_userinfo_failure_is_502_and_no_change(keypair, cache, clean_db):
+    from app.userinfo import UserinfoError
+
+    priv, _ = keypair
+
+    async def fetcher(token: str) -> UserinfoClaims:
+        raise UserinfoError("userinfo_status")
+
+    _sync_overrides(cache, fetcher)
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            headers = {"Authorization": f"Bearer {_mint(priv)}"}
+            before = (await ac.get("/api/v1/me", headers=headers)).json()["email"]
+            resp = await ac.post(
+                "/api/v1/me/sync", json={"userinfo_token": "opaque"}, headers=headers
+            )
+            assert resp.status_code == 502
+            after = (await ac.get("/api/v1/me", headers=headers)).json()["email"]
+            assert after == before
+    finally:
+        _clear_sync_overrides()
+
+
+async def test_me_sync_preserves_email_on_unverified_but_updates_name(keypair, cache, clean_db):
+    priv, _ = keypair
+
+    async def fetcher(token: str) -> UserinfoClaims:
+        return UserinfoClaims(
+            sub="logto|abc", email="evil@x.com", email_verified=False, name="New Name"
+        )
+
+    _sync_overrides(cache, fetcher)
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            headers = {"Authorization": f"Bearer {_mint(priv)}"}
+            before = (await ac.get("/api/v1/me", headers=headers)).json()["email"]  # u@example.com
+            resp = await ac.post(
+                "/api/v1/me/sync", json={"userinfo_token": "opaque"}, headers=headers
+            )
+            assert resp.status_code == 200
+            body = resp.json()
+            assert body["email"] == before  # unverified email preserved
+            assert body["display_name"] == "New Name"  # name still updated
+    finally:
+        _clear_sync_overrides()
+
+
+async def test_me_sync_preserves_avatar_on_invalid_picture(keypair, cache, clean_db):
+    priv, _ = keypair
+
+    async def fetcher(token: str) -> UserinfoClaims:
+        return UserinfoClaims(sub="logto|abc", picture="http://insecure/a.png")
+
+    _sync_overrides(cache, fetcher)
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            headers = {"Authorization": f"Bearer {_mint(priv)}"}
+            resp = await ac.post(
+                "/api/v1/me/sync", json={"userinfo_token": "opaque"}, headers=headers
+            )
+            assert resp.status_code == 200
+            assert resp.json()["avatar_url"] is None  # non-https rejected -> existing (None) kept
+    finally:
+        _clear_sync_overrides()

@@ -72,3 +72,7 @@ class MeResponse(BaseModel):
     avatar_url: str | None
     is_admin: bool
     created_at: datetime
+
+
+class SyncProfileRequest(BaseModel):
+    userinfo_token: str = Field(min_length=1)
