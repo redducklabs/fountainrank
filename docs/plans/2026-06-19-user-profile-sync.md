@@ -798,6 +798,19 @@ describe("sync helper", () => {
     expect(out).not.toContain("resource-tok");
     expect(out).not.toContain("opaque-tok");
   });
+
+  it("keeps tokens hidden when fetch throws AFTER both tokens are acquired", async () => {
+    stubEnv();
+    getAccessTokenRSC.mockImplementation(async (_c: unknown, resource?: string) =>
+      resource ? "resource-tok" : "opaque-tok",
+    );
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network down")));
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(syncProfile("rid-4")).resolves.toBeUndefined();
+    const out = spy.mock.calls.map((c) => String(c[0])).join("");
+    expect(out).not.toContain("resource-tok");
+    expect(out).not.toContain("opaque-tok");
+  });
 });
 ```
 
@@ -851,7 +864,7 @@ export async function syncProfile(requestId: string): Promise<void> {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `pnpm --filter web exec vitest run lib/server/sync.test.ts`
-Expected: PASS (4 tests).
+Expected: PASS (5 tests).
 
 - [ ] **Step 5: Wire it into `/account`**
 
@@ -887,7 +900,7 @@ This is a **gate before opening the PR** — it proves the central assumption (t
 
 - [ ] **Step 1: Run the local stack against live Logto (owner-assisted)**
 
-Bring up the DB + local backend (`run.ps1 up`, then run the backend locally so it reaches live Logto userinfo at `https://auth.fountainrank.com/oidc/me`). In a PowerShell session, with the real `LOGTO_*` exported and `NEXT_PUBLIC_API_BASE_URL` pointed at the local backend (or the prod backend `https://api.fountainrank.com`), run `pnpm --filter web dev` (port 3020). Sign in at `http://localhost:3020/account` (Google or email).
+Bring up the DB + local backend (`run.ps1 up`, then run the backend locally so it reaches live Logto userinfo at `https://auth.fountainrank.com/oidc/me`). In a PowerShell session, with the real `LOGTO_*` exported and `NEXT_PUBLIC_API_BASE_URL` pointed at the **local backend** (NOT prod — prod has no `/api/v1/me/sync` until this merges+deploys, so a local backend is required to exercise the new code path), run `pnpm --filter web dev` (port 3020). Sign in at `http://localhost:3020/account` (Google or email).
 
 - [ ] **Step 2: Confirm + record the probe result**
 

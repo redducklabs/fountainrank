@@ -211,7 +211,8 @@ swallowed (best-effort) and logs a **redacted** warning (assert no token in the 
 
 **Local gate:** `run.ps1 check`; `pnpm run generate` regenerates the api-client for the new
 `/api/v1/me/sync` path (gitignored — not committed). The genuine end-to-end proof is the
-post-deploy sign-in showing the real `aronweiler@gmail.com` + name + avatar (§6.1).
+**pre-merge local probe** (§6.1) — local web + local backend + live Logto — showing the real
+`aronweiler@gmail.com` + name + avatar; the post-deploy sign-in is an additional confirmation.
 
 ## 6. Acceptance criteria
 
