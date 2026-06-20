@@ -233,6 +233,27 @@ async def test_bearer_jwt_provisions_and_authorizes_write(keypair, cache, clean_
         app.dependency_overrides.pop(get_settings, None)
 
 
+async def test_me_with_synthetic_bearer_returns_profile(keypair, cache, clean_db):
+    # End-to-end on the new GET /api/v1/me: a valid synthetic ES384 bearer flows through the
+    # real get_current_user resolver (JWKS validate -> JIT provision) — NOT the dev-override
+    # fixture — and the endpoint returns the claim-derived profile (email/name from the token).
+    priv, _ = keypair
+    app.dependency_overrides[get_jwks_cache] = lambda: cache
+    app.dependency_overrides[get_settings] = lambda: Settings(dev_auth_enabled=False)
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.get("/api/v1/me", headers={"Authorization": f"Bearer {_mint(priv)}"})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["email"] == "u@example.com"
+        assert body["display_name"] == "U"
+        assert "logto_user_id" not in body
+    finally:
+        app.dependency_overrides.pop(get_jwks_cache, None)
+        app.dependency_overrides.pop(get_settings, None)
+
+
 async def test_invalid_bearer_does_not_fall_through_to_dev(keypair, cache, clean_db):
     # An Authorization header is present but the token is expired; even with dev auth
     # ENABLED and X-Dev-User set, this must be 401 — never silently use the dev path.
