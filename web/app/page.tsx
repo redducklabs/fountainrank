@@ -44,6 +44,9 @@ export default function Home() {
         <Link className="underline-offset-4 hover:text-white hover:underline" href="/terms">
           Terms
         </Link>
+        <Link className="underline-offset-4 hover:text-white hover:underline" href="/account">
+          Sign in
+        </Link>
       </footer>
     </main>
   );
