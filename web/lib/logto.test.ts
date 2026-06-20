@@ -25,10 +25,14 @@ describe("requireEnv", () => {
 
 describe("requireCookieSecret", () => {
   it("passes at exactly 32 chars", () => {
-    expect(requireCookieSecret("LOGTO_COOKIE_SECRET", { LOGTO_COOKIE_SECRET: "x".repeat(32) })).toHaveLength(32);
+    expect(
+      requireCookieSecret("LOGTO_COOKIE_SECRET", { LOGTO_COOKIE_SECRET: "x".repeat(32) }),
+    ).toHaveLength(32);
   });
   it("throws below 32 chars", () => {
-    expect(() => requireCookieSecret("LOGTO_COOKIE_SECRET", { LOGTO_COOKIE_SECRET: "x".repeat(31) })).toThrow(/32/);
+    expect(() =>
+      requireCookieSecret("LOGTO_COOKIE_SECRET", { LOGTO_COOKIE_SECRET: "x".repeat(31) }),
+    ).toThrow(/32/);
   });
 });
 

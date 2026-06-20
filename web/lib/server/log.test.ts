@@ -16,7 +16,9 @@ describe("redact", () => {
   });
 
   it("redacts sensitive keys nested in objects", () => {
-    expect(redact({ error: { accessToken: "x" } })).toEqual({ error: { accessToken: "[redacted]" } });
+    expect(redact({ error: { accessToken: "x" } })).toEqual({
+      error: { accessToken: "[redacted]" },
+    });
   });
 
   it("redacts sensitive objects inside arrays", () => {
@@ -30,14 +32,21 @@ describe("redact", () => {
   });
 
   it("drops Error message/cause/stack, keeps the name", () => {
-    expect(redact({ err: new TypeError("secret-in-message") })).toEqual({ err: { name: "TypeError" } });
+    expect(redact({ err: new TypeError("secret-in-message") })).toEqual({
+      err: { name: "TypeError" },
+    });
   });
 });
 
 describe("log", () => {
   it("never emits a token value", () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    log("warn", "callback failed", { accessToken: "supersecret" }, { LOG_LEVEL: "info", LOG_FORMAT: "json" });
+    log(
+      "warn",
+      "callback failed",
+      { accessToken: "supersecret" },
+      { LOG_LEVEL: "info", LOG_FORMAT: "json" },
+    );
     const line = spy.mock.calls.map((c) => String(c[0])).join("");
     expect(line).not.toContain("supersecret");
     expect(line).toContain("[redacted]");

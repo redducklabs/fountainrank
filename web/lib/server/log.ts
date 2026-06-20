@@ -7,8 +7,20 @@ const MAX_DEPTH = 4;
 
 // Substrings that mark a field KEY as sensitive (matched case-insensitively).
 const SENSITIVE = [
-  "token", "authorization", "cookie", "secret", "jwt", "code", "password", "query",
-  "session", "credential", "apikey", "api_key", "clientid", "client_id",
+  "token",
+  "authorization",
+  "cookie",
+  "secret",
+  "jwt",
+  "code",
+  "password",
+  "query",
+  "session",
+  "credential",
+  "apikey",
+  "api_key",
+  "clientid",
+  "client_id",
 ];
 
 // A JWT-shaped substring — redact such VALUES even under a benign key.
