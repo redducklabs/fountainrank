@@ -1,3 +1,5 @@
+import "server-only";
+
 import type { LogtoNextConfig } from "@logto/next";
 
 export const API_RESOURCE = "https://api.fountainrank.com";

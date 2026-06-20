@@ -1,4 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// logto.ts carries `import "server-only"` (it builds a config holding appSecret/cookieSecret),
+// which throws outside a Next bundler — stub it so the pure-function tests can import it.
+vi.mock("server-only", () => ({}));
 
 import { getLogtoConfig, requireCookieSecret, requireEnv } from "./logto";
 
