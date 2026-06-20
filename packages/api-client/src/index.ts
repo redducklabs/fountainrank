@@ -7,3 +7,5 @@ export type ApiClient = Client<paths>;
 export function makeClient(baseUrl: string, options?: Omit<ClientOptions, "baseUrl">): ApiClient {
   return createClient<paths>({ baseUrl, ...options });
 }
+
+export type { paths, components } from "./schema";

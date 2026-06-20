@@ -101,8 +101,8 @@ async def serialize_fountain_detail(session: AsyncSession, fountain: Fountain) -
                 Rating,
                 (Rating.rating_type_id == RatingType.id) & (Rating.fountain_id == fountain.id),
             )
-            .group_by(RatingType.id, RatingType.name)
-            .order_by(RatingType.id)
+            .group_by(RatingType.id, RatingType.name, RatingType.sort_order)
+            .order_by(RatingType.sort_order)
         )
     ).all()
     dimensions = [
@@ -148,6 +148,7 @@ async def nearby_fountains(
                 Fountain.is_working,
                 Fountain.average_rating,
                 Fountain.rating_count,
+                Fountain.ranking_score,
                 distance,
             )
             .where(func.ST_DWithin(Fountain.location, point, radius))
@@ -162,9 +163,10 @@ async def nearby_fountains(
             is_working=working,
             average_rating=avg,
             rating_count=count,
+            ranking_score=score,
             distance_m=float(dist),
         )
-        for (rid, rlat, rlng, working, avg, count, dist) in rows
+        for (rid, rlat, rlng, working, avg, count, score, dist) in rows
     ]
 
 
@@ -195,6 +197,7 @@ async def fountains_in_bbox(
                 Fountain.is_working,
                 Fountain.average_rating,
                 Fountain.rating_count,
+                Fountain.ranking_score,
             )
             .where(func.ST_Intersects(Fountain.location, envelope))
             .limit(settings.max_results)
@@ -207,9 +210,10 @@ async def fountains_in_bbox(
             is_working=working,
             average_rating=avg,
             rating_count=count,
+            ranking_score=score,
             distance_m=None,
         )
-        for (rid, rlat, rlng, working, avg, count) in rows
+        for (rid, rlat, rlng, working, avg, count, score) in rows
     ]
 
 

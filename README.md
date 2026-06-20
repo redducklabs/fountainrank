@@ -106,6 +106,12 @@ to track the latest stable release. Pinned dependency versions live in
 | DigitalOcean TF provider | `~> 2.0` | 2026-06-17 |
 | DOKS (Kubernetes) | 1.34.x (DO offers 1.33–1.36) | 2026-06-17 |
 | Logto (self-hosted) | 1.40.1 | 2026-06-17 |
+| maplibre-gl | 5.24.0 | 2026-06-20 |
+| pmtiles | 4.4.1 | 2026-06-20 |
+| @testing-library/react | 16.3.2 | 2026-06-20 |
+| @testing-library/jest-dom | 6.9.1 | 2026-06-20 |
+| jsdom | 29.1.1 | 2026-06-20 |
+| @types/geojson | 7946.0.16 | 2026-06-20 |
 | (full pins) | `backend/pyproject.toml` + `backend/uv.lock`; workspace `package.json` + `pnpm-lock.yaml` | — |
 
 ## Getting started

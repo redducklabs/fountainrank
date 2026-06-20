@@ -84,3 +84,17 @@ def test_email_configured_requires_token_json_and_delegated_user():
         ).email_configured
         is False
     )
+
+
+def test_max_results_pinned():
+    from app.config import Settings
+
+    # Pinned contract: mirrored in web/lib/map/constants.ts MAX_BBOX_RESULTS.
+    assert Settings().max_results == 500
+
+
+def test_cors_allows_prod_web_origins():
+    # Guard: prod web origins must always be present in the default config,
+    # regardless of other default origins that may be added or removed.
+    origins = set(Settings().cors_allow_origins)
+    assert {"https://fountainrank.com", "https://www.fountainrank.com"} <= origins

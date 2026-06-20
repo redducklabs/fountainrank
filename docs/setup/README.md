@@ -104,6 +104,56 @@ Tick these off as you go (edit this file, or just tell me and I'll update it):
 
 ---
 
+## API CORS for the web map
+
+The backend (`backend/app/config.py`) ships a default `cors_allow_origins` list of
+`["https://fountainrank.com", "https://www.fountainrank.com", "http://localhost:3020"]`.
+Phase 3a makes the web map the first browser-origin API caller, so these origins
+must be correct before going live.
+
+**No separate preview/staging deploy exists in this repo.** If a preview origin is
+ever needed (e.g. `https://preview.fountainrank.com`), add it by setting the
+`CORS_ALLOW_ORIGINS` GitHub Environment variable (or k8s `ConfigMap` entry) to a
+comma-separated list of all allowed origins, for example:
+
+```
+CORS_ALLOW_ORIGINS=https://fountainrank.com,https://www.fountainrank.com,https://preview.fountainrank.com
+```
+
+The config parser also accepts a JSON array. Never write this value to a `.env` file;
+set it as a GitHub Environment **variable** (not a secret — it is not sensitive).
+
+**Post-deploy smoke procedure (owner/CI)** — run these after every backend deploy to
+confirm CORS is wired correctly:
+
+```bash
+# Preflight (replace api.fountainrank.com with the actual API URL)
+curl -i -X OPTIONS 'https://api.fountainrank.com/api/v1/fountains/bbox' \
+  -H 'Origin: https://fountainrank.com' \
+  -H 'Access-Control-Request-Method: GET' \
+  -H 'Access-Control-Request-Headers: x-request-id'
+# Expected: 200 or 204 with Access-Control-Allow-Origin: https://fountainrank.com
+
+# Actual GET (bbox intentionally large — returns up to max_results, not the full DB)
+curl -i 'https://api.fountainrank.com/api/v1/fountains/bbox?min_lat=-90&min_lng=-180&max_lat=90&max_lng=180' \
+  -H 'Origin: https://fountainrank.com' -H 'X-Request-ID: smoke-1'
+# Expected: 200 with Access-Control-Allow-Origin: https://fountainrank.com
+```
+
+Local equivalent (requires backend running on port 3021):
+
+```bash
+curl -i -X OPTIONS 'http://localhost:3021/api/v1/fountains/bbox' \
+  -H 'Origin: http://localhost:3020' \
+  -H 'Access-Control-Request-Method: GET' \
+  -H 'Access-Control-Request-Headers: x-request-id'
+
+curl -i 'http://localhost:3021/api/v1/fountains/bbox?min_lat=-90&min_lng=-180&max_lat=90&max_lng=180' \
+  -H 'Origin: http://localhost:3020' -H 'X-Request-ID: smoke-1'
+```
+
+---
+
 ## How this connects to the build
 
 - **0e (infra Terraform)** consumes the DigitalOcean and DNS outputs.

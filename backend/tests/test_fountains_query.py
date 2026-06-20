@@ -6,6 +6,18 @@ async def _add(client, lat, lng):
     return resp.json()["id"]
 
 
+async def _add_rated(client, lat, lng):
+    resp = await client.post(
+        "/api/v1/fountains",
+        json={
+            "location": {"latitude": lat, "longitude": lng},
+            "ratings": [{"rating_type_id": 1, "stars": 5}],
+        },
+    )
+    assert resp.status_code == 201
+    return resp.json()["id"]
+
+
 async def test_nearby_returns_within_radius_ordered_by_distance(client):
     # Two points ~1.5 km apart in SF; query from the first with a 2 km radius.
     near = await _add(client, 37.7749, -122.4194)
@@ -50,3 +62,24 @@ async def test_bbox_rejects_inverted_bounds(client):
         params={"min_lat": 37.80, "min_lng": -122.40, "max_lat": 37.70, "max_lng": -122.50},
     )
     assert resp.status_code == 422
+
+
+async def test_bbox_pin_includes_ranking_score(client):
+    fid = await _add_rated(client, 37.7749, -122.4194)
+    resp = await client.get(
+        "/api/v1/fountains/bbox",
+        params={"min_lat": 37.70, "min_lng": -122.50, "max_lat": 37.80, "max_lng": -122.40},
+    )
+    assert resp.status_code == 200
+    pin = next(p for p in resp.json() if p["id"] == fid)
+    assert "ranking_score" in pin and pin["ranking_score"] is not None
+
+
+async def test_nearby_pin_includes_ranking_score(client):
+    fid = await _add_rated(client, 37.7749, -122.4194)
+    resp = await client.get(
+        "/api/v1/fountains", params={"lat": 37.7749, "lng": -122.4194, "radius_m": 1000}
+    )
+    assert resp.status_code == 200
+    pin = next(p for p in resp.json() if p["id"] == fid)
+    assert "ranking_score" in pin and pin["ranking_score"] is not None

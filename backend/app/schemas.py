@@ -36,6 +36,7 @@ class FountainPin(BaseModel):
     is_working: bool
     average_rating: float | None
     rating_count: int
+    ranking_score: float | None = None
     distance_m: float | None = None
 
 
