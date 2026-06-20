@@ -487,12 +487,15 @@ Create `web/lib/server/api.test.ts`:
 ```ts
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+// vi.mock factories are hoisted above top-level consts, so the mock fns must come from
+// vi.hoisted() (also hoisted) — a plain `const x = vi.fn()` would be undefined at mock time.
+const { getAccessTokenRSC, makeClient } = vi.hoisted(() => ({
+  getAccessTokenRSC: vi.fn(),
+  makeClient: vi.fn(),
+}));
+
 vi.mock("server-only", () => ({}));
-
-const getAccessTokenRSC = vi.fn();
 vi.mock("@logto/next/server-actions", () => ({ getAccessTokenRSC }));
-
-const makeClient = vi.fn();
 vi.mock("@fountainrank/api-client", () => ({ makeClient }));
 
 import { authedClientHeaders, getAuthedApiClient } from "./api";
@@ -761,7 +764,7 @@ export default async function AccountPage() {
   }
 
   const requestId = crypto.randomUUID();
-  let profile: { display_name: string; email: string } | null = null;
+  let profile: { display_name: string; email: string; avatar_url: string | null } | null = null;
   try {
     const { data, error, response } = await (await getAuthedApiClient(requestId)).GET("/api/v1/me");
     if (error || !data) {
@@ -789,6 +792,10 @@ export default async function AccountPage() {
   return (
     <main className={shell}>
       <h1 className="text-2xl font-bold">Signed in</h1>
+      {profile.avatar_url ? (
+        // eslint-disable-next-line @next/next/no-img-element -- arbitrary external avatar host; no next/image loader configured
+        <img src={profile.avatar_url} alt="" width={64} height={64} className="rounded-full" />
+      ) : null}
       <dl className="text-white/90">
         <div className="flex gap-2">
           <dt className="font-semibold">Name:</dt>
