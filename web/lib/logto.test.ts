@@ -46,4 +46,9 @@ describe("getLogtoConfig", () => {
   it("sets cookieSecure=true in production", () => {
     expect(getLogtoConfig({ ...base, NODE_ENV: "production" }).cookieSecure).toBe(true);
   });
+  it("requests the email and profile scopes", () => {
+    const cfg = getLogtoConfig({ ...base, NODE_ENV: "production" });
+    expect(cfg.scopes).toContain("email");
+    expect(cfg.scopes).toContain("profile");
+  });
 });
