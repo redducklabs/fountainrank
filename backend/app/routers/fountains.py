@@ -101,8 +101,8 @@ async def serialize_fountain_detail(session: AsyncSession, fountain: Fountain) -
                 Rating,
                 (Rating.rating_type_id == RatingType.id) & (Rating.fountain_id == fountain.id),
             )
-            .group_by(RatingType.id, RatingType.name)
-            .order_by(RatingType.id)
+            .group_by(RatingType.id, RatingType.name, RatingType.sort_order)
+            .order_by(RatingType.sort_order)
         )
     ).all()
     dimensions = [
