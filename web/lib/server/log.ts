@@ -47,7 +47,7 @@ export function log(
   level: LogLevel,
   message: string,
   fields: Record<string, unknown> = {},
-  env: NodeJS.ProcessEnv = process.env,
+  env: Record<string, string | undefined> = process.env,
 ): void {
   const threshold = ORDER[(env.LOG_LEVEL as LogLevel) ?? "info"] ?? ORDER.info;
   if (ORDER[level] < threshold) {

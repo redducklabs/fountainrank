@@ -12,7 +12,7 @@ const base = {
   LOGTO_APP_SECRET: "secret",
   LOGTO_BASE_URL: "https://fountainrank.com",
   LOGTO_COOKIE_SECRET: "x".repeat(32),
-} as NodeJS.ProcessEnv;
+};
 
 describe("requireEnv", () => {
   it("returns the value when set", () => {
