@@ -11,7 +11,13 @@ export async function fetchBbox(params: BboxParams, requestId?: string): Promise
   const client = requestId
     ? makeClient(resolveApiBaseUrl(), { headers: { "X-Request-ID": requestId } })
     : getApiClient();
-  const { data } = await client.GET("/api/v1/fountains/bbox", { params: { query: params } });
+  const { data, error, response } = await client.GET("/api/v1/fountains/bbox", {
+    params: { query: params },
+  });
+  if (error !== undefined || (response && !response.ok)) {
+    const status = response?.status ?? 0;
+    throw new Error(`bbox request failed (status ${status})`);
+  }
   return data ?? [];
 }
 

@@ -41,6 +41,7 @@ const activeIdFromPath = (p: string | null) => p?.match(/^\/fountains\/([^/?#]+)
 export default function MapBrowser() {
   const ref = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
+  const loadSeqRef = useRef(0);
   const router = useRouter();
   const pathname = usePathname();
   const [pins, setPins] = useState<FountainPin[]>([]);
@@ -149,12 +150,13 @@ export default function MapBrowser() {
     async function load() {
       const m = mapRef.current;
       if (!m) return;
+      const seq = ++loadSeqRef.current;
       const src = m.getSource("fountains") as GeoJSONSource | undefined;
       if (!shouldLoadPins(m.getZoom())) {
         src?.setData(EMPTY_FC);
         setPins([]);
         setStatus("belowZoom");
-        return; // clear stale pins (spec §6.1)
+        return; // clear stale pins (spec §6.1); seq bump already invalidates in-flight fetches
       }
       const b = m.getBounds();
       const norm = normalizeBounds({
@@ -167,6 +169,7 @@ export default function MapBrowser() {
       setStatus("loading");
       try {
         const data = await fetchBbox(norm.params, crypto.randomUUID());
+        if (seq !== loadSeqRef.current) return; // stale response — a newer load is in progress
         setPins(data);
         // Normalise ranking_score: the API schema marks it optional (?), but PinInput requires
         // number | null. Map undefined → null so pinsToFeatureCollection is type-safe.
@@ -174,6 +177,7 @@ export default function MapBrowser() {
         src?.setData(pinsToFeatureCollection(pinInputs));
         setStatus(isAtCap(data.length) ? "capped" : data.length === 0 ? "empty" : "idle");
       } catch (e) {
+        if (seq !== loadSeqRef.current) return; // stale error — don't clobber newer load's state
         logMapError("bbox-fetch-failed", { name: (e as Error).name });
         setStatus("error");
       }
