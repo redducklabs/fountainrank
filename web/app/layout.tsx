@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 
 import "./globals.css";
 
-const title = "FountainRank — Find, rate, and rank public drinking fountains";
+const title = "FountainRank — Find drinking fountains near you";
 const description =
-  "FountainRank is a community-built map of public drinking fountains. Discover one nearby, rate the ones you love, and help the best rise to the top. Launching soon.";
+  "A free, community map of public drinking fountains. See what's nearby, what's working, and how people rate it.";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://fountainrank.com"),
