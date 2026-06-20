@@ -20,10 +20,10 @@
     "openapi-fetch": "0.17.0"
   },
   "devDependencies": {
-    "@types/node": "22.19.21",
-    "eslint": "9.39.4",
+    "@types/node": "26.0.0",
+    "eslint": "10.5.0",
     "openapi-typescript": "7.13.0",
-    "typescript": "5.9.3",
+    "typescript": "6.0.3",
     "typescript-eslint": "8.61.1",
     "vite": "8.0.16",
     "vitest": "4.1.9"
