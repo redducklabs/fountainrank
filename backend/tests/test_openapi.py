@@ -33,3 +33,11 @@ def test_openapi_exposes_me_endpoint():
     schema = app.openapi()
     assert "/api/v1/me" in schema["paths"]
     assert "MeResponse" in schema["components"]["schemas"]
+
+
+def test_openapi_exposes_me_sync_endpoint():
+    schema = app.openapi()
+    op = schema["paths"]["/api/v1/me/sync"]["post"]
+    assert "SyncProfileRequest" in schema["components"]["schemas"]
+    ref = op["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
+    assert ref.endswith("/MeResponse")
