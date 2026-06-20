@@ -30,6 +30,9 @@ export async function syncProfile(requestId: string): Promise<void> {
       log("warn", "profile sync failed", { requestId, status: res.status });
     }
   } catch (err) {
-    log("warn", "profile sync error", { requestId, reason: (err as Error).name });
+    log("warn", "profile sync error", {
+      requestId,
+      reason: err instanceof Error ? err.name : "unknown",
+    });
   }
 }

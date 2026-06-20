@@ -497,6 +497,6 @@ async def test_me_sync_preserves_avatar_on_invalid_picture(keypair, cache, clean
                 "/api/v1/me/sync", json={"userinfo_token": "opaque"}, headers=headers
             )
             assert resp.status_code == 200
-            assert resp.json()["avatar_url"] is None  # non-https preserved (was None)
+            assert resp.json()["avatar_url"] is None  # non-https rejected -> existing (None) kept
     finally:
         _clear_sync_overrides()
