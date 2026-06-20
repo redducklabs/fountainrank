@@ -8,6 +8,7 @@ JWT is rejected at userinfo). The token is used only for this call and never log
 import json
 import logging
 from collections.abc import Awaitable, Callable
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import Depends
@@ -99,3 +100,38 @@ def get_userinfo_fetcher(settings: Settings = Depends(get_settings)) -> Userinfo
         return await fetch_userinfo(token, settings)
 
     return fetcher
+
+
+def accept_email(claims: UserinfoClaims, *, current: str) -> str:
+    """Return the email to store: the userinfo email only if it is a valid, non-synthetic,
+    non-unverified address; otherwise the existing value (never overwrite a real email with junk)."""
+    email = (claims.email or "").strip()
+    if not email:
+        return current
+    if claims.email_verified is False:
+        return current
+    if email.lower().endswith(SYNTHETIC_EMAIL_DOMAIN):
+        return current
+    if any(ch.isspace() for ch in email):
+        return current
+    local, sep, domain = email.partition("@")
+    if not sep or not local or not domain or "@" in domain:
+        return current
+    return email
+
+
+def pick_display_name(claims: UserinfoClaims, *, current: str, sub: str) -> str:
+    for candidate in (claims.name, claims.username, current, sub):
+        if candidate and candidate.strip():
+            return candidate.strip()
+    return sub
+
+
+def accept_avatar(claims: UserinfoClaims, *, current: str | None) -> str | None:
+    pic = (claims.picture or "").strip()
+    if not pic or len(pic) > _MAX_AVATAR_LEN or any(ch.isspace() for ch in pic):
+        return current
+    parsed = urlparse(pic)
+    if parsed.scheme != "https" or not parsed.netloc:
+        return current
+    return pic

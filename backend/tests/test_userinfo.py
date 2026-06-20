@@ -2,7 +2,7 @@ import httpx
 import pytest
 
 from app.config import Settings
-from app.userinfo import UserinfoError, fetch_userinfo
+from app.userinfo import UserinfoError, UserinfoClaims, fetch_userinfo
 
 
 def _transport(handler):
@@ -76,3 +76,55 @@ def test_userinfo_uri_derivation():
         Settings(logto_endpoint="https://auth.fountainrank.com/").logto_userinfo_uri
         == "https://auth.fountainrank.com/oidc/me"
     )
+
+
+from app.userinfo import accept_avatar, accept_email, pick_display_name
+
+
+def _claims(**kw):
+    return UserinfoClaims(sub="logto|abc", **kw)
+
+
+def test_accept_email_takes_valid_verified():
+    assert accept_email(_claims(email="Real@Gmail.com", email_verified=True), current="old@x.com") == "Real@Gmail.com"
+
+
+def test_accept_email_accepts_absent_verified():
+    assert accept_email(_claims(email="real@gmail.com"), current="old@x.com") == "real@gmail.com"
+
+
+def test_accept_email_preserves_on_unverified():
+    assert accept_email(_claims(email="real@gmail.com", email_verified=False), current="old@x.com") == "old@x.com"
+
+
+def test_accept_email_preserves_on_blank_or_invalid():
+    cur = "old@x.com"
+    assert accept_email(_claims(email="  "), current=cur) == cur
+    assert accept_email(_claims(email="not-an-email"), current=cur) == cur
+    assert accept_email(_claims(email="a b@x.com"), current=cur) == cur
+    assert accept_email(_claims(email="a@b@c.com"), current=cur) == cur
+    assert accept_email(_claims(email="@x.com"), current=cur) == cur
+    assert accept_email(_claims(email="a@"), current=cur) == cur
+    assert accept_email(_claims(email=None), current=cur) == cur
+
+
+def test_accept_email_rejects_synthetic_domain():
+    cur = "old@x.com"
+    assert accept_email(_claims(email="logto|abc@users.noreply.fountainrank.com", email_verified=True), current=cur) == cur
+
+
+def test_pick_display_name_prefers_name_then_username_then_current_then_sub():
+    assert pick_display_name(_claims(name="N", username="U"), current="C", sub="logto|abc") == "N"
+    assert pick_display_name(_claims(name="  ", username="U"), current="C", sub="logto|abc") == "U"
+    assert pick_display_name(_claims(name=None, username=None), current="C", sub="logto|abc") == "C"
+    assert pick_display_name(_claims(name="", username=""), current="  ", sub="logto|abc") == "logto|abc"
+
+
+def test_accept_avatar_only_valid_https_capped():
+    assert accept_avatar(_claims(picture="https://img.example/x.png"), current=None) == "https://img.example/x.png"
+    assert accept_avatar(_claims(picture="http://img.example/x.png"), current="https://old/a.png") == "https://old/a.png"
+    assert accept_avatar(_claims(picture="https://"), current="https://old/a.png") == "https://old/a.png"
+    assert accept_avatar(_claims(picture="https://bad host/x"), current="https://old/a.png") == "https://old/a.png"
+    assert accept_avatar(_claims(picture="  "), current="https://old/a.png") == "https://old/a.png"
+    assert accept_avatar(_claims(picture="https://img.example/" + "x" * 3000), current=None) is None
+    assert accept_avatar(_claims(picture=None), current="https://old/a.png") == "https://old/a.png"
