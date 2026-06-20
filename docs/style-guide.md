@@ -115,3 +115,22 @@ Static, readable policy pages for app-store and OAuth registration URLs.
 - Body is sectioned with `h2` headings and simple disc lists for scanability.
 - These pages intentionally avoid the landing page gradient so long policy text
   remains comfortable to read.
+
+### Auth buttons (`web/components/SignInButton.tsx`, `SignOutButton.tsx`)
+
+Pill-shaped buttons that submit a Next.js server action (`<form action={...}>`).
+
+- **Sign in (primary):** solid crown-gold fill (`bg-[#F2C200]`), navy text
+  (`text-[#0A357E]`), `hover:bg-[#ffce1f]`, gold focus ring.
+- **Sign out (secondary):** transparent with a `border-white/40` outline, white text,
+  `hover:bg-white/10`, white focus ring — for use on the brand gradient.
+- Both are `rounded-full`, `px-6 py-2.5`, `text-sm font-semibold`, and carry a visible
+  `focus-visible` outline for keyboard users.
+
+### Account panel (`web/app/account/page.tsx`)
+
+The authenticated utility page (the BFF round-trip surface), on the brand gradient
+(`min-h-dvh`, centered). Three states: signed-out (heading + copy + Sign in), signed-in
+(heading + a `name`/`email` definition list + Sign out), and a profile-load error
+(heading + Sign out). Not linked from the marketing hero; reached via the footer
+"Sign in" link.

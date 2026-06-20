@@ -31,11 +31,32 @@ spec:
           ports:
             - containerPort: 3000
           env:
-            # NOTE: NEXT_PUBLIC_* is inlined at BUILD time, not read at runtime. The
-            # real value must be passed as a build arg when the web image is built
-            # (Phase 0f). This runtime env only helps server-side reads.
+            # NEXT_PUBLIC_* is inlined at BUILD time (Dockerfile build-arg); this runtime
+            # entry only helps server-side reads.
             - name: NEXT_PUBLIC_API_BASE_URL
               value: "https://api.${DOMAIN}"
+            # Logto SDK (server-side runtime). Non-secret values via envsubst:
+            - name: LOGTO_ENDPOINT
+              value: "https://auth.${DOMAIN}"
+            - name: LOGTO_BASE_URL
+              value: "https://${DOMAIN}"
+            - name: LOGTO_APP_ID
+              value: "${LOGTO_APP_ID}"
+            # Secrets via k8s Secret (never envsubst'd into rendered YAML):
+            - name: LOGTO_APP_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: fountainrank-secrets
+                  key: logto-app-secret
+            - name: LOGTO_COOKIE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: fountainrank-secrets
+                  key: logto-cookie-secret
+            - name: LOG_LEVEL
+              value: "info"
+            - name: LOG_FORMAT
+              value: "json"
           resources:
             requests:
               memory: "256Mi"

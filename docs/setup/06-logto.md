@@ -38,9 +38,8 @@ subject; per-scope authorization is a later concern.)
 In the Logto admin console → **Applications → Create**:
 
 - **Web** — type **Traditional Web** (Next.js). Set:
-  - **Redirect URI:** the web app's callback (Logto Next.js SDK default is
-    `https://fountainrank.com/callback` — confirm against the SDK config we
-    write in Phase 2).
+  - **Redirect URIs:** `http://localhost:3020/callback` (local dev, port 3020)
+    **and** `https://fountainrank.com/callback` (production).
   - **Post sign-out redirect URI:** `https://fountainrank.com`.
   - Record **App ID** and **App secret** → `LOGTO_APP_ID` / `LOGTO_APP_SECRET`.
 
@@ -101,6 +100,25 @@ buttons; set branding (logo, colors) to match the eventual style guide.
 web/mobile/backend config in Phase 2. **You keep / set yourself:** the app
 secrets and connector credentials, entered in Logto and mirrored into GitHub
 Environment secrets where CI needs them.
+
+---
+
+## Owner task — set production GitHub secrets before next deploy
+
+The Phase 2a deploy used placeholder values for `LOGTO_APP_ID` and the web
+secrets. Now that the web Logto integration is implemented you **must** replace
+them before the next deploy. The k8s Secret is recreated from these values on
+every deploy run.
+
+**GitHub → Settings → Environments → `production`:**
+
+| Item | Type | Value |
+|---|---|---|
+| `LOGTO_APP_ID` | **Variable** (not secret) | The real App ID from Step 1 above |
+| `LOGTO_APP_SECRET` | **Secret** | The real App Secret from Step 1 above |
+| `LOGTO_COOKIE_SECRET` | **Secret** | A random string ≥ 32 characters (generate with `openssl rand -base64 32`) |
+
+Do **not** paste the actual secret values here or into any file tracked by git.
 
 ---
 

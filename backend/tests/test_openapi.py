@@ -27,3 +27,9 @@ def test_openapi_exposes_phase1_contract():
     components = schema["components"]["schemas"]
     for name in ("FountainDetail", "FountainPin", "AddFountainRequest", "RatingTypeOut"):
         assert name in components
+
+
+def test_openapi_exposes_me_endpoint():
+    schema = app.openapi()
+    assert "/api/v1/me" in schema["paths"]
+    assert "MeResponse" in schema["components"]["schemas"]
