@@ -104,7 +104,8 @@ def get_userinfo_fetcher(settings: Settings = Depends(get_settings)) -> Userinfo
 
 def accept_email(claims: UserinfoClaims, *, current: str) -> str:
     """Return the email to store: the userinfo email only if it is a valid, non-synthetic,
-    non-unverified address; otherwise the existing value (never overwrite a real email with junk)."""
+    non-unverified address; otherwise the existing value (never overwrite a real email
+    with junk)."""
     email = (claims.email or "").strip()
     if not email:
         return current
