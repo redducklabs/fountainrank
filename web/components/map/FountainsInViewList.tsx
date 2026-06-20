@@ -1,17 +1,44 @@
-/**
- * PLACEHOLDER — Task 14 will replace this with the real accessible fountain list.
- * This file exists only so MapBrowser can import it without a missing-module error.
- * Do NOT implement behaviour here; Task 14 owns this file.
- */
 import type { FountainPin } from "../../lib/fountains";
+import { formatAverage } from "../../lib/map/format";
+import { basePinIcon } from "../../lib/map/pins";
 
-export interface FountainsInViewListProps {
+export function FountainsInViewList({
+  pins,
+  activeId,
+  onOpen,
+}: {
   pins: FountainPin[];
-  activeId: string;
+  activeId?: string;
   onOpen: (id: string) => void;
-}
-
-export function FountainsInViewList(_props: FountainsInViewListProps) {
-  // Intentionally renders nothing — replaced by Task 14.
-  return null;
+}) {
+  if (pins.length === 0) return null;
+  return (
+    <nav
+      aria-label="Fountains in view"
+      className="absolute bottom-0 left-0 right-0 max-h-40 overflow-auto bg-white/95 p-2 shadow md:bottom-4 md:left-4 md:right-auto md:w-72 md:rounded-lg"
+    >
+      <ul className="space-y-1">
+        {pins.map((p) => {
+          const status = p.is_working ? "Working" : "Out of order";
+          return (
+            <li key={p.id}>
+              <button
+                onClick={() => onOpen(String(p.id))}
+                aria-current={String(p.id) === activeId ? "true" : undefined}
+                className="flex w-full items-center justify-between rounded px-3 py-2 text-left text-sm hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#0C44A0] aria-[current=true]:bg-[#0C44A0]/10"
+              >
+                <span>
+                  {status}
+                  {basePinIcon({ ...p, ranking_score: p.ranking_score ?? null }) === "pin-gold"
+                    ? " · Top-rated"
+                    : ""}
+                </span>
+                <span className="text-slate-500">{formatAverage(p.average_rating ?? null)}</span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </nav>
+  );
 }
