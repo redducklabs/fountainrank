@@ -1,4 +1,4 @@
-# Handoff — FountainRank (User profile sync DEPLOYED — `v0.5.0`; ONE owner check outstanding)
+# Handoff — FountainRank (User profile sync DEPLOYED + VERIFIED — `v0.5.0`)
 
 **Date:** 2026-06-20
 **From:** In-repo Claude session (user-profile-sync sub-project: spec → Codex Loop A → plan → Codex Loop A → subagent-driven implement → PR #17 → CI green + Codex Loop B APPROVED → squash-merge → `v0.5.0` deploy)
@@ -11,7 +11,7 @@
 
 1. **User profile sync is MERGED + DEPLOYED** (`main` @ `99866ee`, PR #17, tag **`v0.5.0`**; deploy.yml succeeded, all rollouts green). On login the backend now learns the user's **real** `email`/`name`/`avatar` from Logto userinfo and stores them, replacing the synthetic Phase-2a fallbacks.
 2. **Prod smoke checks pass:** `POST https://api.fountainrank.com/api/v1/me/sync` → **401** (deployed + auth-gated, not 404); `https://fountainrank.com/account` → **200** (new web code live); `/api/v1/me` → 401.
-3. **⚠ ONE owner check is outstanding** (a probe deliberately deferred to post-deploy, owner's choice): sign in at `https://fountainrank.com/account` and confirm it shows the **real** email/name/avatar and the backend log shows `POST /api/v1/me/sync 200`. This proves the **one unproven assumption**: that `getAccessTokenRSC(config)` (no resource) yields an opaque token **Logto userinfo accepts**. **If the profile stays synthetic** (userinfo rejected the token) → do NOT patch around it; that triggers the **Management-API follow-up** (design §8). Also confirm the browser network panel shows **no** `Authorization` call to the API and no `userinfo_token` in any browser payload.
+3. **Post-deploy verification CONFIRMED (owner, 2026-06-20):** signed in at `https://fountainrank.com/account` and the **real** email/name/avatar render. So the one runtime assumption is proven — `getAccessTokenRSC(config)` (no resource) yields an opaque token **Logto userinfo accepts**, and the full `/account` → opaque-token → userinfo → upsert path works end-to-end in prod. The **Management-API contingency (design §8) is NOT needed** (kept only as a reference if profile sync ever regresses). **Writes + real profile are now live end-to-end on web.**
 
 ---
 
@@ -32,14 +32,16 @@ Users provisioned earlier with a synthetic email (`<sub>@users.noreply.fountainr
 
 ---
 
-## ▶ RESUME HERE — next sub-projects (unchanged)
+## ▶ RESUME HERE — next sub-projects
 
-Each: spec → Codex Loop A → plan → Codex Loop A → subagent-driven implement → PR → CI + Codex Loop B → squash-merge → owner-gated `v*.*.*` deploy.
+Each: spec → Codex Loop A → plan → Codex Loop A → subagent-driven implement → PR → CI + Codex Loop B → squash-merge → owner-gated `v*.*.*` deploy. Phase roadmap is spec §20. **Done so far:** Phase 0 (foundation), Phase 1 (data model + fountains API), Phase 2 **web** (Logto auth + email + profile sync). **Not yet built:** the actual product UI, and the mobile client.
 
-- **Mobile auth** — Logto React Native SDK (native OAuth via `expo-auth-session`; `expo-apple-authentication` for Apple); native app id `LOGTO_NATIVE_APP_ID` (=`oikth3qbmnrhqd9jmkbc8`). Reuses the backend `/api/v1/me` + `/api/v1/me/sync` (mobile forwards its own opaque token).
+- **Phase 3 — Web product UI: Maps + add-fountain + rate-on-add (MapLibre).** The biggest next piece and **highest user value** — the Phase-1 fountains API exists (`GET /api/v1/fountains`, `/bbox`, `/{id}`, `POST` add/rate — see `backend/README.md`) and writes are now open, but there is **no product UI yet** (web is only landing + `/account` + privacy/terms). Per spec §14/§20 this starts with a **UI design brainstorm + the style guide** (`docs/style-guide.md` exists) before implementation.
+- **Mobile (finishes Phase 2's mobile half)** — Logto React Native SDK (native OAuth via `expo-auth-session`; `expo-apple-authentication` for Apple); native app id `LOGTO_NATIVE_APP_ID` (=`oikth3qbmnrhqd9jmkbc8`). Reuses the backend `/api/v1/me` + `/api/v1/me/sync` (mobile forwards its own opaque token). (Mobile also needs the Phase-3 UI to be useful, so it usually follows or parallels Phase 3.)
 - **Apple sign-in** — gated on the owner's Apple Developer enrollment (Services ID + key → Logto Apple connector).
-- **Trust & Safety / moderation** (issues #10–#13): user blocking, report→queue, admin queue + content removal, admin bans. New tables, `users.is_admin` gate, soft-delete + ranking recompute.
-- **(Contingency) Management-API profile sync** — only if the v0.5.0 post-deploy probe fails (opaque token not userinfo-accepted): a narrow follow-up spec for backend M2M → `GET /api/users/{sub}` (design §8). M2M creds already exist (`LOGTO_M2M_APP_ID`=`y5pux8b2iy7hmkl79zbic`).
+- **Trust & Safety / moderation** (issues #10–#13): user blocking, report→queue, admin queue + content removal, admin bans. New tables, `users.is_admin` gate, soft-delete + ranking recompute. Independent of the UI; acts on real user content.
+- **Phase 4** (photos + rating existing fountains from detail) and **Phase 5** (leaderboards: weighted/Bayesian ranking + contributor board) follow.
+- **(Reference only) Management-API profile sync** — NOT needed (the v0.5.0 probe passed); design §8 is the fallback only if the opaque-token path ever regresses. M2M creds exist (`LOGTO_M2M_APP_ID`=`y5pux8b2iy7hmkl79zbic`).
 
 ---
 
