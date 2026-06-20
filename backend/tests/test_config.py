@@ -84,3 +84,10 @@ def test_email_configured_requires_token_json_and_delegated_user():
         ).email_configured
         is False
     )
+
+
+def test_max_results_pinned():
+    from app.config import Settings
+
+    # Pinned contract: mirrored in web/lib/map/constants.ts MAX_BBOX_RESULTS.
+    assert Settings().max_results == 500
