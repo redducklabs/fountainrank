@@ -158,8 +158,10 @@ export function getLogtoConfig(): LogtoNextConfig {
 - `requireEnv(name)` throws a clear server-side error naming the missing var (never logs the
   value). `requireCookieSecret(name)` additionally **fails fast if the value is shorter than 32
   characters** — a real validator, not a comment — so a too-short GitHub secret can never deploy
-  a web pod with weak/rejected cookie crypto (it surfaces as a clear startup-time error instead
-  of confusing auth failures). Both have unit tests (incl. the 31/32-char boundary).
+  a web pod with weak/rejected cookie crypto (it surfaces as a clear **request-time** error the
+  first time `/account` or `/callback` builds the config — the pod still starts and passes `/`
+  readiness — instead of confusing auth failures). Both have unit tests (incl. the 31/32-char
+  boundary).
 - The `resources` entry is what makes the SDK mint a JWT with the `aud` the backend validates.
 
 ### 4.3 Web — callback + sign-in/out
@@ -169,9 +171,9 @@ export function getLogtoConfig(): LogtoNextConfig {
   On a `handleSignIn` error (e.g. state/PKCE mismatch), redirect to `/account?error=signin` (no
   token/exception detail leaked to the client) and log the failure via the structured web logger
   (§4.8) at `warn` — **never logging the callback query string** (it carries the auth `code`).
-- `web/app/actions/auth.ts` (`"use server"`): thin `signInAction()` →
-  `signIn(getLogtoConfig(), \`${getLogtoConfig().baseUrl}/callback\`)` and `signOutAction()` →
-  `signOut(getLogtoConfig())`; centralizes the redirect URIs.
+- `web/app/actions/auth.ts` (`"use server"`): each action binds `const config = getLogtoConfig()`
+  once — `signInAction()` → `signIn(config, \`${config.baseUrl}/callback\`)`, `signOutAction()` →
+  `signOut(config)`; centralizes the redirect URIs.
 - `web/components/SignInButton.tsx` / `SignOutButton.tsx` (`"use client"`): render a styled
   button whose form-action invokes the corresponding server action.
 
@@ -320,8 +322,10 @@ inherited from Phase 2a):
 - The structured logger redacts (given a token-bearing field, it does not appear in output).
 - Existing `web/lib/api.test.ts` stays green.
 
-**Build-safety check (acceptance):** `pnpm --filter web run build` **passes with no `LOGTO_*` set**
-(proves the lazy-config + `force-dynamic` pattern; this is exactly what CI and the image build run).
+**Build-safety check (acceptance):** the repo build path — `pnpm run generate` (codegen) then
+`pnpm exec turbo run build --filter=web` — **passes with no `LOGTO_*` set** (proves the
+lazy-config + `force-dynamic` pattern; this is exactly what CI/`run.ps1` and the image build run.
+`generate` first because `packages/api-client/openapi.json` + `src/schema.d.ts` are gitignored).
 
 **CI mirror:** `workspace-js` (lint + typecheck + build + vitest for `web` + `api-client`) and
 `backend` green; `pnpm-audit`/`pip-audit`/`trivy-fs`/CodeQL green; no new deps with known CVEs.
@@ -349,7 +353,8 @@ This is the genuine end-to-end proof CI cannot do; a documented pre-merge step, 
    `force-dynamic`, and `/account` renders the signed-in user via a **server-side**
    `getAccessTokenRSC` → `/api/v1/me` call; the access token is never exposed to the browser
    (`server-only` guard present; `@logto/next` + `server-only` in `package.json`).
-3. **`pnpm --filter web run build` passes with no `LOGTO_*` set** (build-safety).
+3. **The repo web build (`pnpm run generate` then `pnpm exec turbo run build --filter=web`)
+   passes with no `LOGTO_*` set** (build-safety).
 4. `requireCookieSecret` rejects a <32-char secret (unit test); the structured web logger emits
    redacted stdout and is used on all new server-side auth failure paths (no bare `console.*`).
 5. `infra/k8s/web.yaml` injects `LOGTO_*` + `LOG_LEVEL`/`LOG_FORMAT` (non-secret via envsubst,
@@ -376,8 +381,9 @@ This is the genuine end-to-end proof CI cannot do; a documented pre-merge step, 
 ## 9. Risks / open points
 
 - **Secret values in GitHub are placeholders** until §8.1 — a prod deploy before that yields a
-  web pod that fails `requireEnv` (fail-fast, visible in logs) rather than a silent broken
-  session. Called out, not hidden.
+  web pod that **starts and passes `/` readiness** but fails `requireEnv`/`requireCookieSecret`
+  at **request time** on `/account`/`/callback` (fail-fast, visible in logs) rather than a silent
+  broken session. Called out, not hidden.
 - **No end-to-end token test in CI** (no live Logto in CI) — same honest limitation as Phase 2a;
   mitigated by the pre-merge live verification (§6).
 - **Session-cookie size:** Logto stores tokens in the encrypted cookie; with one API resource
