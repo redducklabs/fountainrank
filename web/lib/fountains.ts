@@ -17,8 +17,13 @@ export async function fetchBbox(params: BboxParams, requestId?: string): Promise
 
 export async function getFountainDetailServer(id: string, requestId: string) {
   const client = makeClient(resolveApiBaseUrl(), { headers: { "X-Request-ID": requestId } });
-  const { data, response } = await client.GET("/api/v1/fountains/{fountain_id}", {
-    params: { path: { fountain_id: id } },
-  });
-  return { data, status: response?.status ?? 0 };
+  try {
+    const { data, response } = await client.GET("/api/v1/fountains/{fountain_id}", {
+      params: { path: { fountain_id: id } },
+    });
+    return { data, status: response?.status ?? 0 };
+  } catch {
+    // status 0 = no HTTP response (network error / backend down / DNS failure)
+    return { data: undefined, status: 0 };
+  }
 }
