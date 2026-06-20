@@ -69,53 +69,77 @@ change; the cookie/secret/build-safety design is unchanged.)
 ### 3.2 Web — sync on login from the callback (`web/app/callback/route.ts`)
 
 After `handleSignIn` succeeds (and before the redirect), do a **best-effort** profile sync — a
-mutation, correctly placed in the route handler (keeps `/account` a pure read). The callback (a
-route handler, so it uses `getAccessToken`, not the RSC variant):
+mutation correctly placed in the route handler (keeps `/account` a pure read). A **`server-only`**
+helper `web/lib/server/sync.ts` (its first line is `import "server-only"`, asserted in its test —
+the token must never enter a client-capable module) does, from the route handler (so it uses
+`getAccessToken`, not the RSC variant):
 
 1. `const resourceToken = await getAccessToken(config, API_RESOURCE)` — to authenticate to the
    backend (the sync endpoint is auth-gated by the resource JWT, like every write).
-2. `const opaqueToken = await getAccessToken(config)` — **no resource arg → the opaque,
-   userinfo-capable access token** (plan-time: confirm a no-resource `getAccessToken` returns the
-   opaque token given our scopes).
+2. `const opaqueToken = await getAccessToken(config)` — **no resource arg → the default,
+   userinfo-capable opaque access token** (the SDK's empty-resource token from the auth-code
+   exchange). **This is a hard requirement, not an assumption** (see the §6.1 probe): if this
+   token is not accepted by Logto userinfo in our setup, the build does **NOT** silently fall back
+   to trusting client-supplied claims — the contingency is the still-backend-authoritative
+   Management-API path (§8).
 3. `POST {resolveApiBaseUrl()}/api/v1/me/sync` with `Authorization: Bearer ${resourceToken}` +
-   `X-Request-ID` and JSON body `{ "userinfo_token": opaqueToken }`.
+   `X-Request-ID: <uuid>` and JSON body `{ "userinfo_token": opaqueToken }`, via a plain
+   **server-side `fetch`** (NOT the browser-exposed api-client).
 
-Wrapped in try/catch: **any failure logs (redacted, via the web logger) and is swallowed** —
-sync never blocks the post-login redirect. Then `redirect("/account")` as today. (`handleSignIn`
-failure path / NEXT_REDIRECT handling is unchanged.) A small `web/lib/server/sync.ts` helper
-holds this so the route stays readable; it carries `import "server-only"`.
+Wrapped in try/catch: **any failure logs a structured, redacted warning** (request id + backend
+status/error-class + the authenticated subject when available; NEVER the tokens or the callback
+query string) via `web/lib/server/log.ts`, and is **swallowed** — sync never blocks the post-login
+redirect. Then `redirect("/account")` as today (`handleSignIn`/NEXT_REDIRECT handling unchanged).
 
-Because the callback always redirects to `/account`, every successful login both syncs the
-profile **and** lands on the page that displays it — `/account` then renders the fresh stored
-values via the unchanged `GET /api/v1/me`.
+Because the callback always redirects to `/account`, a **successful** login sync both refreshes
+the stored profile and lands on the page that displays it — `/account` renders the stored values
+via the unchanged `GET /api/v1/me`. On a sync failure the user lands on `/account` still showing
+the last-synced (possibly synthetic) values until a later successful sync — acceptable and
+logged, **not** silently presented as guaranteed-fresh.
 
 ### 3.3 Backend — `POST /api/v1/me/sync` (`backend/app/routers/users.py`)
 
-Auth-required (resource JWT, via the existing `get_current_user` dependency — so it also JIT-
-provisions the user on first sight, exactly as today). Request body `SyncProfileRequest`
-(`backend/app/schemas.py`): `{ userinfo_token: str }` (min length 1). Flow:
+Auth-required via the existing `get_current_user` dependency (so it JIT-provisions on first sight
+exactly as today). The route declares **both** `current_user: Annotated[User, Depends(get_current_user)]`
+**and** `session: Annotated[AsyncSession, Depends(get_session)]` — FastAPI dependency caching makes
+them share one session, so mutating `current_user` and committing persists (the existing write
+routes follow this pattern; `get_session` does not auto-commit — we commit explicitly). Request
+body `SyncProfileRequest` (`backend/app/schemas.py`): `{ userinfo_token: str = Field(min_length=1) }`.
 
-1. **Call Logto userinfo** — `GET {logto_userinfo_uri}` with `Authorization: Bearer
-   {userinfo_token}` via an injectable async `httpx` client (so tests supply a fake — same
-   dependency-injection style as `JwksCache`'s fetch coroutine). `logto_userinfo_uri` is a new
-   derived config: `f"{logto_issuer}/me"` (plan-time: confirm `/oidc/me` against the live
-   discovery `userinfo_endpoint`). Parse `sub`, `email`, `name`, `username`, `picture`.
-2. **Security cross-check (critical):** the userinfo `sub` **MUST equal**
-   `current_user.logto_user_id` (= the validated resource-JWT `sub`). Otherwise **`403`** — a
-   caller must not be able to write someone else's profile onto their own row (or vice-versa) by
-   forwarding a mismatched opaque token. Logged at `WARNING` (reason + both subs are the same
-   validated identity space; never the tokens).
-3. **Update the row** (`current_user` is already attached to the request session — mutate +
-   flush/commit; no new upsert function, no `get_or_create_user` change needed):
-   - `email` ← userinfo `email` **if present** (else leave the existing value — never overwrite a
-     real email with nothing; this is also what self-heals older synthetic rows).
-   - `display_name` ← `name` or `username` or the existing `display_name` or `sub`.
-   - `avatar_url` ← `picture` (or leave/`None`).
-4. Return the updated `MeResponse` (existing schema; already includes `avatar_url`).
+Flow:
 
-`get_or_create_user` stays INSERT-only and unchanged; the **update** is localized to this
-endpoint (mutating the already-loaded `current_user`). This is the deliberate lift of Phase 2a's
-"don't update an existing user's profile" limitation, scoped to this explicit sync.
+1. **Call Logto userinfo** — `GET settings.logto_userinfo_uri` (§3.5) with
+   `Authorization: Bearer {userinfo_token}` via an **injectable async httpx client** (a module
+   singleton overridable in tests — mirrors `JwksCache`'s injected fetch, so tests are
+   network-free). Client guardrails: a short explicit **timeout (~5s)**, **`follow_redirects=False`**,
+   a bounded JSON read; **never** put the token in exception messages or logs.
+2. **Parse into a typed model** `UserinfoClaims` (Pydantic, `extra="ignore"`): `sub: str`
+   (required, non-empty), `email: str | None`, `email_verified: bool | None`, `name: str | None`,
+   `username: str | None`, `picture: str | None`. A non-200, network/timeout error, malformed
+   JSON, or a missing/empty `sub` → **`502`** (logged `WARNING` with request id + reason, no
+   token); the row is left unchanged.
+3. **Security cross-check (critical):** `claims.sub` **MUST equal** `current_user.logto_user_id`
+   (the validated resource-JWT `sub`); else **`403`**, row unchanged. (Prevents an authenticated
+   caller writing another user's profile onto their row — or theirs onto another's — by forwarding
+   a mismatched opaque token. A matched-token replay can only refresh the caller's own row.)
+4. **Update the session-attached `current_user`** (then `await session.commit()` and
+   `await session.refresh(current_user)`), applying these **normalization/acceptance rules**:
+   - **email** — accept the userinfo email ONLY if, after `.strip()`, it is a syntactically valid
+     non-empty address (lightweight check, no new dep: exactly one `@`, non-empty local + domain,
+     no whitespace), is **not** our synthetic `@users.noreply.fountainrank.com` domain, and — when
+     `email_verified` is present — it is `True` (an **absent** `email_verified` is accepted:
+     Logto's social/magic-link emails are connector-verified; an explicit `False` is rejected).
+     Otherwise **preserve the existing `email`** (never overwrite a real email with
+     blank/invalid/synthetic/unverified). This is what self-heals older synthetic rows.
+   - **display_name** — first **non-empty-after-trim** of: `name`, `username`, the existing
+     `display_name`, `sub`.
+   - **avatar_url** — set to `picture` ONLY if it is a non-empty `https://` URL ≤ 2048 chars; a
+     blank/invalid/non-`https` `picture` → leave the existing `avatar_url` unchanged (do not clear).
+5. Return the updated `MeResponse` (existing schema; already includes `avatar_url`).
+
+`get_or_create_user` stays INSERT-only and unchanged; the **update** is localized here (mutating
+the already-loaded `current_user`). This is the deliberate, scoped lift of Phase 2a's
+"don't update an existing user's profile" limitation.
 
 ### 3.4 Data, self-healing, freshness
 
@@ -125,54 +149,96 @@ endpoint (mutating the already-loaded `current_user`). This is the deliberate li
 - **Self-healing:** users provisioned earlier with a synthetic email get the real email on their
   next login's sync (it overwrites). No migration/backfill needed.
 - **Freshness:** sync runs on every login (callback → every login lands on `/account`). Profile
-  changes in the social account propagate on the next login.
+  changes in the social account propagate on the next **successful** login sync (a failed sync
+  leaves the prior values until the next one — not silently presented as fresh).
+
+### 3.5 Backend config — derived userinfo URI (`app/config.py`)
+
+Add a derived (computed, not env) property, matching the existing `logto_issuer`/`logto_jwks_uri`
+pattern (we **derive** rather than read OIDC discovery — Phase 2a deliberately avoided discovery
+because the pre-fix issuer was emitted as `http://`):
+
+```python
+@property
+def logto_userinfo_uri(self) -> str:
+    return f"{self.logto_issuer}/me"   # -> https://auth.fountainrank.com/oidc/me
+```
+
+A config unit test asserts the value (incl. correct behavior regardless of a trailing slash on
+`logto_endpoint`, since `logto_issuer` already strips it). Live OIDC discovery's
+`userinfo_endpoint` is used only as an **operator verification** that `/oidc/me` is correct for
+this Logto build — never as runtime behavior.
 
 ## 4. Error handling
 
 - `POST /api/v1/me/sync`: missing/invalid resource JWT → `401` (existing resolver); malformed body
-  (no `userinfo_token`) → `422`; userinfo `sub` ≠ caller `sub` → `403`; userinfo unreachable /
-  non-200 / unparseable → `502` (logged `WARNING`, never the token); success → `200` + `MeResponse`.
-  No silent `500` for these expected failures; unexpected errors keep the centralized 500 path.
-- Web callback sync is **best-effort**: on any non-200 / network error it logs (redacted) and
-  proceeds to redirect — a sync failure never blocks login.
-- **Never log** the opaque token, the resource token, the full userinfo response, or any secret —
-  redact (reuse `web/lib/server/log.ts` on the web side; the backend's existing
-  request-id-stamped logging + no-token rule on the backend side). Backend logs the **validated**
-  `sub` only on success.
+  (no `userinfo_token`) → `422`; userinfo unreachable / timeout / non-200 / unparseable / missing
+  `sub` → `502` (row unchanged); userinfo `sub` ≠ caller `sub` → `403` (row unchanged); success →
+  `200` + `MeResponse`. No silent `500` for these expected failures; unexpected errors keep the
+  centralized 500 path. The userinfo httpx client uses a short timeout, `follow_redirects=False`,
+  and never includes the token in exceptions.
+- Web callback sync is **best-effort**: any non-200/network/timeout logs a redacted structured
+  warning (request id + status/error-class + subject when available) and is swallowed — never
+  blocks login; the user keeps the prior stored values until a later successful sync.
+- **Never log** the opaque token, the resource token, the full userinfo body, or any secret —
+  redact. Web: `web/lib/server/log.ts` (redacting). Backend: the existing request-id-stamped
+  logging + the Phase 2a no-token rule; on success log the **validated** `sub` only. Repeated
+  `502`s from one caller are visible via the per-request warning (rate limiting is a later concern).
 
 ## 5. Testing
 
 **Backend** (`backend/tests/test_me_sync.py`, no network — inject a fake userinfo client):
-- success: userinfo returns `{sub, email, name, picture}` matching the caller → row updated; the
-  returned `MeResponse` carries the **real** email/name/avatar; `logto_user_id` still absent.
-- **sub mismatch → `403`** (userinfo `sub` ≠ authenticated `sub`); the row is NOT modified.
-- userinfo non-200 / network error → `502`; row unchanged.
-- missing `name` → `display_name` falls back; missing `picture` → `avatar_url` stays null.
-- missing `email` in userinfo → existing email preserved (not nulled/synthetic-overwritten).
-- a previously-synthetic user is updated to the real email (self-heal).
-- 401 without a credential. Existing suite (109 + Phase-2a tests) stays green.
+- success: userinfo `{sub, email, email_verified: true, name, picture(https)}` matching the caller
+  → row updated to the **real** email/name/avatar; `MeResponse` reflects them; `logto_user_id`
+  still absent.
+- **sub mismatch → `403`**, row NOT modified.
+- userinfo non-200 / network error / timeout / malformed JSON / missing `sub` → `502`, row unchanged.
+- **email guards — each preserves the existing real email:** blank/whitespace, syntactically
+  invalid, the synthetic `@users.noreply.fountainrank.com` domain, and `email_verified: false`.
+- absent `email_verified` with a valid email → accepted.
+- **display_name** falls back through `name`→`username`→existing→`sub`, ignoring blank/whitespace.
+- **avatar_url**: a valid `https` is set; blank / `http` / non-URL / oversized `picture` → the
+  existing avatar is preserved (not cleared).
+- a previously-synthetic user → updated to the real email (self-heal).
+- `401` without a credential.
+- `backend/tests/test_openapi.py` extended: asserts `POST /api/v1/me/sync`, `SyncProfileRequest`,
+  and the `MeResponse` response are in the schema.
+- a `config` test asserts `logto_userinfo_uri` (§3.5).
+Existing suite (Phase 2a + web-auth, ~109 tests) stays green.
 
-**Web** (`vitest`): the sync helper posts to `/api/v1/me/sync` with the resource bearer + the
-`userinfo_token` body (mock `getAccessToken`); a thrown/failed sync is swallowed (best-effort).
+**Web** (`vitest`): the `server-only` sync helper — assert it begins with `import "server-only"`
+(so it cannot be pulled into a client bundle); it posts to `/api/v1/me/sync` with the resource
+bearer header + `{ userinfo_token }` body (mock `getAccessToken`); a thrown/failed sync is
+swallowed (best-effort) and logs a **redacted** warning (assert no token in the emitted output).
 `getLogtoConfig` now includes the `email`/`profile` scopes (assert). Build-safety unchanged.
 
-**Local gate:** `run.ps1 check -Backend` + the web checks; `pnpm run generate` regenerates the
-api-client for the new `/api/v1/me/sync` path. Generated `openapi.json`/`schema.d.ts` stay
-gitignored. Live proof is the post-deploy sign-in (now showing the real `aronweiler@gmail.com` +
-name + avatar).
+**Local gate:** `run.ps1 check`; `pnpm run generate` regenerates the api-client for the new
+`/api/v1/me/sync` path (gitignored — not committed). The genuine end-to-end proof is the
+post-deploy sign-in showing the real `aronweiler@gmail.com` + name + avatar (§6.1).
 
 ## 6. Acceptance criteria
 
-1. `POST /api/v1/me/sync` calls Logto userinfo with the forwarded opaque token, **enforces the
-   `sub` cross-check (`403` on mismatch)**, updates `email`/`display_name`/`avatar_url` from the
-   real profile, returns `MeResponse`, and never `500`s on the expected failure modes; all §5
-   backend tests pass under `run.ps1 check`.
-2. `web/lib/logto.ts` requests the `email`+`profile` scopes; the callback best-effort-syncs on
-   every login (failure never blocks the redirect); `/account` shows the real email/name/avatar.
-3. No token/secret is logged anywhere; the opaque token travels only server-to-server (web BFF →
-   backend), never to the browser. No `.env` written; no AI attribution; no time estimates.
-4. CI green + Codex `VERDICT: APPROVED` (Loop A spec + plan, Loop B PR) + every PR comment
-   addressed → squash-merge; owner-gated `v*.*.*` deploy.
+1. **The opaque-token → userinfo path is proven, not assumed:** an early implementation probe
+   confirms `getAccessToken(config)` (no resource) yields a token Logto userinfo accepts (`200` +
+   the caller's `sub`); and the live post-deploy sign-in shows the **real** email/name/avatar
+   (only possible if this path works end-to-end). If the probe fails, switch to the Management-API
+   contingency (§8) — **never** the trust-client-claims path.
+2. `POST /api/v1/me/sync` calls userinfo with the forwarded opaque token, enforces the **`sub`
+   cross-check (`403`)**, applies the email/name/avatar **normalization rules** (§3.3 step 4),
+   updates the row, returns `MeResponse`, and never `500`s on the expected failures; all §5 tests
+   pass under `run.ps1 check`.
+3. **Token boundary (matches the shipped `/me` design):** the sync helper carries `import
+   "server-only"` (asserted in a test); during a real sign-in the **browser network panel shows no
+   `Authorization`-bearing call to `api.fountainrank.com` and no `userinfo_token` in any
+   browser-visible payload**; web + backend logs show only request id / status / `sub`, never
+   tokens or the callback query.
+4. `web/lib/logto.ts` requests the `email`+`profile` scopes; the callback best-effort-syncs on
+   every login (failure logged, never blocks the redirect); `/account` shows the real
+   email/name/avatar **after a successful sync** (a failed sync logs + login still succeeds — no
+   guaranteed-fresh claim).
+5. No `.env` written; no AI attribution; no time estimates. CI green + Codex `VERDICT: APPROVED`
+   (Loop A spec + plan, Loop B PR) + every PR comment addressed → squash-merge; owner-gated
+   `v*.*.*` deploy.
 
 ## 7. Owner tasks
 
@@ -183,12 +249,22 @@ name + avatar).
 
 ## 8. Risks / open points
 
-- **`getAccessToken(config)` (no resource) returning a userinfo-capable opaque token** is assumed;
-  verified at plan/impl time. If the SDK won't yield it, fall back to forwarding the decoded
-  `claims` (trust-the-first-party-BFF) — a documented contingency, not the default.
-- **Userinfo path** (`/oidc/me` vs `/oidc/userinfo`): derived as `{logto_issuer}/me`; confirmed
-  against the live discovery `userinfo_endpoint` at impl time (endpoints are HTTPS since Phase 2a).
-- **Sync on relogin only** (not real-time): a profile change in Google shows after the next login.
-  Acceptable; real-time sync is out of scope.
+- **Opaque-token contingency (NOT the default):** the design REQUIRES `getAccessToken(config)` (no
+  resource) to yield a userinfo-accepted token (§6.1 probe). If — contrary to expectation — Logto
+  returns a resource-bound token from the auth-code exchange (because `resource` was requested at
+  authorize) and userinfo rejects it, the contingency is the **Logto Management API (M2M)**: the
+  backend (using the already-provisioned M2M creds) fetches the canonical profile by `sub` and
+  applies the same normalization + `sub` check. Still **backend-authoritative**; we do **NOT** fall
+  back to trusting BFF-supplied decoded claims. The §6.1 probe decides the path before the sync
+  logic is finalized.
+- **Userinfo path** derived as `settings.logto_issuer + "/me"` (§3.5), with a config test;
+  discovery is operator-verification only (avoids reintroducing the Phase 2a `http://`-discovery
+  issue).
+- **Sync on relogin only** (not real-time): a profile change in the social account shows after the
+  next successful login sync; a transient failure leaves the prior values (logged; login
+  unaffected). Real-time sync is out of scope.
 - **Email-only accounts** (magic-link, no name/avatar): `display_name` falls back, `avatar_url`
   stays null — correct and expected.
+- **`502` amplification:** an authenticated caller hammering `/api/v1/me/sync` with junk tokens
+  forces backend→Logto traffic (fixed URL, so not SSRF); mitigated by the auth gate + the short
+  timeout + the per-request warning log. A rate limit is a later concern if abuse appears.
