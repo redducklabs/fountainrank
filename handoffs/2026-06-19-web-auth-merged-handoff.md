@@ -1,4 +1,4 @@
-# Handoff — FountainRank (Web Logto auth MERGED to `main`, not yet deployed)
+# Handoff — FountainRank (Web Logto auth DEPLOYED to prod — `v0.4.0`)
 
 **Date:** 2026-06-19 (evening PDT)
 **From:** In-repo Claude session (Phase 2 **web** auth sub-project: spec → plan → subagent-driven implement → PR #16 → CI green + Codex Loop B APPROVED → squash-merge)
@@ -9,9 +9,10 @@
 
 ## TL;DR
 
-1. **Web Logto auth is MERGED** (`main` @ `4613a2b`, PR #16) but **NOT deployed** — the live system is still `v0.3.0`. The web app is now a real Logto OIDC client (server-side **BFF**), and the backend has `GET /api/v1/me`.
-2. **Writes are still closed in prod** until this deploys AND the owner sets the real Logto secrets — nothing changed in the running cluster yet.
-3. **3 owner actions remain before it's live** (below): set real GitHub `production` Logto secrets, tag a `v*.*.*` deploy, and do the post-deploy live verification (deferred from pre-merge by owner choice).
+1. **Web Logto auth is MERGED + DEPLOYED** — PR #16 squash-merged (`main` @ `4613a2b`) and shipped as tag **`v0.4.0`** (deploy.yml run succeeded; all rollouts green). The web app is now a real Logto OIDC client (server-side **BFF**), and the backend has `GET /api/v1/me`.
+2. **Prod smoke checks pass:** `https://fountainrank.com/account` → **200** (renders the Sign-in UI — proves the web pod's `LOGTO_*` env + `getLogtoConfig`/`requireCookieSecret`/`getLogtoContext` all resolve at request time, i.e. the real Logto secrets are set and `LOGTO_COOKIE_SECRET` is ≥32 chars); `https://api.fountainrank.com/api/v1/me` → **401** (endpoint deployed + auth-gated); landing footer has the `/account` Sign-in link.
+3. **The real GitHub `production` Logto values were already set by the owner** (`LOGTO_APP_ID` var = `vzkt3h8ou1j4qyar9xzfm`, `LOGTO_APP_SECRET`/`LOGTO_COOKIE_SECRET` secrets, updated 2026-06-19 ~20:24) — the earlier "placeholder" notes were stale.
+4. **One owner check remains:** the interactive end-to-end sign-in (Google/email) at `https://fountainrank.com/account`, confirming `/account` shows your profile and `GET /api/v1/me 200` in the logs with **no** `Authorization` call from the browser. Until that's confirmed, treat "writes fully open end-to-end" as smoke-tested-but-not-interactively-proven.
 
 ---
 
@@ -25,11 +26,11 @@
 
 ---
 
-## ▶ Owner actions to make it live (in order)
+## ▶ Status of the go-live steps
 
-1. **Set the REAL GitHub `production` Logto values** (replacing the Phase 2a placeholders): `LOGTO_APP_ID` (**variable**), `LOGTO_APP_SECRET` + a ≥32-char `LOGTO_COOKIE_SECRET` (**secrets**). The k8s `fountainrank-secrets` is recreated from these at each deploy, so a deploy before this gives a web pod that **starts** but fails `requireEnv`/`requireCookieSecret` at request time on `/account`/`/callback` (fail-fast, visible in logs).
-2. **Deploy** — tag a `v*.*.*` release (e.g. `v0.4.0`) → `deploy.yml` builds/pushes the web image (with `NEXT_PUBLIC_API_BASE_URL` build-arg) and applies the manifests. No new DB migration (web auth added no tables).
-3. **Post-deploy live verification** (deferred from pre-merge): open `https://fountainrank.com/account`, sign in (Google/email), confirm `/account` shows your profile, the web + backend logs show `GET /api/v1/me 200` (correlated by `X-Request-ID`), and the **browser Network panel shows NO `Authorization`-bearing call to `api.fountainrank.com`** (token stays server-side; a browser-side `/api/v1/me` call would mean the boundary broke). This is the real proof that **writes are open**.
+1. **Real GitHub `production` Logto values — DONE** (owner set them 2026-06-19; confirmed via `gh variable list`/`gh secret list`). The `/account` 200 smoke check proves they're valid in the running pod.
+2. **Deploy — DONE** (`v0.4.0` tag → `deploy.yml` succeeded; backend+web images built/pushed, secrets created, workloads applied, migrations run, all rollouts green). No new DB migration (web auth added no tables).
+3. **Interactive live verification — REMAINING (owner):** open `https://fountainrank.com/account`, sign in (Google/email), confirm `/account` shows your profile, the web + backend logs show `GET /api/v1/me 200` (correlated by `X-Request-ID`), and the **browser Network panel shows NO `Authorization`-bearing call to `api.fountainrank.com`** (token stays server-side; a browser-side `/api/v1/me` call would mean the boundary broke). This is the final proof that **writes are open end-to-end**. (HTTP-level smoke checks already pass — see TL;DR — so this is the last interactive confirmation, not a blocker.)
 
 ---
 
