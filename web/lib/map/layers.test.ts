@@ -1,3 +1,8 @@
+import {
+  createExpression,
+  type Feature,
+  type GlobalProperties,
+} from "@maplibre/maplibre-gl-style-spec";
 import { describe, expect, it } from "vitest";
 import {
   fountainsSource,
@@ -7,6 +12,7 @@ import {
   clusterCountLayer,
   selectedHaloLayer,
   selectedPinLayer,
+  SELECTED_ICON_EXPR,
 } from "./layers";
 import { CLUSTER_MAX_ZOOM, CLUSTER_RADIUS, PILL_MIN_ZOOM } from "./constants";
 
@@ -48,5 +54,65 @@ describe("selected layers", () => {
     expect(JSON.stringify(selectedHaloLayer("abc").filter)).toContain("abc");
     const sp = selectedPinLayer("abc");
     expect(JSON.stringify(sp.layout!["icon-image"])).toContain("pin-selected");
+  });
+});
+
+/**
+ * Behavioral cross-check: evaluates SELECTED_ICON_EXPR (the shipping MapLibre
+ * expression) over a property matrix and asserts it agrees with the selection
+ * rule.  selectedSwapIcon() in pins.ts is the readable TS mirror of that rule;
+ * this test guards the two implementations against divergence.
+ *
+ * Rule: feature gets "pin-selected" when is_working === true AND NOT
+ * (ranking_score != null && ranking_score > GOLD_THRESHOLD); otherwise falls
+ * back to the feature's own `icon` property.
+ */
+describe("SELECTED_ICON_EXPR behavioral matrix", () => {
+  const globals: GlobalProperties = { zoom: 0 };
+
+  function evalExpr(props: {
+    is_working: boolean;
+    ranking_score: number | null;
+    icon: string;
+  }): string {
+    // Pass null for propertySpec — the second arg is optional; null skips
+    // property-type constraints while still parsing the expression fully.
+    const parsed = createExpression(SELECTED_ICON_EXPR, null);
+    if (parsed.result !== "success") {
+      throw new Error(`Failed to parse SELECTED_ICON_EXPR: ${JSON.stringify(parsed.value)}`);
+    }
+    const feature: Feature = {
+      type: "Point",
+      properties: props,
+    };
+    return parsed.value.evaluate(globals, feature) as string;
+  }
+
+  it("working, ranking_score null → pin-selected", () => {
+    expect(evalExpr({ is_working: true, ranking_score: null, icon: "pin-standard" })).toBe(
+      "pin-selected",
+    );
+  });
+
+  it("working, ranking_score 3.2 → pin-selected", () => {
+    expect(evalExpr({ is_working: true, ranking_score: 3.2, icon: "pin-standard" })).toBe(
+      "pin-selected",
+    );
+  });
+
+  it("working, ranking_score 4 (boundary, NOT gold) → pin-selected", () => {
+    expect(evalExpr({ is_working: true, ranking_score: 4, icon: "pin-standard" })).toBe(
+      "pin-selected",
+    );
+  });
+
+  it("working, ranking_score 4.6 (gold) → falls back to feature icon", () => {
+    expect(evalExpr({ is_working: true, ranking_score: 4.6, icon: "pin-gold" })).toBe("pin-gold");
+  });
+
+  it("broken (is_working false) → falls back to feature icon", () => {
+    expect(evalExpr({ is_working: false, ranking_score: null, icon: "pin-broken" })).toBe(
+      "pin-broken",
+    );
   });
 });
