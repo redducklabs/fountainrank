@@ -11,12 +11,23 @@ export const dynamic = "force-dynamic";
 const shell =
   "relative flex min-h-dvh flex-col items-center justify-center gap-6 bg-gradient-to-b from-[#0A357E] via-[#0C44A0] to-[#0E4DA4] px-6 py-16 text-center text-white";
 
-export default async function AccountPage() {
+export default async function AccountPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string }>;
+}) {
+  // Only ever compared to a fixed literal — the raw value is never rendered (no injection).
+  const { error } = await searchParams;
   const { isAuthenticated } = await getLogtoContext(getLogtoConfig(), { fetchUserInfo: false });
 
   if (!isAuthenticated) {
     return (
       <main className={shell}>
+        {error === "signin" ? (
+          <p className="rounded-md bg-white/10 px-4 py-2 text-sm text-white/90">
+            Sign-in didn&rsquo;t complete. Please try again.
+          </p>
+        ) : null}
         <h1 className="text-2xl font-bold">Your FountainRank account</h1>
         <p className="max-w-sm text-white/80">Sign in to rate fountains and add new ones.</p>
         <SignInButton />
