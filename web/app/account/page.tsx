@@ -29,10 +29,10 @@ export default async function AccountPage() {
   try {
     const { data, error, response } = await (await getAuthedApiClient(requestId)).GET("/api/v1/me");
     if (error || !data) {
-      log("error", "failed to load profile", { requestId, status: response.status });
+      log("error", "failed to load profile", { requestId, status: response?.status });
     } else {
       profile = data;
-      log("debug", "loaded profile", { requestId, status: response.status });
+      log("debug", "loaded profile", { requestId, status: response?.status });
     }
   } catch (err) {
     // getAccessTokenRSC()/network can throw on an expired or broken session — render the
