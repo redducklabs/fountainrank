@@ -28,9 +28,6 @@ async def session(engine):
 async def clean_db(engine):
     async with engine.begin() as conn:
         await conn.execute(_sa_text("TRUNCATE ratings, fountains, users RESTART IDENTITY CASCADE"))
-        # Remove any non-seed rating_types (id >= 10) that tests may have inserted.
-        # Seed rows (ids 1–4) are left untouched so migration-seeded data is stable.
-        await conn.execute(_sa_text("DELETE FROM rating_types WHERE id >= 10"))
     yield
 
 

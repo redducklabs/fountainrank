@@ -36,17 +36,23 @@ async def test_detail_unknown_id_404(client):
 async def test_detail_dimensions_ordered_by_sort_order(client, session):
     # Insert a probe type with id=99 (highest) but sort_order=0 (lowest).
     # If ordering is by id it will appear LAST; if by sort_order it must appear FIRST.
-    # clean_db (conftest) removes id >= 10 before each test, so this is always fresh.
+    # The probe row is cleaned up locally in the finally block below (not via shared infra).
+    from sqlalchemy import text as _text
+
     await session.execute(
         pg_insert(RatingType)
         .values(id=99, name="Zzz", description="probe", sort_order=0)
         .on_conflict_do_nothing(index_elements=["id"])
     )
     await session.commit()
-    add = await client.post(
-        "/api/v1/fountains", json={"location": {"latitude": 37.7749, "longitude": -122.4194}}
-    )
-    fid = add.json()["id"]
-    resp = await client.get(f"/api/v1/fountains/{fid}")
-    names = [d["name"] for d in resp.json()["dimensions"]]
-    assert names[0] == "Zzz"  # sort_order 0 -> first (would be LAST if ordered by id)
+    try:
+        add = await client.post(
+            "/api/v1/fountains", json={"location": {"latitude": 37.7749, "longitude": -122.4194}}
+        )
+        fid = add.json()["id"]
+        resp = await client.get(f"/api/v1/fountains/{fid}")
+        names = [d["name"] for d in resp.json()["dimensions"]]
+        assert names[0] == "Zzz"  # sort_order 0 -> first (would be LAST if ordered by id)
+    finally:
+        await session.execute(_text("DELETE FROM rating_types WHERE id = 99"))
+        await session.commit()
