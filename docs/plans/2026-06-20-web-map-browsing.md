@@ -72,31 +72,41 @@ Spec §4.1. The column is already on `Fountain` and returned by `FountainDetail`
 **Interfaces:**
 - Produces: `FountainPin.ranking_score: float | None` present in `GET /api/v1/fountains/bbox` and `GET /api/v1/fountains`.
 
-- [ ] **Step 1: Read the existing tests** `backend/tests/test_fountains_query.py` + `backend/tests/conftest.py` to reuse their fixtures (client, session, fountain/rating seeding helpers). Match their style.
+- [ ] **Step 1: Note the existing pattern.** `test_fountains_query.py` uses a local `_add(client, lat, lng)` that POSTs a fountain and returns its id; `test_fountains_detail.py` shows POSTing with inline `ratings: [...]`. A fountain created **with** ≥1 rating gets a non-null `ranking_score` (recomputed on rating create, spec §8). Reuse this — no new fixtures.
 
-- [ ] **Step 2: Write the failing tests** in `test_fountains_query.py` — seed a fountain with ≥1 rating (so `ranking_score` is non-null) using the existing helper, then assert both endpoints expose the field:
+- [ ] **Step 2: Write the failing tests** in `backend/tests/test_fountains_query.py` (concrete, using the real POST-with-inline-ratings pattern):
 
 ```python
-async def test_bbox_pin_includes_ranking_score(client, seeded_rated_fountain):
-    f = seeded_rated_fountain
-    r = await client.get(
-        "/api/v1/fountains/bbox",
-        params={"min_lat": -90, "min_lng": -180, "max_lat": 90, "max_lng": 180},
+async def _add_rated(client, lat, lng):
+    resp = await client.post(
+        "/api/v1/fountains",
+        json={"location": {"latitude": lat, "longitude": lng},
+              "ratings": [{"rating_type_id": 1, "stars": 5}]},
     )
-    assert r.status_code == 200
-    pin = next(p for p in r.json() if p["id"] == str(f.id))
+    assert resp.status_code == 201
+    return resp.json()["id"]
+
+
+async def test_bbox_pin_includes_ranking_score(client):
+    fid = await _add_rated(client, 37.7749, -122.4194)
+    resp = await client.get(
+        "/api/v1/fountains/bbox",
+        params={"min_lat": 37.70, "min_lng": -122.50, "max_lat": 37.80, "max_lng": -122.40},
+    )
+    assert resp.status_code == 200
+    pin = next(p for p in resp.json() if p["id"] == fid)
     assert "ranking_score" in pin and pin["ranking_score"] is not None
 
 
-async def test_nearby_pin_includes_ranking_score(client, seeded_rated_fountain):
-    f, lat, lng = seeded_rated_fountain_with_coords  # use the existing coord helper/pattern
-    r = await client.get("/api/v1/fountains", params={"lat": lat, "lng": lng})
-    assert r.status_code == 200
-    pin = next(p for p in r.json() if p["id"] == str(f.id))
+async def test_nearby_pin_includes_ranking_score(client):
+    fid = await _add_rated(client, 37.7749, -122.4194)
+    resp = await client.get(
+        "/api/v1/fountains", params={"lat": 37.7749, "lng": -122.4194, "radius_m": 1000}
+    )
+    assert resp.status_code == 200
+    pin = next(p for p in resp.json() if p["id"] == fid)
     assert "ranking_score" in pin and pin["ranking_score"] is not None
 ```
-
-(Adapt fixture names to what `conftest.py` actually provides; the assertion — `ranking_score` present + non-null — is the contract.)
 
 - [ ] **Step 3: Run to verify fail.** `cd backend && uv run pytest tests/test_fountains_query.py -k ranking_score -v` → FAIL (KeyError / not present).
 
@@ -162,21 +172,25 @@ Spec §4.2. The serializer orders by `RatingType.id`; change to `sort_order`, an
 **Interfaces:**
 - Produces: `GET /api/v1/fountains/{id}` returns `dimensions[]` ordered by `RatingType.sort_order`.
 
-- [ ] **Step 1: Read** `backend/tests/test_fountains_detail.py` + how rating types are seeded (`conftest.py` / a seed migration) to know whether `sort_order` differs from `id` in the seed.
+- [ ] **Step 1: Confirm `RatingType` field names** in `backend/app/models.py` (expect `id`, `name`, `description`, `sort_order`) and that the `session` fixture in `conftest.py` is writable.
 
-- [ ] **Step 2: Write the failing test.** Bind it to `sort_order` by asserting the returned dimension order equals the rating types sorted by `sort_order` (queried from the DB), which is robust even if the seed's id-order and sort_order coincide:
+- [ ] **Step 2: Write the failing test** in `backend/tests/test_fountains_detail.py`. The seed's id-order and sort_order coincide, so insert a probe type whose `sort_order` precedes the seeded ones but whose `id` is highest — it must appear **first** only if ordering is by `sort_order`:
 
 ```python
-async def test_detail_dimensions_ordered_by_sort_order(client, session, seeded_fountain):
-    from sqlalchemy import select
+async def test_detail_dimensions_ordered_by_sort_order(client, session):
     from app.models import RatingType
-    expected = [n for (n,) in (await session.execute(
-        select(RatingType.name).order_by(RatingType.sort_order))).all()]
-    r = await client.get(f"/api/v1/fountains/{seeded_fountain.id}")
-    assert [d["name"] for d in r.json()["dimensions"]] == expected
+    session.add(RatingType(id=99, name="Zzz", description="probe", sort_order=0))
+    await session.commit()
+    add = await client.post(
+        "/api/v1/fountains", json={"location": {"latitude": 37.7749, "longitude": -122.4194}}
+    )
+    fid = add.json()["id"]
+    resp = await client.get(f"/api/v1/fountains/{fid}")
+    names = [d["name"] for d in resp.json()["dimensions"]]
+    assert names[0] == "Zzz"  # sort_order 0 -> first (would be LAST if ordered by id)
 ```
 
-If the seed makes id-order == sort_order (so the test can't fail before the change), additionally insert/patch a rating type in this test whose `sort_order` precedes a lower id, and assert it appears first.
+(Adjust the `RatingType(...)` kwargs to the real column names from Step 1.)
 
 - [ ] **Step 3: Run to verify it fails** (or, if seed coincides, confirm via the inserted out-of-order type). `cd backend && uv run pytest tests/test_fountains_detail.py -k sort_order -v`.
 
@@ -441,7 +455,7 @@ Spec §7.1, §8, §12.
 
 **Files:** Create `web/lib/map/format.ts`; Test `web/lib/map/format.test.ts`.
 
-**Interfaces:** `formatPill(avg|null): string|null`, `formatAverage(avg|null): string`, `formatVotes(n): string`, `formatDimension(avg|null, votes): string`.
+**Interfaces:** `formatPill(avg|null): string|null`, `formatAverage(avg|null): string`, `formatVotes(n): string`, `formatDimension(avg|null, votes): string`, `formatDate(iso): string` ("Jun 2026").
 
 - [ ] **Step 1: Failing tests** `web/lib/map/format.test.ts`:
 
@@ -465,7 +479,12 @@ describe("formatDimension", () => {
   it("with votes", () => expect(formatDimension(4.4, 72)).toBe("★ 4.4 (72)"));
   it("no votes", () => expect(formatDimension(null, 0)).toBe("Not yet rated"));
 });
+describe("formatDate", () => {
+  it("month + year (UTC)", () => expect(formatDate("2026-06-01T00:00:00Z")).toBe("Jun 2026"));
+});
 ```
+
+(Import `formatDate` in the test's import line alongside the others.)
 
 - [ ] **Step 2: Run → FAIL.**
 
@@ -473,11 +492,16 @@ describe("formatDimension", () => {
 
 ```ts
 const one = (n: number) => n.toFixed(1);
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 export const formatPill = (avg: number | null) => (avg == null ? null : `★ ${one(avg)}`);
 export const formatAverage = (avg: number | null) => (avg == null ? "Not yet rated" : one(avg));
 export const formatVotes = (n: number) => `${n} ${n === 1 ? "rating" : "ratings"}`;
 export const formatDimension = (avg: number | null, votes: number) =>
   avg == null ? "Not yet rated" : `★ ${one(avg)} (${votes})`;
+export const formatDate = (iso: string) => {
+  const d = new Date(iso);
+  return `${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+};
 ```
 
 - [ ] **Step 4: Run → PASS.**
@@ -651,6 +675,9 @@ export async function getFountainDetailServer(id: string, requestId: string) {
 
 ```ts
 // One swappable basemap config (dark-mode-ready, spec §5.4); URLs from NEXT_PUBLIC_* env.
+// MapBrowser loads only `styleUrl`; the hosted Light style JSON embeds its source as
+// `pmtiles://<pmtilesUrl>`. `pmtilesUrl` is the value the upload runbook (Task 20) writes
+// into that style JSON's source — kept here so the two stay in one place.
 export const BASEMAP = {
   flavor: "light" as const,
   styleUrl: process.env.NEXT_PUBLIC_BASEMAP_STYLE_URL ?? "",
@@ -662,6 +689,8 @@ export const PIN_ASSETS: Record<"pin-standard" | "pin-selected" | "pin-gold" | "
   "pin-gold": "/pins/pin-gold.png",
   "pin-broken": "/pins/pin-broken.png",
 };
+// Stretchable rating-pill background, loaded with 9-patch stretch metadata (icon-text-fit).
+export const PILL_BG_ASSET = "/pins/pill-bg.png";
 ```
 
 - [ ] **Step 5: Implement** `web/lib/map/log.ts` (structured client logger — no bare console noise, spec §10):
@@ -689,11 +718,12 @@ git commit -m "feat(web): fountains fetch wrappers, basemap config, client logge
 
 Spec §7.3.
 
-**Files:** Create `web/public/pins/{pin-standard,pin-selected,pin-gold,pin-broken}.png` from `docs/logos/pin-only-logo-sheet.png` (working=#3, selected=#1, gold=#4; broken=#3 + red slash composited).
+**Files:** Create `web/public/pins/{pin-standard,pin-selected,pin-gold,pin-broken,pill-bg}.png`. The four pins come from `docs/logos/pin-only-logo-sheet.png` (working=#3, selected=#1, gold=#4; broken=#3 + red slash composited).
 
-- [ ] **Step 1: Export** four transparent PNGs at ~96 px tall, visual tip at bottom-center (for `icon-anchor: "bottom"`); composite the red slash into `pin-broken.png`.
-- [ ] **Step 2: Verify legibility** on the light basemap at marker scale; add outline/shadow if the spray washes out (manual visual check).
-- [ ] **Step 3: Commit.** `git add web/public/pins/ && git commit -m "assets(web): pin variants (standard/selected/gold/broken)"`
+- [ ] **Step 1: Export** four transparent pin PNGs at ~96 px tall, visual tip at bottom-center (for `icon-anchor: "bottom"`); composite the red slash into `pin-broken.png`.
+- [ ] **Step 2: Create `pill-bg.png`** — a small white rounded-rectangle (e.g. 20×20 px, ~6 px corner radius, transparent outside) used as the stretchable rating-pill background. Note the pixel coordinates of its non-corner content box (e.g. 6–14 px) — Task 13 passes them as `stretchX`/`stretchY`/`content` to `addImage`.
+- [ ] **Step 3: Verify legibility** of the pins on the light basemap at marker scale; add an outline/shadow if the spray washes out (manual visual check).
+- [ ] **Step 4: Commit.** `git add web/public/pins/ && git commit -m "assets(web): pin variants + rating-pill background"`
 
 ---
 
@@ -734,9 +764,11 @@ describe("pinLayer", () => {
   });
 });
 describe("pillLayer", () => {
-  it("is zoom-gated and excludes null pills + clusters", () => {
+  it("is a zoom-gated icon-text-fit pill excluding null pills + clusters", () => {
     const l = pillLayer();
     expect(l.minzoom).toBe(PILL_MIN_ZOOM);
+    expect(l.layout!["icon-image"]).toBe("pill-bg");
+    expect(l.layout!["icon-text-fit"]).toBe("both");
     expect(l.layout!["text-field"]).toEqual(["get", "pill"]);
     expect(JSON.stringify(l.filter)).toContain("pill");
   });
@@ -788,11 +820,16 @@ export function pinLayer(): AddLayerObject {
     layout: { "icon-image": ["get", "icon"], "icon-anchor": "bottom", "icon-size": 0.5, "icon-allow-overlap": true } };
 }
 export function pillLayer(): AddLayerObject {
+  // A real pill: the "pill-bg" image stretches to fit the rating text (icon-text-fit), anchored
+  // just below the pin. (spec §7.1)
   return { id: "pins-pill", type: "symbol", source: "fountains", minzoom: PILL_MIN_ZOOM,
     filter: ["all", notCluster, ["has", "pill"], ["!=", ["get", "pill"], null]],
-    layout: { "text-field": ["get", "pill"], "text-size": 12, "text-offset": [0, 0.6], "text-anchor": "top",
-      "text-font": ["Noto Sans Bold"], "text-allow-overlap": true },
-    paint: { "text-color": "#0A357E", "text-halo-color": "#ffffff", "text-halo-width": 2 } };
+    layout: {
+      "icon-image": "pill-bg", "icon-text-fit": "both", "icon-text-fit-padding": [2, 6, 2, 6],
+      "text-field": ["get", "pill"], "text-size": 12, "text-font": ["Noto Sans Bold"],
+      "text-anchor": "top", "icon-anchor": "top", "text-offset": [0, 1.4],
+      "icon-allow-overlap": true, "text-allow-overlap": true, "text-optional": false },
+    paint: { "text-color": "#0A357E" } };
 }
 // Mirrors selectedSwapIcon: working & not-gold -> pin-selected, else the base icon.
 export const SELECTED_ICON_EXPR = ["case",
@@ -878,7 +915,7 @@ import { usePathname, useRouter } from "next/navigation";
 import maplibregl from "maplibre-gl";
 import { Protocol } from "pmtiles";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { BASEMAP, PIN_ASSETS } from "../../lib/map/style";
+import { BASEMAP, PIN_ASSETS, PILL_BG_ASSET } from "../../lib/map/style";
 import { fetchBbox, type FountainPin } from "../../lib/fountains";
 import { pinsToFeatureCollection } from "../../lib/map/pins";
 import { normalizeBounds, shouldLoadPins, isAtCap } from "../../lib/map/bounds";
@@ -927,7 +964,12 @@ export default function MapBrowser() {
           const img = await map.loadImage(url);
           if (!map.hasImage(name)) map.addImage(name, img.data);
         }));
-      } catch (e) { logMapError("pin-image-load-failed", { name: (e as Error).name }); }
+        // Stretchable rating-pill background (9-patch). Stretch/content coords match pill-bg.png
+        // (Task 11 step 2 — adjust if the asset's content box differs).
+        const pill = await map.loadImage(PILL_BG_ASSET);
+        if (!map.hasImage("pill-bg"))
+          map.addImage("pill-bg", pill.data, { stretchX: [[6, 14]], stretchY: [[6, 14]], content: [6, 6, 14, 14] });
+      } catch (e) { logMapError("image-load-failed", { name: (e as Error).name }); }
       map.addSource("fountains", fountainsSource());
       [clusterCircleLayer(), clusterCountLayer(), pinLayer(), pillLayer(),
        selectedHaloLayer(""), selectedPinLayer("")].forEach((l) => map.addLayer(l));
@@ -1109,9 +1151,9 @@ export function FountainsInViewList({
 
 Spec §3, §8. Presentational content (tested) + the SSR route with precise 404 AND non-404 error handling.
 
-**Files:** Create `web/components/fountain/FountainDetail.tsx`, `web/app/fountains/[id]/page.tsx`; Test `web/components/fountain/FountainDetail.test.tsx`.
+**Files:** Create `web/components/fountain/FountainDetail.tsx`, `web/components/fountain/ShareButton.tsx`, `web/app/fountains/[id]/page.tsx`; Test `web/components/fountain/FountainDetail.test.tsx`.
 
-**Interfaces:** `<FountainDetail detail={FountainDetail} />` (pure). Route renders it inside the standalone shell.
+**Interfaces:** `<FountainDetail detail={FountainDetail} />` (server-renderable; embeds the `ShareButton` client island). Route renders it inside the standalone shell.
 
 - [ ] **Step 1: Failing component tests** `FountainDetail.test.tsx`:
 
@@ -1150,6 +1192,13 @@ describe("FountainDetail", () => {
     rerender(<FountainDetail detail={{ ...base, comments: "Cold and fast" }} />);
     expect(screen.getByText("Cold and fast")).toBeInTheDocument();
   });
+  it("renders meta (added + last rated) and the Directions + Share actions", () => {
+    render(<FountainDetail detail={base} />);
+    expect(screen.getByText(/Added Jun 2026/)).toBeInTheDocument();
+    expect(screen.getByText(/Last rated Jun 2026/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /directions/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /share/i })).toBeInTheDocument();
+  });
 });
 ```
 
@@ -1159,7 +1208,8 @@ describe("FountainDetail", () => {
 
 ```tsx
 import type { FountainDetail as Detail } from "../../lib/fountains";
-import { formatAverage, formatDimension, formatVotes } from "../../lib/map/format";
+import { formatAverage, formatDate, formatDimension, formatVotes } from "../../lib/map/format";
+import { ShareButton } from "./ShareButton";
 
 export function FountainDetail({ detail }: { detail: Detail }) {
   const { latitude, longitude } = detail.location;
@@ -1188,9 +1238,14 @@ export function FountainDetail({ detail }: { detail: Detail }) {
       {detail.comments && (
         <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">{detail.comments}</p>
       )}
+      <p className="text-xs text-slate-400">
+        Added {formatDate(detail.created_at)}
+        {detail.last_rated_at ? ` · Last rated ${formatDate(detail.last_rated_at)}` : ""}
+      </p>
       <div className="flex gap-2">
         <a href={dir} target="_blank" rel="noopener noreferrer"
           className="rounded-full bg-[#F2C200] px-4 py-2 text-sm font-bold text-[#0A357E]">Directions</a>
+        <ShareButton />
       </div>
       <p className="text-xs text-slate-400">“Rate this fountain” arrives in Phase 3b.</p>
     </div>
@@ -1198,7 +1253,27 @@ export function FountainDetail({ detail }: { detail: Detail }) {
 }
 ```
 
-(Add a Share control — copy `location.href` — as a client island if desired; keep `FountainDetail` itself pure/server-renderable.)
+- [ ] **Step 3b: Implement the Share island** `web/components/fountain/ShareButton.tsx` (`"use client"`) — Web Share API with a clipboard fallback (copies the current `/fountains/[id]` URL):
+
+```tsx
+"use client";
+export function ShareButton() {
+  const onClick = async () => {
+    try {
+      if (navigator.share) await navigator.share({ url: window.location.href });
+      else await navigator.clipboard.writeText(window.location.href);
+    } catch {
+      /* user cancelled the share sheet — no-op */
+    }
+  };
+  return (
+    <button onClick={onClick}
+      className="rounded-full border border-[#cdd6e6] bg-white px-4 py-2 text-sm font-bold text-[#0A357E]">
+      Share
+    </button>
+  );
+}
+```
 
 - [ ] **Step 4: Run → PASS.**
 
@@ -1244,7 +1319,7 @@ export default async function FountainPage({ params }: { params: Promise<{ id: s
 
 - [ ] **Step 6: Manual verification.** `curl -i http://localhost:3020/fountains/<unknown-uuid>` → `404`. Point the API at a down/erroring backend (or a non-404 case) → the "Couldn’t load" shell renders (status logged). A valid id → full detail.
 
-- [ ] **Step 7: Commit.** `git add web/components/fountain/FountainDetail.tsx web/components/fountain/FountainDetail.test.tsx web/app/fountains/ && git commit -m "feat(web): fountain detail content + standalone SSR route (404 + error shells)"`
+- [ ] **Step 7: Commit.** `git add web/components/fountain/FountainDetail.tsx web/components/fountain/ShareButton.tsx web/components/fountain/FountainDetail.test.tsx web/app/fountains/ && git commit -m "feat(web): fountain detail content + Share + standalone SSR route (404 + error shells)"`
 
 ---
 
@@ -1274,10 +1349,24 @@ export function DetailOverlay({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    ref.current?.focus();
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") router.back(); };
+    const panel = ref.current;
+    const prevFocus = document.activeElement as HTMLElement | null;
+    panel?.focus();
+    const focusables = () => panel
+      ? Array.from(panel.querySelectorAll<HTMLElement>(
+          'a[href],button:not([disabled]),input,select,textarea,[tabindex]:not([tabindex="-1"])'))
+      : [];
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { router.back(); return; }
+      if (e.key !== "Tab") return; // trap Tab within the dialog
+      const els = focusables();
+      if (els.length === 0) { e.preventDefault(); panel?.focus(); return; }
+      const first = els[0], last = els[els.length - 1], active = document.activeElement;
+      if (e.shiftKey && (active === first || active === panel)) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
+    };
     document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    return () => { document.removeEventListener("keydown", onKey); prevFocus?.focus?.(); }; // restore focus
   }, [router]);
   return (
     <div className="fixed inset-0 z-50">
@@ -1321,7 +1410,7 @@ export default async function FountainModal({ params }: { params: Promise<{ id: 
 
 (If inlining `log()` inside JSX reads awkwardly, lift it to a `const` before the `return`.)
 
-- [ ] **Step 5: Manual verification.** From the map, tap a pin → overlay opens, map still mounted; Back/Escape/backdrop close; refresh on `/fountains/[id]` → standalone page; unknown id soft-nav → in-panel not-found (map intact); unknown id hard-load → 404 page (Task 15).
+- [ ] **Step 5: Manual verification.** From the map, tap a pin → overlay opens, map still mounted; Back/Escape/backdrop close; **Tab cycles only within the dialog (focus never reaches the map/page behind it), and focus returns to the triggering element on close**; refresh on `/fountains/[id]` → standalone page; unknown id soft-nav → in-panel not-found (map intact); unknown id hard-load → 404 page (Task 15).
 
 - [ ] **Step 6: Commit.** `git add web/app/@modal web/app/layout.tsx web/components/fountain/DetailOverlay.tsx && git commit -m "feat(web): intercepting overlay route for fountain detail"`
 
@@ -1407,7 +1496,7 @@ Spec §5.2, §6.2, §14. **Terraform-owned; plan/validate locally only; apply vi
 
 - [ ] **Step 1: Add the Terraform resources** (replacing the `# Spaces … DEFERRED` block): a `digitalocean_spaces_bucket` for the basemap, a CDN endpoint, and **CORS rules** allowing the web origins (`https://fountainrank.com`, `https://www.fountainrank.com`, plus any preview origin from Task 19), methods `GET`/`HEAD`, the `Range` request header, and exposing `Accept-Ranges`/`Content-Range`/`Content-Length`. Follow `claude_help/kubernetes-infra.md` + existing TF patterns (variables, tags, project membership).
 
-- [ ] **Step 2: Validate locally (read-only).** `cd infra/terraform && terraform fmt -check && terraform validate`. `terraform plan` requires the bucket-create-capable key + provider Spaces creds; if those aren't present locally, stop at `fmt`/`validate` and rely on the CI `plan` (note this in the task output — never run a local `apply`).
+- [ ] **Step 2: Validate locally (read-only).** `cd infra/terraform && terraform init -backend=false && terraform fmt -check && terraform validate` (read-only init is permitted by the infra runbook; `-backend=false` avoids touching remote state on a clean checkout). `terraform plan`/`apply` require the bucket-create-capable key + provider Spaces creds and run in **CI only** — never a local `apply`/`plan` against real state.
 
 - [ ] **Step 3: Runbook** — add to `docs/setup/README.md`: the bucket-create-capable Spaces key prerequisite + CI secret name; the one-time owner upload of a Protomaps daily-build planet `.pmtiles` + the Light style JSON + glyphs + sprite to the bucket; and the `NEXT_PUBLIC_BASEMAP_STYLE_URL` / `NEXT_PUBLIC_BASEMAP_PMTILES_URL` env values the web app needs (names only; set via deploy config, not `.env`).
 
