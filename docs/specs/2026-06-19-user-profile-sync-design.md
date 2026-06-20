@@ -66,36 +66,33 @@ resources: [API_RESOURCE],
 This makes the session's tokens grant `email`/`name`/`picture` at userinfo. (No other web config
 change; the cookie/secret/build-safety design is unchanged.)
 
-### 3.2 Web — sync on login from the callback (`web/app/callback/route.ts`)
+### 3.2 Web — sync on `/account` load (`web/app/account/page.tsx` + `web/lib/server/sync.ts`)
 
-After `handleSignIn` succeeds (and before the redirect), do a **best-effort** profile sync — a
-mutation correctly placed in the route handler (keeps `/account` a pure read). A **`server-only`**
-helper `web/lib/server/sync.ts` (its first line is `import "server-only"`, asserted in its test —
-the token must never enter a client-capable module) does, from the route handler (so it uses
-`getAccessToken`, not the RSC variant):
+The sync runs from the **`/account` server component** (already `force-dynamic`), **not** the
+callback. Rationale: every successful login is redirected to `/account` — whichever redirect path
+the SDK takes (our callback's `redirect`, or any internal `handleSignIn` redirect) — so `/account`
+is the one place guaranteed to run on every login; and by the time it renders, the Logto session
+cookie is already set, so reading tokens there is the robust case (it avoids the callback's risky
+same-request cookie read entirely). A **`server-only`** helper `web/lib/server/sync.ts` (first
+line `import "server-only"`, asserted in its test — the token must never enter a client module):
 
-1. `const resourceToken = await getAccessToken(config, API_RESOURCE)` — to authenticate to the
-   backend (the sync endpoint is auth-gated by the resource JWT, like every write).
-2. `const opaqueToken = await getAccessToken(config)` — **no resource arg → the default,
-   userinfo-capable opaque access token** (the SDK's empty-resource token from the auth-code
-   exchange). **This is a hard requirement, not an assumption** (see the §6.1 probe): if this
-   token is not accepted by Logto userinfo in our setup, the build does **NOT** silently fall back
-   to trusting client-supplied claims — the contingency is the still-backend-authoritative
-   Management-API path (§8).
-3. `POST {resolveApiBaseUrl()}/api/v1/me/sync` with `Authorization: Bearer ${resourceToken}` +
-   `X-Request-ID: <uuid>` and JSON body `{ "userinfo_token": opaqueToken }`, via a plain
-   **server-side `fetch`** (NOT the browser-exposed api-client).
+1. `const resourceToken = await getAccessTokenRSC(config, API_RESOURCE)` — to authenticate to the
+   backend (RSC context → the RSC token helper, matching the existing `/account` data layer).
+2. `const opaqueToken = await getAccessTokenRSC(config)` — **no resource → the default,
+   userinfo-capable opaque token**, fetched **sequentially after** the resource token (not
+   concurrently — the SDK reads/refreshes session-cookie state). **A proven gate** (§6.1), not an
+   assumption; the contingency on failure is the Management API (§8), never trust-client-claims.
+3. `POST {resolveApiBaseUrl()}/api/v1/me/sync` (plain **server-side `fetch`**, NOT the api-client)
+   with `Authorization: Bearer ${resourceToken}` + `X-Request-ID: <uuid>` and body
+   `{ "userinfo_token": opaqueToken }`.
 
-Wrapped in try/catch: **any failure logs a structured, redacted warning** (request id + backend
-status/error-class + the authenticated subject when available; NEVER the tokens or the callback
-query string) via `web/lib/server/log.ts`, and is **swallowed** — sync never blocks the post-login
-redirect. Then `redirect("/account")` as today (`handleSignIn`/NEXT_REDIRECT handling unchanged).
-
-Because the callback always redirects to `/account`, a **successful** login sync both refreshes
-the stored profile and lands on the page that displays it — `/account` renders the stored values
-via the unchanged `GET /api/v1/me`. On a sync failure the user lands on `/account` still showing
-the last-synced (possibly synthetic) values until a later successful sync — acceptable and
-logged, **not** silently presented as guaranteed-fresh.
+It is **best-effort** (`syncProfile(requestId)` never throws): any failure logs a structured,
+redacted warning (request id + status/error-class + subject when available; NEVER the tokens) via
+`web/lib/server/log.ts`. `/account` calls `await syncProfile(requestId)` **before** its existing
+`GET /api/v1/me`, then renders the now-fresh stored values. The page is `force-dynamic` and the
+sync is a best-effort refresh-on-view, so the side effect is acceptable; on a sync failure
+`/account` shows the last-synced (possibly synthetic) values, logged — **not** silently presented
+as guaranteed-fresh. The callback (`web/app/callback/route.ts`) is **unchanged**.
 
 ### 3.3 Backend — `POST /api/v1/me/sync` (`backend/app/routers/users.py`)
 
@@ -148,7 +145,7 @@ the already-loaded `current_user`). This is the deliberate, scoped lift of Phase
   concern, explicitly out of scope.)
 - **Self-healing:** users provisioned earlier with a synthetic email get the real email on their
   next login's sync (it overwrites). No migration/backfill needed.
-- **Freshness:** sync runs on every login (callback → every login lands on `/account`). Profile
+- **Freshness:** sync runs on every `/account` load (every login lands there). Profile
   changes in the social account propagate on the next **successful** login sync (a failed sync
   leaves the prior values until the next one — not silently presented as fresh).
 
@@ -177,7 +174,7 @@ this Logto build — never as runtime behavior.
   `200` + `MeResponse`. No silent `500` for these expected failures; unexpected errors keep the
   centralized 500 path. The userinfo httpx client uses a short timeout, `follow_redirects=False`,
   and never includes the token in exceptions.
-- Web callback sync is **best-effort**: any non-200/network/timeout logs a redacted structured
+- Web `/account` sync is **best-effort**: any non-200/network/timeout logs a redacted structured
   warning (request id + status/error-class + subject when available) and is swallowed — never
   blocks login; the user keeps the prior stored values until a later successful sync.
 - **Never log** the opaque token, the resource token, the full userinfo body, or any secret —
@@ -218,16 +215,16 @@ post-deploy sign-in showing the real `aronweiler@gmail.com` + name + avatar (§6
 
 ## 6. Acceptance criteria
 
-1. **The opaque-token → userinfo path is proven, not assumed (a documented gate):** an early
-   implementation probe — exercising the **exact callback sequence** (read both tokens in the
-   route handler **immediately after `handleSignIn`**, same request, before any `/account`
-   round-trip, since the same-request session-cookie read/write is the part most likely to bite)
-   — confirms `getAccessToken(config)` (no resource) yields a token Logto userinfo accepts (`200`
-   + the caller's `sub`). The probe **result is recorded** (a committed probe helper/test or a
-   handoff note with the Logto endpoint, `@logto/next` version, and observed `sub` match), not an
-   untraceable manual check; and the live post-deploy sign-in shows the **real** email/name/avatar
-   (only possible if the path works end-to-end). If the probe fails, switch to the Management-API
-   contingency (§8) — **never** the trust-client-claims path.
+1. **The opaque-token → userinfo path is proven, not assumed — a PRE-MERGE gate:** after the code
+   is written (web + backend) but **before opening the PR / merging**, run the **`/account`
+   sequence** end-to-end against **live** Logto from the local stack (local web + local backend +
+   real `LOGTO_*`): sign in, and confirm the local backend logs `POST /api/v1/me/sync 200` for the
+   caller's `sub` and `/account` shows the **real** email/name/avatar — i.e. `getAccessTokenRSC(config)`
+   (no resource) yielded a token Logto userinfo accepts. The probe **result is recorded** in a
+   handoff note (Logto endpoint, `@logto/next` version, observed `sub` match), not an untraceable
+   manual check. **If the probe fails, STOP** — do not ship; escalate to the Management-API
+   follow-up spec (§8), **never** the trust-client-claims path. The live post-deploy sign-in is an
+   *additional* acceptance check, not the first proof.
 2. `POST /api/v1/me/sync` calls userinfo with the forwarded opaque token, enforces the **`sub`
    cross-check (`403`)**, applies the email/name/avatar **normalization rules** (§3.3 step 4),
    updates the row, returns `MeResponse`, and never `500`s on the expected failures; all §5 tests
@@ -237,8 +234,8 @@ post-deploy sign-in showing the real `aronweiler@gmail.com` + name + avatar (§6
    `Authorization`-bearing call to `api.fountainrank.com` and no `userinfo_token` in any
    browser-visible payload**; web + backend logs show only request id / status / `sub`, never
    tokens or the callback query.
-4. `web/lib/logto.ts` requests the `email`+`profile` scopes; the callback best-effort-syncs on
-   every login (failure logged, never blocks the redirect); `/account` shows the real
+4. `web/lib/logto.ts` requests the `email`+`profile` scopes; `/account` best-effort-syncs on
+   every login (failure logged, never blocks rendering); `/account` shows the real
    email/name/avatar **after a successful sync** (a failed sync logs + login still succeeds — no
    guaranteed-fresh claim).
 5. No `.env` written; no AI attribution; no time estimates. CI green + Codex `VERDICT: APPROVED`
