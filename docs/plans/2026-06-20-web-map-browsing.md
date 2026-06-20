@@ -461,7 +461,7 @@ Spec §7.1, §8, §12.
 
 ```ts
 import { describe, expect, it } from "vitest";
-import { formatPill, formatAverage, formatVotes, formatDimension } from "./format";
+import { formatPill, formatAverage, formatVotes, formatDimension, formatDate } from "./format";
 describe("formatPill", () => {
   it("rounds 1dp", () => expect(formatPill(4.26)).toBe("★ 4.3"));
   it("null -> null", () => expect(formatPill(null)).toBeNull());
@@ -483,8 +483,6 @@ describe("formatDate", () => {
   it("month + year (UTC)", () => expect(formatDate("2026-06-01T00:00:00Z")).toBe("Jun 2026"));
 });
 ```
-
-(Import `formatDate` in the test's import line alongside the others.)
 
 - [ ] **Step 2: Run → FAIL.**
 
