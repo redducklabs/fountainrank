@@ -218,10 +218,15 @@ post-deploy sign-in showing the real `aronweiler@gmail.com` + name + avatar (§6
 
 ## 6. Acceptance criteria
 
-1. **The opaque-token → userinfo path is proven, not assumed:** an early implementation probe
-   confirms `getAccessToken(config)` (no resource) yields a token Logto userinfo accepts (`200` +
-   the caller's `sub`); and the live post-deploy sign-in shows the **real** email/name/avatar
-   (only possible if this path works end-to-end). If the probe fails, switch to the Management-API
+1. **The opaque-token → userinfo path is proven, not assumed (a documented gate):** an early
+   implementation probe — exercising the **exact callback sequence** (read both tokens in the
+   route handler **immediately after `handleSignIn`**, same request, before any `/account`
+   round-trip, since the same-request session-cookie read/write is the part most likely to bite)
+   — confirms `getAccessToken(config)` (no resource) yields a token Logto userinfo accepts (`200`
+   + the caller's `sub`). The probe **result is recorded** (a committed probe helper/test or a
+   handoff note with the Logto endpoint, `@logto/next` version, and observed `sub` match), not an
+   untraceable manual check; and the live post-deploy sign-in shows the **real** email/name/avatar
+   (only possible if the path works end-to-end). If the probe fails, switch to the Management-API
    contingency (§8) — **never** the trust-client-claims path.
 2. `POST /api/v1/me/sync` calls userinfo with the forwarded opaque token, enforces the **`sub`
    cross-check (`403`)**, applies the email/name/avatar **normalization rules** (§3.3 step 4),
@@ -256,7 +261,9 @@ post-deploy sign-in showing the real `aronweiler@gmail.com` + name + avatar (§6
   backend (using the already-provisioned M2M creds) fetches the canonical profile by `sub` and
   applies the same normalization + `sub` check. Still **backend-authoritative**; we do **NOT** fall
   back to trusting BFF-supplied decoded claims. The §6.1 probe decides the path before the sync
-  logic is finalized.
+  logic is finalized. **If the probe fails, the M2M path is NOT directly implementable from this
+  spec** — it needs a narrow follow-up spec/plan (Management API endpoint, M2M scopes, token
+  acquisition/caching, failure mapping, rate limiting) reviewed before implementation.
 - **Userinfo path** derived as `settings.logto_issuer + "/me"` (§3.5), with a config test;
   discovery is operator-verification only (avoids reintroducing the Phase 2a `http://`-discovery
   issue).
