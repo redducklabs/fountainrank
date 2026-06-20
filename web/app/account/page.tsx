@@ -5,6 +5,7 @@ import { SignOutButton } from "../../components/SignOutButton";
 import { getLogtoConfig } from "../../lib/logto";
 import { getAuthedApiClient } from "../../lib/server/api";
 import { log } from "../../lib/server/log";
+import { syncProfile } from "../../lib/server/sync";
 
 export const dynamic = "force-dynamic";
 
@@ -36,6 +37,8 @@ export default async function AccountPage({
   }
 
   const requestId = crypto.randomUUID();
+  // Best-effort: refresh the stored profile from Logto before reading it (never throws).
+  await syncProfile(requestId);
   let profile: { display_name: string; email: string; avatar_url: string | null } | null = null;
   try {
     const { data, error, response } = await (await getAuthedApiClient(requestId)).GET("/api/v1/me");
