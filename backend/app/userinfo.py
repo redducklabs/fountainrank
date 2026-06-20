@@ -6,7 +6,6 @@ JWT is rejected at userinfo). The token is used only for this call and never log
 """
 
 import json
-import logging
 from collections.abc import Awaitable, Callable
 from urllib.parse import urlparse
 
@@ -15,8 +14,6 @@ from fastapi import Depends
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
 from app.config import Settings, get_settings
-
-logger = logging.getLogger("app.userinfo")
 
 MAX_USERINFO_BYTES = 65536
 _MAX_AVATAR_LEN = 2048
