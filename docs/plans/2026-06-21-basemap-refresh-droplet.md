@@ -95,8 +95,12 @@ Spec §3–§9. Replaces the in-runner stream with the droplet pipeline. Keeps t
           if u.scheme != "https": sys.exit("must be https")
           if u.username or u.password: sys.exit("userinfo not allowed")
           # Only the default https port — the later download pins --resolve host:443:ip, so a
-          # non-443 port would otherwise bypass the pin.
-          if u.port not in (None, 443): sys.exit("only port 443 allowed")
+          # non-443 port would otherwise bypass the pin. (u.port raises on malformed port.)
+          try:
+              port = u.port
+          except ValueError:
+              sys.exit("invalid port")
+          if port not in (None, 443): sys.exit("only port 443 allowed")
           host = u.hostname
           if not host: sys.exit("no host")
           ips = {i[4][0] for i in socket.getaddrinfo(host, 443, proto=socket.IPPROTO_TCP)}
