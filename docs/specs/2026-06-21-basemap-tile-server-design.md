@@ -1,70 +1,109 @@
 # Basemap Tile Server (go-pmtiles in DOKS) — design spec
 
 **Date:** 2026-06-21
-**Status:** Draft; architecture approved in-conversation (research-backed); pending Codex Loop A.
+**Status:** Draft; architecture approved in-conversation (research-backed); Codex Loop A in progress (review-1 → this revision).
 
 ## 1. Goal & why
 
-Serve the **whole Protomaps planet** reliably, regionally (only viewed tiles), and CDN/Firefox-friendly — on the infrastructure we already run (DOKS + DO Spaces).
+Serve the **whole Protomaps planet** reliably, regionally (only viewed tiles), and CDN/Firefox-friendly — on infrastructure we already run (DOKS + DO Spaces).
 
-**What's wrong now (root cause).** We deviated from the canonical Protomaps production pattern: we serve the **public 127 GB `planet.pmtiles`** via **client-side `pmtiles://` HTTP range requests straight off the CDN**. Consequences, all observed:
-- The DO CDN can't edge-cache a 127 GB object (`cf-cache-status: BYPASS`) → range requests passthrough, no caching.
-- The 127 GB multipart upload to DO Spaces is fragile (`CompleteMultipartUpload "already in progress"`), and the resulting object is currently **broken**: `HEAD` 200 but `GET`/range → `NoSuchKey` (data not retrievable) — the basemap is down for all browsers.
-- Client-side pmtiles range/decoding is the source of the Firefox+PMTiles range bugs (the gzip/range class, e.g. PMTiles #582/#584).
+**Root cause of the current breakage.** We deviated from the canonical Protomaps production pattern: we serve the **public 127 GB `planet.pmtiles`** via **client-side `pmtiles://` HTTP range requests straight off the CDN**. Observed consequences:
+- The DO CDN can't edge-cache a 127 GB object (`cf-cache-status: BYPASS`) → no caching.
+- The 127 GB multipart upload is fragile (`CompleteMultipartUpload "already in progress"`) and the object is currently **broken**: `HEAD` 200 but `GET`/range → `NoSuchKey` — basemap down for all browsers. (Our verification only checked `HEAD` size, so it missed this.)
+- Client-side pmtiles range/decoding is the source of the Firefox+PMTiles range bug class (PMTiles #582/#584).
 
-**The standard fix** ([Protomaps deploy docs](https://docs.protomaps.com/deploy/)): a **`pmtiles serve` tile server** ([`protomaps/go-pmtiles`](https://hub.docker.com/r/protomaps/go-pmtiles), official Docker image) range-reads the planet **server-side** and serves normal **`z/x/y` vector tiles** + TileJSON. The **CDN/edge caches the small tile responses** (not the 127 GB object); MapLibre consumes a normal tile source (**no client-side pmtiles library**, eliminating the PMTiles+Firefox range class). DigitalOcean Spaces with a custom S3 endpoint is supported ([cloud-storage docs](https://docs.protomaps.com/pmtiles/cloud-storage)).
+**Fix** ([Protomaps deploy docs](https://docs.protomaps.com/deploy/)): a **`pmtiles serve` tile server** ([`protomaps/go-pmtiles`](https://hub.docker.com/r/protomaps/go-pmtiles)) range-reads the planet **server-side** and serves **`z/x/y` vector tiles** + TileJSON. The CDN/edge caches the **small tile responses**; MapLibre uses a normal vector source (**no client-side pmtiles library** → the Firefox range class is gone).
 
-**Out of scope for "Firefox WebGL2":** MapLibre requires WebGL2 regardless of hosting. The owner's specific Firefox can't create a WebGL2 context (a hardware-acceleration / anti-fingerprinting setting on that machine — verify at `get.webgl.org/webgl2`). The graceful `UnsupportedHint` (already shipped) is the correct behavior there. This spec does not add a non-WebGL renderer.
+**Firefox WebGL2 is out of scope:** MapLibre requires WebGL2 regardless of hosting. The owner's Firefox can't create a WebGL2 context (a hardware-acceleration / anti-fingerprinting setting on that machine — verify at `get.webgl.org/webgl2`). The graceful `UnsupportedHint` already shipped is correct there.
 
 ## 2. Architecture
 
 ```
-Browser (MapLibre, vector source via TileJSON)
-   │  GET https://fountainrank.com/tiles/planet/{z}/{x}/{y}.mvt   (same-origin → no CORS)
+Browser (MapLibre, vector source via TileJSON, same-origin → no CORS)
+   │  GET https://fountainrank.com/tiles/planet.json  and  /tiles/planet/{z}/{x}/{y}.mvt
    ▼
-DO LB (TLS) → ingress-nginx (host fountainrank.com, path /tiles → rewrite)
+DO LB (TLS) → ingress-nginx
+   │   SEPARATE Ingress object: host fountainrank.com, regex path /tiles → rewrite → basemap-tiles-service
    ▼
-go-pmtiles `serve` (DOKS Deployment+Service)
-   │  S3 GET byte-ranges (server-side)
+go-pmtiles `serve` (DOKS Deployment+Service, no credentials)
+   │  HTTP GET byte-ranges (server-side) of the PUBLIC object
    ▼
-DO Spaces  s3://fountainrank-basemap/planet.pmtiles
+https://fountainrank-basemap.sfo3.digitaloceanspaces.com/planet.pmtiles  (public-read, DO Spaces origin)
 ```
 
-- **go-pmtiles** runs `pmtiles serve / --bucket "s3://fountainrank-basemap?endpoint=https://sfo3.digitaloceanspaces.com&region=auto&use_path_style=true" --public-url https://fountainrank.com/tiles --port 8080`, with `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` (a **read-only** Spaces key) from a k8s Secret. Pin image `protomaps/go-pmtiles:v1.30.3`.
-- **Path, not subdomain.** Serving under `fountainrank.com/tiles/` reuses the existing LB cert + DNS (a `tiles.` subdomain would need a new DNS record + an LB-cert change), and is **same-origin** with the web app → **no CORS** for tiles. Ingress adds a `/tiles(/|$)(.*)` path rule → go-pmtiles service with `rewrite-target: /$2`, taking precedence over the `/` → web rule.
-- **Glyphs, sprites, and the style JSON stay on the public CDN** (small, cacheable, already working). Only the planet **tiles** move to go-pmtiles. The style's `sources.protomaps` changes from `pmtiles://…/planet.pmtiles` to the go-pmtiles **TileJSON** URL.
-- **Bucket stays public-read** (the small assets are still served from the CDN; nobody hits `planet.pmtiles` directly anymore). Making the bucket private is deferred (it would require relocating the public assets) — noted, not done here.
+- **Credentialless read.** go-pmtiles v1.30.3 has an `HTTPBucket` (`OpenBucket` routes `http`-prefixed bucket URLs to it — verified in source), so `--bucket=https://fountainrank-basemap.sfo3.digitaloceanspaces.com` range-reads the already-public `planet.pmtiles` server-side with **no AWS/Spaces credentials, no k8s Secret, no read-only-key owner step**. Point it at the **Spaces origin** (not the `.cdn.` host) to avoid CDN cold-edge behavior on server-side reads.
+- **Command:** `pmtiles serve / --bucket=https://fountainrank-basemap.sfo3.digitaloceanspaces.com --public-url=https://fountainrank.com/tiles --port=8080`. The TILESET is `planet` (from `planet.pmtiles`): TileJSON at `/planet.json`, tiles at `/planet/{z}/{x}/{y}.mvt`; `--public-url` makes the TileJSON `tiles` array emit `https://fountainrank.com/tiles/planet/{z}/{x}/{y}.mvt`.
+- **Path, not subdomain, on a SEPARATE Ingress.** Serving under `fountainrank.com/tiles/` reuses the existing LB cert + DNS (a `tiles.` subdomain would need a new DNS record + an LB-cert change) and is **same-origin** (no CORS). The regex rewrite annotation is **Ingress-object-scoped**, so it goes on its **own** `basemap-tiles` Ingress object — the shared `fountainrank-ingress` is left untouched.
+- **Only the planet tiles move.** Glyphs, sprites, and `style.light.json` stay on the public CDN (small, cacheable, working). The bucket stays public-read.
 
 ## 3. Components & changes
 
-1. **Fix + re-upload the planet (prerequisite).** The current `planet.pmtiles` is broken (`GET → NoSuchKey`). Enhance the `basemap-upload` workflow:
-   - Replace the `HEAD`-size idempotency-skip with a **range-GET** check (`aws s3api get-object --range bytes=0-99` succeeds AND the object's total size == `SRC_LEN`); a broken/absent object → don't skip → re-upload. `force` still always re-uploads.
-   - Replace the post-upload `HEAD`-size verify with the **range-GET** verify (retrieve a small range back; confirm success + total size == `SRC_LEN`). This catches a failed/partial multipart completion that leaves a non-retrievable object.
-   - Re-run it (with `force`) to replace the broken object with a verified one.
-2. **go-pmtiles Deployment + Service** (`infra/k8s/basemap-tiles.yaml`): the pinned image, the `serve` args, the Spaces creds Secret, modest resources (LRU cache default 64 MB + range reads — ~256–512 MB RAM, low CPU), a `/` HTTP readiness probe (e.g. the TileJSON path), 1–2 replicas.
-3. **Ingress** (`infra/k8s/ingress.yaml`): add the `/tiles` path rule on the `fountainrank.com` host → `basemap-tiles-service`, with `nginx.ingress.kubernetes.io/rewrite-target` + `Cache-Control` for tiles (so browsers/any future edge cache them). Deploy workflow renders it (existing `envsubst` flow).
-4. **Web** (`web/components/map/MapBrowser.tsx`, `web/lib/map/style.ts`): drop the `pmtiles` client import + `addProtocol`/`removeProtocol`/`Protocol`; point the basemap style source at the go-pmtiles **TileJSON** (`https://fountainrank.com/tiles/planet.json`) as a `type: "vector"` source. The WebGL2 pre-check / powerPreference / graceful guard stay. (Remove the now-unused `pmtiles` dependency.)
-5. **Style generation** (`basemap-upload` workflow's `style.light.json`): change the `protomaps` source from `pmtiles://…/planet.pmtiles` to the TileJSON/tiles URL. Glyphs + sprite still point at the CDN. (MapLibre + go-pmtiles z/x/y is consumed without the pmtiles client.)
+### 3.1 Make the planet object durable + verified (prerequisite, blocks everything)
 
-## 4. Caching
+The current object is broken (`GET → NoSuchKey`) and every existing skip/verify is `HEAD`/marker/size-only — which cannot detect a non-retrievable object. Harden `basemap-upload.yml` with a **range-GET** probe used at every decision point:
 
-- go-pmtiles keeps an LRU of the pmtiles header/directory (cheap repeat tile lookups); tile data is small S3 range reads.
-- Set `Cache-Control` on tile responses so browsers cache them; a planet refresh changes tile contents but the URL is stable — use a moderate max-age (and the monthly refresh is infrequent).
-- **No edge CDN fronts the DOKS ingress today** (the main site is served directly). An edge cache (e.g. Cloudflare in front of `fountainrank.com`, or an in-cluster `proxy_cache`) is a **future optimization**, not required for correctness — go-pmtiles serves tiles fast directly. Documented as a follow-up.
+- **Range-GET helper (origin, authenticated):** `aws s3api get-object --bucket fountainrank-basemap --key planet.pmtiles --range bytes=0-99 …` → must succeed AND its `ContentRange` total must equal `SRC_LEN`. (Not the 100-byte response length — the **total** from `bytes 0-99/<total>`.)
+- **Runner skip:** set `SKIP_STREAM=true` only when the marker matches **AND** the range-GET helper proves the live object range-reads with total == `SRC_LEN`. A `NoSuchKey`/mismatch → do not skip.
+- **Droplet idempotency skip:** replace the `head-object` size check with the range-GET helper (same condition).
+- **Post-upload verify:** replace the `head-object` size verify with the range-GET helper.
+- **Smoke:** add an **origin range-read** (since go-pmtiles reads the Spaces origin), in addition to the existing CDN range probe.
+- Then **re-run `basemap-upload` with `force=true`** to replace the broken object with a verified one.
 
-## 5. Security
+### 3.2 go-pmtiles Deployment + Service (`infra/k8s/basemap-tiles.yaml`)
 
-- The go-pmtiles Spaces credentials are a **read-only** key in a k8s Secret (created imperatively in the deploy job like the other secrets), never committed. go-pmtiles reads server-side; the browser never sees Spaces creds.
-- Same-origin tiles (`fountainrank.com/tiles`) need no CORS. The CDN-hosted style/glyphs/sprite keep their existing CORS.
-- No public range serving of the 127 GB object anymore (the attack/abuse surface of a public huge object behind range requests is gone from the hot path).
+- Pinned image `protomaps/go-pmtiles:v1.30.3`, the `serve` command/args above, `--port 8080`, **no env credentials**.
+- **Readiness probe hits `/planet.json`** (forces go-pmtiles to range-read the archive header/metadata from Spaces → catches a bad bucket URL / missing or broken object). **Liveness can be `/`** (cheap 204). A **startup probe** with a generous budget covers a slow first Spaces read.
+- **1 replica** for the MVP on the small cluster, with the same rollout shape as backend/web (`maxSurge: 0`, `maxUnavailable: 1`) — accepts brief unavailability on rollout (tiles are non-critical relative to the API; the tradeoff is stated). Modest resources (LRU default 64 MB + range reads → request ~256 MB / limit ~512 MB RAM, low CPU).
 
-## 6. Testing / verification
+### 3.3 Ingress (`infra/k8s/ingress.yaml` — NEW separate object)
 
-- **Re-upload:** the workflow's range-GET verify must pass (object retrievable + correct size); confirm with `aws s3api get-object --range`.
-- **Tile server:** after deploy, `curl https://fountainrank.com/tiles/planet.json` returns valid TileJSON; `curl https://fountainrank.com/tiles/planet/0/0/0.mvt` returns `200` with `Content-Type: application/vnd.mapbox-vector-tile` (or the archive's type) and non-empty body; a mid-zoom US tile returns data.
-- **Browser (Chromium, headless):** the map renders; network shows `…/tiles/planet/{z}/{x}/{y}.mvt` `200`s (not `pmtiles://`); container height > 0; zero console errors. (Owner confirms Firefox separately, contingent on WebGL2 on that machine.)
-- CI green + Codex Loop A (spec + plan) + Loop B (PRs).
+A **new** `basemap-tiles` Ingress (NOT edits to `fountainrank-ingress`), host `fountainrank.com`, with its own annotations:
+- `nginx.ingress.kubernetes.io/use-regex: "true"`, path `/tiles(/|$)(.*)` `pathType: ImplementationSpecific`, `nginx.ingress.kubernetes.io/rewrite-target: /$2` → `basemap-tiles-service`.
+- **`Cache-Control` scoped to this object only** (via a response-header annotation): moderate cache on tiles, short/revalidate on TileJSON. Because it's a separate Ingress, the web/API/auth/healthz routes cannot inherit tile cache headers or the rewrite.
+- Rendered by the existing `deploy.yml` `envsubst` flow.
 
-## 7. Out of scope
+### 3.4 Web (`web/components/map/MapBrowser.tsx`, `web/lib/map/style.ts`)
 
-A non-WebGL raster fallback (separate decision); making the bucket private + relocating public assets; an edge CDN in front of the ingress (future perf); OSM fountain ingestion (separate spec).
+- Remove the `pmtiles` client: drop `import { Protocol } from "pmtiles"` + `addProtocol`/`removeProtocol`. Remove the `pmtiles` dependency from `web/package.json`.
+- Point the basemap style `sources.protomaps` at the go-pmtiles **TileJSON** (`{ type: "vector", url: "https://fountainrank.com/tiles/planet.json" }`).
+- Keep the WebGL2 pre-check / `powerPreference: 'default'` / graceful `UnsupportedHint`.
+
+### 3.5 Style generation (`basemap-upload.yml` `style.light.json`)
+
+Change the `protomaps` source from `pmtiles://…/planet.pmtiles` to the TileJSON URL (`https://fountainrank.com/tiles/planet.json`). Glyphs + sprite stay on the CDN.
+
+## 4. Release ordering (cutover gate)
+
+A broken cutover (web/style points at the tile server before a verified object + running server exist) shows a blank map. Required order:
+1. Merge the `basemap-upload` range-GET verification fix; **run it with `force=true`**; confirm the origin range-read verify passes (object retrievable, total == `SRC_LEN`).
+2. Deploy go-pmtiles + its Ingress; **preflight** `GET https://fountainrank.com/tiles/planet.json` (valid TileJSON) and one real tile **before** switching the web.
+3. Only then switch `style.light.json` + the web build to the TileJSON source. go-pmtiles **readiness = `/planet.json`** is the backstop: if the object is missing/broken, the pod never becomes Ready and the rollout surfaces it rather than silently serving a dead map.
+
+If bundled into fewer PRs, the deploy must not flip the web/style source until step 1+2 are verified (a manual gate is acceptable given owner-triggered deploys).
+
+## 5. Caching
+
+- go-pmtiles keeps an LRU of the pmtiles header/directory; tile data is small origin range reads.
+- `Cache-Control` is set on the **tile Ingress only** (§3.3); browsers (and any future edge cache) cache tiles. TileJSON: short/revalidate; tiles: moderate max-age (planet refreshes monthly, URLs stable).
+- **No edge CDN fronts the DOKS ingress today** (the main site is served directly). An edge cache (Cloudflare in front of `fountainrank.com`, or an in-cluster `proxy_cache`) is a **future optimization**, not required — go-pmtiles serves tiles fast directly.
+
+## 6. Security
+
+- **No credentials**: go-pmtiles reads the public object over HTTP range; no Spaces key, no k8s Secret. (We do **not** reuse the upload workflow's write-capable key.)
+- Same-origin tiles need no CORS; the CDN-hosted style/glyphs/sprite keep their existing CORS.
+- The application **no longer directs browsers to range-read the 127 GB object**; the public `planet.pmtiles` URL remains reachable directly, but it's out of the hot path. **Follow-up (out of scope here):** make `planet.pmtiles` private (go-pmtiles → `s3://` + a dedicated read-only key) and/or move public glyph/sprite/style assets under a separate public prefix, so the archive can be private.
+
+## 7. Testing / verification
+
+- **Re-upload:** the workflow's origin range-GET verify passes (retrievable, total == `SRC_LEN`).
+- **Tile server (post-deploy, before web cutover):** `GET https://fountainrank.com/tiles/planet.json` → valid TileJSON whose `tiles` array contains exactly `https://fountainrank.com/tiles/planet/{z}/{x}/{y}.mvt`; fetch one URL from that array → `200`, non-empty, vector-tile content-type. Confirm `Cache-Control` present on `/tiles/planet/{z}/{x}/{y}.mvt` and **absent** on `/` (web) and `/healthz` (rewrite/cache isolation holds). Confirm `/`, `/healthz`, `api.${DOMAIN}/` still route correctly (shared ingress untouched).
+- **Browser (Chromium, headless):** map renders; network shows `…/tiles/planet/{z}/{x}/{y}.mvt` `200`s (no `pmtiles://`); map container height > 0; zero console errors.
+- CI green + Codex Loop A (spec + plan) + Loop B (PRs). Owner confirms Firefox separately (contingent on WebGL2 on that machine).
+
+## 8. Standing-doc updates
+
+The plan must update or flag now-stale references to "MapLibre + client-side pmtiles on DO Spaces/CDN" in `docs/design/architecture.md`, `docs/specs/2026-06-16-architecture-and-foundation-design.md`, and `docs/setup/README.md`.
+
+## 9. Out of scope
+
+A non-WebGL raster fallback; making the bucket private + relocating public assets; an edge CDN in front of the ingress (future perf); OSM fountain ingestion (separate spec).
