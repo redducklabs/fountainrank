@@ -263,6 +263,14 @@ resource "digitalocean_spaces_bucket" "basemap" {
   name   = var.basemap_bucket_name
   region = var.region
   acl    = "public-read" # public basemap assets, served via the CDN
+
+  # Failed/aborted large multipart uploads (e.g. an interrupted planet.pmtiles transfer)
+  # leave orphaned parts that are invisible but accrue storage. Auto-abort them.
+  lifecycle_rule {
+    id                                     = "abort-incomplete-mpu"
+    enabled                                = true
+    abort_incomplete_multipart_upload_days = 7
+  }
 }
 
 resource "digitalocean_spaces_bucket_cors_configuration" "basemap" {
