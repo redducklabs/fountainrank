@@ -30,12 +30,12 @@ One Class-B job (`runs-on: ubuntu-latest`, `environment: production`, `permissio
 2. **Resolve source + change detection** (runner, unchanged from #25): auto-discover the latest build (or an explicit, **validated** `pmtiles_url` — §9), HEAD for `SRC_LEN`, compare to the marker → `SKIP_STREAM`.
 3. **Upload fonts/sprites** + **generate/upload style** (runner, unchanged, gated on `UPLOAD_ASSETS`).
 4. **Transfer pmtiles via ephemeral droplet** — only if `SKIP_STREAM != 'true'` (§4–§5).
-5. **CDN purge** — after a successful pmtiles (and/or asset) replacement, flush the overwritten objects from the CDN so the refreshed data serves immediately instead of waiting out the 24 h TTL (§8).
+5. **CDN purge** — flush the small cacheable assets (regenerated style + sprite) when they were refreshed; `planet.pmtiles` is **never** purged because the CDN BYPASSes it (range requests passthrough to origin, always fresh) — see §8.
 6. **Stream-skipped** note (if `SKIP_STREAM == 'true'`).
 7. **Destroy the worker** — `if: always()`, by captured ID (§6).
 8. **Smoke** — origin-side verify of the new object + the existing CDN range check (§8).
 
-The change marker (`planet.pmtiles.meta`) is written **by the runner after a successful upload AND CDN purge** (steps 5→7 below: transfer → purge → record marker), so it only advances once the basemap is both uploaded and served fresh; a failed transfer or purge leaves it stale → next run retries. (The CDN purge also runs on asset-only refreshes, gated on `SKIP_STREAM != true OR UPLOAD_ASSETS == true`.)
+The change marker (`planet.pmtiles.meta`) is written **by the runner after the planet upload+verify** (and the asset CDN purge, when assets were refreshed) succeed (steps 5→7: transfer → asset purge → record marker), so it only advances on true success; a failed transfer leaves it stale → next run retries (which the idempotency skip makes fast). The asset purge is gated on `UPLOAD_ASSETS == true`.
 
 ## 4. The droplet transfer
 
@@ -83,7 +83,7 @@ It self-cleans incomplete multipart uploads from failed transfers (including the
 
 ## 8. Freshness: CDN purge + origin-side verify
 
-The CDN caches objects for the Terraform TTL (86400 s), and refreshes overwrite the same keys, so a plain CDN smoke can pass against stale cached content and users would see the old map for up to a day. After a successful replacement, **purge the overwritten objects from the CDN** — `doctl compute cdn flush <cdn-id> --files planet.pmtiles[,style.light.json,…]` (resolve `<cdn-id>` via `doctl compute cdn list` filtered to the basemap origin). Verification: an **origin-side** HEAD/range against Spaces directly (proves the new object landed) **plus** the CDN range smoke (proves serving) — recording the object's `Content-Length`/`ETag`.
+`planet.pmtiles` is **too large for the CDN to edge-cache** — the CDN serves it `cf-cache-status: BYPASS`, passing byte-range requests through to the Spaces origin (always fresh, `206`). So it is **never purged**: flushing a BYPASS object just forces a needless multi-minute full-object refetch (observed: a post-purge range probe blocked ~9.5 min and returned `200`, while the settled state is a fast `206`). Only the **small cacheable assets** (regenerated `style.light.json` + the referenced sprite) are flushed, and only when re-uploaded — `doctl compute cdn flush <cdn-id> --files /style.light.json,/sprites/v4/light.json,/sprites/v4/light.png` (resolve `<cdn-id>` via `doctl compute cdn list` filtered to the basemap origin). **Smoke:** gate on the **origin** object size (`aws s3api head-object` ContentLength == `SRC_LEN`) **plus** a **CDN** range probe returning `206` (retried for any transient edge state) with the CORS header present.
 
 ## 9. Operator input validation (the droplet fetches it with prod creds in env)
 
