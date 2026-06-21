@@ -33,9 +33,9 @@ import {
 } from "../../lib/map/constants";
 import { logMapError } from "../../lib/map/log";
 import { FountainsInViewList } from "./FountainsInViewList";
-import { CapHint, EmptyHint, ErrorToast, LoadingBar, ZoomInHint } from "./MapStates";
+import { CapHint, EmptyHint, ErrorToast, LoadingBar, UnsupportedHint, ZoomInHint } from "./MapStates";
 
-type Status = "idle" | "loading" | "empty" | "error" | "belowZoom" | "capped";
+type Status = "idle" | "loading" | "empty" | "error" | "belowZoom" | "capped" | "unsupported";
 const activeIdFromPath = (p: string | null) => p?.match(/^\/fountains\/([^/?#]+)/)?.[1] ?? "";
 
 export default function MapBrowser() {
@@ -52,12 +52,26 @@ export default function MapBrowser() {
     const protocol = new Protocol();
     // v5: addProtocol/removeProtocol are standalone named exports (not on the maplibregl namespace object).
     addProtocol("pmtiles", protocol.tile);
-    const map = new maplibregl.Map({
-      container: ref.current!,
-      style: BASEMAP.styleUrl,
-      center: DEFAULT_CENTER,
-      zoom: DEFAULT_ZOOM,
-    });
+    let map: maplibregl.Map;
+    try {
+      map = new maplibregl.Map({
+        container: ref.current!,
+        style: BASEMAP.styleUrl,
+        center: DEFAULT_CENTER,
+        zoom: DEFAULT_ZOOM,
+        // MapLibre defaults powerPreference to 'high-performance', which makes WebGL context
+        // creation FAIL on some setups (e.g. Firefox → EGL_NO_CONFIG / "Exhausted GL driver
+        // options") even when WebGL works on other sites. 'default' lets the browser pick any GPU.
+        canvasContextAttributes: { powerPreference: "default" },
+      });
+    } catch (err) {
+      // WebGL genuinely unavailable — degrade gracefully instead of letting the throw go uncaught
+      // and crash the whole page (uncaught → Next render error → "this page couldn't load").
+      logMapError("webgl-init-failed", { name: (err as Error)?.name });
+      removeProtocol("pmtiles");
+      setStatus("unsupported");
+      return;
+    }
     mapRef.current = map;
     map.addControl(new maplibregl.NavigationControl(), "top-right");
     map.addControl(
@@ -214,6 +228,7 @@ export default function MapBrowser() {
       {status === "empty" && <EmptyHint />}
       {status === "capped" && <CapHint />}
       {status === "error" && <ErrorToast onRetry={retry} />}
+      {status === "unsupported" && <UnsupportedHint />}
       <FountainsInViewList
         pins={pins}
         activeId={activeId}

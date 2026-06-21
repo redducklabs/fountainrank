@@ -34,6 +34,25 @@ export function CapHint() {
     </div>
   );
 }
+export function UnsupportedHint() {
+  return (
+    <div className="absolute inset-0 flex items-center justify-center bg-[#e9efe7] p-6 text-center">
+      <div className="max-w-sm">
+        <p className="text-sm font-semibold text-slate-800">The map couldn&rsquo;t start in this browser.</p>
+        <p className="mt-1 text-sm text-slate-600">
+          It needs WebGL. Turning on hardware acceleration (or relaxing strict anti-fingerprinting
+          for this site) and reloading usually fixes it.
+        </p>
+        <button
+          onClick={() => location.reload()}
+          className="mt-3 rounded-full bg-[#0C44A0] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#0E4DA4]"
+        >
+          Reload
+        </button>
+      </div>
+    </div>
+  );
+}
 export function ErrorToast({ onRetry }: { onRetry: () => void }) {
   return (
     <div
