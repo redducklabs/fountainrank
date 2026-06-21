@@ -192,10 +192,18 @@ Transfer (the security-critical step — copy verbatim; secrets via `$VAR`, neve
           avail=$(df -B1 --output=avail /root | tail -1 | tr -d ' ')
           need=$(( SRC_LEN + 10 * 1024 * 1024 * 1024 ))
           if [ "$avail" -lt "$need" ]; then echo "insufficient disk: avail=$avail need=$need" >&2; exit 1; fi
-          # Resumable, https-only, NO redirects, IP pinned to the runner-validated address
-          # (closes redirect-bypass + DNS-rebinding between validation and fetch).
-          curl -C - --retry 8 --retry-delay 15 --retry-all-errors --proto '=https' --max-redirs 0 \
-            --resolve "${SRC_HOST}:443:${SRC_IP}" -fL -o /root/planet.pmtiles "$SRC_URL"
+          # Resumable download. curl's --retry restarts from byte 0 on a mid-transfer drop (and
+          # -C - fixes its resume offset once at process start), so we loop FRESH curl -C -
+          # invocations — each resumes from the partial file's size via a Range request. https
+          # only, no redirects (closes bypass/rebind), IP pinned to the runner-validated address.
+          ok=""
+          for attempt in $(seq 1 12); do
+            if curl -C - --connect-timeout 30 --proto '=https' --max-redirs 0 \
+                 --resolve "${SRC_HOST}:443:${SRC_IP}" -fL -o /root/planet.pmtiles "$SRC_URL"; then ok=1; break; fi
+            echo "download attempt ${attempt} interrupted; resuming in 15s…" >&2
+            sleep 15
+          done
+          if [ -z "$ok" ]; then echo "download failed after 12 resume attempts" >&2; exit 1; fi
           # Integrity (truncation): size must equal the source content-length.
           got=$(stat -c %s /root/planet.pmtiles)
           if [ "$got" != "$SRC_LEN" ]; then echo "size mismatch: got=$got want=$SRC_LEN" >&2; exit 1; fi
