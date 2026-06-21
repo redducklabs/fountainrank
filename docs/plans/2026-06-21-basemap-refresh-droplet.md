@@ -194,11 +194,11 @@ Transfer (the security-critical step — copy verbatim; secrets via `$VAR`, neve
           export PATH=/usr/local/bin:$PATH
           aws configure set default.region us-east-1
           aws configure set default.s3.endpoint_url "$ENDPOINT"
-          # Fewer, larger parts → faster CompleteMultipartUpload on DO Spaces; cli_read_timeout 0
-          # waits for the single slow completion instead of retrying it ("already in progress").
+          # Fewer, larger parts → faster CompleteMultipartUpload on DO Spaces. The unbounded read
+          # timeout for the slow completion is applied per-command (--cli-read-timeout 0) on the cp
+          # below, so head-object stays bounded.
           aws configure set default.s3.multipart_chunksize 256MB
           aws configure set default.s3.multipart_threshold 256MB
-          aws configure set default.cli_read_timeout 0
           # Idempotency/recovery: if planet.pmtiles already matches the source size (a prior run
           # uploaded it but its marker wasn't recorded), skip the download+upload entirely.
           existing=$(aws s3api head-object --bucket fountainrank-basemap --key planet.pmtiles --endpoint-url "$ENDPOINT" --query 'ContentLength' --output text 2>/dev/null || echo "")
@@ -227,7 +227,8 @@ Transfer (the security-critical step — copy verbatim; secrets via `$VAR`, neve
             # aws-cli mis-report failure even when the object completes server-side — the size
             # VERIFY below (not cp's exit code) is the success criterion.
             aws s3 cp /root/planet.pmtiles "${BUCKET}/planet.pmtiles" \
-              --acl public-read --content-type application/octet-stream --endpoint-url "$ENDPOINT" || \
+              --acl public-read --content-type application/octet-stream --endpoint-url "$ENDPOINT" \
+              --cli-read-timeout 0 || \
               echo "aws s3 cp reported non-zero; verifying the object landed anyway…" >&2
             remote_len=""
             for v in 1 2 3 4 5 6; do
