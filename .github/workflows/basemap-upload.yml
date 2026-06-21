@@ -4,10 +4,16 @@ name: Basemap Upload
 # PMTiles) to the fountainrank-basemap DO Spaces bucket.
 #
 # Runs on a MONTHLY schedule (auto-discovers + uploads the latest Protomaps daily build,
-# skipping the stream if the source is unchanged) AND on demand via workflow_dispatch.
+# skipping the transfer if the source is unchanged) AND on demand via workflow_dispatch.
 #
-# Class B job: handles SPACES secrets → runs on ubuntu-latest + environment: production
-# (mirrors the Terraform apply job in terraform.yml).
+# The ~127 GB planet transfer runs on an EPHEMERAL sfo3 droplet (resumable download to disk
+# + intra-region multipart upload) — NOT streamed through the runner. The runner keeps the
+# resolve/skip/marker, asset/style upload, CDN purge, and smoke. See
+# docs/specs/2026-06-21-basemap-refresh-droplet-design.md. A daily basemap-janitor reaps
+# any leaked worker droplet/key.
+#
+# Class B job: handles SPACES + DigitalOcean secrets → runs on ubuntu-latest +
+# environment: production (mirrors the Terraform apply + deploy jobs).
 #
 # Planet builds: https://build.protomaps.com/YYYYMMDD.pmtiles (~127 GB). Leave pmtiles_url
 # blank (or let the monthly cron run) to auto-discover the latest available build.
@@ -17,9 +23,9 @@ on:
     inputs:
       pmtiles_url:
         description: >
-          Explicit .pmtiles source to stream → s3://fountainrank-basemap/planet.pmtiles.
-          Leave BLANK to auto-discover the latest Protomaps daily build. A regional
-          extract URL is a quicker alternative to the ~127 GB planet for test runs.
+          Explicit .pmtiles source → s3://fountainrank-basemap/planet.pmtiles. Leave BLANK
+          to auto-discover the latest Protomaps daily build. A regional extract URL is a
+          quicker alternative to the ~127 GB planet for test runs. Must be https on port 443.
         required: false
         type: string
       upload_assets:
@@ -28,7 +34,7 @@ on:
         default: true
         type: boolean
       force:
-        description: "Re-stream the planet even if the source size is unchanged since last upload."
+        description: "Re-transfer the planet even if the source size is unchanged since last upload."
         required: false
         default: false
         type: boolean
@@ -48,6 +54,7 @@ jobs:
     name: Upload basemap to DO Spaces
     runs-on: ubuntu-latest
     environment: production
+    timeout-minutes: 150
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.SPACES_SECRET_KEY }}
@@ -64,6 +71,11 @@ jobs:
       ASSETS_REF: 028c18f713baecad011301ff7a69acc39bcc2ae7
 
     steps:
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2.5.2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
       - name: Configure aws-cli for DO Spaces
         run: |
           aws configure set default.region us-east-1
@@ -86,9 +98,44 @@ jobs:
             done
           fi
           if [ -z "$URL" ]; then echo "::error::No Protomaps build found in the last 14 days."; exit 1; fi
+          # The pmtiles_url is fetched by a privileged droplet — validate with real URL parsing
+          # + DNS resolution; reject control chars (env-injection), non-443 ports, and ANY
+          # private/loopback/link-local/reserved/multicast address (IPv4+IPv6, SSRF). Emit the
+          # host + a validated public IP to pin the later fetch (closes redirect/rebind bypass).
+          if ! VALIDATED=$(python3 - "$URL" <<'PY'
+          import sys, socket, ipaddress
+          from urllib.parse import urlparse
+          raw = sys.argv[1]
+          if any(ord(c) < 0x20 or ord(c) == 0x7f for c in raw):
+              sys.exit("control characters in URL")
+          u = urlparse(raw)
+          if u.scheme != "https":
+              sys.exit("must be https")
+          if u.username or u.password:
+              sys.exit("userinfo not allowed")
+          try:
+              port = u.port
+          except ValueError:
+              sys.exit("invalid port")
+          if port not in (None, 443):
+              sys.exit("only port 443 allowed")
+          host = u.hostname
+          if not host:
+              sys.exit("no host")
+          ips = {i[4][0] for i in socket.getaddrinfo(host, 443, proto=socket.IPPROTO_TCP)}
+          if not ips:
+              sys.exit("no resolution")
+          for ip in ips:
+              a = ipaddress.ip_address(ip)
+              if a.is_private or a.is_loopback or a.is_link_local or a.is_reserved or a.is_multicast or a.is_unspecified:
+                  sys.exit(f"non-public address {ip}")
+          print(host, sorted(ips)[0])
+          PY
+          ); then echo "::error::pmtiles_url failed validation"; exit 1; fi
+          SRC_HOST=${VALIDATED%% *}; SRC_IP=${VALIDATED##* }
           # content-length is the change signal (daily builds differ in size).
           SRC_LEN=$(curl -sfI "$URL" | grep -i '^content-length:' | tr -d '\r' | awk '{print $2}')
-          if [ -z "$SRC_LEN" ]; then echo "::error::Could not read source content-length from the build URL."; exit 1; fi
+          case "$SRC_LEN" in ''|*[!0-9]*) echo "::error::source Content-Length not numeric: '$SRC_LEN'"; exit 1 ;; esac
           LAST_LEN=""
           if aws s3 cp "${BUCKET}/planet.pmtiles.meta" last.meta --endpoint-url "$ENDPOINT" >/dev/null 2>&1; then
             LAST_LEN=$(tr -d '\r\n ' < last.meta)
@@ -99,6 +146,8 @@ jobs:
           echo "Resolved source: ${SAFE} (content-length=${SRC_LEN}; last uploaded=${LAST_LEN:-none}; skip_stream=${SKIP})"
           {
             echo "RESOLVED_URL=$URL"
+            echo "SRC_HOST=$SRC_HOST"
+            echo "SRC_IP=$SRC_IP"
             echo "SRC_LEN=$SRC_LEN"
             echo "SKIP_STREAM=$SKIP"
           } >> "$GITHUB_ENV"
@@ -167,40 +216,113 @@ jobs:
 
           echo "style.light.json uploaded."
 
-      # Stream the PMTiles directly from the source URL without landing the whole file on
-      # the runner disk (~14 GB on ubuntu-latest, far too small for ~127 GB). aws s3 cp
-      # reads from stdin and uses multipart upload. A full planet is a very large transfer
-      # and may approach the 6-hour job limit; a regional extract is a smaller alternative.
-      - name: Stream PMTiles to DO Spaces
+      # Provision an ephemeral sfo3 worker (intra-region with the bucket). The ~127 GB planet
+      # is downloaded resumably to its disk then multipart-uploaded — not streamed through the
+      # runner (no resume, ~14 GB runner disk). Destroyed by the always() cleanup below.
+      - name: Provision worker droplet
         if: ${{ env.SKIP_STREAM != 'true' }}
         run: |
-          set -o pipefail  # a failed/truncated curl must fail the step, not silently "succeed"
-          # Log a sanitized source only — strip any userinfo + query string so a presigned /
-          # credential-bearing URL is never exposed in this public repo's Actions logs.
-          SAFE_URL=$(printf '%s' "$RESOLVED_URL" | sed -E 's#(https?://)[^/@]*@#\1#; s#\?.*$##')
-          echo "Streaming ${SAFE_URL} → ${BUCKET}/planet.pmtiles …"
-          curl -fL "$RESOLVED_URL" \
-            | aws s3 cp - \
-                "${BUCKET}/planet.pmtiles" \
-                --acl public-read \
-                --content-type "application/octet-stream" \
-                --endpoint-url "$ENDPOINT"
-          # Record the uploaded source size so a later run can skip an unchanged source.
-          printf '%s' "$SRC_LEN" | aws s3 cp - \
-            "${BUCKET}/planet.pmtiles.meta" \
-            --acl private \
-            --content-type "text/plain" \
-            --endpoint-url "$ENDPOINT"
-          echo "planet.pmtiles upload complete (source content-length=${SRC_LEN})."
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh"
+          # Per-run ephemeral SSH key; the private key stays on the runner.
+          ssh-keygen -t ed25519 -N '' -f "$HOME/.ssh/basemap_refresh" -C "basemap-refresh-${GITHUB_RUN_ID}" >/dev/null
+          KEY_ID=$(doctl compute ssh-key import "basemap-refresh-${GITHUB_RUN_ID}" \
+            --public-key-file "$HOME/.ssh/basemap_refresh.pub" --format ID --no-header)
+          echo "SSH_KEY_ID=$KEY_ID" >> "$GITHUB_ENV"
+          # Defensive pre-clean: destroy any stale tagged droplets from a prior crashed run.
+          for id in $(doctl compute droplet list --tag-name basemap-refresh --format ID --no-header); do
+            doctl compute droplet delete "$id" --force || true
+          done
+          ID=$(doctl compute droplet create "basemap-refresh-${GITHUB_RUN_ID}" \
+            --region sfo3 --size s-4vcpu-8gb --image ubuntu-24-04-x64 \
+            --ssh-keys "$KEY_ID" --tag-name basemap-refresh --wait --format ID --no-header)
+          echo "DROPLET_ID=$ID" >> "$GITHUB_ENV"
+          IP=$(doctl compute droplet get "$ID" --format PublicIPv4 --no-header)
+          echo "DROPLET_IP=$IP" >> "$GITHUB_ENV"
+          echo "Provisioned droplet $ID ($IP)."
 
-      - name: Source unchanged — stream skipped
-        if: ${{ env.SKIP_STREAM == 'true' }}
-        run: echo "Basemap already current (source content-length unchanged since last upload); skipping the ~127 GB stream. Use the 'force' input to override."
-
-      - name: Smoke test — verify planet.pmtiles is reachable via CDN
+      - name: Transfer pmtiles on the droplet
+        if: ${{ env.SKIP_STREAM != 'true' }}
         run: |
-          echo "Probing https://${CDN_HOST}/planet.pmtiles (expecting HTTP 206 + Accept-Ranges) …"
-          # Headers only (no body bytes); send an Origin so CORS exposure is verified too.
+          set -euo pipefail
+          SSH="ssh -i $HOME/.ssh/basemap_refresh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 root@${DROPLET_IP}"
+          # Wait for SSH (cloud-init/boot).
+          ready=""
+          for i in $(seq 1 40); do if $SSH true 2>/dev/null; then ready=1; break; fi; sleep 10; done
+          if [ -z "$ready" ]; then echo "::error::droplet SSH never became ready"; exit 1; fi
+          # Secrets + dynamic inputs travel as a printf %q export-prelude over the encrypted SSH
+          # stdin (not argv/file/log), ahead of a STATIC single-quoted remote script. Secrets are
+          # referenced as shell vars ($AWS_ACCESS_KEY_ID), never the inline secrets context, so
+          # they never land in the runner's temp script file.
+          {
+            printf 'export AWS_ACCESS_KEY_ID=%q\n' "$AWS_ACCESS_KEY_ID"
+            printf 'export AWS_SECRET_ACCESS_KEY=%q\n' "$AWS_SECRET_ACCESS_KEY"
+            printf 'export SRC_URL=%q\n'  "$RESOLVED_URL"
+            printf 'export SRC_HOST=%q\n' "$SRC_HOST"
+            printf 'export SRC_IP=%q\n'   "$SRC_IP"
+            printf 'export SRC_LEN=%q\n'  "$SRC_LEN"
+            printf 'export ENDPOINT=%q\n' "$ENDPOINT"
+            printf 'export BUCKET=%q\n'   "$BUCKET"
+            cat <<'REMOTE'
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq && apt-get install -yqq awscli curl >/dev/null
+          aws configure set default.region us-east-1
+          aws configure set default.s3.endpoint_url "$ENDPOINT"
+          aws configure set default.s3.multipart_chunksize 64MB
+          aws configure set default.s3.multipart_threshold 64MB
+          # Preflight disk: require SRC_LEN + 10 GiB free (GiB-vs-GB + OS/package overhead).
+          avail=$(df -B1 --output=avail /root | tail -1 | tr -d ' ')
+          need=$(( SRC_LEN + 10 * 1024 * 1024 * 1024 ))
+          if [ "$avail" -lt "$need" ]; then echo "insufficient disk: avail=$avail need=$need" >&2; exit 1; fi
+          # Resumable, https-only, NO redirects, IP pinned to the runner-validated address.
+          curl -C - --retry 8 --retry-delay 15 --retry-all-errors --proto '=https' --max-redirs 0 \
+            --resolve "${SRC_HOST}:443:${SRC_IP}" -fL -o /root/planet.pmtiles "$SRC_URL"
+          # Integrity (truncation): size must equal the source content-length.
+          got=$(stat -c %s /root/planet.pmtiles)
+          if [ "$got" != "$SRC_LEN" ]; then echo "size mismatch: got=$got want=$SRC_LEN" >&2; exit 1; fi
+          # Intra-region multipart upload (automatic per-part retry).
+          aws s3 cp /root/planet.pmtiles "${BUCKET}/planet.pmtiles" \
+            --acl public-read --content-type application/octet-stream --endpoint-url "$ENDPOINT"
+          # Marker = bare content-length (matches the resolve/skip read). Written only on success.
+          printf '%s' "$SRC_LEN" | aws s3 cp - "${BUCKET}/planet.pmtiles.meta" \
+            --acl private --content-type text/plain --endpoint-url "$ENDPOINT"
+          unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+          echo "droplet transfer + marker complete"
+          REMOTE
+          } | $SSH 'bash -s'
+
+      - name: Purge CDN for refreshed objects
+        if: ${{ env.SKIP_STREAM != 'true' }}
+        run: |
+          set -euo pipefail
+          CDN_ID=$(doctl compute cdn list --format ID,Origin --no-header | grep 'fountainrank-basemap' | awk '{print $1}' | head -1)
+          if [ -z "$CDN_ID" ]; then echo "::warning::basemap CDN not found; skipping purge"; exit 0; fi
+          # doctl cdn flush --files takes ABSOLUTE object paths (leading slash); no --files = flush all.
+          if [ "${UPLOAD_ASSETS}" = "true" ]; then
+            doctl compute cdn flush "$CDN_ID" # assets + pmtiles refreshed → flush entire cache
+          else
+            doctl compute cdn flush "$CDN_ID" --files /planet.pmtiles
+          fi
+          echo "CDN purged."
+
+      - name: Source unchanged — transfer skipped
+        if: ${{ env.SKIP_STREAM == 'true' }}
+        run: echo "Basemap already current (source content-length unchanged since last upload); skipping the ~127 GB transfer. Use the 'force' input to override."
+
+      - name: Destroy worker droplet + key
+        if: ${{ always() }}
+        run: |
+          if [ -n "${DROPLET_ID:-}" ]; then doctl compute droplet delete "$DROPLET_ID" --force || true; fi
+          if [ -n "${SSH_KEY_ID:-}" ]; then doctl compute ssh-key delete "$SSH_KEY_ID" --force || true; fi
+
+      - name: Smoke test — origin + CDN
+        run: |
+          set -o pipefail
+          echo "Origin HEAD (Spaces)…"
+          aws s3api head-object --bucket fountainrank-basemap --key planet.pmtiles \
+            --endpoint-url "$ENDPOINT" --query 'ContentLength' --output text
+          echo "CDN range probe (expecting HTTP 206 + Accept-Ranges)…"
           HEADERS=$(curl -s -o /dev/null -D - -H 'Origin: https://fountainrank.com' -H 'Range: bytes=0-99' "https://${CDN_HOST}/planet.pmtiles")
           printf '%s\n' "$HEADERS" | grep -iE '^HTTP/|^accept-ranges:|^content-range:|^content-length:|^access-control-allow-origin:'
           if printf '%s' "$HEADERS" | grep -q "^HTTP/.*206"; then
