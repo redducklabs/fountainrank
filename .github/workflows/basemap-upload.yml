@@ -140,8 +140,17 @@ jobs:
           if aws s3 cp "${BUCKET}/planet.pmtiles.meta" last.meta --endpoint-url "$ENDPOINT" >/dev/null 2>&1; then
             LAST_LEN=$(tr -d '\r\n ' < last.meta)
           fi
+          # The marker can lie (HEAD-200 but GET/range-NoSuchKey). Prove the LIVE object actually
+          # range-READS with the right total before skipping — checks the ContentRange metadata
+          # ("bytes 0-99/<total>"), not the body length or a HEAD ContentLength.
+          LIVE_OK=""
+          if cr=$(aws s3api get-object --bucket fountainrank-basemap --key planet.pmtiles \
+                    --range bytes=0-99 --endpoint-url "$ENDPOINT" /dev/null \
+                    --query 'ContentRange' --output text 2>/dev/null); then
+            [ "${cr##*/}" = "$SRC_LEN" ] && LIVE_OK=1
+          fi
           SKIP=false
-          if [ "$FORCE" != "true" ] && [ -n "$LAST_LEN" ] && [ "$SRC_LEN" = "$LAST_LEN" ]; then SKIP=true; fi
+          if [ "$FORCE" != "true" ] && [ -n "$LAST_LEN" ] && [ "$SRC_LEN" = "$LAST_LEN" ] && [ -n "$LIVE_OK" ]; then SKIP=true; fi
           SAFE=$(printf '%s' "$URL" | sed -E 's#(https?://)[^/@]*@#\1#; s#\?.*$##')
           echo "Resolved source: ${SAFE} (content-length=${SRC_LEN}; last uploaded=${LAST_LEN:-none}; skip_stream=${SKIP})"
           {
@@ -293,9 +302,9 @@ jobs:
           aws configure set default.s3.multipart_threshold 256MB
           # Idempotency/recovery: if planet.pmtiles already matches the source size (e.g. a prior
           # run uploaded it but its marker wasn't recorded), skip the download+upload entirely.
-          existing=$(aws s3api head-object --bucket fountainrank-basemap --key planet.pmtiles --endpoint-url "$ENDPOINT" --query 'ContentLength' --output text 2>/dev/null || echo "")
-          if [ "$existing" = "$SRC_LEN" ]; then
-            echo "planet.pmtiles already present with the correct size (${existing}); skipping download+upload."
+          existing=$(aws s3api get-object --bucket fountainrank-basemap --key planet.pmtiles --range bytes=0-99 --endpoint-url "$ENDPOINT" /dev/null --query 'ContentRange' --output text 2>/dev/null || echo "")
+          if [ "${existing##*/}" = "$SRC_LEN" ]; then
+            echo "planet.pmtiles already present + range-readable, total ${existing##*/}; skipping download+upload."
           else
             # Preflight disk: require SRC_LEN + 10 GiB free (GiB-vs-GB + OS/package overhead).
             avail=$(df -B1 --output=avail /root | tail -1 | tr -d ' ')
@@ -322,14 +331,15 @@ jobs:
               --acl public-read --content-type application/octet-stream --endpoint-url "$ENDPOINT" \
               --cli-read-timeout 0 || \
               echo "aws s3 cp reported non-zero; verifying the object landed anyway…" >&2
-            remote_len=""
+            remote_total=""
             for v in 1 2 3 4 5 6; do
-              remote_len=$(aws s3api head-object --bucket fountainrank-basemap --key planet.pmtiles --endpoint-url "$ENDPOINT" --query 'ContentLength' --output text 2>/dev/null || echo "")
-              [ "$remote_len" = "$SRC_LEN" ] && break
-              echo "waiting for object to finalize (got '${remote_len:-none}')…" >&2; sleep 15
+              cr=$(aws s3api get-object --bucket fountainrank-basemap --key planet.pmtiles --range bytes=0-99 --endpoint-url "$ENDPOINT" /dev/null --query 'ContentRange' --output text 2>/dev/null || echo "")
+              remote_total="${cr##*/}"
+              [ "$remote_total" = "$SRC_LEN" ] && break
+              echo "waiting for object to be range-readable (got '${remote_total:-none}')…" >&2; sleep 15
             done
-            if [ "$remote_len" != "$SRC_LEN" ]; then echo "upload verify failed: remote='${remote_len:-none}' want=$SRC_LEN" >&2; exit 1; fi
-            echo "upload verified: planet.pmtiles is ${remote_len} bytes"
+            if [ "$remote_total" != "$SRC_LEN" ]; then echo "upload verify failed (not range-readable): remote='${remote_total:-none}' want=$SRC_LEN" >&2; exit 1; fi
+            echo "upload verified: planet.pmtiles range-readable, total ${remote_total} bytes"
           fi
           unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
           echo "droplet transfer step complete"
@@ -377,10 +387,14 @@ jobs:
       - name: Smoke test — origin size + CDN range
         run: |
           set -o pipefail
-          echo "Origin object size (Spaces)…"
+          echo "Origin object size + range-READ (Spaces; go-pmtiles reads this path)…"
           osize=$(aws s3api head-object --bucket fountainrank-basemap --key planet.pmtiles --endpoint-url "$ENDPOINT" --query 'ContentLength' --output text)
           echo "origin ContentLength=${osize} (expected ${SRC_LEN})"
           [ "$osize" = "$SRC_LEN" ] || { echo "::error::origin size ${osize} != expected ${SRC_LEN}"; exit 1; }
+          # HEAD size can be present even when GET/range 404s (NoSuchKey) — prove a real origin range read.
+          ostatus=$(curl -s -o /dev/null -w '%{http_code}' -m 30 -r 0-99 "https://fountainrank-basemap.sfo3.digitaloceanspaces.com/planet.pmtiles")
+          [ "$ostatus" = "206" ] || { echo "::error::origin range probe expected 206, got ${ostatus} (object not range-readable)"; exit 1; }
+          echo "origin range read OK (206)."
           echo "CDN range probe (expect HTTP 206 + CORS; planet is CDN-BYPASS passthrough to origin)…"
           ok=""
           for attempt in 1 2 3 4 5; do
