@@ -1,11 +1,9 @@
-// One swappable basemap config (dark-mode-ready, spec §5.4); URLs from NEXT_PUBLIC_* env.
-// MapBrowser loads only `styleUrl`; the hosted Light style JSON embeds its source as
-// `pmtiles://<pmtilesUrl>`. `pmtilesUrl` is the value the upload runbook (Task 20) writes
-// into that style JSON's source — kept here so the two stay in one place.
+// One swappable basemap config (dark-mode-ready, spec §5.4); URL from NEXT_PUBLIC_* env.
+// MapBrowser loads only `styleUrl` (the hosted Light style JSON); that style's source is a
+// go-pmtiles TileJSON (fountainrank.com/tiles/planet.json) which MapLibre fetches natively.
 export const BASEMAP = {
   flavor: "light" as const,
   styleUrl: process.env.NEXT_PUBLIC_BASEMAP_STYLE_URL ?? "",
-  pmtilesUrl: process.env.NEXT_PUBLIC_BASEMAP_PMTILES_URL ?? "",
 };
 export const PIN_ASSETS: Record<
   "pin-standard" | "pin-selected" | "pin-gold" | "pin-broken",

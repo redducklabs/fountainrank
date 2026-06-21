@@ -84,7 +84,6 @@ jobs:
           docker build -f web/Dockerfile \
             --build-arg NEXT_PUBLIC_API_BASE_URL="https://api.${DOMAIN}" \
             --build-arg NEXT_PUBLIC_BASEMAP_STYLE_URL="https://${BASEMAP_CDN}/style.light.json" \
-            --build-arg NEXT_PUBLIC_BASEMAP_PMTILES_URL="https://${BASEMAP_CDN}/planet.pmtiles" \
             -t "$REGISTRY/fountainrank-web:$IMAGE_TAG" .
           docker push "$REGISTRY/fountainrank-web:$IMAGE_TAG"
       # Image scans are report-only (ignore-unfixed) — see Task 5's scanning policy.

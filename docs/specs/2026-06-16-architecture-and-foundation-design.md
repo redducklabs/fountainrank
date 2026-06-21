@@ -88,7 +88,7 @@ Exact versions are pinned during Phase 0 via the `version-research-expert` and r
 | Dependency mgmt (Py) | uv (locked) |
 | Web | Next.js (App Router) + React 19 + TypeScript + Tailwind |
 | Mobile | Expo SDK (current) / React Native + TypeScript |
-| Maps | MapLibre GL JS (web) + MapLibre React Native (mobile) + Protomaps pmtiles |
+| Maps | MapLibre GL JS (web) + MapLibre React Native (mobile) + Protomaps pmtiles (served as z/x/y tiles by a go-pmtiles tile server — see `docs/specs/2026-06-21-basemap-tile-server-design.md`) |
 | Auth | Logto (self-hosted) |
 | Monorepo | pnpm + Turborepo (Node 22) |
 | Object storage | DO Spaces + CDN |

@@ -167,17 +167,22 @@ CDN + CORS (gated behind `var.manage_basemap_spaces`); the upload runs via the
   `Accept-Ranges`/`Content-Range`/`Content-Length`/`ETag` exposed, origins = the web origins).
   **CDN `fountainrank-basemap.sfo3.cdn.digitaloceanspaces.com`.**
 - ✅ **Web env wired** — `deploy.yml` (and the security-audit scan build) pass
-  `NEXT_PUBLIC_BASEMAP_STYLE_URL=https://<cdn>/style.light.json` and
-  `NEXT_PUBLIC_BASEMAP_PMTILES_URL=https://<cdn>/planet.pmtiles` as Docker build-args. **These
-  are inlined into the web client bundle at _build_ time** (Next bakes `NEXT_PUBLIC_*` during
-  `next build`), so they live as CI build-args, **not** a k8s runtime ConfigMap. No manual env
-  step is needed — the next web deploy picks them up.
+  `NEXT_PUBLIC_BASEMAP_STYLE_URL=https://<cdn>/style.light.json` as a Docker build-arg (inlined
+  into the web client bundle at _build_ time — Next bakes `NEXT_PUBLIC_*` during `next build`).
+  The planet itself is **not** a build-arg: it's served as z/x/y tiles by the go-pmtiles **tile
+  server** (`fountainrank.com/tiles`), referenced from inside `style.light.json`.
 - ⏳ **Remaining: upload the basemap data** (below), then tag the release.
 
+**Serving.** The planet is served by a **go-pmtiles tile server** in DOKS (`infra/k8s/basemap-tiles.yaml`)
+that range-reads `planet.pmtiles` from Spaces server-side and serves z/x/y vector tiles + TileJSON at
+`fountainrank.com/tiles/` (the browser uses **no** client-side pmtiles library). Design:
+`docs/specs/2026-06-21-basemap-tile-server-design.md`.
+
 **Upload + monthly refresh (the `basemap-upload` workflow).** It uploads (public-read): the
-**style** (`style.light.json`, generated for the Light flavor pointing at the CDN
-pmtiles/glyphs/sprite), the **fonts** (`fonts/{fontstack}/{range}.pbf`), the **sprites**, and
-**streams** the pmtiles to `planet.pmtiles` (so the runner's small disk isn't a limit).
+**style** (`style.light.json`, generated for the Light flavor — its source is the tile-server
+TileJSON; glyphs/sprite on the CDN), the **fonts** (`fonts/{fontstack}/{range}.pbf`), the
+**sprites**, and the **planet** to `planet.pmtiles` via an **ephemeral sfo3 droplet** (resumable
+download + intra-region upload; verified **range-readable** before the run succeeds).
 
 - **Runs monthly** (cron `0 4 1 * *`) to keep the basemap current: it **auto-discovers the
   latest** Protomaps daily build (`https://build.protomaps.com/YYYYMMDD.pmtiles`) and **skips
@@ -186,22 +191,21 @@ pmtiles/glyphs/sprite), the **fonts** (`fonts/{fontstack}/{range}.pbf`), the **s
 - **On demand:** Actions → **basemap-upload** — leave `pmtiles_url` blank to auto-discover the
   latest (or pass an explicit URL, e.g. a regional extract for a quick first pass), set
   `upload_assets` (default true), and `force` to re-stream even if unchanged.
-- A ~127 GB planet stream is large and may approach GitHub Actions' 6-hour job limit (and has
-  no resume); if a run fails mid-stream, the marker isn't updated, so the next run retries. Do
-  **not** hotlink Protomaps — we copy to our own bucket.
+- The ~127 GB transfer runs on the ephemeral droplet (resumable download + intra-region upload);
+  the marker only advances after the object verifies **range-readable**, so a failed/partial
+  upload retries instead of leaving a broken object. Do **not** hotlink Protomaps — we copy to our own bucket.
 
 Manual fallback (from a machine with the create-capable Spaces key + aws-cli at
 `https://sfo3.digitaloceanspaces.com`): `aws s3 cp <file> s3://fountainrank-basemap/<key>
 --acl public-read --endpoint-url …` for `planet.pmtiles`, `style.light.json`, `fonts/…`,
 `sprites/…` (same keys as above).
 
-**Smoke check** — confirm a cross-origin range request returns 206 with the range
-headers exposed:
+**Smoke check** — confirm the tile server serves TileJSON + a tile, and that go-pmtiles can
+range-read the origin it depends on:
 ```bash
-curl -i -H 'Origin: https://fountainrank.com' -H 'Range: bytes=0-99' \
-  'https://<basemap_cdn_endpoint>/planet.pmtiles'
-# Expect: 206 Partial Content; Access-Control-Allow-Origin: https://fountainrank.com;
-#         Accept-Ranges: bytes; Content-Range present.
+curl -s  https://fountainrank.com/tiles/planet.json | head      # valid TileJSON; tiles[] under /tiles/planet/{z}/{x}/{y}.mvt
+curl -sI https://fountainrank.com/tiles/planet/0/0/0.mvt | head -1   # 200 (vector tile)
+curl -sI -r 0-99 'https://fountainrank-basemap.sfo3.digitaloceanspaces.com/planet.pmtiles' | head -1  # 206 (origin range go-pmtiles reads)
 ```
 Then load `https://fountainrank.com/` and confirm tiles render (pins appear once fountain
 data exists).

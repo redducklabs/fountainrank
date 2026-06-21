@@ -2,13 +2,10 @@
 import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import maplibregl, {
-  addProtocol,
-  removeProtocol,
   type FilterSpecification,
   type MapLayerMouseEvent,
   type GeoJSONSource,
 } from "maplibre-gl";
-import { Protocol } from "pmtiles";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { BASEMAP, PIN_ASSETS, PILL_BG_ASSET } from "../../lib/map/style";
 import { fetchBbox, type FountainPin } from "../../lib/fountains";
@@ -69,9 +66,8 @@ export default function MapBrowser() {
 
   useEffect(() => {
     if (!webglOk) return; // no WebGL2 → the UnsupportedHint renders; never touch MapLibre.
-    const protocol = new Protocol();
-    // v5: addProtocol/removeProtocol are standalone named exports (not on the maplibregl namespace object).
-    addProtocol("pmtiles", protocol.tile);
+    // The basemap source is now a normal vector TileJSON (go-pmtiles at /tiles) — MapLibre
+    // fetches it natively; no client-side pmtiles protocol needed.
     let map: maplibregl.Map;
     try {
       map = new maplibregl.Map({
@@ -88,7 +84,6 @@ export default function MapBrowser() {
       // Pre-check passed but init still threw (rare) — catch so it can't go uncaught and crash
       // the page; the map area stays blank but the page renders.
       logMapError("webgl-init-failed", { name: (err as Error)?.name });
-      removeProtocol("pmtiles");
       return;
     }
     mapRef.current = map;
@@ -219,7 +214,6 @@ export default function MapBrowser() {
     return () => {
       clearTimeout(timer);
       map.remove();
-      removeProtocol("pmtiles");
       mapRef.current = null;
     };
   }, [router, webglOk]);

@@ -19,6 +19,11 @@ of truth** is `docs/specs/2026-06-16-architecture-and-foundation-design.md`.
    Everything runs in DOKS; CI/CD via GitHub Actions on redducklabs-runners
 ```
 
+> Basemap serving: the planet Protomaps pmtiles is served as `z/x/y` vector tiles by a
+> **go-pmtiles tile server** (`fountainrank.com/tiles`) that range-reads the archive from DO
+> Spaces server-side — see `docs/specs/2026-06-21-basemap-tile-server-design.md`. (The browser
+> uses no client-side pmtiles library.)
+
 ## Component responsibilities
 
 - **`backend/`** — FastAPI (Python 3.13), async SQLAlchemy 2 + Alembic, PostGIS
