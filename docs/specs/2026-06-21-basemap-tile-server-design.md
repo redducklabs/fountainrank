@@ -12,7 +12,7 @@ Serve the **whole Protomaps planet** reliably, regionally (only viewed tiles), a
 - The 127 GB multipart upload is fragile (`CompleteMultipartUpload "already in progress"`) and the object is currently **broken**: `HEAD` 200 but `GET`/range → `NoSuchKey` — basemap down for all browsers. (Our verification only checked `HEAD` size, so it missed this.)
 - Client-side pmtiles range/decoding is the source of the Firefox+PMTiles range bug class (PMTiles #582/#584).
 
-**Fix** ([Protomaps deploy docs](https://docs.protomaps.com/deploy/)): a **`pmtiles serve` tile server** ([`protomaps/go-pmtiles`](https://hub.docker.com/r/protomaps/go-pmtiles)) range-reads the planet **server-side** and serves **`z/x/y` vector tiles** + TileJSON. The CDN/edge caches the **small tile responses**; MapLibre uses a normal vector source (**no client-side pmtiles library** → the Firefox range class is gone).
+**Fix** ([Protomaps deploy docs](https://docs.protomaps.com/deploy/)): a **`pmtiles serve` tile server** ([`protomaps/go-pmtiles`](https://hub.docker.com/r/protomaps/go-pmtiles)) range-reads the planet **server-side** and serves **`z/x/y` vector tiles** + TileJSON. The **small tile responses are cacheable** (unlike the 127 GB object — by browsers now via `Cache-Control`, and by an edge cache later; there is **no** edge CDN in front of DOKS today — see §5); MapLibre uses a normal vector source (**no client-side pmtiles library** → the Firefox range class is gone).
 
 **Firefox WebGL2 is out of scope:** MapLibre requires WebGL2 regardless of hosting. The owner's Firefox can't create a WebGL2 context (a hardware-acceleration / anti-fingerprinting setting on that machine — verify at `get.webgl.org/webgl2`). The graceful `UnsupportedHint` already shipped is correct there.
 
@@ -61,6 +61,7 @@ A **new** `basemap-tiles` Ingress (NOT edits to `fountainrank-ingress`), host `f
 - `nginx.ingress.kubernetes.io/use-regex: "true"`, path `/tiles(/|$)(.*)` `pathType: ImplementationSpecific`, `nginx.ingress.kubernetes.io/rewrite-target: /$2` → `basemap-tiles-service`.
 - **`Cache-Control` scoped to this object only** (via a response-header annotation): moderate cache on tiles, short/revalidate on TileJSON. Because it's a separate Ingress, the web/API/auth/healthz routes cannot inherit tile cache headers or the rewrite.
 - Rendered by the existing `deploy.yml` `envsubst` flow.
+- **Note (ingress-nginx merge behavior):** ingress-nginx merges all Ingresses sharing host `fountainrank.com` into one nginx server, but `use-regex`/`rewrite-target` are applied per-Ingress-object to **their own** paths — so the shared object's `/` (web) path does not inherit the rewrite. The `/tiles(/|$)(.*)` regex location must take precedence over the prefix `/` for that host; §7 verifies both `/tiles/planet.json` and `/` (web) route correctly to confirm the merge is safe.
 
 ### 3.4 Web (`web/components/map/MapBrowser.tsx`, `web/lib/map/style.ts`)
 
@@ -96,6 +97,7 @@ If bundled into fewer PRs, the deploy must not flip the web/style source until s
 ## 7. Testing / verification
 
 - **Re-upload:** the workflow's origin range-GET verify passes (retrievable, total == `SRC_LEN`).
+- **go-pmtiles' read path:** since go-pmtiles' `HTTPBucket` range-reads the public origin, smoke the exact path it uses — `curl -r 0-99 https://fountainrank-basemap.sfo3.digitaloceanspaces.com/planet.pmtiles` → `206` (this is the read that go-pmtiles depends on; if it ever returns `NoSuchKey`/`200`-full, the tile server can't read the archive).
 - **Tile server (post-deploy, before web cutover):** `GET https://fountainrank.com/tiles/planet.json` → valid TileJSON whose `tiles` array contains exactly `https://fountainrank.com/tiles/planet/{z}/{x}/{y}.mvt`; fetch one URL from that array → `200`, non-empty, vector-tile content-type. Confirm `Cache-Control` present on `/tiles/planet/{z}/{x}/{y}.mvt` and **absent** on `/` (web) and `/healthz` (rewrite/cache isolation holds). Confirm `/`, `/healthz`, `api.${DOMAIN}/` still route correctly (shared ingress untouched).
 - **Browser (Chromium, headless):** map renders; network shows `…/tiles/planet/{z}/{x}/{y}.mvt` `200`s (no `pmtiles://`); map container height > 0; zero console errors.
 - CI green + Codex Loop A (spec + plan) + Loop B (PRs). Owner confirms Firefox separately (contingent on WebGL2 on that machine).
