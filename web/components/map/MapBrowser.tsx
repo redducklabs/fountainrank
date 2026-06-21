@@ -207,7 +207,7 @@ export default function MapBrowser() {
   const retry = () => mapRef.current?.fire("moveend");
 
   return (
-    <div className="relative h-full w-full">
+    <div className="absolute inset-0">
       <div ref={ref} className="h-full w-full" />
       {status === "loading" && <LoadingBar />}
       {status === "belowZoom" && <ZoomInHint />}
