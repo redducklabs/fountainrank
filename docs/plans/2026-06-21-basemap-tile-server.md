@@ -24,7 +24,7 @@
 - **Modify** `.github/workflows/basemap-upload.yml` — range-GET verify helper at all gates (Phase 1); style-gen source → TileJSON (Phase 3).
 - **Create** `infra/k8s/basemap-tiles.yaml` — go-pmtiles Deployment + Service + the separate `basemap-tiles` Ingress (Phase 2).
 - **Modify** `.github/workflows/deploy.yml` — add `basemap-tiles` to the workload `envsubst` loop; drop the now-unused `NEXT_PUBLIC_BASEMAP_PMTILES_URL` web build-arg (Phase 2/3).
-- **Modify** `web/components/map/MapBrowser.tsx`, `web/lib/map/style.ts`, `web/package.json`, `web/Dockerfile`, `.github/workflows/security-audit.yml` — drop the pmtiles client + the unused pmtiles build-arg (Phase 3).
+- **Modify** `web/components/map/MapBrowser.tsx`, `web/lib/map/style.ts`, `web/Dockerfile`, `.github/workflows/security-audit.yml` — drop the pmtiles client **usage** + the unused pmtiles build-arg (Phase 3). (The `pmtiles` **dependency** stays in `web/package.json` — Task 4 Step 3.)
 - **Modify** `docs/design/architecture.md`, `docs/specs/2026-06-16-architecture-and-foundation-design.md`, `docs/setup/README.md` — note the tile-server serving (Phase 3).
 
 ---
@@ -274,7 +274,7 @@ git commit -m "ci: basemap style source → go-pmtiles TileJSON (https://fountai
 - [ ] **Step 2: style.ts.** Remove the now-unused `pmtilesUrl` field (the style JSON carries the source). Keep `styleUrl`.
 - [ ] **Step 3: Leave the `pmtiles` dependency in place.** Do NOT edit `web/package.json` / `pnpm-lock.yaml`: removing the dep needs a `pnpm install` to update the lockfile, which can't run in this Windows/Git-Bash checkout (and CI uses `--frozen-lockfile`, so package.json/lockfile drift fails). After Step 1 the package is unused (tree-shaken from the client bundle). Removing the dep + regenerating the lockfile is a follow-up requiring a working pnpm install.
 - [ ] **Step 4: Build-args.** Remove the unused `NEXT_PUBLIC_BASEMAP_PMTILES_URL` ARG/ENV from `web/Dockerfile` and the `--build-arg NEXT_PUBLIC_BASEMAP_PMTILES_URL=…` from `deploy.yml` + `security-audit.yml`. (Keep `NEXT_PUBLIC_BASEMAP_STYLE_URL`.)
-- [ ] **Step 5: Prettier + verify + commit.** Run Prettier on the changed web files (`node node_modules/.pnpm/prettier@3.8.4/node_modules/prettier/bin/prettier.cjs --write web/components/map/MapBrowser.tsx web/lib/map/style.ts`). Confirm no remaining `pmtiles`/`addProtocol`/`NEXT_PUBLIC_BASEMAP_PMTILES_URL` references via grep.
+- [ ] **Step 5: Prettier + verify + commit.** Run Prettier on the changed web files (`node node_modules/.pnpm/prettier@3.8.4/node_modules/prettier/bin/prettier.cjs --write web/components/map/MapBrowser.tsx web/lib/map/style.ts`). Confirm no remaining `addProtocol`/`Protocol`-from-pmtiles import, `pmtiles://`, or `NEXT_PUBLIC_BASEMAP_PMTILES_URL` references via grep — scope to runtime usage/imports/build-args; the `pmtiles` dep intentionally remains in `package.json`/`pnpm-lock.yaml`, so don't flag that.
 ```bash
 git add web/components/map/MapBrowser.tsx web/lib/map/style.ts web/Dockerfile .github/workflows/deploy.yml .github/workflows/security-audit.yml
 git commit -m "feat(web): consume go-pmtiles TileJSON vector source; drop the client-side pmtiles usage + unused build-arg"
@@ -292,7 +292,7 @@ git commit -m "feat(web): consume go-pmtiles TileJSON vector source; drop the cl
 
 ## Self-review (author)
 
-- **Spec coverage:** §3.1 verify (Task 1), §3.2 Deployment incl. readiness=/planet.json + 1-replica rollout (Task 2), §3.3 separate Ingress + scoped Cache-Control (Task 2), §3.4 web (Task 4), §3.5 style-gen (Task 3), §4 cutover ordering (phases + operational gates), §6 no-creds (Task 2 has no secret), §7 tests (preflight + Chromium), §8 stale docs (Task 5). Covered.
+- **Spec coverage:** §3.1 verify (Task 1), §3.2 Deployment incl. readiness=/planet.json + 1-replica rollout (Task 2), §3.3 separate Ingress + ETag-based caching (no ingress Cache-Control snippet) (Task 2), §3.4 web (Task 4), §3.5 style-gen (Task 3), §4 cutover ordering (phases + operational gates), §6 no-creds (Task 2 has no secret), §7 tests (preflight + Chromium), §8 stale docs (Task 5). Covered.
 - **Placeholders:** none — exact YAML/shell/JS given; verification is YAML-parse/`bash -n`/envsubst-then-parse + post-deploy curl/Chromium (cloud orchestration has no headless unit test, stated).
 - **Consistency:** `fountainrank.com/tiles/planet.json` + `/tiles/planet/{z}/{x}/{y}.mvt`, the `basemap-tiles` names (Deployment/Service/Ingress), and the range-GET `ContentRange` total check are consistent across tasks and the spec.
 - **Ordering:** Phase 1 unbreaks on the current approach (valid object) before any cutover; Phase 2 deploys+preflights the server; Phase 3 flips style+web only after. The deploy gate (readiness=/planet.json) backstops a missing object.

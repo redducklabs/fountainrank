@@ -12,14 +12,14 @@ Serve the **whole Protomaps planet** reliably, regionally (only viewed tiles), a
 - The 127 GB multipart upload is fragile (`CompleteMultipartUpload "already in progress"`) and the object is currently **broken**: `HEAD` 200 but `GET`/range → `NoSuchKey` — basemap down for all browsers. (Our verification only checked `HEAD` size, so it missed this.)
 - Client-side pmtiles range/decoding is the source of the Firefox+PMTiles range bug class (PMTiles #582/#584).
 
-**Fix** ([Protomaps deploy docs](https://docs.protomaps.com/deploy/)): a **`pmtiles serve` tile server** ([`protomaps/go-pmtiles`](https://hub.docker.com/r/protomaps/go-pmtiles)) range-reads the planet **server-side** and serves **`z/x/y` vector tiles** + TileJSON. The **small tile responses are cacheable** (unlike the 127 GB object — by browsers now via `Cache-Control`, and by an edge cache later; there is **no** edge CDN in front of DOKS today — see §5); MapLibre uses a normal vector source (**no client-side pmtiles library** → the Firefox range class is gone).
+**Fix** ([Protomaps deploy docs](https://docs.protomaps.com/deploy/)): a **`pmtiles serve` tile server** ([`protomaps/go-pmtiles`](https://hub.docker.com/r/protomaps/go-pmtiles)) range-reads the planet **server-side** and serves **`z/x/y` vector tiles** + TileJSON. The **small tile responses are cacheable** (unlike the 127 GB object — by browsers via go-pmtiles' `ETag` revalidation now, and with `max-age` via an edge cache later; there is **no** edge CDN in front of DOKS today — see §5); MapLibre uses a normal vector source (**no client-side pmtiles library** → the Firefox range class is gone).
 
 **Firefox WebGL2 is out of scope:** MapLibre requires WebGL2 regardless of hosting. The owner's Firefox can't create a WebGL2 context (a hardware-acceleration / anti-fingerprinting setting on that machine — verify at `get.webgl.org/webgl2`). The graceful `UnsupportedHint` already shipped is correct there.
 
 ## 2. Architecture
 
 ```
-Browser (MapLibre, vector source via TileJSON, same-origin → no CORS)
+Browser (MapLibre, vector source via TileJSON; apex=same-origin, www=cross-origin → go-pmtiles --cors)
    │  GET https://fountainrank.com/tiles/planet.json  and  /tiles/planet/{z}/{x}/{y}.mvt
    ▼
 DO LB (TLS) → ingress-nginx
@@ -91,7 +91,7 @@ If bundled into fewer PRs, the deploy must not flip the web/style source until s
 ## 6. Security
 
 - **No credentials**: go-pmtiles reads the public object over HTTP range; no Spaces key, no k8s Secret. (We do **not** reuse the upload workflow's write-capable key.)
-- Same-origin tiles need no CORS; the CDN-hosted style/glyphs/sprite keep their existing CORS.
+- Apex (`fountainrank.com`) tile requests are same-origin; `www.fountainrank.com` visitors fetch the apex `/tiles` cross-origin, so go-pmtiles `--cors` allows apex + www. The CDN-hosted style/glyphs/sprite keep their existing CORS.
 - The application **no longer directs browsers to range-read the 127 GB object**; the public `planet.pmtiles` URL remains reachable directly, but it's out of the hot path. **Follow-up (out of scope here):** make `planet.pmtiles` private (go-pmtiles → `s3://` + a dedicated read-only key) and/or move public glyph/sprite/style assets under a separate public prefix, so the archive can be private.
 
 ## 7. Testing / verification
