@@ -33,7 +33,14 @@ import {
 } from "../../lib/map/constants";
 import { logMapError } from "../../lib/map/log";
 import { FountainsInViewList } from "./FountainsInViewList";
-import { CapHint, EmptyHint, ErrorToast, LoadingBar, UnsupportedHint, ZoomInHint } from "./MapStates";
+import {
+  CapHint,
+  EmptyHint,
+  ErrorToast,
+  LoadingBar,
+  UnsupportedHint,
+  ZoomInHint,
+} from "./MapStates";
 
 type Status = "idle" | "loading" | "empty" | "error" | "belowZoom" | "capped";
 const activeIdFromPath = (p: string | null) => p?.match(/^\/fountains\/([^/?#]+)/)?.[1] ?? "";
