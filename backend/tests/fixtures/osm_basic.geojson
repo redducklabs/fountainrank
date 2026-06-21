@@ -1,0 +1,4 @@
+{"type":"FeatureCollection","features":[
+ {"type":"Feature","id":"node/1","properties":{"amenity":"drinking_water","wheelchair":"yes"},"geometry":{"type":"Point","coordinates":[-122.4194,37.7749]}},
+ {"type":"Feature","id":"node/2","properties":{"man_made":"water_tap","drinking_water":"yes"},"geometry":{"type":"Point","coordinates":[-122.4000,37.7700]}}
+]}

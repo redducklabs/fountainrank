@@ -1,0 +1,6 @@
+{"type":"FeatureCollection","features":[
+ {"type":"Feature","id":"node/10","properties":{"disused:amenity":"drinking_water"},"geometry":{"type":"Point","coordinates":[1,1]}},
+ {"type":"Feature","id":"node/11","properties":{"amenity":"drinking_water"},"geometry":{"type":"Point","coordinates":[200,99]}},
+ {"type":"Feature","id":"node/12","properties":{"amenity":"fountain"},"geometry":{"type":"Point","coordinates":[2,2]}},
+ {"type":"Feature","id":"way/13","properties":{"amenity":"drinking_water","secret_tag":"x","description":"clean water"},"geometry":{"type":"Polygon","coordinates":[[[3,3],[3,4],[4,4],[3,3]]]}}
+]}
