@@ -1,0 +1,156 @@
+name: Basemap Upload
+
+# Uploads the Protomaps Light basemap assets and/or a planet (or extract)
+# PMTiles file to the fountainrank-basemap DO Spaces bucket.
+#
+# Class B job: handles SPACES secrets → runs on ubuntu-latest + environment: production
+# (mirrors the Terraform apply job in terraform.yml).
+#
+# Planet-build URL recommendation: https://build.protomaps.com/YYYYMMDD.pmtiles
+# Example: https://build.protomaps.com/20260620.pmtiles
+# Check https://maps.protomaps.com/builds for the latest available date.
+# A full planet is ~120 GB; consider a regional extract for testing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pmtiles_url:
+        description: >
+          Source .pmtiles to stream → s3://fountainrank-basemap/planet.pmtiles.
+          Use a Protomaps daily build URL (https://build.protomaps.com/YYYYMMDD.pmtiles)
+          or a regional extract. A full planet is ~120 GB and may approach the 6-hour
+          job time limit — prefer an extract URL for non-production runs.
+        required: true
+        type: string
+      upload_assets:
+        description: >
+          Also upload style JSON, fonts, and sprites (set false to only refresh planet.pmtiles).
+        required: false
+        default: true
+        type: boolean
+
+concurrency:
+  group: basemap-upload
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  upload:
+    name: Upload basemap to DO Spaces
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.SPACES_SECRET_KEY }}
+      CDN_HOST: fountainrank-basemap.sfo3.cdn.digitaloceanspaces.com
+      BUCKET: s3://fountainrank-basemap
+      ENDPOINT: https://sfo3.digitaloceanspaces.com
+      PMTILES_URL: ${{ github.event.inputs.pmtiles_url }}
+
+    steps:
+      - name: Configure aws-cli for DO Spaces
+        run: |
+          aws configure set default.region us-east-1
+          aws configure set default.s3.endpoint_url "$ENDPOINT"
+          # Tune multipart to stay under the 10,000-part limit for large planet files.
+          # 64 MB × 10 000 parts = 640 GB max — safely covers the ~120 GB planet.
+          aws configure set default.s3.multipart_chunksize 64MB
+          aws configure set default.s3.multipart_threshold 64MB
+
+      - name: Upload fonts and sprites
+        if: ${{ github.event.inputs.upload_assets == 'true' }}
+        run: |
+          # Download basemaps-assets (fonts + sprites) from protomaps/basemaps-assets main branch.
+          curl -fL -o basemaps-assets.zip \
+            https://github.com/protomaps/basemaps-assets/archive/refs/heads/main.zip
+          unzip -q basemaps-assets.zip
+
+          # Upload fonts (PBF glyphs) — public-read
+          aws s3 cp basemaps-assets-main/fonts/ \
+            "${BUCKET}/fonts/" \
+            --recursive \
+            --acl public-read \
+            --endpoint-url "$ENDPOINT"
+
+          # Upload sprites (v3 and v4 both present in the asset zip) — public-read
+          aws s3 cp basemaps-assets-main/sprites/ \
+            "${BUCKET}/sprites/" \
+            --recursive \
+            --acl public-read \
+            --endpoint-url "$ENDPOINT"
+
+          echo "Fonts and sprites uploaded."
+
+      - name: Generate and upload Light style JSON
+        if: ${{ github.event.inputs.upload_assets == 'true' }}
+        run: |
+          # Install the current @protomaps/basemaps package (successor to protomaps-themes-base).
+          # The docs at docs.protomaps.com/basemaps/maplibre use @protomaps/basemaps which
+          # exports layers() + namedFlavor(); sprite v4 is current for this package.
+          npm install --no-save @protomaps/basemaps@5.7.2
+
+          # Generate the Light MapLibre style as JSON.
+          # Sources, glyphs, and sprite all point at the CDN paths we just uploaded.
+          node - > style.light.json <<'EOF'
+          const { layers, namedFlavor } = require("@protomaps/basemaps");
+
+          const CDN_HOST = process.env.CDN_HOST;
+
+          const style = {
+            version: 8,
+            glyphs: `https://${CDN_HOST}/fonts/{fontstack}/{range}.pbf`,
+            sprite: `https://${CDN_HOST}/sprites/v4/light`,
+            sources: {
+              protomaps: {
+                type: "vector",
+                url: `pmtiles://https://${CDN_HOST}/planet.pmtiles`,
+                attribution:
+                  '<a href="https://protomaps.com">Protomaps</a> © <a href="https://openstreetmap.org">OpenStreetMap</a>',
+              },
+            },
+            layers: layers("protomaps", namedFlavor("light"), { lang: "en" }),
+          };
+
+          process.stdout.write(JSON.stringify(style, null, 2));
+          EOF
+
+          aws s3 cp style.light.json \
+            "${BUCKET}/style.light.json" \
+            --acl public-read \
+            --content-type "application/json" \
+            --endpoint-url "$ENDPOINT"
+
+          echo "style.light.json uploaded."
+
+      # Stream the PMTiles directly from the source URL without landing the whole
+      # file on the runner disk (which is ~14 GB on ubuntu-latest — far too small
+      # for a 120 GB planet). aws s3 cp reads from stdin and uses multipart upload.
+      #
+      # NOTE: A full planet build (~120 GB) is a very large transfer and may approach
+      # GitHub Actions' 6-hour job time limit. For non-production or test runs, supply
+      # a regional extract URL instead of a full planet URL.
+      - name: Stream PMTiles to DO Spaces
+        run: |
+          set -o pipefail  # a failed/truncated curl must fail the step, not silently "succeed"
+          echo "Streaming ${PMTILES_URL} → ${BUCKET}/planet.pmtiles …"
+          curl -fL "$PMTILES_URL" \
+            | aws s3 cp - \
+                "${BUCKET}/planet.pmtiles" \
+                --acl public-read \
+                --content-type "application/octet-stream" \
+                --endpoint-url "$ENDPOINT"
+          echo "planet.pmtiles upload complete."
+
+      - name: Smoke test — verify planet.pmtiles is reachable via CDN
+        run: |
+          echo "Probing https://${CDN_HOST}/planet.pmtiles (expecting HTTP 206 + Accept-Ranges) …"
+          RESPONSE=$(curl -si -H 'Range: bytes=0-99' "https://${CDN_HOST}/planet.pmtiles")
+          echo "$RESPONSE"
+          if echo "$RESPONSE" | grep -q "^HTTP/.*206"; then
+            echo "Smoke test PASSED — CDN serving PMTiles correctly."
+          else
+            echo "::error::Smoke test FAILED — expected HTTP 206, got unexpected response."
+            exit 1
+          fi
