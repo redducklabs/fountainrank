@@ -194,32 +194,53 @@ Transfer (the security-critical step — copy verbatim; secrets via `$VAR`, neve
           export PATH=/usr/local/bin:$PATH
           aws configure set default.region us-east-1
           aws configure set default.s3.endpoint_url "$ENDPOINT"
-          aws configure set default.s3.multipart_chunksize 64MB
-          aws configure set default.s3.multipart_threshold 64MB
-          # Preflight disk: require SRC_LEN + 10 GiB free (GiB vs GB + OS/package overhead).
-          avail=$(df -B1 --output=avail /root | tail -1 | tr -d ' ')
-          need=$(( SRC_LEN + 10 * 1024 * 1024 * 1024 ))
-          if [ "$avail" -lt "$need" ]; then echo "insufficient disk: avail=$avail need=$need" >&2; exit 1; fi
-          # Resumable download. curl's --retry restarts from byte 0 on a mid-transfer drop (and
-          # -C - fixes its resume offset once at process start), so we loop FRESH curl -C -
-          # invocations — each resumes from the partial file's size via a Range request. https
-          # only, no redirects (closes bypass/rebind), IP pinned to the runner-validated address.
-          ok=""
-          for attempt in $(seq 1 12); do
-            if curl -C - --connect-timeout 30 --proto '=https' --max-redirs 0 \
-                 --resolve "${SRC_HOST}:443:${SRC_IP}" -fL -o /root/planet.pmtiles "$SRC_URL"; then ok=1; break; fi
-            echo "download attempt ${attempt} interrupted; resuming in 15s…" >&2
-            sleep 15
-          done
-          if [ -z "$ok" ]; then echo "download failed after 12 resume attempts" >&2; exit 1; fi
-          # Integrity (truncation): size must equal the source content-length.
-          got=$(stat -c %s /root/planet.pmtiles)
-          if [ "$got" != "$SRC_LEN" ]; then echo "size mismatch: got=$got want=$SRC_LEN" >&2; exit 1; fi
-          # Intra-region multipart upload (automatic per-part retry).
-          aws s3 cp /root/planet.pmtiles "${BUCKET}/planet.pmtiles" \
-            --acl public-read --content-type application/octet-stream --endpoint-url "$ENDPOINT"
+          # Fewer, larger parts → faster CompleteMultipartUpload on DO Spaces. The unbounded read
+          # timeout for the slow completion is applied per-command (--cli-read-timeout 0) on the cp
+          # below, so head-object stays bounded.
+          aws configure set default.s3.multipart_chunksize 256MB
+          aws configure set default.s3.multipart_threshold 256MB
+          # Idempotency/recovery: if planet.pmtiles already matches the source size (a prior run
+          # uploaded it but its marker wasn't recorded), skip the download+upload entirely.
+          existing=$(aws s3api head-object --bucket fountainrank-basemap --key planet.pmtiles --endpoint-url "$ENDPOINT" --query 'ContentLength' --output text 2>/dev/null || echo "")
+          if [ "$existing" = "$SRC_LEN" ]; then
+            echo "planet.pmtiles already present with the correct size (${existing}); skipping download+upload."
+          else
+            # Preflight disk: require SRC_LEN + 10 GiB free (GiB vs GB + OS/package overhead).
+            avail=$(df -B1 --output=avail /root | tail -1 | tr -d ' ')
+            need=$(( SRC_LEN + 10 * 1024 * 1024 * 1024 ))
+            if [ "$avail" -lt "$need" ]; then echo "insufficient disk: avail=$avail need=$need" >&2; exit 1; fi
+            # Resumable download via a loop of FRESH curl -C - (curl --retry restarts from byte 0
+            # on a mid-transfer drop; -C - fixes its offset at start) — each resumes via a Range
+            # request. https only, no redirects, IP pinned to the runner-validated address.
+            ok=""
+            for attempt in $(seq 1 12); do
+              if curl -C - --connect-timeout 30 --proto '=https' --max-redirs 0 \
+                   --resolve "${SRC_HOST}:443:${SRC_IP}" -fL -o /root/planet.pmtiles "$SRC_URL"; then ok=1; break; fi
+              echo "download attempt ${attempt} interrupted; resuming in 15s…" >&2
+              sleep 15
+            done
+            if [ -z "$ok" ]; then echo "download failed after 12 resume attempts" >&2; exit 1; fi
+            # Integrity (truncation): size must equal the source content-length.
+            got=$(stat -c %s /root/planet.pmtiles)
+            if [ "$got" != "$SRC_LEN" ]; then echo "size mismatch: got=$got want=$SRC_LEN" >&2; exit 1; fi
+            # Intra-region multipart upload. DO Spaces' CompleteMultipartUpload can be slow and make
+            # aws-cli mis-report failure even when the object completes server-side — the size
+            # VERIFY below (not cp's exit code) is the success criterion.
+            aws s3 cp /root/planet.pmtiles "${BUCKET}/planet.pmtiles" \
+              --acl public-read --content-type application/octet-stream --endpoint-url "$ENDPOINT" \
+              --cli-read-timeout 0 || \
+              echo "aws s3 cp reported non-zero; verifying the object landed anyway…" >&2
+            remote_len=""
+            for v in 1 2 3 4 5 6; do
+              remote_len=$(aws s3api head-object --bucket fountainrank-basemap --key planet.pmtiles --endpoint-url "$ENDPOINT" --query 'ContentLength' --output text 2>/dev/null || echo "")
+              [ "$remote_len" = "$SRC_LEN" ] && break
+              echo "waiting for object to finalize (got '${remote_len:-none}')…" >&2; sleep 15
+            done
+            if [ "$remote_len" != "$SRC_LEN" ]; then echo "upload verify failed: remote='${remote_len:-none}' want=$SRC_LEN" >&2; exit 1; fi
+            echo "upload verified: planet.pmtiles is ${remote_len} bytes"
+          fi
           unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
-          echo "droplet pmtiles upload complete"
+          echo "droplet transfer step complete"
           REMOTE
           } | $SSH 'bash -s'
 ```
