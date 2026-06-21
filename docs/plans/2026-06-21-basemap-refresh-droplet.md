@@ -79,19 +79,37 @@ Spec §3–§9. Replaces the in-runner stream with the droplet pipeline. Keeps t
           token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
 ```
 
-- [ ] **Step 2: Validate the resolved URL** — in the existing "Resolve source build + change detection" step, immediately after `URL` is finalized (after the auto-discover block, before computing `SRC_LEN`), insert:
+- [ ] **Step 2a: Validate the resolved URL** — in the existing "Resolve source build + change detection" step, immediately after `URL` is finalized (after the auto-discover block, before computing `SRC_LEN`), insert a **real** validator (https-only; no userinfo; resolves ALL A/AAAA answers and rejects any private/loopback/link-local/reserved/multicast/unspecified address — IPv4 and IPv6; emits the host + a validated public IP to pin the later fetch against DNS-rebinding):
 
 ```bash
-          # Operator URLs are fetched by a privileged droplet — validate (https-only, no
-          # userinfo/control chars, no private/link-local/metadata targets). Auto-discovered
-          # builds are always the fixed build.protomaps.com host.
-          case "$URL" in https://*) ;; *) echo "::error::pmtiles_url must be https://"; exit 1 ;; esac
-          if printf '%s' "$URL" | grep -qE '@|[[:cntrl:]]'; then echo "::error::URL has userinfo/control chars"; exit 1; fi
-          host=$(printf '%s' "$URL" | sed -E 's#^https://([^/]+).*#\1#; s#:.*##')
-          case "$host" in
-            169.254.*|127.*|10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*|localhost|*.internal)
-              echo "::error::private/link-local/metadata target rejected"; exit 1 ;;
-          esac
+          # The pmtiles_url is fetched by a privileged droplet. Validate with real URL parsing
+          # + DNS resolution; reject non-public targets (SSRF). Auto-discovered builds are the
+          # fixed build.protomaps.com host but go through the same check.
+          if ! VALIDATED=$(python3 - "$URL" <<'PY'
+          import sys, socket, ipaddress
+          from urllib.parse import urlparse
+          u = urlparse(sys.argv[1])
+          if u.scheme != "https": sys.exit("must be https")
+          if u.username or u.password: sys.exit("userinfo not allowed")
+          host = u.hostname
+          if not host: sys.exit("no host")
+          ips = {i[4][0] for i in socket.getaddrinfo(host, 443, proto=socket.IPPROTO_TCP)}
+          if not ips: sys.exit("no resolution")
+          for ip in ips:
+              a = ipaddress.ip_address(ip)
+              if a.is_private or a.is_loopback or a.is_link_local or a.is_reserved or a.is_multicast or a.is_unspecified:
+                  sys.exit(f"non-public address {ip}")
+          print(host, sorted(ips)[0])
+          PY
+          ); then echo "::error::pmtiles_url failed validation"; exit 1; fi
+          SRC_HOST=${VALIDATED%% *}; SRC_IP=${VALIDATED##* }
+          { echo "SRC_HOST=$SRC_HOST"; echo "SRC_IP=$SRC_IP"; } >> "$GITHUB_ENV"
+```
+
+- [ ] **Step 2b: Validate `SRC_LEN` is decimal** — in the same step, immediately after the existing `SRC_LEN=$(curl -sfI … | awk '{print $2}')` line, insert:
+
+```bash
+          case "$SRC_LEN" in ''|*[!0-9]*) echo "::error::source Content-Length not numeric: '$SRC_LEN'"; exit 1 ;; esac
 ```
 
 - [ ] **Step 3: Replace the stream step with droplet provisioning.** Delete the entire existing `- name: Stream PMTiles to DO Spaces` step and insert these three steps in its place.
@@ -140,6 +158,8 @@ Transfer (the security-critical step — copy verbatim; secrets via `$VAR`, neve
             printf 'export AWS_ACCESS_KEY_ID=%q\n' "$AWS_ACCESS_KEY_ID"
             printf 'export AWS_SECRET_ACCESS_KEY=%q\n' "$AWS_SECRET_ACCESS_KEY"
             printf 'export SRC_URL=%q\n'  "$RESOLVED_URL"
+            printf 'export SRC_HOST=%q\n' "$SRC_HOST"
+            printf 'export SRC_IP=%q\n'   "$SRC_IP"
             printf 'export SRC_LEN=%q\n'  "$SRC_LEN"
             printf 'export ENDPOINT=%q\n' "$ENDPOINT"
             printf 'export BUCKET=%q\n'   "$BUCKET"
@@ -155,9 +175,10 @@ Transfer (the security-critical step — copy verbatim; secrets via `$VAR`, neve
           avail=$(df -B1 --output=avail /root | tail -1 | tr -d ' ')
           need=$(( SRC_LEN + 10 * 1024 * 1024 * 1024 ))
           if [ "$avail" -lt "$need" ]; then echo "insufficient disk: avail=$avail need=$need" >&2; exit 1; fi
-          # Resumable, https-only, bounded-redirect download.
-          curl -C - --retry 8 --retry-delay 15 --retry-all-errors --proto '=https' --max-redirs 2 \
-            -fL -o /root/planet.pmtiles "$SRC_URL"
+          # Resumable, https-only, NO redirects, IP pinned to the runner-validated address
+          # (closes redirect-bypass + DNS-rebinding between validation and fetch).
+          curl -C - --retry 8 --retry-delay 15 --retry-all-errors --proto '=https' --max-redirs 0 \
+            --resolve "${SRC_HOST}:443:${SRC_IP}" -fL -o /root/planet.pmtiles "$SRC_URL"
           # Integrity (truncation): size must equal the source content-length.
           got=$(stat -c %s /root/planet.pmtiles)
           if [ "$got" != "$SRC_LEN" ]; then echo "size mismatch: got=$got want=$SRC_LEN" >&2; exit 1; fi
@@ -182,14 +203,16 @@ CDN purge:
           set -euo pipefail
           CDN_ID=$(doctl compute cdn list --format ID,Origin --no-header | grep 'fountainrank-basemap' | awk '{print $1}' | head -1)
           if [ -z "$CDN_ID" ]; then echo "::warning::basemap CDN not found; skipping purge"; exit 0; fi
-          doctl compute cdn flush "$CDN_ID" --files planet.pmtiles
+          # doctl cdn flush --files takes ABSOLUTE object paths (leading slash); no --files = flush all.
           if [ "${UPLOAD_ASSETS}" = "true" ]; then
-            doctl compute cdn flush "$CDN_ID" --files style.light.json
+            doctl compute cdn flush "$CDN_ID" # assets + pmtiles refreshed → flush entire cache
+          else
+            doctl compute cdn flush "$CDN_ID" --files /planet.pmtiles
           fi
           echo "CDN purged."
 ```
 
-- [ ] **Step 4: Add the always-run cleanup** — insert after the "Source unchanged — stream skipped" step (and before the smoke), so it runs regardless of success/failure/cancel:
+- [ ] **Step 4: Add the always-run cleanup** — insert after the "Source unchanged — stream skipped" step (and before the smoke), so it runs regardless of success/failure/cancel. (Residual: if `doctl create --wait` creates the droplet but exits non-zero before printing the ID, `DROPLET_ID` is unset and this step can't delete it — the daily janitor in Task 3 is the backstop that reaps it by age.)
 
 ```yaml
       - name: Destroy worker droplet + key
@@ -217,7 +240,7 @@ CDN purge:
 
 - [ ] **Step 6: Verify YAML + review.**
 
-Run: `python -c "import yaml; yaml.safe_load(open('.github/workflows/basemap-upload.yml'))" && echo "YAML OK"`
+Run: `python3 -c "import yaml; yaml.safe_load(open('.github/workflows/basemap-upload.yml'))" && echo "YAML OK"`
 Then re-read the diff: confirm no `${{ secrets.* }}` appears inside any `run:` body; the remote here-doc is `<<'REMOTE'` (single-quoted/static); `set -x` absent; cleanup is `if: always()` and ID-based; `timeout-minutes` set.
 
 - [ ] **Step 7: Commit.**
@@ -257,27 +280,43 @@ jobs:
   reap:
     runs-on: ubuntu-latest
     environment: production
+    timeout-minutes: 10
     steps:
-      - uses: digitalocean/action-doctl@v2.5.2
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2.5.2
         with:
           token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
       - name: Reap stale basemap-refresh droplets + orphaned keys
+        env:
+          STALE_SECONDS: "21600" # 6h — well beyond a normal run
         run: |
           set -euo pipefail
-          threshold=$(( 6 * 3600 )) # 6h — well beyond a normal run
-          now=$(date -u +%s)
-          # Live droplet names (to protect in-flight runs' keys).
-          live_names=$(doctl compute droplet list --tag-name basemap-refresh --format Name --no-header || true)
-          # Reap droplets older than the threshold.
-          doctl compute droplet list --tag-name basemap-refresh --format ID,Name,Created --no-header | while read -r id name created; do
-            [ -n "$created" ] || continue
-            age=$(( now - $(date -u -d "$created" +%s) ))
-            if [ "$age" -gt "$threshold" ]; then
-              echo "reaping droplet $name ($id), age ${age}s"
-              doctl compute droplet delete "$id" --force || true
-            fi
-          done
-          # Reap imported keys named basemap-refresh-* with NO matching live droplet (orphans).
+          # doctl droplet --format has NO creation-time column → use JSON + created_at.
+          dj=$(doctl compute droplet list --tag-name basemap-refresh -o json)
+          # Reap droplets older than STALE_SECONDS.
+          stale_ids=$(python3 - "$dj" <<'PY'
+          import sys, json, os
+          from datetime import datetime, timezone
+          now = datetime.now(timezone.utc); stale = int(os.environ["STALE_SECONDS"])
+          for d in (json.loads(sys.argv[1] or "[]") or []):
+              c = datetime.fromisoformat(d["created_at"].replace("Z", "+00:00"))
+              if (now - c).total_seconds() > stale:
+                  print(d["id"])
+          PY
+          )
+          for id in $stale_ids; do echo "reaping droplet $id"; doctl compute droplet delete "$id" --force || true; done
+          # NON-stale (in-flight/recent) droplet names — their keys must be protected.
+          live_names=$(python3 - "$dj" <<'PY'
+          import sys, json, os
+          from datetime import datetime, timezone
+          now = datetime.now(timezone.utc); stale = int(os.environ["STALE_SECONDS"])
+          for d in (json.loads(sys.argv[1] or "[]") or []):
+              c = datetime.fromisoformat(d["created_at"].replace("Z", "+00:00"))
+              if (now - c).total_seconds() <= stale:
+                  print(d["name"])
+          PY
+          )
+          # Reap imported keys named basemap-refresh-* with NO matching non-stale droplet (orphans).
           doctl compute ssh-key list --format ID,Name --no-header | awk '$2 ~ /^basemap-refresh-/ {print $1" "$2}' | while read -r kid kname; do
             if ! printf '%s\n' "$live_names" | grep -qx "$kname"; then
               echo "reaping orphaned ssh-key $kname ($kid)"
@@ -288,7 +327,7 @@ jobs:
 
 - [ ] **Step 2: Verify YAML.**
 
-Run: `python -c "import yaml; yaml.safe_load(open('.github/workflows/basemap-janitor.yml'))" && echo "YAML OK"`
+Run: `python3 -c "import yaml; yaml.safe_load(open('.github/workflows/basemap-janitor.yml'))" && echo "YAML OK"`
 
 - [ ] **Step 3: Commit.**
 
