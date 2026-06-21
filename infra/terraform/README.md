@@ -5,8 +5,10 @@ Managed Postgres + PostGIS (app DB + a separate Logto DB), the LB-terminated Let
 Encrypt SAN cert, and DNS A records — with the cluster, DB, LB, and domain assigned
 to the `FountainRank` DO project. **Not managed here:** the container registry (DO
 multiple-registries feature is incompatible with the provider's legacy endpoint —
-created out-of-band) and the photos/pmtiles Spaces buckets + CDN (deferred to Phase
-3/4 — the scoped Spaces key can't create them). See the pre-apply checklist below.
+created out-of-band). The Phase 3a **basemap** Spaces bucket + CDN + CORS are defined
+here but **gated** behind `var.manage_basemap_spaces` (default off; a no-op until a
+bucket-create-capable Spaces key is wired and the gate is enabled — see the checklist).
+The Phase 4 photos bucket remains deferred. See the pre-apply checklist below.
 
 ## 🔴 Local use is READ-ONLY
 
@@ -57,10 +59,13 @@ environment secrets (`DIGITALOCEAN_ACCESS_TOKEN`, `SPACES_ACCESS_KEY`,
    (`422 certificate cannot be created when DNSSEC is enabled`). The DS record lived at the
    registrar (GoDaddy); it was removed 2026-06-18. Verify with
    `curl 'https://dns.google/resolve?name=fountainrank.com&type=DS'` → no `Answer`.
-5. **Spaces buckets (photos/pmtiles + CDN):** ✅ **deferred** — removed from Terraform. The
-   `SPACES_ACCESS_KEY` is scoped to only the TF-state bucket (403 on new-bucket create); these
-   buckets are only needed in Phase 3 (pmtiles)/Phase 4 (photos) and will be re-added then with
-   a bucket-create-capable key (or created out-of-band).
+5. **Basemap Spaces bucket + CDN + CORS (Phase 3a):** defined here but **gated** behind
+   `var.manage_basemap_spaces` (default `false`) so a routine apply is a no-op. The current
+   `SPACES_ACCESS_KEY` is scoped to the TF-state bucket (403 on new-bucket create), so to bring
+   the basemap up: wire a bucket-create-capable Spaces key as the apply job's secrets, then run
+   the Terraform workflow with `action=apply` **and** the `manage_basemap_spaces` input `true`.
+   Full steps (upload + env + smoke) in `docs/setup/README.md` → "Basemap hosting". The Phase 4
+   **photos** bucket remains deferred.
 6. **DNS:** the four A records (`@`/`www`/`api`/`auth`) are created here; the owner's
    email records (MX/DKIM/SPF/DMARC) are intentionally unmanaged.
 7. **App DB SSL:** ✅ wired (Phase 0f). The backend passes `connect_args={"ssl": ctx}` when
