@@ -222,7 +222,9 @@ async def _merge_one(
         summary.provenance_attached_count += 1
         if dry_run:
             return "match_provenance", match
-        await session.execute(select(Fountain).where(Fountain.id == match).with_for_update())
+        fountain = (
+            await session.execute(select(Fountain).where(Fountain.id == match).with_for_update())
+        ).scalar_one()
         new_prov = _new_provenance(match, cand, run, now, scope)
         session.add(new_prov)
         await session.flush()
@@ -235,6 +237,9 @@ async def _merge_one(
                 prior_values=None,
             )
         )
+        # Apply the movement rule (spec §6): _maybe_move only moves imported-only, unrated
+        # rows; it never moves a user-created or rated fountain.
+        await _maybe_move(session, fountain, cand, run, settings, summary)
         return "match_provenance", match
 
     summary.inserted_count += 1
@@ -324,6 +329,7 @@ async def _mark_scope_removals(session, *, run, scope, seen_ext_ids, now, summar
             ).scalar_one()
             if not inside:
                 continue
+        prior_last_run = str(prov.last_import_run_id)
         prov.removed_at = now
         prov.last_import_run_id = run.id
         summary.removed_count += 1
@@ -333,7 +339,7 @@ async def _mark_scope_removals(session, *, run, scope, seen_ext_ids, now, summar
                 fountain_id=prov.fountain_id,
                 provenance_id=prov.id,
                 operation="mark_removed",
-                prior_values={"removed_at": None},
+                prior_values={"removed_at": None, "last_import_run_id": prior_last_run},
             )
         )
 
@@ -359,8 +365,10 @@ def _new_provenance(fountain_id, cand, run, now, scope) -> FountainProvenance:
 
 
 def _refresh_provenance(prov, cand, run, now, scope) -> tuple[bool, dict | None]:
-    # Material changes -> event/rollback. last_seen_at/last_import_run_id are freshness
-    # bookkeeping: advance every run, not part of `changed`/prior_values, not rolled back.
+    # `changed` (material) drives whether a provenance_update event is emitted. freshness
+    # fields (last_seen_at, last_import_run_id) advance every run, so a PURE freshness touch
+    # emits no event and is never rolled back. But when a material event IS emitted, its
+    # prior_values capture the freshness fields too so rollback fully reverses that run.
     changed = (
         prov.source_tags != cand.tags
         or prov.confidence != cand.confidence
@@ -376,6 +384,8 @@ def _refresh_provenance(prov, cand, run, now, scope) -> tuple[bool, dict | None]
             "removed_at": prov.removed_at.isoformat() if prov.removed_at else None,
             "scope_id": prov.scope_id,
             "source_dataset": prov.source_dataset,
+            "last_seen_at": prov.last_seen_at.isoformat() if prov.last_seen_at else None,
+            "last_import_run_id": str(prov.last_import_run_id),
         }
     prov.source_tags = cand.tags
     prov.confidence = cand.confidence
@@ -450,6 +460,12 @@ async def rollback_run(session: AsyncSession, run_id: uuid.UUID) -> int:
                 prov.removed_at = datetime.fromisoformat(rv) if rv else None
                 prov.scope_id = ev.prior_values.get("scope_id")
                 prov.source_dataset = ev.prior_values.get("source_dataset")
+                ls = ev.prior_values.get("last_seen_at")
+                if ls:
+                    prov.last_seen_at = datetime.fromisoformat(ls)
+                lr = ev.prior_values.get("last_import_run_id")
+                if lr:
+                    prov.last_import_run_id = uuid.UUID(lr)
                 affected += 1
         elif ev.operation == "mark_removed" and ev.provenance_id is not None:
             prov = (
@@ -461,6 +477,9 @@ async def rollback_run(session: AsyncSession, run_id: uuid.UUID) -> int:
             ).scalar_one_or_none()
             if prov is not None:
                 prov.removed_at = None
+                lr = ev.prior_values.get("last_import_run_id")
+                if lr:
+                    prov.last_import_run_id = uuid.UUID(lr)
                 affected += 1
     await session.flush()
     log.info("osm_import_run_rolled_back", extra={"run_id": str(run_id), "affected": affected})

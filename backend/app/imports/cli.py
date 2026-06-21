@@ -36,7 +36,25 @@ def _parse_file(path: str) -> ParseResult:
     )
 
 
+def _validate_source_identity(scope: RunScope) -> None:
+    # Persist only non-secret labels/ids (spec §5.4). A credentialed/raw URL in any
+    # identity field would land in osm_fountain_import_runs / fountain_provenances; refuse it.
+    for name, value in (
+        ("system", scope.source_system),
+        ("dataset", scope.source_dataset),
+        ("build-id", scope.source_build_id),
+        ("label", scope.source_label),
+        ("scope-id", scope.scope_id),
+    ):
+        if value and "://" in value:
+            raise ValueError(
+                f"--{name} looks like a URL; pass a non-secret label/id only "
+                f"(strip URLs/credentials per the runbook)"
+            )
+
+
 async def run_import(path: str, *, scope: RunScope, dry_run: bool) -> RunSummary:
+    _validate_source_identity(scope)
     # Parse on a worker thread — blocking file IO must not run on the event loop.
     parsed = await asyncio.to_thread(_parse_file, path)
     maker = get_sessionmaker()

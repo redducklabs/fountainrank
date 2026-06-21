@@ -396,14 +396,45 @@ async def test_rollback_restores_moved_location_and_mark_removed(session):
     await rollback_run(session, s2.run_id)
     await session.commit()
     assert (await session.execute(select(func.ST_AsText(Fountain.location)))).scalar_one() == a
+    prior_run = (await session.execute(select(FountainProvenance.last_import_run_id))).scalar_one()
     s3 = await merge_candidates(session, scope=SCOPE, candidates=[], skipped=[], dry_run=False)
     await session.commit()
     p = (await session.execute(select(FountainProvenance))).scalar_one()
-    assert p.removed_at is not None
+    assert p.removed_at is not None and p.last_import_run_id == s3.run_id
     await rollback_run(session, s3.run_id)
     await session.commit()
     p2 = (await session.execute(select(FountainProvenance))).scalar_one()
-    assert p2.removed_at is None
+    # mark_removed fully reversed: removed_at cleared AND last_import_run_id restored.
+    assert p2.removed_at is None and p2.last_import_run_id == prior_run
+
+
+@pytest.mark.asyncio
+async def test_spatial_match_to_imported_row_applies_small_move(session):
+    # A different source id ~5 m from an imported, unrated row -> spatial match: attach a
+    # second provenance AND apply the movement rule (small move -> location updated).
+    await merge_candidates(
+        session,
+        scope=SCOPE,
+        candidates=[_cand("osm:node:1", 37.77000, -122.41000)],
+        skipped=[],
+        dry_run=False,
+    )
+    await session.commit()
+    await merge_candidates(
+        session,
+        scope=SCOPE,
+        candidates=[_cand("osm:node:2", 37.77004, -122.41000)],
+        skipped=[],
+        dry_run=False,
+    )
+    await session.commit()
+    count = (await session.execute(select(func.count()).select_from(Fountain))).scalar_one()
+    provs = (
+        await session.execute(select(func.count()).select_from(FountainProvenance))
+    ).scalar_one()
+    assert count == 1 and provs == 2  # one fountain, two OSM provenances
+    lat = (await session.execute(select(latitude_of(Fountain.location)))).scalar_one()
+    assert round(lat, 5) == 37.77004  # moved to the spatially-matched candidate
 
 
 # --- Task 9: concurrency (real endpoint + import) ---
