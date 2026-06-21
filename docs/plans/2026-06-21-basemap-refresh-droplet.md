@@ -177,7 +177,15 @@ Transfer (the security-critical step — copy verbatim; secrets via `$VAR`, neve
           set -euo pipefail
           export DEBIAN_FRONTEND=noninteractive
           # Ubuntu 24.04 dropped the apt 'awscli' package — install AWS CLI v2 (pinned) from the official zip.
-          apt-get update -qq && apt-get install -yqq curl unzip ca-certificates >/dev/null
+          # A fresh droplet runs cloud-init + apt-daily on first boot, holding the dpkg lock — wait it
+          # out, then retry apt briefly so the install doesn't race the lock.
+          cloud-init status --wait >/dev/null 2>&1 || true
+          apt_ok=""
+          for i in $(seq 1 30); do
+            if apt-get update -qq && apt-get install -yqq curl unzip ca-certificates >/dev/null 2>&1; then apt_ok=1; break; fi
+            echo "apt busy (dpkg lock held); retry ${i}…" >&2; sleep 10
+          done
+          [ -n "$apt_ok" ] || { echo "apt-get failed after retries (dpkg lock)" >&2; exit 1; }
           curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-2.35.9.zip" -o /tmp/awscliv2.zip
           # Verify installer integrity before executing (pinned SHA256 of 2.35.9; supply-chain).
           echo "b331d4822a22612915f22f89cfd0e07895c7b6837999fca8fb9f6c2a370a54c0  /tmp/awscliv2.zip" | sha256sum -c -
