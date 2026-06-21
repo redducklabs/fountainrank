@@ -248,29 +248,26 @@ Transfer (the security-critical step — copy verbatim; secrets via `$VAR`, neve
 CDN purge:
 
 ```yaml
-      # Runs when pmtiles OR assets were (re)uploaded — so asset-only refreshes purge too.
-      - name: Purge CDN for refreshed objects
-        if: ${{ env.SKIP_STREAM != 'true' || env.UPLOAD_ASSETS == 'true' }}
+      # Purge ONLY the small cacheable assets. planet.pmtiles is too large to edge-cache (the CDN
+      # BYPASSes it → range requests passthrough to origin, always fresh); flushing it just forces a
+      # needless multi-minute full-object refetch — so never do it.
+      - name: Purge CDN for refreshed assets
+        if: ${{ env.UPLOAD_ASSETS == 'true' }}
         run: |
           set -euo pipefail
           # grep may legitimately find no CDN — keep it from killing the step under pipefail.
           CDN_ID=$(doctl compute cdn list --format ID,Origin --no-header | { grep 'fountainrank-basemap' || true; } | awk '{print $1}' | head -1)
           if [ -z "$CDN_ID" ]; then echo "::warning::basemap CDN not found; skipping purge"; exit 0; fi
-          # doctl cdn flush --files takes ABSOLUTE object paths (leading slash); no --files = flush all.
-          # Retry briefly; the marker is written only AFTER this succeeds.
+          # Absolute object paths (leading slash) — the regenerated style + the sprite it references.
           for attempt in 1 2 3; do
-            if [ "${UPLOAD_ASSETS}" = "true" ]; then
-              doctl compute cdn flush "$CDN_ID" && break # assets (+maybe pmtiles) → flush entire cache
-            else
-              doctl compute cdn flush "$CDN_ID" --files /planet.pmtiles && break
-            fi
+            doctl compute cdn flush "$CDN_ID" --files /style.light.json,/sprites/v4/light.json,/sprites/v4/light.png && break
             if [ "$attempt" = 3 ]; then echo "::error::CDN flush failed after retries"; exit 1; fi
             echo "flush attempt $attempt failed; retrying…"; sleep 10
           done
-          echo "CDN purged."
+          echo "CDN assets purged."
 ```
 
-Then, AFTER the purge, the change marker is written on the runner — so it advances only after a successful upload AND purge (a failed purge leaves it stale → next run retries):
+Then the change marker is written on the runner after the planet upload+verify (and the asset purge, when assets were refreshed) succeed:
 
 ```yaml
       - name: Record change marker
@@ -295,17 +292,25 @@ Then, AFTER the purge, the change marker is written on the runner — so it adva
 - [ ] **Step 5: Augment the smoke** with an origin-side check (the CDN smoke can hit cached content). Replace the smoke step's body so it FIRST verifies the object at the **origin** (Spaces), then the CDN:
 
 ```yaml
-      - name: Smoke test — origin + CDN
+      - name: Smoke test — origin size + CDN range
         run: |
           set -o pipefail
-          echo "Origin HEAD (Spaces)…"
-          aws s3api head-object --bucket fountainrank-basemap --key planet.pmtiles \
-            --endpoint-url "$ENDPOINT" --query 'ContentLength' --output text
-          echo "CDN range probe…"
-          HEADERS=$(curl -s -o /dev/null -D - -H 'Origin: https://fountainrank.com' -H 'Range: bytes=0-99' "https://${CDN_HOST}/planet.pmtiles")
-          printf '%s\n' "$HEADERS" | grep -iE '^HTTP/|^accept-ranges:|^content-range:|^content-length:|^access-control-allow-origin:'
-          printf '%s' "$HEADERS" | grep -q "^HTTP/.*206" || { echo "::error::CDN did not return 206"; exit 1; }
-          echo "Smoke PASSED."
+          echo "Origin object size (Spaces)…"
+          osize=$(aws s3api head-object --bucket fountainrank-basemap --key planet.pmtiles --endpoint-url "$ENDPOINT" --query 'ContentLength' --output text)
+          echo "origin ContentLength=${osize} (expected ${SRC_LEN})"
+          [ "$osize" = "$SRC_LEN" ] || { echo "::error::origin size ${osize} != expected ${SRC_LEN}"; exit 1; }
+          echo "CDN range probe (expect HTTP 206 + CORS; planet is CDN-BYPASS passthrough to origin)…"
+          ok=""
+          for attempt in 1 2 3 4 5; do
+            HEADERS=$(curl -s -o /dev/null -D - -m 60 -H 'Origin: https://fountainrank.com' -H 'Range: bytes=0-99' "https://${CDN_HOST}/planet.pmtiles" || true)
+            if printf '%s' "$HEADERS" | grep -q "^HTTP/.*206"; then
+              printf '%s\n' "$HEADERS" | grep -iE '^accept-ranges:|^content-range:|^access-control-allow-origin:'
+              ok=1; break
+            fi
+            echo "CDN not 206 yet (attempt ${attempt}); retrying…" >&2; sleep 15
+          done
+          [ -n "$ok" ] || { echo "::error::CDN did not return 206 for a range request"; exit 1; }
+          echo "Smoke PASSED — origin size correct; CDN serves 206 ranges with CORS."
 ```
 
 - [ ] **Step 6: Verify YAML + review.**
