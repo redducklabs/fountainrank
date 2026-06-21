@@ -35,8 +35,19 @@ import { logMapError } from "../../lib/map/log";
 import { FountainsInViewList } from "./FountainsInViewList";
 import { CapHint, EmptyHint, ErrorToast, LoadingBar, UnsupportedHint, ZoomInHint } from "./MapStates";
 
-type Status = "idle" | "loading" | "empty" | "error" | "belowZoom" | "capped" | "unsupported";
+type Status = "idle" | "loading" | "empty" | "error" | "belowZoom" | "capped";
 const activeIdFromPath = (p: string | null) => p?.match(/^\/fountains\/([^/?#]+)/)?.[1] ?? "";
+
+// MapLibre v5 needs a WebGL2 context. Probe once with default attributes (matching the map's
+// powerPreference:'default' below) so we can render a graceful hint instead of throwing/crashing.
+function isWebglSupported(): boolean {
+  if (typeof window === "undefined" || !("WebGL2RenderingContext" in window)) return false;
+  try {
+    return !!document.createElement("canvas").getContext("webgl2");
+  } catch {
+    return false;
+  }
+}
 
 export default function MapBrowser() {
   const ref = useRef<HTMLDivElement>(null);
@@ -46,9 +57,11 @@ export default function MapBrowser() {
   const pathname = usePathname();
   const [pins, setPins] = useState<FountainPin[]>([]);
   const [status, setStatus] = useState<Status>("idle");
+  const [webglOk] = useState(isWebglSupported);
   const activeId = activeIdFromPath(pathname);
 
   useEffect(() => {
+    if (!webglOk) return; // no WebGL2 → the UnsupportedHint renders; never touch MapLibre.
     const protocol = new Protocol();
     // v5: addProtocol/removeProtocol are standalone named exports (not on the maplibregl namespace object).
     addProtocol("pmtiles", protocol.tile);
@@ -65,11 +78,10 @@ export default function MapBrowser() {
         canvasContextAttributes: { powerPreference: "default" },
       });
     } catch (err) {
-      // WebGL genuinely unavailable — degrade gracefully instead of letting the throw go uncaught
-      // and crash the whole page (uncaught → Next render error → "this page couldn't load").
+      // Pre-check passed but init still threw (rare) — catch so it can't go uncaught and crash
+      // the page; the map area stays blank but the page renders.
       logMapError("webgl-init-failed", { name: (err as Error)?.name });
       removeProtocol("pmtiles");
-      setStatus("unsupported");
       return;
     }
     mapRef.current = map;
@@ -203,7 +215,7 @@ export default function MapBrowser() {
       removeProtocol("pmtiles");
       mapRef.current = null;
     };
-  }, [router]);
+  }, [router, webglOk]);
 
   // Reflect the active route id on the selected layers (additive: halo always; icon swap via expr).
   useEffect(() => {
@@ -228,7 +240,7 @@ export default function MapBrowser() {
       {status === "empty" && <EmptyHint />}
       {status === "capped" && <CapHint />}
       {status === "error" && <ErrorToast onRetry={retry} />}
-      {status === "unsupported" && <UnsupportedHint />}
+      {!webglOk && <UnsupportedHint />}
       <FountainsInViewList
         pins={pins}
         activeId={activeId}
