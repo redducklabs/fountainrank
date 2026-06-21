@@ -420,7 +420,7 @@ async def test_spatial_match_to_imported_row_applies_small_move(session):
         dry_run=False,
     )
     await session.commit()
-    await merge_candidates(
+    s2 = await merge_candidates(
         session,
         scope=SCOPE,
         candidates=[_cand("osm:node:2", 37.77004, -122.41000)],
@@ -435,6 +435,8 @@ async def test_spatial_match_to_imported_row_applies_small_move(session):
     assert count == 1 and provs == 2  # one fountain, two OSM provenances
     lat = (await session.execute(select(latitude_of(Fountain.location)))).scalar_one()
     assert round(lat, 5) == 37.77004  # moved to the spatially-matched candidate
+    # the move is counted in the run summary (consistent with the durable event log)
+    assert s2.provenance_attached_count == 1 and s2.updated_count == 1
 
 
 # --- Task 9: concurrency (real endpoint + import) ---

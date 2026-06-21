@@ -239,7 +239,8 @@ async def _merge_one(
         )
         # Apply the movement rule (spec §6): _maybe_move only moves imported-only, unrated
         # rows; it never moves a user-created or rated fountain.
-        await _maybe_move(session, fountain, cand, run, settings, summary)
+        if await _maybe_move(session, fountain, cand, run, settings, summary):
+            summary.updated_count += 1
         return "match_provenance", match
 
     summary.inserted_count += 1
