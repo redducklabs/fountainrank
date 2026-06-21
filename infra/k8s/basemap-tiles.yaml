@@ -28,6 +28,19 @@ spec:
         app: basemap-tiles
         component: basemap-tiles
     spec:
+      # Hardened pod security (go-pmtiles is a static Go binary serving HTTP on :8080, reading
+      # remote ranges — no root, no privileged port, no disk writes needed).
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        # Writable scratch for Go's tmp under readOnlyRootFilesystem (defensive; serving needs none).
+        - name: tmp
+          emptyDir: {}
       containers:
         - name: go-pmtiles
           # Public image (Docker Hub) → no imagePullSecrets. Pinned.
@@ -45,6 +58,15 @@ spec:
             - "--cors=https://${DOMAIN},https://www.${DOMAIN}"
           ports:
             - containerPort: 8080
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
           resources:
             requests:
               memory: "256Mi"

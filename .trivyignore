@@ -2,4 +2,9 @@
 # RULE: every entry MUST carry a justification + a revisit condition.
 # Format:
 #   CVE-XXXX-YYYY  # <why not exploitable in our runtime> — revisit when <condition>
-# No suppressions yet.
+
+# Kubernetes misconfig: "image from an untrusted registry". We intentionally run pinned official
+# third-party images from Docker Hub — protomaps/go-pmtiles (basemap tile server) and svhd/logto
+# (auth) — which have no first-party DO-registry equivalent. They are pinned by version tag.
+# Revisit when: we mirror these into our DigitalOcean registry (then drop this + use ${REGISTRY}).
+AVD-KSV-0125
