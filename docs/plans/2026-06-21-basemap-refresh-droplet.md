@@ -88,9 +88,15 @@ Spec §3–§9. Replaces the in-runner stream with the droplet pipeline. Keeps t
           if ! VALIDATED=$(python3 - "$URL" <<'PY'
           import sys, socket, ipaddress
           from urllib.parse import urlparse
-          u = urlparse(sys.argv[1])
+          raw = sys.argv[1]
+          # Reject control chars (incl. newlines) BEFORE the URL is written to $GITHUB_ENV (env injection).
+          if any(ord(c) < 0x20 or ord(c) == 0x7f for c in raw): sys.exit("control characters in URL")
+          u = urlparse(raw)
           if u.scheme != "https": sys.exit("must be https")
           if u.username or u.password: sys.exit("userinfo not allowed")
+          # Only the default https port — the later download pins --resolve host:443:ip, so a
+          # non-443 port would otherwise bypass the pin.
+          if u.port not in (None, 443): sys.exit("only port 443 allowed")
           host = u.hostname
           if not host: sys.exit("no host")
           ips = {i[4][0] for i in socket.getaddrinfo(host, 443, proto=socket.IPPROTO_TCP)}
