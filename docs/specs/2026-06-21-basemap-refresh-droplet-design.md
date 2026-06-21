@@ -45,7 +45,7 @@ The marker (`planet.pmtiles.meta`) is written **by the droplet** immediately aft
   1. Installs aws-cli; configures **non-secret** aws settings (placeholder region, `s3.endpoint_url`, `s3.multipart_chunksize 64MB`, `s3.multipart_threshold 64MB`) via `aws configure set` — credentials are **NOT** written to `~/.aws`; they are exported into the process env only.
   2. **Preflight `df`:** compute available bytes on the download filesystem; require `>= SRC_LEN + 10 GiB` margin; **fail before download** if insufficient (accounts for GiB-vs-GB + OS/package overhead; flags future planet growth early).
   3. **Resumable download:** `curl -C - --retry 8 --retry-delay 15 --retry-all-errors -fL -o /root/planet.pmtiles "$URL"` (`-C -` resumes the partial file across retries; covers the HTTP/2 reset).
-  4. **Integrity:** verify the downloaded byte count equals `SRC_LEN`; abort otherwise. (Content-Length detects truncation, not a same-length content swap; Protomaps publishes no strong planet checksum we rely on — documented limitation. The ETag from the HEAD is recorded in the marker alongside the length when available.)
+  4. **Integrity:** verify the downloaded byte count equals `SRC_LEN`; abort otherwise. (Content-Length detects truncation, not a same-length content swap; Protomaps publishes no strong planet checksum we rely on — documented limitation.) The skip **marker stays the bare content-length** (consistent with the #25 resolve/skip read) — no ETag is stored in it; any ETag is used only for the post-upload origin verify logging in §8, not the change-detection marker.
   5. **Upload intra-region:** `aws s3 cp /root/planet.pmtiles s3://fountainrank-basemap/planet.pmtiles --acl public-read --content-type application/octet-stream --endpoint-url https://sfo3.digitaloceanspaces.com` (file-based multipart → automatic per-part retry).
   6. **Write the marker:** `printf '%s' "$SRC_LEN" | aws s3 cp - s3://fountainrank-basemap/planet.pmtiles.meta --acl private …`.
 - Any remote failure → SSH returns non-zero → the step fails → cleanup still runs (§6) → marker unchanged → next run retries.
@@ -65,7 +65,7 @@ The marker (`planet.pmtiles.meta`) is written **by the droplet** immediately aft
 
 In-run cleanup is **best-effort**: an `if: always()` step destroys the droplet **by the captured ID** and removes the imported ssh-key by **captured ID/fingerprint** (idempotent; ID-based, not name-based). A **defensive pre-clean** destroys any stale `basemap-refresh`-tagged droplet before creating a new one.
 
-Because `always()` does **not** cover runner-VM loss, a doctl/API outage during cleanup, or a hard-kill before the cleanup step, a leak is still possible. So a **separate daily janitor workflow** (`basemap-janitor.yml`, Class-B, `schedule` daily) lists droplets tagged `basemap-refresh` and destroys any whose creation age exceeds a stale threshold (well beyond a normal run). This bounds any leak to ~a day rather than ~a month. The spec claims **eventual cleanup**, not "no leak."
+Because `always()` does **not** cover runner-VM loss, a doctl/API outage during cleanup, or a hard-kill before the cleanup step, a leak is still possible. So a **separate daily janitor workflow** (`basemap-janitor.yml`, Class-B, `schedule` daily) destroys any stale `basemap-refresh`-tagged **droplet** whose creation age exceeds a stale threshold (well beyond a normal run), **and** removes any stale imported DO **SSH keys** named `basemap-refresh-*` (a hard-killed run can leak the imported key too). This bounds any leak to ~a day rather than ~a month. The spec claims **eventual cleanup**, not "no leak."
 
 ## 7. Terraform: abort orphaned multipart uploads
 
@@ -88,6 +88,8 @@ The CDN caches objects for the Terraform TTL (86400 s), and refreshes overwrite 
 ## 9. Operator input validation (the droplet fetches it with prod creds in env)
 
 A manual `pmtiles_url` is now fetched by a privileged droplet. Validate it on the runner before use: **`https://` scheme only**, reject userinfo (`user:pass@`), reject control characters, and reject private/loopback/link-local/metadata targets (e.g. `169.254.*`, `127.*`, `10.*`, `192.168.*`, `*.internal`). Auto-discovered builds are always the fixed `https://build.protomaps.com/…` host. Only the sanitized URL is logged.
+
+**Redirects:** the remote download uses `curl -L`, so validating only the initial URL is insufficient — a redirect could point at a private/metadata target. Constrain the download with `--proto '=https' --max-redirs 2` (https-only at every hop, bounded). Note the blast radius is small regardless: the Spaces keys live only in the droplet's process env (§5), **not** in its metadata service, so an SSRF-via-redirect to `169.254.169.254` cannot exfiltrate them; the redirect bounds are defense-in-depth.
 
 ## 10. Testing / verification
 
