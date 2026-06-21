@@ -194,7 +194,7 @@ jobs:
           LOGTO_APP_ID: ${{ vars.LOGTO_APP_ID }}
         run: |
           export NAMESPACE ENVIRONMENT IMAGE_TAG REGISTRY DOMAIN GOOGLE_DELEGATED_USER FROM_EMAIL LOGTO_APP_ID
-          for f in backend web logto ingress; do
+          for f in backend web logto ingress basemap-tiles; do
             envsubst < "infra/k8s/$f.yaml" | kubectl apply -f -
           done
       # Migrations run BEFORE gating backend readiness: /readyz runs a PostGIS query,
@@ -216,3 +216,6 @@ jobs:
           kubectl -n "$NAMESPACE" rollout status deploy/fountainrank-web --timeout=180s
           kubectl -n "$NAMESPACE" rollout status deploy/logto --timeout=180s
           kubectl -n "$NAMESPACE" rollout status deploy/healthz --timeout=120s
+          # basemap-tiles readiness is /planet.json (a real range-read of the archive) — this
+          # wait fails the deploy if planet.pmtiles is missing/broken, which is the intended gate.
+          kubectl -n "$NAMESPACE" rollout status deploy/basemap-tiles --timeout=180s
