@@ -186,9 +186,9 @@ pmtiles/glyphs/sprite), the **fonts** (`fonts/{fontstack}/{range}.pbf`), the **s
 - **On demand:** Actions → **basemap-upload** — leave `pmtiles_url` blank to auto-discover the
   latest (or pass an explicit URL, e.g. a regional extract for a quick first pass), set
   `upload_assets` (default true), and `force` to re-stream even if unchanged.
-- A ~127 GB planet stream is large/slowish (well under the 6-hour job limit, but no resume);
-  if a run fails mid-stream, the marker isn't updated, so the next run retries. Do **not**
-  hotlink Protomaps — we copy to our own bucket.
+- A ~127 GB planet stream is large and may approach GitHub Actions' 6-hour job limit (and has
+  no resume); if a run fails mid-stream, the marker isn't updated, so the next run retries. Do
+  **not** hotlink Protomaps — we copy to our own bucket.
 
 Manual fallback (from a machine with the create-capable Spaces key + aws-cli at
 `https://sfo3.digitaloceanspaces.com`): `aws s3 cp <file> s3://fountainrank-basemap/<key>
