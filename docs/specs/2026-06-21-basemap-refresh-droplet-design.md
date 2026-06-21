@@ -89,7 +89,7 @@ The CDN caches objects for the Terraform TTL (86400 s), and refreshes overwrite 
 
 A manual `pmtiles_url` is now fetched by a privileged droplet. Validate it on the runner before use: **`https://` scheme only**, reject userinfo (`user:pass@`), reject control characters, and reject private/loopback/link-local/metadata targets (e.g. `169.254.*`, `127.*`, `10.*`, `192.168.*`, `*.internal`). Auto-discovered builds are always the fixed `https://build.protomaps.com/…` host. Only the sanitized URL is logged.
 
-**Redirects:** the remote download uses `curl -L`, so validating only the initial URL is insufficient — a redirect could point at a private/metadata target. Constrain the download with `--proto '=https' --max-redirs 2` (https-only at every hop, bounded). Note the blast radius is small regardless: the Spaces keys live only in the droplet's process env (§5), **not** in its metadata service, so an SSRF-via-redirect to `169.254.169.254` cannot exfiltrate them; the redirect bounds are defense-in-depth.
+**Redirects:** validating only the initial URL is insufficient if redirects were followed — a redirect could point at a private/metadata target. The download therefore disables redirects entirely (`--proto '=https' --max-redirs 0`) and pins `--resolve host:443:<validated-ip>`, so the validated host/IP is exactly what is fetched. Note the blast radius is small regardless: the Spaces keys live only in the droplet's process env (§5), **not** in its metadata service, so an SSRF-via-redirect to `169.254.169.254` cannot exfiltrate them; the redirect bounds are defense-in-depth.
 
 ## 10. Testing / verification
 
