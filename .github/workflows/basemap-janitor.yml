@@ -1,0 +1,62 @@
+name: Basemap Janitor
+
+# Daily backstop: reap leaked ephemeral basemap-refresh workers (a basemap-upload run
+# hard-killed before its in-run cleanup). Droplets are reaped by age; imported SSH keys
+# are reaped only when no NON-stale droplet matches them (so an in-flight run's key is
+# never pulled out from under it).
+
+on:
+  schedule:
+    - cron: "30 5 * * *" # daily
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reap:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2.5.2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+      - name: Reap stale basemap-refresh droplets + orphaned keys
+        env:
+          STALE_SECONDS: "21600" # 6h — well beyond a normal run
+        run: |
+          set -euo pipefail
+          # doctl droplet --format has NO creation-time column → use JSON + created_at.
+          dj=$(doctl compute droplet list --tag-name basemap-refresh -o json)
+          # Reap droplets older than STALE_SECONDS.
+          stale_ids=$(python3 - "$dj" <<'PY'
+          import sys, json, os
+          from datetime import datetime, timezone
+          now = datetime.now(timezone.utc); stale = int(os.environ["STALE_SECONDS"])
+          for d in (json.loads(sys.argv[1] or "[]") or []):
+              c = datetime.fromisoformat(d["created_at"].replace("Z", "+00:00"))
+              if (now - c).total_seconds() > stale:
+                  print(d["id"])
+          PY
+          )
+          for id in $stale_ids; do echo "reaping droplet $id"; doctl compute droplet delete "$id" --force || true; done
+          # NON-stale (in-flight/recent) droplet names — their keys must be protected.
+          live_names=$(python3 - "$dj" <<'PY'
+          import sys, json, os
+          from datetime import datetime, timezone
+          now = datetime.now(timezone.utc); stale = int(os.environ["STALE_SECONDS"])
+          for d in (json.loads(sys.argv[1] or "[]") or []):
+              c = datetime.fromisoformat(d["created_at"].replace("Z", "+00:00"))
+              if (now - c).total_seconds() <= stale:
+                  print(d["name"])
+          PY
+          )
+          # Reap imported keys named basemap-refresh-* with NO matching non-stale droplet (orphans).
+          doctl compute ssh-key list --format ID,Name --no-header | awk '$2 ~ /^basemap-refresh-/ {print $1" "$2}' | while read -r kid kname; do
+            if ! printf '%s\n' "$live_names" | grep -qx "$kname"; then
+              echo "reaping orphaned ssh-key $kname ($kid)"
+              doctl compute ssh-key delete "$kid" --force || true
+            fi
+          done
