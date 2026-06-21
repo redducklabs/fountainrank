@@ -64,6 +64,16 @@ class Settings(BaseSettings):
     nearby_max_radius_m: float = 50_000.0
     max_results: int = 500
 
+    # --- OSM ingestion (see docs/specs/2026-06-21-osm-fountain-ingestion-design.md) ---
+    # Auto-update an imported-only, unrated fountain's location only if it moved <= this.
+    osm_move_small_max_m: float = 25.0
+    # Movement at/above this flags a review candidate instead of moving.
+    osm_move_review_min_m: float = 100.0
+    # Untrusted-tag guards for the allow-listed source_tags jsonb.
+    osm_tag_max_key_len: int = 64
+    osm_tag_max_value_len: int = 255
+    osm_tags_max_bytes: int = 4096
+
     # --- Phase 2a (Logto auth) ---
     # Logto OIDC authority. Issuer + JWKS are DERIVED from this so the backend never
     # depends on the OIDC discovery document (which emits http:// until TRUST_PROXY_HEADER

@@ -1,6 +1,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import JSONResponse
 from geoalchemy2 import Geography
 from sqlalchemy import cast, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -10,12 +11,14 @@ from app.auth import get_current_user
 from app.config import Settings, get_settings
 from app.db import get_session
 from app.geo import latitude_of, longitude_of, point_geography
+from app.locks import ADD_FOUNTAIN_LOCK_KEY
 from app.models import Fountain, Rating, RatingType, User
 from app.ranking import recompute_fountain_ranking
 from app.schemas import (
     AddFountainRequest,
     Coordinates,
     DimensionSummary,
+    DuplicateFountainConflict,
     FountainDetail,
     FountainPin,
     RateRequest,
@@ -23,14 +26,6 @@ from app.schemas import (
 )
 
 router = APIRouter(prefix="/api/v1", tags=["fountains"])
-
-# Serializes fountain creation. add_fountain does a check-then-insert (ST_DWithin then
-# INSERT); two concurrent adds at the same point could both pass the proximity check
-# before either commits and both insert a near-duplicate. A transaction-level advisory
-# lock makes the check+insert atomic. A single global key is fine for Phase 1 (adds are
-# low-frequency); a spatial-grid key would cut contention if add volume ever grows. The
-# lock releases automatically on commit/rollback.
-_ADD_FOUNTAIN_LOCK_KEY = 0x464E5452  # "FNTR"
 
 
 async def _validate_rating_types(session: AsyncSession, ratings: list[RatingInput]) -> None:
@@ -151,6 +146,7 @@ async def nearby_fountains(
                 Fountain.ranking_score,
                 distance,
             )
+            .where(Fountain.is_hidden.is_(False))
             .where(func.ST_DWithin(Fountain.location, point, radius))
             .order_by(distance)
             .limit(settings.max_results)
@@ -199,6 +195,7 @@ async def fountains_in_bbox(
                 Fountain.rating_count,
                 Fountain.ranking_score,
             )
+            .where(Fountain.is_hidden.is_(False))
             .where(func.ST_Intersects(Fountain.location, envelope))
             .limit(settings.max_results)
         )
@@ -223,37 +220,48 @@ async def fountain_detail(
     session: AsyncSession = Depends(get_session),
 ) -> FountainDetail:
     fountain = (
-        await session.execute(select(Fountain).where(Fountain.id == fountain_id))
+        await session.execute(
+            select(Fountain).where(Fountain.id == fountain_id, Fountain.is_hidden.is_(False))
+        )
     ).scalar_one_or_none()
     if fountain is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="fountain not found")
     return await serialize_fountain_detail(session, fountain)
 
 
-@router.post("/fountains", response_model=FountainDetail, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/fountains",
+    response_model=FountainDetail,
+    status_code=status.HTTP_201_CREATED,
+    responses={status.HTTP_409_CONFLICT: {"model": DuplicateFountainConflict}},
+)
 async def add_fountain(
     payload: AddFountainRequest,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
-) -> FountainDetail:
+) -> FountainDetail | JSONResponse:
     await _validate_rating_types(session, payload.ratings)
 
     # Serialize the proximity check + insert against concurrent adds (held until commit).
-    await session.execute(select(func.pg_advisory_xact_lock(_ADD_FOUNTAIN_LOCK_KEY)))
+    await session.execute(select(func.pg_advisory_xact_lock(ADD_FOUNTAIN_LOCK_KEY)))
 
     point = point_geography(payload.location.latitude, payload.location.longitude)
+    # Ignore hidden rows so a hidden bad-import never blocks a real user add.
     conflict = (
         await session.execute(
             select(Fountain.id)
+            .where(Fountain.is_hidden.is_(False))
             .where(func.ST_DWithin(Fountain.location, point, settings.duplicate_threshold_m))
             .limit(1)
         )
     ).scalar_one_or_none()
     if conflict is not None:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            detail=f"a fountain already exists within {settings.duplicate_threshold_m} m",
+        # Typed body so clients can route the user to confirm/rate the existing fountain
+        # (the add->verify hook). Declared via responses= so it appears in the OpenAPI schema.
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content=DuplicateFountainConflict(fountain_id=conflict).model_dump(mode="json"),
         )
 
     fountain = Fountain(
@@ -290,7 +298,11 @@ async def submit_ratings(
     # makes the upsert+recompute atomic per fountain (the second waits for the first
     # to commit, then recomputes over both rows).
     fountain = (
-        await session.execute(select(Fountain).where(Fountain.id == fountain_id).with_for_update())
+        await session.execute(
+            select(Fountain)
+            .where(Fountain.id == fountain_id, Fountain.is_hidden.is_(False))
+            .with_for_update()
+        )
     ).scalar_one_or_none()
     if fountain is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="fountain not found")

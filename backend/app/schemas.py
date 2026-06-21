@@ -53,6 +53,11 @@ class FountainDetail(BaseModel):
     dimensions: list[DimensionSummary]
 
 
+class DuplicateFountainConflict(BaseModel):
+    detail: str = "duplicate_fountain"
+    fountain_id: uuid.UUID
+
+
 class AddFountainRequest(BaseModel):
     location: Coordinates
     is_working: bool = True

@@ -61,9 +61,11 @@ Writes (require auth — see below):
 
 - `POST /api/v1/fountains` — add a fountain. Body:
   `{ "location": { "latitude", "longitude" }, "is_working"?, "comments"?, "ratings"?: [{ "rating_type_id", "stars" }] }`.
-  Rejects a location within `duplicate_threshold_m` of an existing fountain
-  (`409`); unknown `rating_type_id` or out-of-range `stars` → `422`. Returns the
-  created fountain detail (`201`).
+  Rejects a location within `duplicate_threshold_m` of an existing (non-hidden)
+  fountain with a typed `409` body `{ "detail": "duplicate_fountain", "fountain_id": <uuid> }`
+  so the client can route the user to confirm/rate the existing fountain; unknown
+  `rating_type_id` or out-of-range `stars` → `422`. Returns the created fountain
+  detail (`201`).
 - `POST /api/v1/fountains/{fountain_id}/ratings` — create/update this user's
   ratings for a fountain (atomic upsert on `(fountain, user, dimension)`). Body:
   `{ "ratings": [{ "rating_type_id", "stars" }] }` (non-empty). Unknown fountain
@@ -93,3 +95,33 @@ writes locally without standing up Logto:
 A missing header (when enabled) or any write while disabled returns `401`. Both the
 Bearer path and this fallback share the same just-in-time provisioning tail
 (`get_or_create_user`).
+
+## OSM fountain import
+
+Pre-seeds the map with public drinking-water locations from OpenStreetMap as
+first-class, rateable `fountains` rows with separable provenance. Imported rows are
+`created_source = 'osm'` with a null owner; they award no contribution credit and
+render as standard unrated pins. Design: `docs/specs/2026-06-21-osm-fountain-ingestion-design.md`.
+Runbook (dry-run / apply / refresh / audit / rollback): `docs/runbooks/osm-fountain-import.md`.
+
+The importer is an **operator/CI CLI only** — there is no public/unauthenticated HTTP
+import endpoint:
+
+```
+python -m app.imports.cli --path extract.geojson --scope-id us/ca \
+    --dataset geofabrik:us/california --build-id 2026-06-21 --label "California" [--dry-run]
+```
+
+It reads a GeoJSON extract (stable OSM ids required), parses + filters candidates,
+then merges them idempotently. The final stdout line is a JSON run summary (the
+documented operator result contract); diagnostics go to structured logs.
+
+Settings (safe defaults; override by env var name only — never commit values):
+
+- `OSM_MOVE_SMALL_MAX_M` (default `25.0`) — auto-update an imported-only, unrated
+  fountain's location only if it moved ≤ this.
+- `OSM_MOVE_REVIEW_MIN_M` (default `100.0`) — movement ≥ this flags a review
+  candidate instead of moving.
+- `OSM_TAG_MAX_KEY_LEN` (`64`), `OSM_TAG_MAX_VALUE_LEN` (`255`),
+  `OSM_TAGS_MAX_BYTES` (`4096`) — untrusted-tag guards for the allow-listed
+  `source_tags` jsonb.
