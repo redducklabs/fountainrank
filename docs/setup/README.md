@@ -156,49 +156,39 @@ curl -i 'http://localhost:3021/api/v1/fountains/bbox?min_lat=37.70&min_lng=-122.
 
 ## Basemap hosting (Protomaps planet on Spaces + CDN) — Phase 3a
 
-The web map renders a self-hosted Protomaps **Light** basemap. The code is merged; the map
-only renders tiles once this is hosted. Terraform manages the bucket + CDN + CORS (gated
-behind `var.manage_basemap_spaces`, default off); the upload is a manual owner step.
+The web map renders a self-hosted Protomaps **Light** basemap. Terraform manages the bucket +
+CDN + CORS (gated behind `var.manage_basemap_spaces`); the upload runs via the
+**`basemap-upload`** GitHub Actions workflow.
 
-**Prerequisite — a bucket-create-capable Spaces key.** The current `SPACES_ACCESS_KEY`/
-`SPACES_SECRET_KEY` (`production` env) are scoped to the TF-state bucket and 403 on bucket
-create. Broaden that key or mint a new Spaces key (DO console → API → Spaces Keys) and
-update the `production` env secrets the Terraform **apply** job uses. (Confirm the TF-state
-S3 backend still authenticates with the updated key.)
+**Status (2026-06-21):**
 
-**1. Provision bucket + CDN + CORS (Terraform, CI only):** with the create-capable key set,
-dispatch the **Terraform** workflow (`workflow_dispatch`) with `action=apply` **and** the
-`manage_basemap_spaces` input checked **true** (it is wired to `TF_VAR_manage_basemap_spaces`
-in `.github/workflows/terraform.yml`). This creates `fountainrank-basemap`
-(sfo3, public-read), its CORS config (GET/HEAD, `Range` allowed, `Accept-Ranges`/
-`Content-Range`/`Content-Length`/`ETag` exposed, origins = the web origins), and a CDN
-endpoint. Record the `basemap_cdn_endpoint` + `basemap_bucket_domain` outputs. Never apply
-locally.
+- ✅ **Bucket + CDN + CORS provisioned** (Terraform apply with `manage_basemap_spaces=true`):
+  bucket `fountainrank-basemap` (sfo3, public-read; CORS: GET/HEAD, `Range` allowed,
+  `Accept-Ranges`/`Content-Range`/`Content-Length`/`ETag` exposed, origins = the web origins).
+  **CDN `fountainrank-basemap.sfo3.cdn.digitaloceanspaces.com`.**
+- ✅ **Web env wired** — `deploy.yml` (and the security-audit scan build) pass
+  `NEXT_PUBLIC_BASEMAP_STYLE_URL=https://<cdn>/style.light.json` and
+  `NEXT_PUBLIC_BASEMAP_PMTILES_URL=https://<cdn>/planet.pmtiles` as Docker build-args. **These
+  are inlined into the web client bundle at _build_ time** (Next bakes `NEXT_PUBLIC_*` during
+  `next build`), so they live as CI build-args, **not** a k8s runtime ConfigMap. No manual env
+  step is needed — the next web deploy picks them up.
+- ⏳ **Remaining: upload the basemap data** (below), then tag the release.
 
-**2. Build + upload the basemap (one-time, ~120 GB):**
-- Download a Protomaps daily-build **planet `.pmtiles`** from `maps.protomaps.com/builds`
-  (do **not** hotlink — copy to our bucket). Get the Protomaps **Light** style JSON + its
-  glyphs + sprite. Edit the style JSON so its vector source is
-  `pmtiles://<NEXT_PUBLIC_BASEMAP_PMTILES_URL>` and glyphs/sprite point at the CDN paths.
-- Upload with **public-read** ACL via the create-capable key (aws-cli/s3cmd at the DO
-  endpoint):
-  ```bash
-  aws s3 cp planet.pmtiles  s3://fountainrank-basemap/planet.pmtiles  --acl public-read --endpoint-url https://sfo3.digitaloceanspaces.com
-  aws s3 cp style.light.json s3://fountainrank-basemap/style.light.json --acl public-read --endpoint-url https://sfo3.digitaloceanspaces.com
-  aws s3 cp glyphs/ s3://fountainrank-basemap/glyphs/ --recursive --acl public-read --endpoint-url https://sfo3.digitaloceanspaces.com
-  aws s3 cp sprite/ s3://fountainrank-basemap/sprite/ --recursive --acl public-read --endpoint-url https://sfo3.digitaloceanspaces.com
-  ```
+**Upload (the `basemap-upload` workflow).** Dispatch Actions → **basemap-upload** with a
+`pmtiles_url` (a Protomaps planet daily build from `maps.protomaps.com/builds`, or a regional
+extract) and `upload_assets=true`. It uploads (public-read): the **style** as `style.light.json`
+(generated for the Light flavor, pointing at the CDN pmtiles/glyphs/sprite), the **fonts**
+(`fonts/{fontstack}/{range}.pbf`), the **sprites**, and **streams** the pmtiles to
+`planet.pmtiles` (so the runner's small disk isn't a limit). A ~120 GB planet stream is
+large/fragile — a regional extract is a quicker first pass; the full planet can be re-run later
+(or uploaded from a disk-backed machine). Do **not** hotlink Protomaps — copy to our own bucket.
 
-**3. Point the web app at it** — set the web deploy env (GitHub Environment variables /
-k8s ConfigMap; names only, never a `.env` file):
-```
-NEXT_PUBLIC_BASEMAP_STYLE_URL=https://<basemap_cdn_endpoint>/style.light.json
-NEXT_PUBLIC_BASEMAP_PMTILES_URL=https://<basemap_cdn_endpoint>/planet.pmtiles
-```
-`web/lib/map/style.ts` reads these; `MapBrowser` loads the style URL (the style embeds the
-`pmtiles://` source).
+Manual fallback (from a machine with the create-capable Spaces key + aws-cli at
+`https://sfo3.digitaloceanspaces.com`): `aws s3 cp <file> s3://fountainrank-basemap/<key>
+--acl public-read --endpoint-url …` for `planet.pmtiles`, `style.light.json`, `fonts/…`,
+`sprites/…` (same keys as above).
 
-**4. Post-deploy smoke** — confirm a cross-origin range request returns 206 with the range
+**Smoke check** — confirm a cross-origin range request returns 206 with the range
 headers exposed:
 ```bash
 curl -i -H 'Origin: https://fountainrank.com' -H 'Range: bytes=0-99' \

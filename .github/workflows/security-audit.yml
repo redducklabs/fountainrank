@@ -103,6 +103,8 @@ jobs:
           docker build -t fountainrank-backend:scan backend
           docker build -f web/Dockerfile \
             --build-arg NEXT_PUBLIC_API_BASE_URL=https://api.fountainrank.com \
+            --build-arg NEXT_PUBLIC_BASEMAP_STYLE_URL=https://fountainrank-basemap.sfo3.cdn.digitaloceanspaces.com/style.light.json \
+            --build-arg NEXT_PUBLIC_BASEMAP_PMTILES_URL=https://fountainrank-basemap.sfo3.cdn.digitaloceanspaces.com/planet.pmtiles \
             -t fountainrank-web:scan .
       - name: Trivy scan backend image (report -> SARIF)
         uses: aquasecurity/trivy-action@v0.36.0
