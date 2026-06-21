@@ -47,18 +47,37 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Validate bbox
+      - name: Validate + sanitize bbox
         env:
-          BBOX: ${{ github.event.inputs.bbox }}
+          BBOX_IN: ${{ github.event.inputs.bbox }}
         run: |
-          if ! printf '%s' "$BBOX" | grep -Eq '^-?[0-9]+(\.[0-9]+)?,-?[0-9]+(\.[0-9]+)?,-?[0-9]+(\.[0-9]+)?,-?[0-9]+(\.[0-9]+)?$'; then
-            echo "::error::bbox must be 'south,west,north,east' decimals"; exit 1
-          fi
+          # Reject any newline/CR: a multiline value could pass a line-based check and inject
+          # extra Overpass statements when interpolated into the query (workflow_dispatch is
+          # API-callable, so don't rely on the UI). Then parse into 4 numeric fields,
+          # validate range + order + a max extent, and RECONSTRUCT the value so only the
+          # validated numbers are ever interpolated downstream.
+          case "$BBOX_IN" in
+            *$'\n'* | *$'\r'*) echo "::error::bbox must be a single line"; exit 1 ;;
+          esac
+          IFS=',' read -r S W N E EXTRA <<EOF
+          $BBOX_IN
+          EOF
+          if [ -n "$EXTRA" ]; then echo "::error::bbox must have exactly 4 fields (south,west,north,east)"; exit 1; fi
+          for v in "$S" "$W" "$N" "$E"; do
+            if ! printf '%s' "$v" | grep -Eq '^-?[0-9]+(\.[0-9]+)?$'; then
+              echo "::error::bbox field '$v' is not a decimal"; exit 1
+            fi
+          done
+          awk -v s="$S" -v w="$W" -v n="$N" -v e="$E" 'BEGIN{
+            if (s < -90 || s > 90 || n < -90 || n > 90 || w < -180 || w > 180 || e < -180 || e > 180) exit 1;
+            if (s >= n || w >= e) exit 2;
+            if (n - s > 6 || e - w > 6) exit 3;
+          }' || { echo "::error::bbox failed range/order/extent (each side <= 6 deg; use a Geofabrik/PBF source for larger extents)"; exit 1; }
+          echo "BBOX=$S,$W,$N,$E" >> "$GITHUB_ENV"
 
       - name: Fetch Overpass extract
-        env:
-          BBOX: ${{ github.event.inputs.bbox }}
         run: |
+          # $BBOX is the SANITIZED value from the previous step (via GITHUB_ENV), not the raw input.
           cat > query.txt <<EOF
           [out:json][timeout:240];
           (
@@ -67,6 +86,9 @@ jobs:
             node["amenity"="fountain"]["drinking_water"="yes"]($BBOX);
             way["amenity"="drinking_water"]($BBOX);
             way["man_made"="water_tap"]["drinking_water"="yes"]($BBOX);
+            relation["amenity"="drinking_water"]($BBOX);
+            relation["man_made"="water_tap"]["drinking_water"="yes"]($BBOX);
+            relation["amenity"="fountain"]["drinking_water"="yes"]($BBOX);
           );
           out center;
           EOF

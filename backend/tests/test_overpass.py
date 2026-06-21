@@ -43,6 +43,23 @@ def test_way_uses_center_and_missing_coords_skipped():
     assert gj["features"][0]["geometry"]["coordinates"] == [2.0, 1.0]
 
 
+def test_relation_uses_center():
+    data = {
+        "elements": [
+            {
+                "type": "relation",
+                "id": 7,
+                "center": {"lat": 3.0, "lon": 4.0},
+                "tags": {"amenity": "drinking_water"},
+            },
+        ]
+    }
+    gj = overpass_json_to_geojson(data)
+    f = gj["features"][0]
+    assert f["id"] == "relation/7"
+    assert f["geometry"]["coordinates"] == [4.0, 3.0]
+
+
 def test_empty_elements_yield_empty_collection():
     gj = overpass_json_to_geojson({"elements": []})
     assert gj == {"type": "FeatureCollection", "features": []}
