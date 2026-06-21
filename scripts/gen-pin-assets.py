@@ -18,6 +18,10 @@ Anchor note: every pin variant shares one canvas with the teardrop tip at the
 bottom-center (MapLibre `icon-anchor: "bottom"`), so they all anchor identically.
 `pill-bg` uses 6px corners to match the MapBrowser addImage stretch metadata
 (stretchX/Y [[6,14]], content [6,6,14,14]).
+
+Source: `docs/logos/512-pin.png` (committed). Requires Pillow — either
+`pip install Pillow` then `python scripts/gen-pin-assets.py`, or hermetically:
+`uvx --from pillow python scripts/gen-pin-assets.py`.
 """
 from __future__ import annotations
 

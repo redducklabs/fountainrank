@@ -248,8 +248,9 @@ resource "digitalocean_database_db" "logto" {
 # only (403 AccessDenied on bucket create). These basemap resources are gated behind
 # `var.manage_basemap_spaces` (default false) so merging them changes nothing and a
 # routine apply stays a no-op. To bring them up: wire a bucket-create-capable Spaces
-# key as the apply job's SPACES_ACCESS_KEY/SPACES_SECRET_KEY, set
-# TF_VAR_manage_basemap_spaces=true, and dispatch the Terraform apply workflow. Then
+# key as the apply job's SPACES_ACCESS_KEY/SPACES_SECRET_KEY, then dispatch the
+# Terraform workflow with action=apply AND the `manage_basemap_spaces` input set true
+# (it is wired to TF_VAR_manage_basemap_spaces in .github/workflows/terraform.yml). Then
 # upload the planet .pmtiles + Light style/glyphs/sprite and set the web
 # NEXT_PUBLIC_BASEMAP_* env — see docs/setup/README.md.
 #
@@ -385,12 +386,13 @@ resource "digitalocean_record" "auth" {
 # ---------------------------------------------------------------------------
 resource "digitalocean_project_resources" "main" {
   project = data.digitalocean_project.main.id
-  resources = [
+  resources = concat([
     digitalocean_kubernetes_cluster.main.urn,
     digitalocean_database_cluster.postgres.urn,
     digitalocean_loadbalancer.main.urn,
     data.digitalocean_domain.main.urn,
-  ]
+    # The basemap bucket (splat -> [] when the gate is off) joins the project when enabled.
+  ], digitalocean_spaces_bucket.basemap[*].urn)
 }
 
 # ---------------------------------------------------------------------------

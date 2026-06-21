@@ -12,6 +12,11 @@ on:
         default: plan
         type: choice
         options: [plan, apply]
+      manage_basemap_spaces:
+        description: "Enable the Phase 3a basemap Spaces bucket/CDN/CORS (needs a bucket-create-capable Spaces key)"
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: terraform-production
@@ -49,6 +54,9 @@ jobs:
       TF_VAR_do_token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
       TF_VAR_spaces_access_id: ${{ secrets.SPACES_ACCESS_KEY }}
       TF_VAR_spaces_secret_key: ${{ secrets.SPACES_SECRET_KEY }}
+      # Phase 3a basemap gate (default false). Set the workflow input true — with a
+      # bucket-create-capable Spaces key above — to create the basemap bucket/CDN/CORS.
+      TF_VAR_manage_basemap_spaces: ${{ github.event.inputs.manage_basemap_spaces }}
     steps:
       - uses: actions/checkout@v6
       - uses: hashicorp/setup-terraform@v4

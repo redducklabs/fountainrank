@@ -167,8 +167,9 @@ update the `production` env secrets the Terraform **apply** job uses. (Confirm t
 S3 backend still authenticates with the updated key.)
 
 **1. Provision bucket + CDN + CORS (Terraform, CI only):** with the create-capable key set,
-dispatch the **Terraform** workflow (`workflow_dispatch`, `action=apply`) with
-`TF_VAR_manage_basemap_spaces=true` for that run. This creates `fountainrank-basemap`
+dispatch the **Terraform** workflow (`workflow_dispatch`) with `action=apply` **and** the
+`manage_basemap_spaces` input checked **true** (it is wired to `TF_VAR_manage_basemap_spaces`
+in `.github/workflows/terraform.yml`). This creates `fountainrank-basemap`
 (sfo3, public-read), its CORS config (GET/HEAD, `Range` allowed, `Accept-Ranges`/
 `Content-Range`/`Content-Length`/`ETag` exposed, origins = the web origins), and a CDN
 endpoint. Record the `basemap_cdn_endpoint` + `basemap_bucket_domain` outputs. Never apply
