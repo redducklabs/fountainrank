@@ -48,6 +48,9 @@ jobs:
       BUCKET: s3://fountainrank-basemap
       ENDPOINT: https://sfo3.digitaloceanspaces.com
       PMTILES_URL: ${{ github.event.inputs.pmtiles_url }}
+      # Pin basemaps-assets to an immutable commit (reproducible fonts/sprites that match
+      # the pinned @protomaps/basemaps style generator). Bump deliberately, not silently.
+      ASSETS_REF: 028c18f713baecad011301ff7a69acc39bcc2ae7
 
     steps:
       - name: Configure aws-cli for DO Spaces
@@ -62,20 +65,20 @@ jobs:
       - name: Upload fonts and sprites
         if: ${{ github.event.inputs.upload_assets == 'true' }}
         run: |
-          # Download basemaps-assets (fonts + sprites) from protomaps/basemaps-assets main branch.
+          # Download basemaps-assets (fonts + sprites) pinned to an immutable commit (ASSETS_REF).
           curl -fL -o basemaps-assets.zip \
-            https://github.com/protomaps/basemaps-assets/archive/refs/heads/main.zip
+            "https://github.com/protomaps/basemaps-assets/archive/${ASSETS_REF}.zip"
           unzip -q basemaps-assets.zip
 
           # Upload fonts (PBF glyphs) — public-read
-          aws s3 cp basemaps-assets-main/fonts/ \
+          aws s3 cp "basemaps-assets-${ASSETS_REF}/fonts/" \
             "${BUCKET}/fonts/" \
             --recursive \
             --acl public-read \
             --endpoint-url "$ENDPOINT"
 
-          # Upload sprites (v3 and v4 both present in the asset zip) — public-read
-          aws s3 cp basemaps-assets-main/sprites/ \
+          # Upload sprites (v3 + v4 both present; the style references v4/light) — public-read
+          aws s3 cp "basemaps-assets-${ASSETS_REF}/sprites/" \
             "${BUCKET}/sprites/" \
             --recursive \
             --acl public-read \
@@ -134,7 +137,10 @@ jobs:
       - name: Stream PMTiles to DO Spaces
         run: |
           set -o pipefail  # a failed/truncated curl must fail the step, not silently "succeed"
-          echo "Streaming ${PMTILES_URL} → ${BUCKET}/planet.pmtiles …"
+          # Log a sanitized source only — strip any userinfo + query string so a presigned /
+          # credential-bearing URL is never exposed in this public repo's Actions logs.
+          SAFE_URL=$(printf '%s' "$PMTILES_URL" | sed -E 's#(https?://)[^/@]*@#\1#; s#\?.*$##')
+          echo "Streaming ${SAFE_URL} → ${BUCKET}/planet.pmtiles …"
           curl -fL "$PMTILES_URL" \
             | aws s3 cp - \
                 "${BUCKET}/planet.pmtiles" \
@@ -146,11 +152,12 @@ jobs:
       - name: Smoke test — verify planet.pmtiles is reachable via CDN
         run: |
           echo "Probing https://${CDN_HOST}/planet.pmtiles (expecting HTTP 206 + Accept-Ranges) …"
-          RESPONSE=$(curl -si -H 'Range: bytes=0-99' "https://${CDN_HOST}/planet.pmtiles")
-          echo "$RESPONSE"
-          if echo "$RESPONSE" | grep -q "^HTTP/.*206"; then
-            echo "Smoke test PASSED — CDN serving PMTiles correctly."
+          # Headers only (no body bytes); send an Origin so CORS exposure is verified too.
+          HEADERS=$(curl -s -o /dev/null -D - -H 'Origin: https://fountainrank.com' -H 'Range: bytes=0-99' "https://${CDN_HOST}/planet.pmtiles")
+          printf '%s\n' "$HEADERS" | grep -iE '^HTTP/|^accept-ranges:|^content-range:|^content-length:|^access-control-allow-origin:'
+          if printf '%s' "$HEADERS" | grep -q "^HTTP/.*206"; then
+            echo "Smoke test PASSED — CDN serving PMTiles range requests."
           else
-            echo "::error::Smoke test FAILED — expected HTTP 206, got unexpected response."
+            echo "::error::Smoke test FAILED — expected HTTP 206 from the CDN."
             exit 1
           fi
