@@ -59,6 +59,7 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.SPACES_SECRET_KEY }}
       CDN_HOST: fountainrank-basemap.sfo3.cdn.digitaloceanspaces.com
+      SITE_HOST: fountainrank.com
       BUCKET: s3://fountainrank-basemap
       ENDPOINT: https://sfo3.digitaloceanspaces.com
       # Raw operator input (may be blank → auto-discover the latest build in the resolve step).
@@ -198,6 +199,7 @@ jobs:
           const { layers, namedFlavor } = require("@protomaps/basemaps");
 
           const CDN_HOST = process.env.CDN_HOST;
+          const SITE_HOST = process.env.SITE_HOST;
 
           const style = {
             version: 8,
@@ -206,7 +208,7 @@ jobs:
             sources: {
               protomaps: {
                 type: "vector",
-                url: `pmtiles://https://${CDN_HOST}/planet.pmtiles`,
+                url: `https://${SITE_HOST}/tiles/planet.json`,
                 attribution:
                   '<a href="https://protomaps.com">Protomaps</a> © <a href="https://openstreetmap.org">OpenStreetMap</a>',
               },
