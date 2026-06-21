@@ -27,7 +27,13 @@ async def session(engine):
 @pytest.fixture(autouse=True)
 async def clean_db(engine):
     async with engine.begin() as conn:
-        await conn.execute(_sa_text("TRUNCATE ratings, fountains, users RESTART IDENTITY CASCADE"))
+        await conn.execute(
+            _sa_text(
+                "TRUNCATE fountain_import_events, osm_fountain_import_candidates, "
+                "fountain_provenances, osm_fountain_import_runs, ratings, fountains, users "
+                "RESTART IDENTITY CASCADE"
+            )
+        )
     yield
 
 

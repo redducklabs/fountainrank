@@ -251,11 +251,16 @@ class FountainProvenance(Base):
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Explicit short FK names — the convention name would exceed Postgres's 63-char limit.
     first_import_run_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("osm_fountain_import_runs.id"), nullable=False
+        PgUUID(as_uuid=True),
+        ForeignKey("osm_fountain_import_runs.id", name="fk_provenances_first_run"),
+        nullable=False,
     )
     last_import_run_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("osm_fountain_import_runs.id"), nullable=False
+        PgUUID(as_uuid=True),
+        ForeignKey("osm_fountain_import_runs.id", name="fk_provenances_last_run"),
+        nullable=False,
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -301,7 +306,7 @@ class OsmImportCandidate(Base):
     id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     run_id: Mapped[uuid.UUID] = mapped_column(
         PgUUID(as_uuid=True),
-        ForeignKey("osm_fountain_import_runs.id", ondelete="CASCADE"),
+        ForeignKey("osm_fountain_import_runs.id", ondelete="CASCADE", name="fk_candidates_run"),
         nullable=False,
     )
     source_external_id: Mapped[str] = mapped_column(String, nullable=False)
@@ -448,15 +453,18 @@ def upgrade() -> None:
         ),
     )
     op.alter_column("fountains", "added_by_user_id", existing_type=PgUUID(as_uuid=True), nullable=True)
-    # 2) CHECKs added LAST, after backfill. FULL literal names (op applies no naming
-    #    convention on ALTER) so they match the ORM's conventioned ck_fountains_* names.
+    # 2) CHECKs added LAST, after backfill. op.create_check_constraint APPLIES the naming
+    #    convention (ck_%(table_name)s_%(constraint_name)s), so pass the SHORT name — it
+    #    renders to ck_fountains_* matching the ORM. Passing the full name double-prefixes to
+    #    ck_fountains_ck_fountains_* (same trap as ratings.stars_range). alembic check won't
+    #    catch this (it ignores CHECK names), so the pg_constraint test below is the guard.
     op.create_check_constraint(
-        "ck_fountains_created_source",
+        "created_source",
         "fountains",
         "created_source IN ('user','osm','admin_import')",
     )
     op.create_check_constraint(
-        "ck_fountains_user_source_requires_user",
+        "user_source_requires_user",
         "fountains",
         "created_source <> 'user' OR added_by_user_id IS NOT NULL",
     )
@@ -517,8 +525,8 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id", name="pk_fountain_provenances"),
         sa.ForeignKeyConstraint(["fountain_id"], ["fountains.id"], ondelete="CASCADE", name="fk_fountain_provenances_fountain_id_fountains"),
-        sa.ForeignKeyConstraint(["first_import_run_id"], ["osm_fountain_import_runs.id"], name="fk_fountain_provenances_first_import_run_id_osm_fountain_import_runs"),
-        sa.ForeignKeyConstraint(["last_import_run_id"], ["osm_fountain_import_runs.id"], name="fk_fountain_provenances_last_import_run_id_osm_fountain_import_runs"),
+        sa.ForeignKeyConstraint(["first_import_run_id"], ["osm_fountain_import_runs.id"], name="fk_provenances_first_run"),  # short: 63-char limit
+        sa.ForeignKeyConstraint(["last_import_run_id"], ["osm_fountain_import_runs.id"], name="fk_provenances_last_run"),
     )
     op.create_index("uq_fountain_provenances_source_external", "fountain_provenances", ["source_system", "source_external_id"], unique=True)
     op.create_index("ix_fountain_provenances_fountain_id", "fountain_provenances", ["fountain_id"], unique=False)
@@ -546,7 +554,7 @@ def upgrade() -> None:
         sa.Column("matched_fountain_id", PgUUID(as_uuid=True), nullable=True),
         sa.Column("action", sa.String(), nullable=False),
         sa.PrimaryKeyConstraint("id", name="pk_osm_fountain_import_candidates"),
-        sa.ForeignKeyConstraint(["run_id"], ["osm_fountain_import_runs.id"], ondelete="CASCADE", name="fk_osm_fountain_import_candidates_run_id_osm_fountain_import_runs"),
+        sa.ForeignKeyConstraint(["run_id"], ["osm_fountain_import_runs.id"], ondelete="CASCADE", name="fk_candidates_run"),  # short: 63-char limit
     )
     op.create_index("ix_osm_fountain_import_candidates_run_id", "osm_fountain_import_candidates", ["run_id"], unique=False)
 

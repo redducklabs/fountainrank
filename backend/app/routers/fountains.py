@@ -10,6 +10,7 @@ from app.auth import get_current_user
 from app.config import Settings, get_settings
 from app.db import get_session
 from app.geo import latitude_of, longitude_of, point_geography
+from app.locks import ADD_FOUNTAIN_LOCK_KEY
 from app.models import Fountain, Rating, RatingType, User
 from app.ranking import recompute_fountain_ranking
 from app.schemas import (
@@ -23,14 +24,6 @@ from app.schemas import (
 )
 
 router = APIRouter(prefix="/api/v1", tags=["fountains"])
-
-# Serializes fountain creation. add_fountain does a check-then-insert (ST_DWithin then
-# INSERT); two concurrent adds at the same point could both pass the proximity check
-# before either commits and both insert a near-duplicate. A transaction-level advisory
-# lock makes the check+insert atomic. A single global key is fine for Phase 1 (adds are
-# low-frequency); a spatial-grid key would cut contention if add volume ever grows. The
-# lock releases automatically on commit/rollback.
-_ADD_FOUNTAIN_LOCK_KEY = 0x464E5452  # "FNTR"
 
 
 async def _validate_rating_types(session: AsyncSession, ratings: list[RatingInput]) -> None:
@@ -240,7 +233,7 @@ async def add_fountain(
     await _validate_rating_types(session, payload.ratings)
 
     # Serialize the proximity check + insert against concurrent adds (held until commit).
-    await session.execute(select(func.pg_advisory_xact_lock(_ADD_FOUNTAIN_LOCK_KEY)))
+    await session.execute(select(func.pg_advisory_xact_lock(ADD_FOUNTAIN_LOCK_KEY)))
 
     point = point_geography(payload.location.latitude, payload.location.longitude)
     conflict = (
