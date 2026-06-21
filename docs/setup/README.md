@@ -174,14 +174,21 @@ CDN + CORS (gated behind `var.manage_basemap_spaces`); the upload runs via the
   step is needed — the next web deploy picks them up.
 - ⏳ **Remaining: upload the basemap data** (below), then tag the release.
 
-**Upload (the `basemap-upload` workflow).** Dispatch Actions → **basemap-upload** with a
-`pmtiles_url` (a Protomaps planet daily build from `maps.protomaps.com/builds`, or a regional
-extract) and `upload_assets=true`. It uploads (public-read): the **style** as `style.light.json`
-(generated for the Light flavor, pointing at the CDN pmtiles/glyphs/sprite), the **fonts**
-(`fonts/{fontstack}/{range}.pbf`), the **sprites**, and **streams** the pmtiles to
-`planet.pmtiles` (so the runner's small disk isn't a limit). A ~120 GB planet stream is
-large/fragile — a regional extract is a quicker first pass; the full planet can be re-run later
-(or uploaded from a disk-backed machine). Do **not** hotlink Protomaps — copy to our own bucket.
+**Upload + monthly refresh (the `basemap-upload` workflow).** It uploads (public-read): the
+**style** (`style.light.json`, generated for the Light flavor pointing at the CDN
+pmtiles/glyphs/sprite), the **fonts** (`fonts/{fontstack}/{range}.pbf`), the **sprites**, and
+**streams** the pmtiles to `planet.pmtiles` (so the runner's small disk isn't a limit).
+
+- **Runs monthly** (cron `0 4 1 * *`) to keep the basemap current: it **auto-discovers the
+  latest** Protomaps daily build (`https://build.protomaps.com/YYYYMMDD.pmtiles`) and **skips
+  the ~127 GB stream when the source is unchanged** (it compares the source `Content-Length`
+  to a `planet.pmtiles.meta` marker it writes after each upload).
+- **On demand:** Actions → **basemap-upload** — leave `pmtiles_url` blank to auto-discover the
+  latest (or pass an explicit URL, e.g. a regional extract for a quick first pass), set
+  `upload_assets` (default true), and `force` to re-stream even if unchanged.
+- A ~127 GB planet stream is large and may approach GitHub Actions' 6-hour job limit (and has
+  no resume); if a run fails mid-stream, the marker isn't updated, so the next run retries. Do
+  **not** hotlink Protomaps — we copy to our own bucket.
 
 Manual fallback (from a machine with the create-capable Spaces key + aws-cli at
 `https://sfo3.digitaloceanspaces.com`): `aws s3 cp <file> s3://fountainrank-basemap/<key>

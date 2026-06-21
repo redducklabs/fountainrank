@@ -1,33 +1,40 @@
 name: Basemap Upload
 
-# Uploads the Protomaps Light basemap assets and/or a planet (or extract)
-# PMTiles file to the fountainrank-basemap DO Spaces bucket.
+# Uploads the Protomaps Light basemap (style + fonts + sprites + a planet/extract
+# PMTiles) to the fountainrank-basemap DO Spaces bucket.
+#
+# Runs on a MONTHLY schedule (auto-discovers + uploads the latest Protomaps daily build,
+# skipping the stream if the source is unchanged) AND on demand via workflow_dispatch.
 #
 # Class B job: handles SPACES secrets → runs on ubuntu-latest + environment: production
 # (mirrors the Terraform apply job in terraform.yml).
 #
-# Planet-build URL recommendation: https://build.protomaps.com/YYYYMMDD.pmtiles
-# Example: https://build.protomaps.com/20260620.pmtiles
-# Check https://maps.protomaps.com/builds for the latest available date.
-# A full planet is ~120 GB; consider a regional extract for testing.
+# Planet builds: https://build.protomaps.com/YYYYMMDD.pmtiles (~127 GB). Leave pmtiles_url
+# blank (or let the monthly cron run) to auto-discover the latest available build.
 
 on:
   workflow_dispatch:
     inputs:
       pmtiles_url:
         description: >
-          Source .pmtiles to stream → s3://fountainrank-basemap/planet.pmtiles.
-          Use a Protomaps daily build URL (https://build.protomaps.com/YYYYMMDD.pmtiles)
-          or a regional extract. A full planet is ~120 GB and may approach the 6-hour
-          job time limit — prefer an extract URL for non-production runs.
-        required: true
+          Explicit .pmtiles source to stream → s3://fountainrank-basemap/planet.pmtiles.
+          Leave BLANK to auto-discover the latest Protomaps daily build. A regional
+          extract URL is a quicker alternative to the ~127 GB planet for test runs.
+        required: false
         type: string
       upload_assets:
-        description: >
-          Also upload style JSON, fonts, and sprites (set false to only refresh planet.pmtiles).
+        description: "Also (re)upload style JSON, fonts, and sprites."
         required: false
         default: true
         type: boolean
+      force:
+        description: "Re-stream the planet even if the source size is unchanged since last upload."
+        required: false
+        default: false
+        type: boolean
+  schedule:
+    # Monthly (1st @ 04:00 UTC) — keep the self-hosted basemap current with Protomaps/OSM.
+    - cron: "0 4 1 * *"
 
 concurrency:
   group: basemap-upload
@@ -47,7 +54,11 @@ jobs:
       CDN_HOST: fountainrank-basemap.sfo3.cdn.digitaloceanspaces.com
       BUCKET: s3://fountainrank-basemap
       ENDPOINT: https://sfo3.digitaloceanspaces.com
-      PMTILES_URL: ${{ github.event.inputs.pmtiles_url }}
+      # Raw operator input (may be blank → auto-discover the latest build in the resolve step).
+      PMTILES_INPUT: ${{ github.event.inputs.pmtiles_url }}
+      # Assets are (re)uploaded on every scheduled run, and on dispatch when upload_assets=true.
+      UPLOAD_ASSETS: ${{ github.event_name == 'schedule' || github.event.inputs.upload_assets == 'true' }}
+      FORCE: ${{ github.event.inputs.force == 'true' }}
       # Pin basemaps-assets to an immutable commit (reproducible fonts/sprites that match
       # the pinned @protomaps/basemaps style generator). Bump deliberately, not silently.
       ASSETS_REF: 028c18f713baecad011301ff7a69acc39bcc2ae7
@@ -58,12 +69,42 @@ jobs:
           aws configure set default.region us-east-1
           aws configure set default.s3.endpoint_url "$ENDPOINT"
           # Tune multipart to stay under the 10,000-part limit for large planet files.
-          # 64 MB × 10 000 parts = 640 GB max — safely covers the ~120 GB planet.
+          # 64 MB × 10 000 parts = 640 GB max — safely covers the ~127 GB planet.
           aws configure set default.s3.multipart_chunksize 64MB
           aws configure set default.s3.multipart_threshold 64MB
 
+      - name: Resolve source build + change detection
+        run: |
+          set -o pipefail
+          URL="$PMTILES_INPUT"
+          if [ -z "$URL" ]; then
+            echo "No pmtiles_url given — auto-discovering the latest Protomaps daily build…"
+            for i in $(seq 0 14); do
+              d=$(date -u -d "-${i} day" +%Y%m%d)
+              cand="https://build.protomaps.com/${d}.pmtiles"
+              if curl -sfI "$cand" >/dev/null 2>&1; then URL="$cand"; break; fi
+            done
+          fi
+          if [ -z "$URL" ]; then echo "::error::No Protomaps build found in the last 14 days."; exit 1; fi
+          # content-length is the change signal (daily builds differ in size).
+          SRC_LEN=$(curl -sfI "$URL" | grep -i '^content-length:' | tr -d '\r' | awk '{print $2}')
+          if [ -z "$SRC_LEN" ]; then echo "::error::Could not read source content-length from the build URL."; exit 1; fi
+          LAST_LEN=""
+          if aws s3 cp "${BUCKET}/planet.pmtiles.meta" last.meta --endpoint-url "$ENDPOINT" >/dev/null 2>&1; then
+            LAST_LEN=$(tr -d '\r\n ' < last.meta)
+          fi
+          SKIP=false
+          if [ "$FORCE" != "true" ] && [ -n "$LAST_LEN" ] && [ "$SRC_LEN" = "$LAST_LEN" ]; then SKIP=true; fi
+          SAFE=$(printf '%s' "$URL" | sed -E 's#(https?://)[^/@]*@#\1#; s#\?.*$##')
+          echo "Resolved source: ${SAFE} (content-length=${SRC_LEN}; last uploaded=${LAST_LEN:-none}; skip_stream=${SKIP})"
+          {
+            echo "RESOLVED_URL=$URL"
+            echo "SRC_LEN=$SRC_LEN"
+            echo "SKIP_STREAM=$SKIP"
+          } >> "$GITHUB_ENV"
+
       - name: Upload fonts and sprites
-        if: ${{ github.event.inputs.upload_assets == 'true' }}
+        if: ${{ env.UPLOAD_ASSETS == 'true' }}
         run: |
           # Download basemaps-assets (fonts + sprites) pinned to an immutable commit (ASSETS_REF).
           curl -fL -o basemaps-assets.zip \
@@ -87,15 +128,14 @@ jobs:
           echo "Fonts and sprites uploaded."
 
       - name: Generate and upload Light style JSON
-        if: ${{ github.event.inputs.upload_assets == 'true' }}
+        if: ${{ env.UPLOAD_ASSETS == 'true' }}
         run: |
-          # Install the current @protomaps/basemaps package (successor to protomaps-themes-base).
-          # The docs at docs.protomaps.com/basemaps/maplibre use @protomaps/basemaps which
-          # exports layers() + namedFlavor(); sprite v4 is current for this package.
+          # @protomaps/basemaps is the successor to protomaps-themes-base; it exports
+          # layers() + namedFlavor(). Pinned so the style matches the pinned ASSETS_REF.
           npm install --no-save @protomaps/basemaps@5.7.2
 
-          # Generate the Light MapLibre style as JSON.
-          # Sources, glyphs, and sprite all point at the CDN paths we just uploaded.
+          # Generate the Light MapLibre style as JSON. Sources, glyphs, and sprite all
+          # point at the CDN paths we upload to.
           node - > style.light.json <<'EOF'
           const { layers, namedFlavor } = require("@protomaps/basemaps");
 
@@ -127,27 +167,35 @@ jobs:
 
           echo "style.light.json uploaded."
 
-      # Stream the PMTiles directly from the source URL without landing the whole
-      # file on the runner disk (which is ~14 GB on ubuntu-latest — far too small
-      # for a 120 GB planet). aws s3 cp reads from stdin and uses multipart upload.
-      #
-      # NOTE: A full planet build (~120 GB) is a very large transfer and may approach
-      # GitHub Actions' 6-hour job time limit. For non-production or test runs, supply
-      # a regional extract URL instead of a full planet URL.
+      # Stream the PMTiles directly from the source URL without landing the whole file on
+      # the runner disk (~14 GB on ubuntu-latest, far too small for ~127 GB). aws s3 cp
+      # reads from stdin and uses multipart upload. A full planet is a very large transfer
+      # and may approach the 6-hour job limit; a regional extract is a smaller alternative.
       - name: Stream PMTiles to DO Spaces
+        if: ${{ env.SKIP_STREAM != 'true' }}
         run: |
           set -o pipefail  # a failed/truncated curl must fail the step, not silently "succeed"
           # Log a sanitized source only — strip any userinfo + query string so a presigned /
           # credential-bearing URL is never exposed in this public repo's Actions logs.
-          SAFE_URL=$(printf '%s' "$PMTILES_URL" | sed -E 's#(https?://)[^/@]*@#\1#; s#\?.*$##')
+          SAFE_URL=$(printf '%s' "$RESOLVED_URL" | sed -E 's#(https?://)[^/@]*@#\1#; s#\?.*$##')
           echo "Streaming ${SAFE_URL} → ${BUCKET}/planet.pmtiles …"
-          curl -fL "$PMTILES_URL" \
+          curl -fL "$RESOLVED_URL" \
             | aws s3 cp - \
                 "${BUCKET}/planet.pmtiles" \
                 --acl public-read \
                 --content-type "application/octet-stream" \
                 --endpoint-url "$ENDPOINT"
-          echo "planet.pmtiles upload complete."
+          # Record the uploaded source size so a later run can skip an unchanged source.
+          printf '%s' "$SRC_LEN" | aws s3 cp - \
+            "${BUCKET}/planet.pmtiles.meta" \
+            --acl private \
+            --content-type "text/plain" \
+            --endpoint-url "$ENDPOINT"
+          echo "planet.pmtiles upload complete (source content-length=${SRC_LEN})."
+
+      - name: Source unchanged — stream skipped
+        if: ${{ env.SKIP_STREAM == 'true' }}
+        run: echo "Basemap already current (source content-length unchanged since last upload); skipping the ~127 GB stream. Use the 'force' input to override."
 
       - name: Smoke test — verify planet.pmtiles is reachable via CDN
         run: |
