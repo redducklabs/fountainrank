@@ -13,7 +13,8 @@
 #       single-registry endpoint, incompatible with this account's multiple registries);
 #       `fountainrank` is created out-of-band via /v2/registries. See below. ✅
 #   (c) sizing/cost reviewed (cheapest defaults, owner-approved). ✅
-#   (d) Spaces buckets deferred (scoped key can't create them) — see below.
+#   (d) Basemap Spaces bucket/CDN/CORS defined but GATED (var.manage_basemap_spaces,
+#       default off — current key can't create buckets); Phase 4 photos bucket still deferred.
 #   (e) 🔴 DNSSEC must be OFF on the domain or DO refuses the LE cert (422) — the
 #       owner removed the GoDaddy DS record on 2026-06-18.
 
@@ -380,9 +381,10 @@ resource "digitalocean_record" "auth" {
 # DO project-resource supported URN types are: app, database, domain, droplet,
 # floating IP, Kubernetes cluster, load balancer, Spaces bucket, volume. So we
 # assign the cluster, DB, LB, and the (pre-existing) domain — but NOT the container
-# registry or certificate (account/region-scoped, not project-assignable), and NOT
-# the Spaces buckets (deferred — see above). Assigning the domain only GROUPS it
-# under the project; it does not manage or alter its DNS records.
+# registry or certificate (account/region-scoped, not project-assignable). The basemap
+# Spaces bucket joins only when var.manage_basemap_spaces is enabled (concat below); the
+# Phase 4 photos bucket is still deferred. Assigning the domain only GROUPS it under the
+# project; it does not manage or alter its DNS records.
 # ---------------------------------------------------------------------------
 resource "digitalocean_project_resources" "main" {
   project = data.digitalocean_project.main.id
@@ -432,9 +434,9 @@ output "loadbalancer_ip" {
   value       = digitalocean_loadbalancer.main.ip
 }
 
-# NOTE: registry endpoint, Spaces bucket names, and the CDN endpoint outputs were
-# removed — the registry is managed out-of-band and the buckets are deferred (see above).
-# The registry endpoint is `registry.digitalocean.com/${DO_REGISTRY}` (a CI variable).
+# NOTE: no registry endpoint output — the registry is managed out-of-band
+# (`registry.digitalocean.com/${DO_REGISTRY}`, a CI variable). The basemap bucket/CDN
+# outputs are defined below (null until var.manage_basemap_spaces is enabled).
 
 output "certificate_id" {
   value = digitalocean_certificate.main.id
