@@ -33,7 +33,7 @@
 
 ### Task 1: Range-GET verification in `basemap-upload.yml`
 
-The current object is `NoSuchKey`-broken and every skip/verify is `HEAD`/marker/size-only. Add a range-GET probe at every gate.
+The current object is `NoSuchKey`-broken and every skip/verify is `HEAD`/marker/size-only. Add a range-GET probe at every gate. (The probe checks the response **`ContentRange`** metadata — `bytes 0-99/<total>` — and compares `${cr##*/}` (the `<total>`) to `SRC_LEN`; it does NOT trust the downloaded body length or a `HEAD` `ContentLength`. That distinction is the whole point: a `HEAD`-200 / `GET`-`NoSuchKey` object fails this probe.)
 
 **Files:** Modify `.github/workflows/basemap-upload.yml`.
 
@@ -141,6 +141,10 @@ spec:
             - "--bucket=https://fountainrank-basemap.sfo3.digitaloceanspaces.com"
             - "--public-url=https://${DOMAIN}/tiles"
             - "--port=8080"
+            # CORS is needed: www.${DOMAIN} is also served by the web ingress, but TileJSON
+            # points at the apex (${DOMAIN}/tiles) — so a www visitor's tile fetches are
+            # cross-origin. go-pmtiles' --cors sets ACAO for these; tiles from the apex itself
+            # are same-origin (the header is harmless there).
             - "--cors=https://${DOMAIN},https://www.${DOMAIN}"
           ports:
             - containerPort: 8080
@@ -188,8 +192,10 @@ metadata:
     nginx.ingress.kubernetes.io/use-regex: "true"
     nginx.ingress.kubernetes.io/rewrite-target: /$2
     nginx.ingress.kubernetes.io/use-forwarded-headers: "true"
-    nginx.ingress.kubernetes.io/configuration-snippet: |
-      more_set_headers "Cache-Control: public, max-age=86400";
+    # No Cache-Control snippet: ingress-nginx snippet annotations are disabled in this cluster
+    # (allow-snippet-annotations=false; the Helm install does not enable them). go-pmtiles sets
+    # ETag on tiles + TileJSON, so browsers revalidate (304). Adding max-age belongs to a future
+    # edge cache (Cloudflare) or an allowed global add-headers ConfigMap — out of scope here.
   labels: { app: basemap-tiles }
 spec:
   ingressClassName: nginx
@@ -217,7 +223,9 @@ And add a rollout wait (after the existing waits): `kubectl -n "$NAMESPACE" roll
 
 - [ ] **Step 3: Verify + commit.**
 
-Run: `python3 -c "import yaml,sys; list(yaml.safe_load_all(open('infra/k8s/basemap-tiles.yaml')))" ` — note `${...}` placeholders make it non-pure-YAML; instead validate after envsubst: `NAMESPACE=x DOMAIN=example.com envsubst < infra/k8s/basemap-tiles.yaml | python3 -c "import yaml,sys; list(yaml.safe_load_all(sys.stdin)); print('OK')"`.
+Render (manifests have `${...}` placeholders) then schema-validate per the infra guidance:
+`NAMESPACE=fountainrank DOMAIN=fountainrank.com envsubst < infra/k8s/basemap-tiles.yaml | kubeconform -strict -ignore-missing-schemas -`
+(fallback if kubeconform is unavailable: pipe the same envsubst output to `python3 -c "import yaml,sys; list(yaml.safe_load_all(sys.stdin)); print('OK')"`).
 ```bash
 git add infra/k8s/basemap-tiles.yaml .github/workflows/deploy.yml
 git commit -m "feat(infra): go-pmtiles tile server (DOKS) serving fountainrank.com/tiles from the public planet pmtiles"
@@ -239,20 +247,18 @@ curl -s -o /dev/null -w '%{http_code}\n' https://fountainrank.com/healthz # 200 
 
 **Files:** Modify `.github/workflows/basemap-upload.yml` (the `style.light.json` node generator).
 
-- [ ] **Step 1: Change the source from `pmtiles://` to the TileJSON URL.** In the node heredoc, replace the `protomaps` source:
+- [ ] **Step 1: Change the source from `pmtiles://` to the TileJSON URL.** Add `SITE_HOST` to that workflow step's `env:` (`SITE_HOST: fountainrank.com`, alongside the existing `CDN_HOST`). In the node heredoc, add `const SITE_HOST = process.env.SITE_HOST;` near `const CDN_HOST = …`, and set the `protomaps` source (glyphs + sprite still use `CDN_HOST`):
 
 ```js
             sources: {
               protomaps: {
                 type: "vector",
-                url: `https://${CDN_HOST_OR_DOMAIN}/tiles/planet.json`,
+                url: `https://${SITE_HOST}/tiles/planet.json`,
                 attribution:
                   '<a href="https://protomaps.com">Protomaps</a> © <a href="https://openstreetmap.org">OpenStreetMap</a>',
               },
             },
 ```
-
-Use the site domain (`fountainrank.com`), not the basemap CDN host — add a `DOMAIN`/`SITE_HOST` env to the style step (e.g. `SITE_HOST: fountainrank.com`) and reference `https://${SITE_HOST}/tiles/planet.json`. (Glyphs + sprite still point at `CDN_HOST`.)
 
 - [ ] **Step 2: Verify + commit.** YAML parse + `bash -n` the style step; confirm the generated JSON would reference `/tiles/planet.json`.
 ```bash
@@ -262,16 +268,16 @@ git commit -m "ci: basemap style source → go-pmtiles TileJSON (https://fountai
 
 ### Task 4: Web — drop the client pmtiles library
 
-**Files:** Modify `web/components/map/MapBrowser.tsx`, `web/lib/map/style.ts`, `web/package.json`, `web/Dockerfile`, `.github/workflows/deploy.yml`, `.github/workflows/security-audit.yml`.
+**Files:** Modify `web/components/map/MapBrowser.tsx`, `web/lib/map/style.ts`, `web/Dockerfile`, `.github/workflows/deploy.yml`, `.github/workflows/security-audit.yml`. (NOT `web/package.json` — see Step 3.)
 
 - [ ] **Step 1: MapBrowser.** Remove `import { Protocol } from "pmtiles";` and the `addProtocol("pmtiles", …)` / `removeProtocol("pmtiles")` calls (the style now uses a normal vector TileJSON source MapLibre fetches natively). Keep the WebGL2 pre-check / `powerPreference` / `UnsupportedHint`.
 - [ ] **Step 2: style.ts.** Remove the now-unused `pmtilesUrl` field (the style JSON carries the source). Keep `styleUrl`.
-- [ ] **Step 3: package.json.** Remove the `pmtiles` dependency.
+- [ ] **Step 3: Leave the `pmtiles` dependency in place.** Do NOT edit `web/package.json` / `pnpm-lock.yaml`: removing the dep needs a `pnpm install` to update the lockfile, which can't run in this Windows/Git-Bash checkout (and CI uses `--frozen-lockfile`, so package.json/lockfile drift fails). After Step 1 the package is unused (tree-shaken from the client bundle). Removing the dep + regenerating the lockfile is a follow-up requiring a working pnpm install.
 - [ ] **Step 4: Build-args.** Remove the unused `NEXT_PUBLIC_BASEMAP_PMTILES_URL` ARG/ENV from `web/Dockerfile` and the `--build-arg NEXT_PUBLIC_BASEMAP_PMTILES_URL=…` from `deploy.yml` + `security-audit.yml`. (Keep `NEXT_PUBLIC_BASEMAP_STYLE_URL`.)
-- [ ] **Step 5: Prettier + verify + commit.** Run Prettier on the changed web files (`node node_modules/.pnpm/prettier@3.8.4/node_modules/prettier/bin/prettier.cjs --write …`). 
+- [ ] **Step 5: Prettier + verify + commit.** Run Prettier on the changed web files (`node node_modules/.pnpm/prettier@3.8.4/node_modules/prettier/bin/prettier.cjs --write web/components/map/MapBrowser.tsx web/lib/map/style.ts`). Confirm no remaining `pmtiles`/`addProtocol`/`NEXT_PUBLIC_BASEMAP_PMTILES_URL` references via grep.
 ```bash
-git add web/components/map/MapBrowser.tsx web/lib/map/style.ts web/package.json web/Dockerfile .github/workflows/deploy.yml .github/workflows/security-audit.yml
-git commit -m "feat(web): consume go-pmtiles TileJSON vector source; drop the client-side pmtiles library + unused build-arg"
+git add web/components/map/MapBrowser.tsx web/lib/map/style.ts web/Dockerfile .github/workflows/deploy.yml .github/workflows/security-audit.yml
+git commit -m "feat(web): consume go-pmtiles TileJSON vector source; drop the client-side pmtiles usage + unused build-arg"
 ```
 
 ### Task 5: Standing-doc updates

@@ -59,13 +59,13 @@ The current object is broken (`GET → NoSuchKey`) and every existing skip/verif
 
 A **new** `basemap-tiles` Ingress (NOT edits to `fountainrank-ingress`), host `fountainrank.com`, with its own annotations:
 - `nginx.ingress.kubernetes.io/use-regex: "true"`, path `/tiles(/|$)(.*)` `pathType: ImplementationSpecific`, `nginx.ingress.kubernetes.io/rewrite-target: /$2` → `basemap-tiles-service`.
-- **`Cache-Control` scoped to this object only** (via a response-header annotation): moderate cache on tiles, short/revalidate on TileJSON. Because it's a separate Ingress, the web/API/auth/healthz routes cannot inherit tile cache headers or the rewrite.
+- **Caching:** go-pmtiles sets `ETag` (not `Cache-Control`), so browsers revalidate cheaply (conditional GET → 304). ingress-nginx **snippet annotations are disabled** in this cluster (`allow-snippet-annotations=false`), so we do **not** inject `Cache-Control` at the ingress; `max-age` caching is a future edge-cache optimization (§5). Being a separate Ingress, this object's rewrite cannot affect the web/API/auth/healthz routes.
 - Rendered by the existing `deploy.yml` `envsubst` flow.
 - **Note (ingress-nginx merge behavior):** ingress-nginx merges all Ingresses sharing host `fountainrank.com` into one nginx server, but `use-regex`/`rewrite-target` are applied per-Ingress-object to **their own** paths — so the shared object's `/` (web) path does not inherit the rewrite. The `/tiles(/|$)(.*)` regex location must take precedence over the prefix `/` for that host; §7 verifies both `/tiles/planet.json` and `/` (web) route correctly to confirm the merge is safe.
 
 ### 3.4 Web (`web/components/map/MapBrowser.tsx`, `web/lib/map/style.ts`)
 
-- Remove the `pmtiles` client: drop `import { Protocol } from "pmtiles"` + `addProtocol`/`removeProtocol`. Remove the `pmtiles` dependency from `web/package.json`.
+- Remove the `pmtiles` client **usage**: drop `import { Protocol } from "pmtiles"` + `addProtocol`/`removeProtocol`. Leave the `pmtiles` **dependency** in `web/package.json` for now (removing it needs a `pnpm-lock.yaml` regen that can't run in this checkout; it's tree-shaken once unused) — a follow-up.
 - Point the basemap style `sources.protomaps` at the go-pmtiles **TileJSON** (`{ type: "vector", url: "https://fountainrank.com/tiles/planet.json" }`).
 - Keep the WebGL2 pre-check / `powerPreference: 'default'` / graceful `UnsupportedHint`.
 
@@ -85,7 +85,7 @@ If bundled into fewer PRs, the deploy must not flip the web/style source until s
 ## 5. Caching
 
 - go-pmtiles keeps an LRU of the pmtiles header/directory; tile data is small origin range reads.
-- `Cache-Control` is set on the **tile Ingress only** (§3.3); browsers (and any future edge cache) cache tiles. TileJSON: short/revalidate; tiles: moderate max-age (planet refreshes monthly, URLs stable).
+- go-pmtiles sets `ETag` (no `Cache-Control`/`max-age`), so browsers revalidate cheaply (conditional GET → 304). We do **not** inject `Cache-Control` at the ingress (snippet annotations disabled in this cluster). `max-age` caching is deferred to a future edge cache (Cloudflare in front of `fountainrank.com`) or a global `add-headers` ConfigMap — a documented follow-up, not required for correctness.
 - **No edge CDN fronts the DOKS ingress today** (the main site is served directly). An edge cache (Cloudflare in front of `fountainrank.com`, or an in-cluster `proxy_cache`) is a **future optimization**, not required — go-pmtiles serves tiles fast directly.
 
 ## 6. Security
@@ -98,7 +98,7 @@ If bundled into fewer PRs, the deploy must not flip the web/style source until s
 
 - **Re-upload:** the workflow's origin range-GET verify passes (retrievable, total == `SRC_LEN`).
 - **go-pmtiles' read path:** since go-pmtiles' `HTTPBucket` range-reads the public origin, smoke the exact path it uses — `curl -r 0-99 https://fountainrank-basemap.sfo3.digitaloceanspaces.com/planet.pmtiles` → `206` (this is the read that go-pmtiles depends on; if it ever returns `NoSuchKey`/`200`-full, the tile server can't read the archive).
-- **Tile server (post-deploy, before web cutover):** `GET https://fountainrank.com/tiles/planet.json` → valid TileJSON whose `tiles` array contains exactly `https://fountainrank.com/tiles/planet/{z}/{x}/{y}.mvt`; fetch one URL from that array → `200`, non-empty, vector-tile content-type. Confirm `Cache-Control` present on `/tiles/planet/{z}/{x}/{y}.mvt` and **absent** on `/` (web) and `/healthz` (rewrite/cache isolation holds). Confirm `/`, `/healthz`, `api.${DOMAIN}/` still route correctly (shared ingress untouched).
+- **Tile server (post-deploy, before web cutover):** `GET https://fountainrank.com/tiles/planet.json` → valid TileJSON whose `tiles` array contains exactly `https://fountainrank.com/tiles/planet/{z}/{x}/{y}.mvt`; fetch one URL from that array → `200`, non-empty, vector-tile content-type. Confirm `ETag` present on `/tiles/planet/{z}/{x}/{y}.mvt` (go-pmtiles' revalidation header). Confirm `/`, `/healthz`, and `api.${DOMAIN}/` still route correctly (the shared ingress + the separate tile Ingress merge safely; the rewrite is isolated to `/tiles`).
 - **Browser (Chromium, headless):** map renders; network shows `…/tiles/planet/{z}/{x}/{y}.mvt` `200`s (no `pmtiles://`); map container height > 0; zero console errors.
 - CI green + Codex Loop A (spec + plan) + Loop B (PRs). Owner confirms Firefox separately (contingent on WebGL2 on that machine).
 
