@@ -100,6 +100,31 @@ variable "registry_name" {
   default     = "fountainrank"
 }
 
+# --- Phase 3a basemap Spaces (gated; see the Spaces section below) ---
+variable "manage_basemap_spaces" {
+  description = <<-EOT
+    Gate for the Phase 3a basemap Spaces bucket + CDN + CORS. Keep FALSE until a
+    bucket-create-capable Spaces key is wired as the apply job's SPACES_ACCESS_KEY/
+    SPACES_SECRET_KEY (the current key is TF-state-scoped and 403s on bucket create).
+    Then set TF_VAR_manage_basemap_spaces=true and dispatch the Terraform apply
+    workflow. Default false keeps every other apply a no-op for these resources.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "basemap_bucket_name" {
+  description = "DO Spaces bucket for the Protomaps planet .pmtiles + style/glyphs/sprite."
+  type        = string
+  default     = "fountainrank-basemap"
+}
+
+variable "basemap_cors_origins" {
+  description = "Browser origins allowed to fetch the basemap (style/glyphs/sprite/pmtiles) cross-origin."
+  type        = list(string)
+  default     = ["https://fountainrank.com", "https://www.fountainrank.com", "http://localhost:3020"]
+}
+
 variable "kubernetes_version_prefix" {
   description = "DOKS version prefix; the latest matching patch is selected. DO offers 1.33-1.36."
   type        = string
@@ -217,13 +242,48 @@ resource "digitalocean_database_db" "logto" {
 # the `DO_REGISTRY` CI variable. `var.registry_name` is retained for documentation.
 
 # ---------------------------------------------------------------------------
-# Spaces — photos + pmtiles basemap: DEFERRED (not managed here yet).
+# Spaces — Phase 3a basemap bucket + CDN + CORS (GATED), Phase 4 photos DEFERRED.
 # ---------------------------------------------------------------------------
-# These buckets are only needed in Phase 3 (pmtiles basemap) / Phase 4 (photos), and
-# the current `SPACES_ACCESS_KEY` is scoped to only the TF-state bucket (it returns
-# 403 AccessDenied when creating new buckets). They will be added back with a
-# bucket-create-capable key (or created out-of-band) when those phases land. The
-# TF-state bucket is NOT managed here either.
+# 🔴 PREREQUISITE: the current `SPACES_ACCESS_KEY` is scoped to the TF-state bucket
+# only (403 AccessDenied on bucket create). These basemap resources are gated behind
+# `var.manage_basemap_spaces` (default false) so merging them changes nothing and a
+# routine apply stays a no-op. To bring them up: wire a bucket-create-capable Spaces
+# key as the apply job's SPACES_ACCESS_KEY/SPACES_SECRET_KEY, set
+# TF_VAR_manage_basemap_spaces=true, and dispatch the Terraform apply workflow. Then
+# upload the planet .pmtiles + Light style/glyphs/sprite and set the web
+# NEXT_PUBLIC_BASEMAP_* env — see docs/setup/README.md.
+#
+# Phase 4 photos Spaces bucket remains deferred (add when Phase 4 lands). The
+# TF-state bucket is NOT managed here.
+
+resource "digitalocean_spaces_bucket" "basemap" {
+  count  = var.manage_basemap_spaces ? 1 : 0
+  name   = var.basemap_bucket_name
+  region = var.region
+  acl    = "public-read" # public basemap assets, served via the CDN
+}
+
+resource "digitalocean_spaces_bucket_cors_configuration" "basemap" {
+  count  = var.manage_basemap_spaces ? 1 : 0
+  bucket = digitalocean_spaces_bucket.basemap[0].id
+  region = var.region
+
+  # Browser fetches the style/glyphs/sprite + PMTiles byte-ranges cross-origin. PMTiles
+  # needs the Range request header allowed and the range/length response headers exposed.
+  cors_rule {
+    allowed_headers = ["*"]
+    allowed_methods = ["GET", "HEAD"]
+    allowed_origins = var.basemap_cors_origins
+    expose_headers  = ["Accept-Ranges", "Content-Range", "Content-Length", "ETag"]
+    max_age_seconds = 3600
+  }
+}
+
+resource "digitalocean_cdn" "basemap" {
+  count  = var.manage_basemap_spaces ? 1 : 0
+  origin = digitalocean_spaces_bucket.basemap[0].bucket_domain_name
+  ttl    = 86400
+}
 
 # ---------------------------------------------------------------------------
 # TLS — LB-terminated Let's Encrypt SAN cert (apex / www / api / auth)
@@ -376,4 +436,14 @@ output "loadbalancer_ip" {
 
 output "certificate_id" {
   value = digitalocean_certificate.main.id
+}
+
+# Basemap (null until var.manage_basemap_spaces = true). Feed these into the web
+# NEXT_PUBLIC_BASEMAP_* env after uploading the style/pmtiles — see docs/setup/README.md.
+output "basemap_bucket_domain" {
+  value = var.manage_basemap_spaces ? digitalocean_spaces_bucket.basemap[0].bucket_domain_name : null
+}
+
+output "basemap_cdn_endpoint" {
+  value = var.manage_basemap_spaces ? digitalocean_cdn.basemap[0].endpoint : null
 }
