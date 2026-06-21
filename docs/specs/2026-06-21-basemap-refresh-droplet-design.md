@@ -35,7 +35,7 @@ One Class-B job (`runs-on: ubuntu-latest`, `environment: production`, `permissio
 7. **Destroy the worker** — `if: always()`, by captured ID (§6).
 8. **Smoke** — origin-side verify of the new object + the existing CDN range check (§8).
 
-The marker (`planet.pmtiles.meta`) is written **by the droplet** immediately after a successful upload, so it only advances on true success; a failed transfer leaves it stale → next run retries.
+The change marker (`planet.pmtiles.meta`) is written **by the runner after a successful upload AND CDN purge** (steps 5→7 below: transfer → purge → record marker), so it only advances once the basemap is both uploaded and served fresh; a failed transfer or purge leaves it stale → next run retries. (The CDN purge also runs on asset-only refreshes, gated on `SKIP_STREAM != true OR UPLOAD_ASSETS == true`.)
 
 ## 4. The droplet transfer
 
@@ -47,7 +47,7 @@ The marker (`planet.pmtiles.meta`) is written **by the droplet** immediately aft
   3. **Resumable download:** `curl -C - --retry 8 --retry-delay 15 --retry-all-errors -fL -o /root/planet.pmtiles "$URL"` (`-C -` resumes the partial file across retries; covers the HTTP/2 reset).
   4. **Integrity:** verify the downloaded byte count equals `SRC_LEN`; abort otherwise. (Content-Length detects truncation, not a same-length content swap; Protomaps publishes no strong planet checksum we rely on — documented limitation.) The skip **marker stays the bare content-length** (consistent with the #25 resolve/skip read) — no ETag is stored in it; any ETag is used only for the post-upload origin verify logging in §8, not the change-detection marker.
   5. **Upload intra-region:** `aws s3 cp /root/planet.pmtiles s3://fountainrank-basemap/planet.pmtiles --acl public-read --content-type application/octet-stream --endpoint-url https://sfo3.digitaloceanspaces.com` (file-based multipart → automatic per-part retry).
-  6. **Write the marker:** `printf '%s' "$SRC_LEN" | aws s3 cp - s3://fountainrank-basemap/planet.pmtiles.meta --acl private …`.
+- The droplet does **not** write the change marker. The runner writes it (§8) only after the CDN purge succeeds, so a failed purge can't strand a stale CDN behind an advanced marker.
 - Any remote failure → SSH returns non-zero → the step fails → cleanup still runs (§6) → marker unchanged → next run retries.
 
 ## 5. Credentials + SSH (the security crux — concrete pattern, not an example)

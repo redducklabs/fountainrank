@@ -195,11 +195,8 @@ Transfer (the security-critical step — copy verbatim; secrets via `$VAR`, neve
           # Intra-region multipart upload (automatic per-part retry).
           aws s3 cp /root/planet.pmtiles "${BUCKET}/planet.pmtiles" \
             --acl public-read --content-type application/octet-stream --endpoint-url "$ENDPOINT"
-          # Marker = bare content-length (matches the #25 skip read). Written only on success.
-          printf '%s' "$SRC_LEN" | aws s3 cp - "${BUCKET}/planet.pmtiles.meta" \
-            --acl private --content-type text/plain --endpoint-url "$ENDPOINT"
           unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
-          echo "droplet transfer + marker complete"
+          echo "droplet pmtiles upload complete"
           REMOTE
           } | $SSH 'bash -s'
 ```
@@ -207,19 +204,38 @@ Transfer (the security-critical step — copy verbatim; secrets via `$VAR`, neve
 CDN purge:
 
 ```yaml
+      # Runs when pmtiles OR assets were (re)uploaded — so asset-only refreshes purge too.
       - name: Purge CDN for refreshed objects
+        if: ${{ env.SKIP_STREAM != 'true' || env.UPLOAD_ASSETS == 'true' }}
+        run: |
+          set -euo pipefail
+          # grep may legitimately find no CDN — keep it from killing the step under pipefail.
+          CDN_ID=$(doctl compute cdn list --format ID,Origin --no-header | { grep 'fountainrank-basemap' || true; } | awk '{print $1}' | head -1)
+          if [ -z "$CDN_ID" ]; then echo "::warning::basemap CDN not found; skipping purge"; exit 0; fi
+          # doctl cdn flush --files takes ABSOLUTE object paths (leading slash); no --files = flush all.
+          # Retry briefly; the marker is written only AFTER this succeeds.
+          for attempt in 1 2 3; do
+            if [ "${UPLOAD_ASSETS}" = "true" ]; then
+              doctl compute cdn flush "$CDN_ID" && break # assets (+maybe pmtiles) → flush entire cache
+            else
+              doctl compute cdn flush "$CDN_ID" --files /planet.pmtiles && break
+            fi
+            if [ "$attempt" = 3 ]; then echo "::error::CDN flush failed after retries"; exit 1; fi
+            echo "flush attempt $attempt failed; retrying…"; sleep 10
+          done
+          echo "CDN purged."
+```
+
+Then, AFTER the purge, the change marker is written on the runner — so it advances only after a successful upload AND purge (a failed purge leaves it stale → next run retries):
+
+```yaml
+      - name: Record change marker
         if: ${{ env.SKIP_STREAM != 'true' }}
         run: |
           set -euo pipefail
-          CDN_ID=$(doctl compute cdn list --format ID,Origin --no-header | grep 'fountainrank-basemap' | awk '{print $1}' | head -1)
-          if [ -z "$CDN_ID" ]; then echo "::warning::basemap CDN not found; skipping purge"; exit 0; fi
-          # doctl cdn flush --files takes ABSOLUTE object paths (leading slash); no --files = flush all.
-          if [ "${UPLOAD_ASSETS}" = "true" ]; then
-            doctl compute cdn flush "$CDN_ID" # assets + pmtiles refreshed → flush entire cache
-          else
-            doctl compute cdn flush "$CDN_ID" --files /planet.pmtiles
-          fi
-          echo "CDN purged."
+          printf '%s' "$SRC_LEN" | aws s3 cp - "${BUCKET}/planet.pmtiles.meta" \
+            --acl private --content-type "text/plain" --endpoint-url "$ENDPOINT"
+          echo "marker recorded (content-length=${SRC_LEN})."
 ```
 
 - [ ] **Step 4: Add the always-run cleanup** — insert after the "Source unchanged — stream skipped" step (and before the smoke), so it runs regardless of success/failure/cancel. (Residual: if `doctl create --wait` creates the droplet but exits non-zero before printing the ID, `DROPLET_ID` is unset and this step can't delete it — the daily janitor in Task 3 is the backstop that reaps it by age.)
