@@ -37,8 +37,42 @@ Optional improvement to discuss: set a shorter `Cache-Control` on the style uplo
 - **1 minified console error** at ~564ms on load (`_next/static/chunks/…js:0`, no text). The map renders regardless. Worth a look with sourcemaps.
 - **Process note:** to recover the test browser I ran a blanket `taskkill firefox.exe`, which may have closed your own Firefox windows — session-restore should recover tabs. Won't blanket-kill again.
 
-## Tasks
+## Verified LIVE at handoff (2026-06-21)
 
-- Basemap NoSuchKey break — FIXED (durable range-readable object).
-- go-pmtiles tile server — DEPLOYED + serving; web cut over (style → TileJSON).
-- Follow-up: Deploy B (drop pmtiles client from the running web) after the 24h style cache propagates.
+- `main` HEAD = **`399e19f`**. All Phase 1–3 PR branches merged + **deleted** on origin (no basemap branches remain).
+- Latest `deploy.yml` run = **27898588060** (sha `b14fa26` = the OLD web). **Deploy B has NOT run.**
+- Probes: `planet.pmtiles` origin range → **206**; `fountainrank.com/tiles/planet.json` → **200**; `…/tiles/planet/10/301/385.mvt` → **200**; `fountainrank.com/` → **200**.
+- `style.light.json`.sources.protomaps.url = `https://fountainrank.com/tiles/planet.json`; `cache-control: max-age=86400`, `last-modified: Sun, 21 Jun 2026 08:31:36 GMT` → **Deploy B becomes safe after 2026-06-22 08:31 UTC.**
+
+## How to resume (fresh conversation)
+
+**1. Re-confirm production is still good (copy-paste):**
+```bash
+curl -s -o /dev/null -w "origin range: %{http_code}\n" -r 0-99 "https://fountainrank-basemap.sfo3.digitaloceanspaces.com/planet.pmtiles"   # 206
+curl -s -o /dev/null -w "tilejson:    %{http_code}\n" "https://fountainrank.com/tiles/planet.json"                                          # 200
+curl -s -o /dev/null -w "tile:        %{http_code}\n" "https://fountainrank.com/tiles/planet/10/301/385.mvt"                                # 200
+curl -s "https://fountainrank-basemap.sfo3.cdn.digitaloceanspaces.com/style.light.json" \
+  | python3 -c "import json,sys;print(json.load(sys.stdin)['sources']['protomaps']['url'])"                                                 # .../tiles/planet.json
+```
+
+**2. Has Deploy B already happened?** `gh run list --workflow=deploy.yml -L 5`. If the newest successful run is still **27898588060** (sha `b14fa26`), Deploy B has NOT run (old web is live). Any newer successful `deploy.yml` run (built after the #37 merge `5adf6a9`) = Deploy B done.
+
+**3. To do Deploy B** (only after **2026-06-22 08:31 UTC**) — the Phase-3 web is already on `main`, so this is a deploy of merged code, **no PR/code change needed**:
+```bash
+gh workflow run deploy.yml          # rebuilds + deploys the Phase-3 web (pmtiles client dropped)
+# then: gh run watch <id>  — the basemap-tiles rollout gate (/planet.json readiness) must stay green
+```
+After it lands, hard-refresh `fountainrank.com` in **Chrome** (not Firefox — see memory: owner's Firefox lacks WebGL2) and confirm DevTools → Network shows `…/tiles/planet/{z}/{x}/{y}.mvt` 200s and **no** `planet.pmtiles`. A returning user who sees a broken map immediately after Deploy B just has a pre-cutover cached style → hard refresh fixes it.
+
+**4. Do NOT re-dispatch `basemap-upload`** unless you intend to re-upload the planet (a ~127 GB droplet operation). The style + object are already correct.
+
+**Key artifacts:** spec `docs/specs/2026-06-21-basemap-tile-server-design.md` · plan `docs/plans/2026-06-21-basemap-tile-server.md` · manifest `infra/k8s/basemap-tiles.yaml` · workflows `.github/workflows/{basemap-upload,deploy,security-audit}.yml` · Codex reviews under `temp/codex-reviews/` · PRs #35/#36/#37 (merged). The `pmtiles` dep stays in `web/package.json` (tree-shaken; removing needs a lockfile regen — a separate follow-up). `AVD-KSV-0125` is suppressed in `.trivyignore`.
+
+**Process reminder:** any NEW code change still follows branch → PR → CI green + Codex `VERDICT: APPROVED` + all PR comments addressed → squash-merge (see `CLAUDE.md` + `claude_help/codex-review-process.md`). Deploy B alone needs none of that — it deploys already-merged code.
+
+## Tasks (mirrored in the task list)
+
+- ✅ Basemap `NoSuchKey` break — FIXED (durable range-readable object; origin 206).
+- ✅ go-pmtiles tile server — DEPLOYED + serving; web cut over (style → TileJSON); map renders.
+- ⏳ **Deploy B** (task #13): deploy the Phase-3 web (drops the pmtiles client) after the 24h style cache propagates (≥ 2026-06-22 08:31 UTC). Optionally first shorten the style `Cache-Control` in `basemap-upload.yml` for faster future cutovers (policy change — discuss).
+- 🔎 Investigate the 1 minified console error at load (map renders regardless).
