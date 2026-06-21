@@ -1,0 +1,137 @@
+name: OSM Import
+
+# Operator-triggered OSM drinking-water import (spec: docs/specs/2026-06-21-osm-fountain-ingestion-design.md,
+# runbook: docs/runbooks/osm-fountain-import.md). Fetches an Overpass extract for a bbox, converts
+# it to the importer's GeoJSON shape, streams it into the running backend pod, and runs the
+# already-deployed importer CLI there (the pod holds the prod DATABASE_URL — same pattern as the
+# deploy's migration step). dry_run defaults TRUE: nothing is written to `fountains` unless an
+# operator explicitly unticks it. Bounded bbox + Overpass is fine for cities/regions; switch to a
+# Geofabrik/PBF source for production-scale (US/world) extents.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bbox:
+        description: "Overpass bbox: south,west,north,east (lat,lon decimals)"
+        required: true
+      scope_id:
+        description: "Canonical scope id, e.g. us/ca/san-diego (used for scope-limited removal)"
+        required: true
+      dataset:
+        description: "Non-secret dataset id, e.g. overpass:san-diego (NEVER a URL)"
+        required: true
+      label:
+        description: "Human label, e.g. San Diego"
+        required: true
+      dry_run:
+        description: "Dry run (no writes to fountains; only staging run + candidates)"
+        type: boolean
+        default: true
+
+concurrency:
+  group: osm-import-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CLUSTER_NAME: fountainrank-production-cluster
+  NAMESPACE: fountainrank
+
+jobs:
+  import:
+    name: OSM import (operator)
+    runs-on: ubuntu-latest # Class B: handles cluster credentials
+    environment: production
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Validate + sanitize bbox
+        env:
+          BBOX_IN: ${{ github.event.inputs.bbox }}
+        run: |
+          # Reject any newline/CR: a multiline value could pass a line-based check and inject
+          # extra Overpass statements when interpolated into the query (workflow_dispatch is
+          # API-callable, so don't rely on the UI). Then parse into 4 numeric fields,
+          # validate range + order + a max extent, and RECONSTRUCT the value so only the
+          # validated numbers are ever interpolated downstream.
+          case "$BBOX_IN" in
+            *$'\n'* | *$'\r'*) echo "::error::bbox must be a single line"; exit 1 ;;
+          esac
+          IFS=',' read -r S W N E EXTRA <<EOF
+          $BBOX_IN
+          EOF
+          if [ -n "$EXTRA" ]; then echo "::error::bbox must have exactly 4 fields (south,west,north,east)"; exit 1; fi
+          for v in "$S" "$W" "$N" "$E"; do
+            if ! printf '%s' "$v" | grep -Eq '^-?[0-9]+(\.[0-9]+)?$'; then
+              echo "::error::bbox field '$v' is not a decimal"; exit 1
+            fi
+          done
+          awk -v s="$S" -v w="$W" -v n="$N" -v e="$E" 'BEGIN{
+            if (s < -90 || s > 90 || n < -90 || n > 90 || w < -180 || w > 180 || e < -180 || e > 180) exit 1;
+            if (s >= n || w >= e) exit 2;
+            if (n - s > 6 || e - w > 6) exit 3;
+          }' || { echo "::error::bbox failed range/order/extent (each side <= 6 deg; use a Geofabrik/PBF source for larger extents)"; exit 1; }
+          echo "BBOX=$S,$W,$N,$E" >> "$GITHUB_ENV"
+
+      - name: Fetch Overpass extract
+        run: |
+          # $BBOX is the SANITIZED value from the previous step (via GITHUB_ENV), not the raw input.
+          cat > query.txt <<EOF
+          [out:json][timeout:240];
+          (
+            node["amenity"="drinking_water"]($BBOX);
+            node["man_made"="water_tap"]["drinking_water"="yes"]($BBOX);
+            node["amenity"="fountain"]["drinking_water"="yes"]($BBOX);
+            way["amenity"="drinking_water"]($BBOX);
+            way["man_made"="water_tap"]["drinking_water"="yes"]($BBOX);
+            relation["amenity"="drinking_water"]($BBOX);
+            relation["man_made"="water_tap"]["drinking_water"="yes"]($BBOX);
+            relation["amenity"="fountain"]["drinking_water"="yes"]($BBOX);
+          );
+          out center;
+          EOF
+          curl -sS --fail -A "fountainrank-osm-import/1.0 (https://fountainrank.com)" \
+            -H "Accept: application/json" \
+            -X POST --data-urlencode "data@query.txt" \
+            "https://overpass-api.de/api/interpreter" -o raw.json
+          echo "raw bytes: $(wc -c < raw.json)"
+
+      - name: Convert to GeoJSON
+        run: |
+          n=$(python3 backend/app/imports/overpass.py raw.json import.geojson)
+          echo "geojson features: $n"
+          if [ "$n" -eq 0 ]; then echo "::error::no features returned for this bbox"; exit 1; fi
+
+      - uses: digitalocean/action-doctl@v2.5.2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: Save kubeconfig
+        run: doctl kubernetes cluster kubeconfig save "$CLUSTER_NAME"
+
+      - name: Run importer in backend pod
+        env:
+          SCOPE_ID: ${{ github.event.inputs.scope_id }}
+          DATASET: ${{ github.event.inputs.dataset }}
+          LABEL: ${{ github.event.inputs.label }}
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
+        run: |
+          POD="$(kubectl -n "$NAMESPACE" get pod -l app=fountainrank-backend \
+            --field-selector=status.phase=Running \
+            -o jsonpath='{.items[0].metadata.name}')"
+          if [ -z "$POD" ]; then echo "::error::no Running backend pod found"; exit 1; fi
+          echo "backend pod: $POD"
+          # Stream the GeoJSON into the pod (avoids `kubectl cp`'s tar dependency).
+          kubectl -n "$NAMESPACE" exec -i "$POD" -- sh -c 'cat > /tmp/osm-import.geojson' < import.geojson
+          DRY=""
+          if [ "$DRY_RUN" = "true" ]; then DRY="--dry-run"; fi
+          BUILD_ID="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
+          echo "::group::importer (dry_run=$DRY_RUN)"
+          kubectl -n "$NAMESPACE" exec "$POD" -- \
+            python -m app.imports.cli --path /tmp/osm-import.geojson \
+            --scope-id "$SCOPE_ID" --dataset "$DATASET" --build-id "$BUILD_ID" \
+            --label "$LABEL" $DRY
+          echo "::endgroup::"
+          kubectl -n "$NAMESPACE" exec "$POD" -- rm -f /tmp/osm-import.geojson
