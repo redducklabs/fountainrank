@@ -179,6 +179,8 @@ Transfer (the security-critical step — copy verbatim; secrets via `$VAR`, neve
           # Ubuntu 24.04 dropped the apt 'awscli' package — install AWS CLI v2 (pinned) from the official zip.
           apt-get update -qq && apt-get install -yqq curl unzip ca-certificates >/dev/null
           curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-2.35.9.zip" -o /tmp/awscliv2.zip
+          # Verify installer integrity before executing (pinned SHA256 of 2.35.9; supply-chain).
+          echo "b331d4822a22612915f22f89cfd0e07895c7b6837999fca8fb9f6c2a370a54c0  /tmp/awscliv2.zip" | sha256sum -c -
           unzip -q /tmp/awscliv2.zip -d /tmp
           /tmp/aws/install
           export PATH=/usr/local/bin:$PATH
