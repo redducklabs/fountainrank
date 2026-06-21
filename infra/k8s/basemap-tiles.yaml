@@ -1,0 +1,124 @@
+# go-pmtiles tile server: range-reads the PUBLIC planet.pmtiles from DO Spaces (server-side,
+# no credentials) and serves z/x/y vector tiles + TileJSON at fountainrank.com/tiles/.
+# Replaces the fragile client-side pmtiles:// range-against-CDN approach. See
+# docs/specs/2026-06-21-basemap-tile-server-design.md.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: basemap-tiles
+  namespace: ${NAMESPACE}
+  labels:
+    app: basemap-tiles
+    component: basemap-tiles
+spec:
+  replicas: 1
+  # Small-cluster recreate-in-place (mirrors backend/web): tear the old pod down before the new
+  # one so a single node without surge headroom doesn't deadlock the rollout.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: basemap-tiles
+  template:
+    metadata:
+      labels:
+        app: basemap-tiles
+        component: basemap-tiles
+    spec:
+      containers:
+        - name: go-pmtiles
+          # Public image (Docker Hub) → no imagePullSecrets. Pinned.
+          image: protomaps/go-pmtiles:v1.30.3
+          # ENTRYPOINT is /go-pmtiles; args form the `serve` command. The HTTP bucket form reads
+          # the already-public object over server-side range requests — NO credentials/secret.
+          args:
+            - serve
+            - "/"
+            - "--bucket=https://fountainrank-basemap.sfo3.digitaloceanspaces.com"
+            - "--public-url=https://${DOMAIN}/tiles"
+            - "--port=8080"
+            # CORS: www.${DOMAIN} renders the same map but TileJSON points at the apex /tiles,
+            # so www tile fetches are cross-origin. (Apex fetches are same-origin; header harmless.)
+            - "--cors=https://${DOMAIN},https://www.${DOMAIN}"
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "50m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          # /planet.json forces a range-read of the archive header from Spaces — readiness/startup
+          # then catch a missing/broken object or bad bucket URL (not just "process listening").
+          startupProbe:
+            httpGet:
+              path: /planet.json
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /planet.json
+              port: 8080
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: basemap-tiles-service
+  namespace: ${NAMESPACE}
+  labels:
+    app: basemap-tiles
+spec:
+  selector:
+    app: basemap-tiles
+  ports:
+    - port: 80
+      targetPort: 8080
+      protocol: TCP
+  type: ClusterIP
+---
+# SEPARATE Ingress — the regex/rewrite annotations are Ingress-object-scoped, so they must NOT
+# live on the shared fountainrank-ingress (they'd affect web/API/auth/healthz). ingress-nginx
+# merges this with the shared object for host fountainrank.com, applying the rewrite only to the
+# /tiles paths. No Cache-Control snippet (allow-snippet-annotations is off in this cluster);
+# go-pmtiles sets ETag → browsers revalidate (304). max-age caching is a future edge-cache concern.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: basemap-tiles
+  namespace: ${NAMESPACE}
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    nginx.ingress.kubernetes.io/use-forwarded-headers: "true"
+  labels:
+    app: basemap-tiles
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: ${DOMAIN}
+      http:
+        paths:
+          # /tiles/planet.json -> /planet.json ; /tiles/planet/3/2/3.mvt -> /planet/3/2/3.mvt
+          - path: /tiles(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: basemap-tiles-service
+                port:
+                  number: 80
