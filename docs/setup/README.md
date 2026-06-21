@@ -134,8 +134,8 @@ curl -i -X OPTIONS 'https://api.fountainrank.com/api/v1/fountains/bbox' \
   -H 'Access-Control-Request-Headers: x-request-id'
 # Expected: 200 or 204 with Access-Control-Allow-Origin: https://fountainrank.com
 
-# Actual GET (bbox intentionally large — returns up to max_results, not the full DB)
-curl -i 'https://api.fountainrank.com/api/v1/fountains/bbox?min_lat=-90&min_lng=-180&max_lat=90&max_lng=180' \
+# Actual GET (use a small REGIONAL bbox — a whole-globe bbox currently 500s, see issue #20)
+curl -i 'https://api.fountainrank.com/api/v1/fountains/bbox?min_lat=37.70&min_lng=-122.52&max_lat=37.81&max_lng=-122.36' \
   -H 'Origin: https://fountainrank.com' -H 'X-Request-ID: smoke-1'
 # Expected: 200 with Access-Control-Allow-Origin: https://fountainrank.com
 ```
@@ -148,9 +148,69 @@ curl -i -X OPTIONS 'http://localhost:3021/api/v1/fountains/bbox' \
   -H 'Access-Control-Request-Method: GET' \
   -H 'Access-Control-Request-Headers: x-request-id'
 
-curl -i 'http://localhost:3021/api/v1/fountains/bbox?min_lat=-90&min_lng=-180&max_lat=90&max_lng=180' \
+curl -i 'http://localhost:3021/api/v1/fountains/bbox?min_lat=37.70&min_lng=-122.52&max_lat=37.81&max_lng=-122.36' \
   -H 'Origin: http://localhost:3020' -H 'X-Request-ID: smoke-1'
 ```
+
+---
+
+## Basemap hosting (Protomaps planet on Spaces + CDN) — Phase 3a
+
+The web map renders a self-hosted Protomaps **Light** basemap. The code is merged; the map
+only renders tiles once this is hosted. Terraform manages the bucket + CDN + CORS (gated
+behind `var.manage_basemap_spaces`, default off); the upload is a manual owner step.
+
+**Prerequisite — a bucket-create-capable Spaces key.** The current `SPACES_ACCESS_KEY`/
+`SPACES_SECRET_KEY` (`production` env) are scoped to the TF-state bucket and 403 on bucket
+create. Broaden that key or mint a new Spaces key (DO console → API → Spaces Keys) and
+update the `production` env secrets the Terraform **apply** job uses. (Confirm the TF-state
+S3 backend still authenticates with the updated key.)
+
+**1. Provision bucket + CDN + CORS (Terraform, CI only):** with the create-capable key set,
+dispatch the **Terraform** workflow (`workflow_dispatch`, `action=apply`) with
+`TF_VAR_manage_basemap_spaces=true` for that run. This creates `fountainrank-basemap`
+(sfo3, public-read), its CORS config (GET/HEAD, `Range` allowed, `Accept-Ranges`/
+`Content-Range`/`Content-Length`/`ETag` exposed, origins = the web origins), and a CDN
+endpoint. Record the `basemap_cdn_endpoint` + `basemap_bucket_domain` outputs. Never apply
+locally.
+
+**2. Build + upload the basemap (one-time, ~120 GB):**
+- Download a Protomaps daily-build **planet `.pmtiles`** from `maps.protomaps.com/builds`
+  (do **not** hotlink — copy to our bucket). Get the Protomaps **Light** style JSON + its
+  glyphs + sprite. Edit the style JSON so its vector source is
+  `pmtiles://<NEXT_PUBLIC_BASEMAP_PMTILES_URL>` and glyphs/sprite point at the CDN paths.
+- Upload with **public-read** ACL via the create-capable key (aws-cli/s3cmd at the DO
+  endpoint):
+  ```bash
+  aws s3 cp planet.pmtiles  s3://fountainrank-basemap/planet.pmtiles  --acl public-read --endpoint-url https://sfo3.digitaloceanspaces.com
+  aws s3 cp style.light.json s3://fountainrank-basemap/style.light.json --acl public-read --endpoint-url https://sfo3.digitaloceanspaces.com
+  aws s3 cp glyphs/ s3://fountainrank-basemap/glyphs/ --recursive --acl public-read --endpoint-url https://sfo3.digitaloceanspaces.com
+  aws s3 cp sprite/ s3://fountainrank-basemap/sprite/ --recursive --acl public-read --endpoint-url https://sfo3.digitaloceanspaces.com
+  ```
+
+**3. Point the web app at it** — set the web deploy env (GitHub Environment variables /
+k8s ConfigMap; names only, never a `.env` file):
+```
+NEXT_PUBLIC_BASEMAP_STYLE_URL=https://<basemap_cdn_endpoint>/style.light.json
+NEXT_PUBLIC_BASEMAP_PMTILES_URL=https://<basemap_cdn_endpoint>/planet.pmtiles
+```
+`web/lib/map/style.ts` reads these; `MapBrowser` loads the style URL (the style embeds the
+`pmtiles://` source).
+
+**4. Post-deploy smoke** — confirm a cross-origin range request returns 206 with the range
+headers exposed:
+```bash
+curl -i -H 'Origin: https://fountainrank.com' -H 'Range: bytes=0-99' \
+  'https://<basemap_cdn_endpoint>/planet.pmtiles'
+# Expect: 206 Partial Content; Access-Control-Allow-Origin: https://fountainrank.com;
+#         Accept-Ranges: bytes; Content-Range present.
+```
+Then load `https://fountainrank.com/` and confirm tiles render (pins appear once fountain
+data exists).
+
+**Pin assets** are already committed (`web/public/pins/*.png`, derived from
+`docs/logos/512-pin.png` via `scripts/gen-pin-assets.py`) — swap for bespoke art anytime
+(referenced by name in `web/lib/map/style.ts`, no code change).
 
 ---
 
