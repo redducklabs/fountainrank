@@ -59,6 +59,25 @@ async def get_or_create_user(
     ).scalar_one()
 
 
+async def _reconcile_admin(session: AsyncSession, user: User, sub: str, settings: Settings) -> User:
+    """Authoritative, request-time admin reconciliation: User.is_admin tracks
+    `sub in settings.admin_subjects` (exact, case-sensitive). Write-if-changed only —
+    steady state issues no write. Grant and demotion both take effect on the next
+    authenticated request. The user row is already provisioned; this independent update
+    is committed here so /me and admin gates read a fresh value."""
+    desired = sub in settings.admin_subjects
+    if user.is_admin != desired:
+        previous = user.is_admin
+        user.is_admin = desired
+        await session.commit()
+        await session.refresh(user)
+        logger.info(
+            "admin status changed",
+            extra={"sub": sub, "previous": previous, "current": desired},
+        )
+    return user
+
+
 async def get_current_user(
     authorization: str | None = Header(default=None),
     x_dev_user: str | None = Header(default=None, alias="X-Dev-User"),
@@ -96,16 +115,18 @@ async def get_current_user(
         logger.debug("authenticated request", extra={"sub": sub})
         email = claims.get("email") or f"{sub}@users.noreply.fountainrank.com"
         display_name = claims.get("name") or claims.get("username") or sub
-        return await get_or_create_user(
+        user = await get_or_create_user(
             session, logto_user_id=sub, email=email, display_name=display_name
         )
+        return await _reconcile_admin(session, user, sub, settings)
 
     if settings.dev_auth_enabled and x_dev_user:
-        return await get_or_create_user(
+        user = await get_or_create_user(
             session,
             logto_user_id=x_dev_user,
             email=x_dev_email or f"{x_dev_user}@dev.local",
             display_name=x_dev_name or x_dev_user,
         )
+        return await _reconcile_admin(session, user, x_dev_user, settings)
 
     raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="authentication required")

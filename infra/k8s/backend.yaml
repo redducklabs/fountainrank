@@ -68,6 +68,10 @@ spec:
               value: "${GOOGLE_DELEGATED_USER}"
             - name: FROM_EMAIL
               value: "${FROM_EMAIL}"
+            # Logto subjects granted admin (request-time reconciliation, slice 6b-1).
+            # Opaque ids, not secrets — from the ADMIN_SUBJECTS GitHub Actions variable.
+            - name: ADMIN_SUBJECTS
+              value: "${ADMIN_SUBJECTS}"
           volumeMounts:
             - name: db-ca
               mountPath: /var/run/secrets/fountainrank

@@ -11,6 +11,7 @@ import {
   attributeValueLabel,
   attributeDisplay,
   formatCategory,
+  conditionStatusLabel,
 } from "./format";
 describe("formatPill", () => {
   it("rounds 1dp", () => expect(formatPill(4.26)).toBe("★ 4.3"));
@@ -168,4 +169,20 @@ describe("formatCategory", () => {
   it("accessibility", () => expect(formatCategory("accessibility")).toBe("Accessibility"));
   it("access", () => expect(formatCategory("access")).toBe("Access"));
   it("unknown key title-cased", () => expect(formatCategory("future_kind")).toBe("Future kind"));
+});
+
+describe("conditionStatusLabel", () => {
+  it("maps the known statuses", () => {
+    expect(conditionStatusLabel("working")).toBe("It's working");
+    expect(conditionStatusLabel("broken")).toBe("Broken / not working");
+    expect(conditionStatusLabel("low_pressure")).toBe("Low water pressure");
+    expect(conditionStatusLabel("dirty")).toBe("Dirty");
+    expect(conditionStatusLabel("bad_taste")).toBe("Bad taste");
+    expect(conditionStatusLabel("blocked")).toBe("Blocked / clogged");
+    expect(conditionStatusLabel("seasonal_unavailable")).toBe("Shut off for the season");
+    expect(conditionStatusLabel("hours_limited")).toBe("Only available certain hours");
+  });
+  it("title-cases an unknown status generically", () => {
+    expect(conditionStatusLabel("some_new_status")).toBe("Some new status");
+  });
 });

@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const getDetail = vi.fn();
 const getNotes = vi.fn();
+const getViewerFn = vi.fn();
 const logFn = vi.fn();
 const notFoundFn = vi.fn(() => {
   throw new Error("NEXT_NOT_FOUND");
@@ -14,6 +15,9 @@ vi.mock("../../../lib/fountains", () => ({
   getFountainDetailServer: (...a: unknown[]) => getDetail(...a),
   getFountainNotesServer: (...a: unknown[]) => getNotes(...a),
 }));
+vi.mock("../../../lib/server/viewer", () => ({
+  getViewer: (...a: unknown[]) => getViewerFn(...a),
+}));
 vi.mock("../../../lib/server/log", () => ({ log: (...a: unknown[]) => logFn(...a) }));
 vi.mock("next/navigation", () => ({ notFound: () => notFoundFn() }));
 vi.mock("next/link", () => ({
@@ -22,9 +26,14 @@ vi.mock("next/link", () => ({
   ),
 }));
 vi.mock("../../../components/fountain/FountainDetail", () => ({
-  FountainDetail: ({ notes }: { notes: unknown[] }) => (
-    <div data-testid="detail">notes:{notes.length}</div>
+  FountainDetail: ({ notes, isAuthenticated }: { notes: unknown[]; isAuthenticated: boolean }) => (
+    <div data-testid="detail" data-authed={String(isAuthenticated)}>
+      notes:{notes.length}
+    </div>
   ),
+}));
+vi.mock("../../../components/SiteHeader", () => ({
+  SiteHeader: () => <div data-testid="site-header" />,
 }));
 
 import FountainPage from "./page";
@@ -34,8 +43,10 @@ const params = Promise.resolve({ id: "f1" });
 beforeEach(() => {
   getDetail.mockReset();
   getNotes.mockReset();
+  getViewerFn.mockReset();
   logFn.mockReset();
   notFoundFn.mockClear();
+  getViewerFn.mockResolvedValue({ state: "anonymous" });
 });
 
 describe("FountainPage route (standalone)", () => {
@@ -68,5 +79,24 @@ describe("FountainPage route (standalone)", () => {
     getNotes.mockResolvedValue({ data: undefined, status: 0 });
     render(await FountainPage({ params }));
     expect(screen.getByText(/Couldn.t load this fountain/i)).toBeInTheDocument();
+  });
+  it("passes isAuthenticated=true when viewer.state is authed", async () => {
+    getDetail.mockResolvedValue({ data: { id: "f1" }, status: 200 });
+    getNotes.mockResolvedValue({ data: [], status: 200 });
+    getViewerFn.mockResolvedValue({
+      state: "authed",
+      displayName: "Sam",
+      avatarUrl: null,
+      isAdmin: false,
+    });
+    render(await FountainPage({ params }));
+    expect(screen.getByTestId("detail")).toHaveAttribute("data-authed", "true");
+  });
+  it("passes isAuthenticated=false when viewer.state is anonymous", async () => {
+    getDetail.mockResolvedValue({ data: { id: "f1" }, status: 200 });
+    getNotes.mockResolvedValue({ data: [], status: 200 });
+    getViewerFn.mockResolvedValue({ state: "anonymous" });
+    render(await FountainPage({ params }));
+    expect(screen.getByTestId("detail")).toHaveAttribute("data-authed", "false");
   });
 });

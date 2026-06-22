@@ -1,0 +1,132 @@
+"use server";
+import { revalidatePath } from "next/cache";
+import type { components } from "@fountainrank/api-client";
+import { getAuthedApiClientForAction } from "../../lib/server/api";
+import { log } from "../../lib/server/log";
+
+type ConditionStatus = components["schemas"]["ConditionReportRequest"]["status"];
+export type ContributeError = "unauthenticated" | "validation" | "not_found" | "server";
+export type ActionResult = { ok: true } | { ok: false; error: ContributeError };
+
+const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+const CONDITION_STATUSES: ReadonlySet<string> = new Set([
+  "working",
+  "broken",
+  "low_pressure",
+  "dirty",
+  "bad_taste",
+  "blocked",
+  "seasonal_unavailable",
+  "hours_limited",
+]);
+
+function fail(error: ContributeError): ActionResult {
+  return { ok: false, error };
+}
+function mapStatus(status: number): ActionResult {
+  if (status >= 200 && status < 300) return { ok: true };
+  if (status === 401) return fail("unauthenticated");
+  if (status === 404) return fail("not_found");
+  if (status === 422) return fail("validation");
+  return fail("server");
+}
+
+async function run(
+  fountainId: string,
+  action: string,
+  call: (
+    client: Awaited<ReturnType<typeof getAuthedApiClientForAction>>,
+  ) => Promise<{ response?: { status: number } }>,
+): Promise<ActionResult> {
+  const requestId = crypto.randomUUID();
+  // Split the two failure classes: a token/session failure (getAccessToken throws) is
+  // "unauthenticated"; a POST/network failure (backend down, fetch threw) is "server".
+  // Collapsing both into "unauthenticated" would tell users to sign in again when the
+  // backend is merely down.
+  let client: Awaited<ReturnType<typeof getAuthedApiClientForAction>>;
+  try {
+    client = await getAuthedApiClientForAction(requestId);
+  } catch (err) {
+    log("warn", "contribute auth error", {
+      requestId,
+      action,
+      fountainId,
+      reason: (err as Error).name,
+    });
+    return fail("unauthenticated");
+  }
+  try {
+    const { response } = await call(client);
+    const status = response?.status ?? 0;
+    const result = mapStatus(status);
+    log(result.ok ? "info" : "warn", "contribute action", {
+      requestId,
+      action,
+      fountainId,
+      status,
+    });
+    if (result.ok) revalidatePath(`/fountains/${fountainId}`);
+    return result;
+  } catch (err) {
+    log("warn", "contribute action error", {
+      requestId,
+      action,
+      fountainId,
+      reason: (err as Error).name,
+    });
+    return fail("server");
+  }
+}
+
+export async function submitRating(
+  fountainId: string,
+  ratings: { rating_type_id: number; stars: number }[],
+): Promise<ActionResult> {
+  if (!UUID_RE.test(fountainId)) return fail("validation");
+  if (
+    !Array.isArray(ratings) ||
+    ratings.length === 0 ||
+    !ratings.every(
+      (r) =>
+        Number.isInteger(r?.rating_type_id) &&
+        r.rating_type_id > 0 &&
+        Number.isInteger(r?.stars) &&
+        r.stars >= 1 &&
+        r.stars <= 5,
+    )
+  ) {
+    return fail("validation");
+  }
+  return run(fountainId, "rate", (client) =>
+    client.POST("/api/v1/fountains/{fountain_id}/ratings", {
+      params: { path: { fountain_id: fountainId } },
+      body: { ratings },
+    }),
+  );
+}
+
+export async function submitCondition(
+  fountainId: string,
+  status: ConditionStatus,
+): Promise<ActionResult> {
+  if (!UUID_RE.test(fountainId)) return fail("validation");
+  if (!CONDITION_STATUSES.has(status)) return fail("validation");
+  return run(fountainId, "condition", (client) =>
+    client.POST("/api/v1/fountains/{fountain_id}/conditions", {
+      params: { path: { fountain_id: fountainId } },
+      body: { status, is_proximate: false },
+    }),
+  );
+}
+
+export async function submitNote(fountainId: string, body: string): Promise<ActionResult> {
+  if (!UUID_RE.test(fountainId)) return fail("validation");
+  const trimmed = typeof body === "string" ? body.trim() : "";
+  if (trimmed.length < 1 || trimmed.length > 1000) return fail("validation");
+  return run(fountainId, "note", (client) =>
+    client.POST("/api/v1/fountains/{fountain_id}/notes", {
+      params: { path: { fountain_id: fountainId } },
+      body: { body: trimmed },
+    }),
+  );
+}

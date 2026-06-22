@@ -154,6 +154,76 @@ curl -i 'http://localhost:3021/api/v1/fountains/bbox?min_lat=37.70&min_lng=-122.
 
 ---
 
+## Admin subjects — slice 6b-1
+
+The backend reads `ADMIN_SUBJECTS` (a comma-separated list of Logto subject ids) to
+decide, at request time, whether the authenticated user gets admin-level write
+capabilities (status overrides, attribute consensus, placement edits, notes
+moderation). The ids are opaque identifiers, not secrets — so this value is a GitHub
+Actions **variable**, not a secret.
+
+### Creating the `ADMIN_SUBJECTS` variable
+
+1. Open your Logto admin console (e.g. `https://auth.fountainrank.com/console`).
+2. Navigate to **Users** and find the owner account.
+3. Open the user record; copy the **User ID** shown at the top (it looks like
+   `kz0i9k3bpg0...` — an opaque Logto-generated string).
+4. In GitHub: **Settings → Environments → production → Environment variables → Add
+   variable**.
+   - Name: `ADMIN_SUBJECTS`
+   - Value: the Logto User ID copied above. For multiple admins, separate ids with a
+     comma (`id1,id2`) — no spaces.
+5. Do **not** put the actual ids in this file or anywhere in the repo.
+
+> The value is config, not a secret: it grants elevated write access to specific
+> authenticated users, but does not itself convey a credential. Compare to
+> `GOOGLE_DELEGATED_USER` and `FROM_EMAIL` which follow the same pattern.
+
+### Post-deploy authenticated-write smoke (slice 6b-1)
+
+Run this after every deploy that touches contribution or admin code to confirm the
+full auth → write → persistence path is working. This procedure covers what slice
+6b-1 ships: ratings, condition reports, notes, and the admin placeholder. Moderation
+and status-update controls are deferred to slice 6g and are not verified here.
+
+**Prerequisites:** the `ADMIN_SUBJECTS` variable must be set in the `production`
+environment **before** the deploy that is being verified (the env var is baked into
+the pod at deploy time; a redeploy is required if you add it after the fact).
+
+**Procedure:**
+
+1. Open `https://fountainrank.com` in a browser.
+2. Sign in with the owner account (the one whose Logto User ID is in
+   `ADMIN_SUBJECTS`).
+3. Navigate to any fountain detail page.
+4. Submit a **rating**: tap/click a star rating (1–5) and confirm. The page should
+   reflect the new average without an error banner.
+5. Submit a **condition report**: open the Condition panel, choose a condition
+   ("it's working" or a problem code), and submit. Confirm the operational
+   status / "Last verified" trust line updates without an error (this slice
+   surfaces the derived status, not a raw condition-history list).
+6. Save a **note** on the fountain detail page and confirm it persists.
+7. Confirm the **admin menu item** appears in the nav for the admin account, and
+   that `/admin` loads (it is a placeholder in this slice — no controls yet).
+8. Verify the `/admin` fail-closed gate: while **signed out**, `/admin` shows a
+   sign-in prompt (not the admin page); while **signed in with a non-admin
+   account**, `/admin` returns a 404. (Both confirm a non-admin never sees admin
+   content.)
+
+**What to check in logs** (do not log token values or note body text):
+
+```bash
+# Tail the backend pod for 4XX/5XX during the smoke
+kubectl -n fountainrank logs -l app=fountainrank-backend --tail=50 -f
+```
+
+Expected: every write request returns 200/201; no 401/403 for the owner account; no
+500 at any step. If a 403 is returned for an admin action, confirm `ADMIN_SUBJECTS`
+was set before the current deploy (check `kubectl -n fountainrank exec <pod> -- env |
+grep ADMIN_SUBJECTS`).
+
+---
+
 ## Basemap hosting (Protomaps planet on Spaces + CDN) — Phase 3a
 
 The web map renders a self-hosted Protomaps **Light** basemap. Terraform manages the bucket +

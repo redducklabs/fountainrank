@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getAccessTokenRSC } from "@logto/next/server-actions";
+import { getAccessToken, getAccessTokenRSC } from "@logto/next/server-actions";
 
 import { makeClient, type ApiClient } from "@fountainrank/api-client";
 
@@ -16,5 +16,12 @@ export function authedClientHeaders(token: string, requestId: string): Record<st
 // The token never leaves the server — `server-only` guards against any client-bundle import.
 export async function getAuthedApiClient(requestId: string): Promise<ApiClient> {
   const token = await getAccessTokenRSC(getLogtoConfig(), API_RESOURCE);
+  return makeClient(resolveApiBaseUrl(), { headers: authedClientHeaders(token, requestId) });
+}
+
+// Server-Action variant: getAccessToken can persist a refreshed token to the writable
+// action cookie store (RSC cookies are read-only). Token never leaves the server.
+export async function getAuthedApiClientForAction(requestId: string): Promise<ApiClient> {
+  const token = await getAccessToken(getLogtoConfig(), API_RESOURCE);
   return makeClient(resolveApiBaseUrl(), { headers: authedClientHeaders(token, requestId) });
 }
