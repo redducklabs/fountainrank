@@ -122,3 +122,21 @@ export function formatCategory(key: string): string {
   const spaced = key.replace(/_/g, " ");
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
+
+const CONDITION_LABELS: Record<string, string> = {
+  working: "It's working",
+  broken: "Broken / not working",
+  low_pressure: "Low water pressure",
+  dirty: "Dirty",
+  bad_taste: "Bad taste",
+  blocked: "Blocked / clogged",
+  seasonal_unavailable: "Shut off for the season",
+  hours_limited: "Only available certain hours",
+};
+
+export function conditionStatusLabel(status: string): string {
+  const known = CONDITION_LABELS[status];
+  if (known) return known;
+  const words = status.replace(/_/g, " ").trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
