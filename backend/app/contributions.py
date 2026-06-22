@@ -32,6 +32,8 @@ POINTS: dict[str, int] = {
     "rate": 2,
     "first_rating_bonus": 5,
     "observe_attribute": 2,
+    "verify_working": 3,
+    "report_condition": 2,
 }
 
 # Allowed target_type per event_type (None = a pure bonus event with no source row).
@@ -44,6 +46,8 @@ EVENT_TARGET_TYPES: dict[str, set[str | None]] = {
     "rate": {"rating"},
     "first_rating_bonus": {None},
     "observe_attribute": {"attribute_observation"},
+    "verify_working": {"condition_report"},
+    "report_condition": {"condition_report"},
 }
 
 # Which user_contribution_stats counter each event_type increments (besides total_points).
@@ -51,6 +55,8 @@ _STAT_COUNTER: dict[str, str] = {
     "add_fountain": "fountains_added",
     "rate": "ratings_count",
     "observe_attribute": "attributes_count",
+    "verify_working": "verifications_count",
+    "report_condition": "conditions_reported",
 }
 
 
@@ -99,6 +105,14 @@ def dk_first_rating(fountain_id: uuid.UUID) -> str:
 
 def dk_observe_attr(user_id: uuid.UUID, fountain_id: uuid.UUID, attribute_type_id: int) -> str:
     return f"attr:{user_id}:{fountain_id}:{attribute_type_id}"
+
+
+def dk_verify(user_id: uuid.UUID, fountain_id: uuid.UUID, day: str) -> str:
+    return f"verify:{user_id}:{fountain_id}:{day}"
+
+
+def dk_report_condition(user_id: uuid.UUID, fountain_id: uuid.UUID, day: str) -> str:
+    return f"cond:{user_id}:{fountain_id}:{day}"
 
 
 def _validate(spec: ContributionSpec) -> None:

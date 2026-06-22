@@ -79,6 +79,13 @@ class Fountain(Base):
             "created_source <> 'user' OR added_by_user_id IS NOT NULL",
             name="user_source_requires_user",
         ),
+        # Derived current_status (#40) is public API state — constrain it. Short name
+        # renders to ck_fountains_current_status (NULL = fall back to baseline is_working).
+        CheckConstraint(
+            "current_status IS NULL OR "
+            "current_status IN ('ok','reported_issue','degraded','not_working')",
+            name="current_status",
+        ),
         # Spec §4.1: btree index on created_source for import/audit queries.
         Index("ix_fountains_created_source", "created_source"),
     )
@@ -108,6 +115,11 @@ class Fountain(Base):
     # ORM type matches the migration's sa.Double() — no `alembic check` type ambiguity.
     average_rating: Mapped[float | None] = mapped_column(Double, nullable=True)
     ranking_score: Mapped[float | None] = mapped_column(Double, nullable=True)
+    # Operational status (#40), derived from condition_reports (app/conditions.py).
+    current_status: Mapped[str | None] = mapped_column(String, nullable=True)
+    last_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class Rating(Base):
@@ -475,4 +487,46 @@ class UserContributionStats(Base):
     notes_count: Mapped[int] = mapped_column(nullable=False, server_default=text("0"))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ConditionReport(Base):
+    """Append-only, time-sensitive condition/verification report (#40). Distinct from
+    attributes: a fountain's working state changes over time, so these are events (not
+    upserts) and recency + distinct-user corroboration drive the derived current_status."""
+
+    __tablename__ = "condition_reports"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('working','broken','low_pressure','dirty','bad_taste',"
+            "'blocked','seasonal_unavailable','hours_limited')",
+            name="status",
+        ),
+        Index("ix_condition_reports_fountain_created", "fountain_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    fountain_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("fountains.id", ondelete="CASCADE", name="fk_condition_reports_fountain"),
+        nullable=False,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE", name="fk_condition_reports_user"),
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    is_proximate: Mapped[bool] = mapped_column(nullable=False, server_default=text("false"))
+    is_hidden: Mapped[bool] = mapped_column(nullable=False, server_default=text("false"))
+    hidden_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("users.id", name="fk_condition_reports_hidden_by"),
+        nullable=True,
+    )
+    hidden_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
     )

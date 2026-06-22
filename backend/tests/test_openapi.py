@@ -62,3 +62,13 @@ def test_openapi_exposes_contribution_data_contract():
 
     # FountainDetail now carries the attribute consensus list.
     assert "attributes" in components["FountainDetail"]["properties"]
+
+
+def test_openapi_exposes_conditions_contract():
+    schema = app.openapi()
+    assert "/api/v1/fountains/{fountain_id}/conditions" in schema["paths"]
+    components = schema["components"]["schemas"]
+    assert "ConditionReportRequest" in components
+    # current_status / last_verified_at surfaced on pins + detail.
+    assert "current_status" in components["FountainPin"]["properties"]
+    assert "current_status" in components["FountainDetail"]["properties"]
