@@ -92,7 +92,7 @@ export default function MapBrowser() {
     tiles: number;
     sourceLoaded: boolean;
     errors: string[];
-  }>({ webgl: "", tiles: 0, sourceLoaded: false, errors: [] });
+  }>(() => ({ webgl: debug ? webglInfo() : "", tiles: 0, sourceLoaded: false, errors: [] }));
 
   useEffect(() => {
     if (!webglOk) return; // no WebGL2 → the UnsupportedHint renders; never touch MapLibre.
@@ -126,7 +126,6 @@ export default function MapBrowser() {
       setDiag((d) => ({ ...d, errors: [...d.errors.slice(-9), msg] }));
     });
     if (debug) {
-      setDiag((d) => ({ ...d, webgl: webglInfo() }));
       map.on("data", (ev) => {
         // The "data" listener is typed as the base MapDataEvent; the source-data fields live
         // on MapSourceDataEvent. Narrow structurally to read sourceId/tile/isSourceLoaded.
