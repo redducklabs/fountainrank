@@ -28,6 +28,7 @@ from app.contributions import (
 )
 from app.db import get_session
 from app.display import public_display_name
+from app.filters import DiscoveryFilters, apply_discovery_filters, discovery_filters
 from app.geo import latitude_of, longitude_of, point_geography
 from app.locks import ADD_FOUNTAIN_LOCK_KEY
 from app.models import (
@@ -342,30 +343,30 @@ async def nearby_fountains(
     radius_m: float | None = Query(default=None, gt=0.0),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
+    filters: DiscoveryFilters = Depends(discovery_filters),
 ) -> list[FountainPin]:
     radius = min(radius_m or settings.nearby_default_radius_m, settings.nearby_max_radius_m)
     point = point_geography(lat, lng)
     distance = func.ST_Distance(Fountain.location, point)
-    rows = (
-        await session.execute(
-            select(
-                Fountain.id,
-                latitude_of(Fountain.location),
-                longitude_of(Fountain.location),
-                Fountain.is_working,
-                Fountain.average_rating,
-                Fountain.rating_count,
-                Fountain.ranking_score,
-                Fountain.current_status,
-                Fountain.last_verified_at,
-                distance,
-            )
-            .where(Fountain.is_hidden.is_(False))
-            .where(func.ST_DWithin(Fountain.location, point, radius))
-            .order_by(distance)
-            .limit(settings.max_results)
+    stmt = (
+        select(
+            Fountain.id,
+            latitude_of(Fountain.location),
+            longitude_of(Fountain.location),
+            Fountain.is_working,
+            Fountain.average_rating,
+            Fountain.rating_count,
+            Fountain.ranking_score,
+            Fountain.current_status,
+            Fountain.last_verified_at,
+            distance,
         )
-    ).all()
+        .where(Fountain.is_hidden.is_(False))
+        .where(func.ST_DWithin(Fountain.location, point, radius))
+    )
+    stmt = apply_discovery_filters(stmt, filters)  # all filters in WHERE...
+    stmt = stmt.order_by(distance).limit(settings.max_results)  # ...then order + cap
+    rows = (await session.execute(stmt)).all()
     return [
         FountainPin(
             id=rid,
@@ -390,6 +391,7 @@ async def fountains_in_bbox(
     max_lng: float = Query(ge=-180.0, le=180.0),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
+    filters: DiscoveryFilters = Depends(discovery_filters),
 ) -> list[FountainPin]:
     # Known limitation: a viewport that crosses the antimeridian (e.g. min_lng=170,
     # max_lng=-170) is rejected here rather than split into two envelopes. Acceptable for
@@ -400,24 +402,24 @@ async def fountains_in_bbox(
             detail="min_lat/min_lng must be <= max_lat/max_lng",
         )
     envelope = cast(func.ST_MakeEnvelope(min_lng, min_lat, max_lng, max_lat, 4326), Geography)
-    rows = (
-        await session.execute(
-            select(
-                Fountain.id,
-                latitude_of(Fountain.location),
-                longitude_of(Fountain.location),
-                Fountain.is_working,
-                Fountain.average_rating,
-                Fountain.rating_count,
-                Fountain.ranking_score,
-                Fountain.current_status,
-                Fountain.last_verified_at,
-            )
-            .where(Fountain.is_hidden.is_(False))
-            .where(func.ST_Intersects(Fountain.location, envelope))
-            .limit(settings.max_results)
+    stmt = (
+        select(
+            Fountain.id,
+            latitude_of(Fountain.location),
+            longitude_of(Fountain.location),
+            Fountain.is_working,
+            Fountain.average_rating,
+            Fountain.rating_count,
+            Fountain.ranking_score,
+            Fountain.current_status,
+            Fountain.last_verified_at,
         )
-    ).all()
+        .where(Fountain.is_hidden.is_(False))
+        .where(func.ST_Intersects(Fountain.location, envelope))
+    )
+    stmt = apply_discovery_filters(stmt, filters)  # all filters in WHERE before the cap
+    stmt = stmt.limit(settings.max_results)
+    rows = (await session.execute(stmt)).all()
     return [
         FountainPin(
             id=rid,

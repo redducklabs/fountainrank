@@ -83,6 +83,14 @@ def test_openapi_exposes_notes_contract():
     assert "AddNoteRequest" in components and "NoteOut" in components
 
 
+def test_openapi_discovery_filters_on_both_endpoints():
+    schema = app.openapi()
+    expected = {"working_now", "bottle_filler", "min_rating", "include_unknown", "public_access"}
+    for path in ("/api/v1/fountains", "/api/v1/fountains/bbox"):
+        params = {p["name"] for p in schema["paths"][path]["get"].get("parameters", [])}
+        assert expected <= params, f"{path} missing filter params: {expected - params}"
+
+
 def test_openapi_add_fountain_has_placement_and_observations():
     schema = app.openapi()
     props = schema["components"]["schemas"]["AddFountainRequest"]["properties"]
