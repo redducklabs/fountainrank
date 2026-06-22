@@ -15,7 +15,7 @@ vi.mock("@fountainrank/api-client", () => ({
   makeClient: () => ({ GET: mockGet }),
 }));
 
-import { fetchBbox, getFountainDetailServer } from "./fountains";
+import { fetchBbox, getFountainDetailServer, getFountainNotesServer } from "./fountains";
 
 const PARAMS = { min_lat: 1, min_lng: 2, max_lat: 3, max_lng: 4 };
 
@@ -44,5 +44,20 @@ describe("getFountainDetailServer", () => {
     mockGet.mockRejectedValueOnce(new Error("network error"));
     const result = await getFountainDetailServer("x", "rid");
     expect(result).toEqual({ data: undefined, status: 0 });
+  });
+});
+
+describe("getFountainNotesServer", () => {
+  it("returns data + status on success", async () => {
+    mockGet.mockResolvedValueOnce({ data: [{ id: "n1" }], response: { ok: true, status: 200 } });
+    expect(await getFountainNotesServer("x", "rid")).toEqual({ data: [{ id: "n1" }], status: 200 });
+  });
+  it("returns status without data on non-2xx", async () => {
+    mockGet.mockResolvedValueOnce({ data: undefined, response: { ok: false, status: 503 } });
+    expect(await getFountainNotesServer("x", "rid")).toEqual({ data: undefined, status: 503 });
+  });
+  it("returns { data: undefined, status: 0 } on network error", async () => {
+    mockGet.mockRejectedValueOnce(new Error("network error"));
+    expect(await getFountainNotesServer("x", "rid")).toEqual({ data: undefined, status: 0 });
   });
 });
