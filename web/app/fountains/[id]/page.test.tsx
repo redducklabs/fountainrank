@@ -26,6 +26,9 @@ vi.mock("../../../components/fountain/FountainDetail", () => ({
     <div data-testid="detail">notes:{notes.length}</div>
   ),
 }));
+vi.mock("../../../components/SiteHeader", () => ({
+  SiteHeader: () => <div data-testid="site-header" />,
+}));
 
 import FountainPage from "./page";
 

@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { getFountainDetailServer, getFountainNotesServer } from "../../../lib/fountains";
 import { log } from "../../../lib/server/log";
 import { FountainDetail } from "../../../components/fountain/FountainDetail";
+import { SiteHeader } from "../../../components/SiteHeader";
 
 export const dynamic = "force-dynamic";
 const shell = "mx-auto min-h-dvh max-w-2xl bg-white px-6 py-10";
@@ -22,13 +23,18 @@ export default async function FountainPage({ params }: { params: Promise<{ id: s
   if (!data) {
     log("error", "failed to load fountain", { requestId, id, status });
     return (
-      <main className={shell}>
-        <Link href="/" className="text-sm text-[#0C44A0] underline">
-          ← Back to the map
-        </Link>
-        <h1 className="mt-6 text-lg font-bold text-[#0A357E]">Couldn&rsquo;t load this fountain</h1>
-        <p className="mt-2 text-slate-600">Please try again.</p>
-      </main>
+      <>
+        <SiteHeader variant="bar" />
+        <main className={shell}>
+          <Link href="/" className="text-sm text-[#0C44A0] underline">
+            ← Back to the map
+          </Link>
+          <h1 className="mt-6 text-lg font-bold text-[#0A357E]">
+            Couldn&rsquo;t load this fountain
+          </h1>
+          <p className="mt-2 text-slate-600">Please try again.</p>
+        </main>
+      </>
     );
   }
   const notesOk = notesRes.status >= 200 && notesRes.status < 300;
@@ -37,13 +43,16 @@ export default async function FountainPage({ params }: { params: Promise<{ id: s
   }
   const notes = notesOk && notesRes.data ? notesRes.data : [];
   return (
-    <main className={shell}>
-      <Link href="/" className="text-sm text-[#0C44A0] underline">
-        ← Back to the map
-      </Link>
-      <div className="mt-6">
-        <FountainDetail detail={data} notes={notes} />
-      </div>
-    </main>
+    <>
+      <SiteHeader variant="bar" />
+      <main className={shell}>
+        <Link href="/" className="text-sm text-[#0C44A0] underline">
+          ← Back to the map
+        </Link>
+        <div className="mt-6">
+          <FountainDetail detail={data} notes={notes} />
+        </div>
+      </main>
+    </>
   );
 }
