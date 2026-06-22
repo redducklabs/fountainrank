@@ -1,22 +1,39 @@
-import type { FountainDetail as Detail } from "../../lib/fountains";
+import type { FountainDetail as Detail, NoteOut } from "../../lib/fountains";
 import { formatAverage, formatDate, formatDimension, formatVotes } from "../../lib/map/format";
 import { ShareButton } from "./ShareButton";
+import { StatusBlock } from "./StatusBlock";
+import { AttributeList } from "./AttributeList";
+import { NotesList } from "./NotesList";
 
-export function FountainDetail({ detail }: { detail: Detail }) {
+export function FountainDetail({
+  detail,
+  notes,
+  now,
+}: {
+  detail: Detail;
+  notes: NoteOut[];
+  now?: Date;
+}) {
+  const renderNow = now ?? new Date();
   const { latitude, longitude } = detail.location;
   const dir = `https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}`;
   return (
     <div className="space-y-4">
       <div>
         <h1 className="text-lg font-bold text-[#0A357E]">Public drinking fountain</h1>
-        <span
-          className={`mt-1 inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-bold ${
-            detail.is_working ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"
-          }`}
-        >
-          {detail.is_working ? "Working" : "Out of order"}
-        </span>
+        <StatusBlock
+          currentStatus={detail.current_status}
+          isWorking={detail.is_working}
+          lastVerifiedAt={detail.last_verified_at}
+          now={renderNow}
+        />
       </div>
+      {detail.placement_note && (
+        <p className="text-sm break-words text-slate-600">
+          <span aria-hidden="true">📍 </span>
+          {detail.placement_note}
+        </p>
+      )}
       <div className="flex items-baseline gap-2">
         <span className="text-2xl font-extrabold text-[#0A357E]">
           {formatAverage(detail.average_rating ?? null)}
@@ -38,11 +55,16 @@ export function FountainDetail({ detail }: { detail: Detail }) {
           </div>
         ))}
       </dl>
+      <AttributeList attributes={detail.attributes} />
       {detail.comments && (
-        <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
-          {detail.comments}
-        </p>
+        <div>
+          <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm break-words text-slate-700">
+            {detail.comments}
+          </p>
+          <p className="mt-1 text-xs text-slate-400">From the person who added this fountain</p>
+        </div>
       )}
+      <NotesList notes={notes} now={renderNow} />
       <p className="text-xs text-slate-400">
         Added {formatDate(detail.created_at)}
         {detail.last_rated_at ? ` · Last rated ${formatDate(detail.last_rated_at)}` : ""}
@@ -58,9 +80,6 @@ export function FountainDetail({ detail }: { detail: Detail }) {
         </a>
         <ShareButton />
       </div>
-      <p className="text-xs text-slate-400">
-        &ldquo;Rate this fountain&rdquo; arrives in Phase 3b.
-      </p>
     </div>
   );
 }

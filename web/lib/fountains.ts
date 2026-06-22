@@ -6,6 +6,7 @@ import type { BboxParams } from "./map/bounds";
 export type FountainPin = components["schemas"]["FountainPin"];
 export type FountainDetail = components["schemas"]["FountainDetail"];
 export type DimensionSummary = components["schemas"]["DimensionSummary"];
+export type NoteOut = components["schemas"]["NoteOut"];
 
 export async function fetchBbox(params: BboxParams, requestId?: string): Promise<FountainPin[]> {
   const client = requestId
@@ -25,6 +26,19 @@ export async function getFountainDetailServer(id: string, requestId: string) {
   const client = makeClient(resolveApiBaseUrl(), { headers: { "X-Request-ID": requestId } });
   try {
     const { data, response } = await client.GET("/api/v1/fountains/{fountain_id}", {
+      params: { path: { fountain_id: id } },
+    });
+    return { data, status: response?.status ?? 0 };
+  } catch {
+    // status 0 = no HTTP response (network error / backend down / DNS failure)
+    return { data: undefined, status: 0 };
+  }
+}
+
+export async function getFountainNotesServer(id: string, requestId: string) {
+  const client = makeClient(resolveApiBaseUrl(), { headers: { "X-Request-ID": requestId } });
+  try {
+    const { data, response } = await client.GET("/api/v1/fountains/{fountain_id}/notes", {
       params: { path: { fountain_id: id } },
     });
     return { data, status: response?.status ?? 0 };

@@ -1,0 +1,67 @@
+// @vitest-environment jsdom
+import { render, screen } from "@testing-library/react";
+import type { ReactNode } from "react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const getDetail = vi.fn();
+const getNotes = vi.fn();
+const logFn = vi.fn();
+
+vi.mock("../../../../lib/fountains", () => ({
+  getFountainDetailServer: (...a: unknown[]) => getDetail(...a),
+  getFountainNotesServer: (...a: unknown[]) => getNotes(...a),
+}));
+vi.mock("../../../../lib/server/log", () => ({ log: (...a: unknown[]) => logFn(...a) }));
+vi.mock("../../../../components/fountain/DetailOverlay", () => ({
+  DetailOverlay: ({ children }: { children: ReactNode }) => (
+    <div data-testid="overlay">{children}</div>
+  ),
+}));
+vi.mock("../../../../components/fountain/FountainDetail", () => ({
+  FountainDetail: ({ notes }: { notes: unknown[] }) => (
+    <div data-testid="detail">notes:{notes.length}</div>
+  ),
+}));
+
+import FountainModal from "./page";
+
+const params = Promise.resolve({ id: "f1" });
+
+beforeEach(() => {
+  getDetail.mockReset();
+  getNotes.mockReset();
+  logFn.mockReset();
+});
+
+describe("FountainModal route (overlay)", () => {
+  it("passes fetched notes through on success", async () => {
+    getDetail.mockResolvedValue({ data: { id: "f1" }, status: 200 });
+    getNotes.mockResolvedValue({ data: [{ id: "n1" }], status: 200 });
+    render(await FountainModal({ params }));
+    expect(screen.getByTestId("detail")).toHaveTextContent("notes:1");
+    expect(logFn).not.toHaveBeenCalled();
+  });
+  it("non-fatal notes: 503 renders detail with notes=[] + constrained warn log", async () => {
+    getDetail.mockResolvedValue({ data: { id: "f1" }, status: 200 });
+    getNotes.mockResolvedValue({ data: undefined, status: 503 });
+    render(await FountainModal({ params }));
+    expect(screen.getByTestId("detail")).toHaveTextContent("notes:0");
+    expect(logFn).toHaveBeenCalledWith("warn", expect.stringMatching(/notes/i), {
+      requestId: expect.any(String),
+      id: "f1",
+      status: 503,
+    });
+  });
+  it("detail 404 renders the overlay not-found message", async () => {
+    getDetail.mockResolvedValue({ data: undefined, status: 404 });
+    getNotes.mockResolvedValue({ data: [], status: 200 });
+    render(await FountainModal({ params }));
+    expect(screen.getByText(/Fountain not found/i)).toBeInTheDocument();
+  });
+  it("detail network failure renders the overlay error message", async () => {
+    getDetail.mockResolvedValue({ data: undefined, status: 0 });
+    getNotes.mockResolvedValue({ data: undefined, status: 0 });
+    render(await FountainModal({ params }));
+    expect(screen.getByText(/Couldn.t load this fountain/i)).toBeInTheDocument();
+  });
+});
