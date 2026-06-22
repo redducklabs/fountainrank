@@ -53,6 +53,26 @@ function isWebglSupported(): boolean {
   }
 }
 
+// Diagnostic only (shown behind ?debug): the GPU vendor/renderer string. On Android this
+// reveals the GLES driver (Adreno/Mali/...) so we can correlate a mobile-only blank basemap
+// with the device's GPU.
+function webglInfo(): string {
+  try {
+    const gl = document.createElement("canvas").getContext("webgl2");
+    if (!gl) return "no-webgl2";
+    const dbg = gl.getExtension("WEBGL_debug_renderer_info");
+    const vendor = String(
+      dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : gl.getParameter(gl.VENDOR),
+    );
+    const renderer = String(
+      dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER),
+    );
+    return `${vendor} | ${renderer}`;
+  } catch {
+    return "probe-failed";
+  }
+}
+
 export default function MapBrowser() {
   const ref = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -63,6 +83,16 @@ export default function MapBrowser() {
   const [status, setStatus] = useState<Status>("idle");
   const [webglOk] = useState(isWebglSupported);
   const activeId = activeIdFromPath(pathname);
+  // Opt-in on-screen diagnostics: visit `?debug` to surface GPU info, tile/source load
+  // progress, and MapLibre's own error events (otherwise invisible). No effect for normal users.
+  const debug =
+    typeof window !== "undefined" && new URLSearchParams(window.location.search).has("debug");
+  const [diag, setDiag] = useState<{
+    webgl: string;
+    tiles: number;
+    sourceLoaded: boolean;
+    errors: string[];
+  }>(() => ({ webgl: debug ? webglInfo() : "", tiles: 0, sourceLoaded: false, errors: [] }));
 
   useEffect(() => {
     if (!webglOk) return; // no WebGL2 → the UnsupportedHint renders; never touch MapLibre.
@@ -87,6 +117,33 @@ export default function MapBrowser() {
       return;
     }
     mapRef.current = map;
+    // Capture MapLibre's own errors (tile fetch/decode failures, WebGL/render errors) — these
+    // are otherwise only console-logged by MapLibre and invisible to us. This is how a
+    // mobile-only "gray basemap" (tiles never paint) surfaces a concrete cause.
+    map.on("error", (e) => {
+      const msg = (e.error?.message ?? "unknown maplibre error").slice(0, 240);
+      logMapError("maplibre-error", { message: msg });
+      setDiag((d) => ({ ...d, errors: [...d.errors.slice(-9), msg] }));
+    });
+    if (debug) {
+      map.on("data", (ev) => {
+        // The "data" listener is typed as the base MapDataEvent; the source-data fields live
+        // on MapSourceDataEvent. Narrow structurally to read sourceId/tile/isSourceLoaded.
+        const e = ev as unknown as {
+          dataType?: string;
+          sourceId?: string;
+          isSourceLoaded?: boolean;
+          tile?: unknown;
+        };
+        if (e.dataType === "source" && e.sourceId === "protomaps") {
+          setDiag((d) => ({
+            ...d,
+            tiles: e.tile ? d.tiles + 1 : d.tiles,
+            sourceLoaded: e.isSourceLoaded === true ? true : d.sourceLoaded,
+          }));
+        }
+      });
+    }
     map.addControl(new maplibregl.NavigationControl(), "top-right");
     map.addControl(
       new maplibregl.GeolocateControl({
@@ -216,7 +273,7 @@ export default function MapBrowser() {
       map.remove();
       mapRef.current = null;
     };
-  }, [router, webglOk]);
+  }, [router, webglOk, debug]);
 
   // Reflect the active route id on the selected layers (additive: halo always; icon swap via expr).
   useEffect(() => {
@@ -242,6 +299,24 @@ export default function MapBrowser() {
       {status === "capped" && <CapHint />}
       {status === "error" && <ErrorToast onRetry={retry} />}
       {!webglOk && <UnsupportedHint />}
+      {debug && (
+        <div className="absolute left-2 top-2 z-[60] max-h-[45%] w-[92%] overflow-auto rounded bg-black/85 p-2 font-mono text-[10px] leading-tight text-emerald-300">
+          <div>
+            dpr {typeof window !== "undefined" ? window.devicePixelRatio : "?"} · maplibre 5.24 ·
+            webglOk {String(webglOk)} · status {status}
+          </div>
+          <div>webgl: {diag.webgl || "…"}</div>
+          <div>
+            basemap tiles seen: {diag.tiles} · sourceLoaded: {String(diag.sourceLoaded)}
+          </div>
+          <div>errors ({diag.errors.length}):</div>
+          {diag.errors.length === 0 ? (
+            <div>• none</div>
+          ) : (
+            diag.errors.map((e, i) => <div key={i}>• {e}</div>)
+          )}
+        </div>
+      )}
       <FountainsInViewList
         pins={pins}
         activeId={activeId}
