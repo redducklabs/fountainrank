@@ -7,7 +7,10 @@
  */
 export function isDisplayableEmail(email: string | null | undefined): boolean {
   if (!email) return false;
-  if (email.endsWith("@users.noreply.fountainrank.com")) return false;
-  if (email.endsWith("@privaterelay.appleid.com")) return false;
+  // Lowercase once so suffix checks are case-insensitive, matching the backend's
+  // accept_email normalization.
+  const normalized = email.toLowerCase();
+  if (normalized.endsWith("@users.noreply.fountainrank.com")) return false;
+  if (normalized.endsWith("@privaterelay.appleid.com")) return false;
   return true;
 }

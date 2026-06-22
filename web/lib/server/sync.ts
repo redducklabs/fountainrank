@@ -22,6 +22,9 @@ async function postProfileSync(
       "X-Request-ID": requestId,
     },
     body: JSON.stringify({ userinfo_token: opaqueToken }),
+    // Bound the sync so a hung backend during the sign-in callback can't stall sign-in;
+    // the abort surfaces as a thrown error that callers already swallow (still best-effort).
+    signal: AbortSignal.timeout(3000),
   });
   if (res.ok) {
     log("debug", "profile synced", { requestId, status: res.status });

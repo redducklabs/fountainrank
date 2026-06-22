@@ -15,6 +15,10 @@ describe("isDisplayableEmail", () => {
     expect(isDisplayableEmail("abc123@privaterelay.appleid.com")).toBe(false);
   });
 
+  it("returns false for mixed-case Apple private relay addresses", () => {
+    expect(isDisplayableEmail("Abc@PrivateRelay.AppleID.com")).toBe(false);
+  });
+
   it("returns false for FountainRank synthetic noreply addresses", () => {
     expect(isDisplayableEmail("sub_abc123@users.noreply.fountainrank.com")).toBe(false);
   });
