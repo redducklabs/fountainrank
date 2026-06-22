@@ -12,6 +12,7 @@ from app.routers import (
     email_webhook,
     fountains,
     health,
+    leaderboard,
     rating_types,
     users,
 )
@@ -40,6 +41,7 @@ def create_app() -> FastAPI:
     app.include_router(rating_types.router)
     app.include_router(attribute_types.router)
     app.include_router(fountains.router)
+    app.include_router(leaderboard.router)
     app.include_router(users.router)
     app.include_router(email_webhook.router)
 

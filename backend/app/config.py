@@ -70,6 +70,8 @@ class Settings(BaseSettings):
     # derived current_status; an authoritative status needs >= this many distinct users.
     condition_freshness_days: int = 90
     condition_corroboration_min: int = 2
+    # Default radius (m) for the local contributor leaderboard when no radius_m is given.
+    leaderboard_local_radius_m: float = 5000.0
 
     # --- OSM ingestion (see docs/specs/2026-06-21-osm-fountain-ingestion-design.md) ---
     # Auto-update an imported-only, unrated fountain's location only if it moved <= this.

@@ -96,3 +96,11 @@ def test_openapi_add_fountain_has_placement_and_observations():
     props = schema["components"]["schemas"]["AddFountainRequest"]["properties"]
     assert "placement_note" in props and "observations" in props
     assert "placement_note" in schema["components"]["schemas"]["FountainDetail"]["properties"]
+
+
+def test_openapi_exposes_gamification_read_apis():
+    schema = app.openapi()
+    assert "/api/v1/leaderboard/contributors" in schema["paths"]
+    assert "/api/v1/me/badges" in schema["paths"]
+    components = schema["components"]["schemas"]
+    assert "BadgeOut" in components and "ContributorRow" in components

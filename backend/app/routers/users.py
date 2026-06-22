@@ -2,13 +2,15 @@ import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
+from app.badges import earned_badges
 from app.db import get_session
 from app.models import ContributionEvent, User, UserContributionStats
 from app.schemas import (
+    BadgeOut,
     ContributionEventOut,
     ContributionStatsOut,
     MeContributionsOut,
@@ -73,6 +75,46 @@ async def get_my_contributions(
     )
     recent = [ContributionEventOut.model_validate(r) for r in recent_rows]
     return MeContributionsOut(stats=stats, recent=recent)
+
+
+@router.get("/me/badges", response_model=list[BadgeOut])
+async def get_my_badges(
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> list[BadgeOut]:
+    # Auth-required, caller's own derived badges.
+    stats_row = (
+        await session.execute(
+            select(UserContributionStats).where(UserContributionStats.user_id == current_user.id)
+        )
+    ).scalar_one_or_none()
+    stats = stats_row or _ZERO_STATS
+    # Deterministic 1-based rank over the total order (created_at, id).
+    rank = (
+        await session.execute(
+            select(func.count())
+            .select_from(User)
+            .where(
+                tuple_(User.created_at, User.id) < tuple_(current_user.created_at, current_user.id)
+            )
+        )
+    ).scalar_one() + 1
+    # Per-dimension rate counts from AWARDED rate events only (reversed never count).
+    rating_type = ContributionEvent.event_metadata["rating_type_id"].astext.label("rating_type")
+    dim_rows = (
+        await session.execute(
+            select(rating_type, func.count())
+            .where(
+                ContributionEvent.user_id == current_user.id,
+                ContributionEvent.event_type == "rate",
+                ContributionEvent.status == "awarded",
+            )
+            .group_by(rating_type)
+        )
+    ).all()
+    dimension_counts = {int(k): n for (k, n) in dim_rows if k is not None}
+    badges = earned_badges(stats=stats, created_rank=rank, dimension_rate_counts=dimension_counts)
+    return [BadgeOut(key=b.key, name=b.name, description=b.description) for b in badges]
 
 
 @router.post("/me/sync", response_model=MeResponse)
