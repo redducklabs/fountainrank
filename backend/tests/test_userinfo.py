@@ -129,6 +129,39 @@ def test_accept_email_rejects_synthetic_domain():
     )
 
 
+def test_accept_email_rejects_apple_private_relay_with_existing_email():
+    """Apple private-relay address must not overwrite a real stored email."""
+    assert (
+        accept_email(
+            _claims(email="abc123@privaterelay.appleid.com", email_verified=True),
+            current="old@example.com",
+        )
+        == "old@example.com"
+    )
+
+
+def test_accept_email_rejects_apple_private_relay_with_no_prior_email():
+    """Apple private-relay address must not be stored even when there is no prior email."""
+    assert (
+        accept_email(
+            _claims(email="abc123@privaterelay.appleid.com", email_verified=True),
+            current="",
+        )
+        == ""
+    )
+
+
+def test_accept_email_still_accepts_normal_verified_email():
+    """A normal verified email continues to be accepted (regression guard)."""
+    assert (
+        accept_email(
+            _claims(email="user@example.com", email_verified=True),
+            current="",
+        )
+        == "user@example.com"
+    )
+
+
 def test_pick_display_name_prefers_name_then_username_then_current_then_sub():
     assert pick_display_name(_claims(name="N", username="U"), current="C", sub="logto|abc") == "N"
     assert pick_display_name(_claims(name="  ", username="U"), current="C", sub="logto|abc") == "U"
