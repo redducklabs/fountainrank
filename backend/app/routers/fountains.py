@@ -9,8 +9,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
 from app.config import Settings, get_settings
+from app.contributions import (
+    ContributionSpec,
+    dk_add_fountain,
+    dk_first_fountain,
+    dk_first_in_area,
+    dk_first_rating,
+    dk_rate,
+    record_contributions,
+)
 from app.db import get_session
 from app.geo import latitude_of, longitude_of, point_geography
+from app.geohash import geohash_encode
 from app.locks import ADD_FOUNTAIN_LOCK_KEY
 from app.models import Fountain, Rating, RatingType, User
 from app.ranking import recompute_fountain_ranking
@@ -45,7 +55,7 @@ async def _validate_rating_types(session: AsyncSession, ratings: list[RatingInpu
 
 async def _upsert_ratings(
     session: AsyncSession, *, fountain_id: uuid.UUID, user_id: uuid.UUID, ratings: list[RatingInput]
-) -> None:
+) -> dict[int, uuid.UUID]:
     # Atomic upsert via ON CONFLICT on the (fountain_id, user_id, rating_type_id) unique
     # constraint. A SELECT-then-INSERT would race two concurrent submissions for the same
     # user/fountain/dimension (both see no row, both INSERT) -> one hits IntegrityError ->
@@ -54,7 +64,7 @@ async def _upsert_ratings(
     # twice — Postgres rejects "ON CONFLICT ... cannot affect row a second time".
     stars_by_type = {r.rating_type_id: r.stars for r in ratings}
     if not stars_by_type:
-        return
+        return {}
     stmt = pg_insert(Rating).values(
         [
             {
@@ -67,12 +77,52 @@ async def _upsert_ratings(
             for rating_type_id, stars in stars_by_type.items()
         ]
     )
+    # RETURNING (rating_type_id, id) gives the durable contribution target_id for each
+    # affected row (DO UPDATE returns the conflict row too), so a `rate` event can link
+    # to the exact ratings row for future confirmation/moderation.
     stmt = stmt.on_conflict_do_update(
         index_elements=["fountain_id", "user_id", "rating_type_id"],
         set_={"stars": stmt.excluded.stars, "updated_at": func.now()},
-    )
-    await session.execute(stmt)
+    ).returning(Rating.rating_type_id, Rating.id)
+    result = await session.execute(stmt)
+    rating_ids = {row.rating_type_id: row.id for row in result}
     await session.flush()
+    return rating_ids
+
+
+def _rating_contribution_specs(
+    *,
+    user_id: uuid.UUID,
+    fountain_id: uuid.UUID,
+    location: object,
+    rating_ids: dict[int, uuid.UUID],
+) -> list[ContributionSpec]:
+    """Build `rate` (one per dimension) + a `first_rating_bonus` spec. Dedup keys make
+    re-rates/bonus idempotent in the chokepoint — no first-detection query needed."""
+    specs = [
+        ContributionSpec(
+            user_id=user_id,
+            event_type="rate",
+            dedup_key=dk_rate(user_id, fountain_id, rating_type_id),
+            fountain_id=fountain_id,
+            location=location,
+            target_type="rating",
+            target_id=rating_id,
+            event_metadata={"rating_type_id": rating_type_id},
+        )
+        for rating_type_id, rating_id in rating_ids.items()
+    ]
+    if rating_ids:
+        specs.append(
+            ContributionSpec(
+                user_id=user_id,
+                event_type="first_rating_bonus",
+                dedup_key=dk_first_rating(fountain_id),
+                fountain_id=fountain_id,
+                location=location,
+            )
+        )
+    return specs
 
 
 async def serialize_fountain_detail(session: AsyncSession, fountain: Fountain) -> FountainDetail:
@@ -273,11 +323,43 @@ async def add_fountain(
     session.add(fountain)
     await session.flush()
 
+    # Emit contribution events (idempotent via dedup keys; first-X bonuses self-detect).
+    specs = [
+        ContributionSpec(
+            user_id=user.id,
+            event_type="add_fountain",
+            dedup_key=dk_add_fountain(fountain.id),
+            fountain_id=fountain.id,
+            location=point,
+            target_type="fountain",
+            target_id=fountain.id,
+        ),
+        ContributionSpec(
+            user_id=user.id,
+            event_type="first_fountain_bonus",
+            dedup_key=dk_first_fountain(user.id),
+            fountain_id=fountain.id,
+            location=point,
+        ),
+        ContributionSpec(
+            user_id=user.id,
+            event_type="first_in_area_bonus",
+            dedup_key=dk_first_in_area(
+                geohash_encode(payload.location.latitude, payload.location.longitude)
+            ),
+            fountain_id=fountain.id,
+            location=point,
+        ),
+    ]
     if payload.ratings:
-        await _upsert_ratings(
+        rating_ids = await _upsert_ratings(
             session, fountain_id=fountain.id, user_id=user.id, ratings=payload.ratings
         )
         await recompute_fountain_ranking(session, fountain.id)
+        specs += _rating_contribution_specs(
+            user_id=user.id, fountain_id=fountain.id, location=point, rating_ids=rating_ids
+        )
+    await record_contributions(session, specs)
 
     await session.commit()
     await session.refresh(fountain)
@@ -308,10 +390,28 @@ async def submit_ratings(
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="fountain not found")
 
     await _validate_rating_types(session, payload.ratings)
-    await _upsert_ratings(
+    rating_ids = await _upsert_ratings(
         session, fountain_id=fountain.id, user_id=user.id, ratings=payload.ratings
     )
     await recompute_fountain_ranking(session, fountain.id)
+    # Rebuild the location as a SQL expression (binding a loaded WKBElement would need
+    # Shapely); mirrors how add_fountain passes the point_geography expression.
+    lat, lng = (
+        await session.execute(
+            select(latitude_of(Fountain.location), longitude_of(Fountain.location)).where(
+                Fountain.id == fountain.id
+            )
+        )
+    ).one()
+    await record_contributions(
+        session,
+        _rating_contribution_specs(
+            user_id=user.id,
+            fountain_id=fountain.id,
+            location=point_geography(float(lat), float(lng)),
+            rating_ids=rating_ids,
+        ),
+    )
     await session.commit()
     await session.refresh(fountain)
     return await serialize_fountain_detail(session, fountain)
