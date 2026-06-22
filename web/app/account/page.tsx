@@ -7,6 +7,7 @@ import { getLogtoConfig } from "../../lib/logto";
 import { getAuthedApiClient } from "../../lib/server/api";
 import { log } from "../../lib/server/log";
 import { syncProfile } from "../../lib/server/sync";
+import { isDisplayableEmail } from "../../lib/email";
 
 export const dynamic = "force-dynamic";
 
@@ -85,10 +86,12 @@ export default async function AccountPage({
             <dt className="font-semibold">Name:</dt>
             <dd>{profile.display_name}</dd>
           </div>
-          <div className="flex gap-2">
-            <dt className="font-semibold">Email:</dt>
-            <dd>{profile.email}</dd>
-          </div>
+          {isDisplayableEmail(profile.email) && (
+            <div className="flex gap-2">
+              <dt className="font-semibold">Email:</dt>
+              <dd>{profile.email}</dd>
+            </div>
+          )}
         </dl>
         <SignOutButton />
       </main>

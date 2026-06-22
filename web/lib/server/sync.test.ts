@@ -2,11 +2,14 @@ import { readFileSync } from "node:fs";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { getAccessTokenRSC } = vi.hoisted(() => ({ getAccessTokenRSC: vi.fn() }));
+const { getAccessTokenRSC, getAccessToken } = vi.hoisted(() => ({
+  getAccessTokenRSC: vi.fn(),
+  getAccessToken: vi.fn(),
+}));
 vi.mock("server-only", () => ({}));
-vi.mock("@logto/next/server-actions", () => ({ getAccessTokenRSC }));
+vi.mock("@logto/next/server-actions", () => ({ getAccessTokenRSC, getAccessToken }));
 
-import { syncProfile } from "./sync";
+import { syncProfile, syncProfileForRoute } from "./sync";
 
 const ENV = {
   LOGTO_ENDPOINT: "https://auth.fountainrank.com",
@@ -92,5 +95,62 @@ describe("sync helper", () => {
     const out = spy.mock.calls.map((c) => String(c[0])).join("");
     expect(out).not.toContain("resource-tok");
     expect(out).not.toContain("opaque-tok");
+  });
+});
+
+describe("syncProfileForRoute", () => {
+  it("POSTs to /api/v1/me/sync using getAccessToken (route variant)", async () => {
+    stubEnv();
+    getAccessToken.mockImplementation(async (_c: unknown, resource?: string) =>
+      resource ? "route-resource-tok" : "route-opaque-tok",
+    );
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await syncProfileForRoute("rid-r1");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.fountainrank.com/api/v1/me/sync",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          Authorization: "Bearer route-resource-tok",
+          "X-Request-ID": "rid-r1",
+        }),
+        body: JSON.stringify({ userinfo_token: "route-opaque-tok" }),
+      }),
+    );
+  });
+
+  it("never throws when getAccessToken rejects (best-effort)", async () => {
+    stubEnv();
+    getAccessToken.mockRejectedValue(new Error("token-error"));
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(syncProfileForRoute("rid-r2")).resolves.toBeUndefined();
+    const out = spy.mock.calls.map((c) => String(c[0])).join("");
+    expect(out).not.toContain("route-resource-tok");
+    expect(out).not.toContain("route-opaque-tok");
+  });
+
+  it("never throws when fetch rejects after tokens are acquired (best-effort)", async () => {
+    stubEnv();
+    getAccessToken.mockImplementation(async (_c: unknown, resource?: string) =>
+      resource ? "route-resource-tok" : "route-opaque-tok",
+    );
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network down")));
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(syncProfileForRoute("rid-r3")).resolves.toBeUndefined();
+    const out = spy.mock.calls.map((c) => String(c[0])).join("");
+    expect(out).not.toContain("route-resource-tok");
+    expect(out).not.toContain("route-opaque-tok");
+  });
+
+  it("never throws on non-200 response", async () => {
+    stubEnv();
+    getAccessToken.mockImplementation(async (_c: unknown, resource?: string) =>
+      resource ? "route-resource-tok" : "route-opaque-tok",
+    );
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 503 }));
+    await expect(syncProfileForRoute("rid-r4")).resolves.toBeUndefined();
   });
 });
