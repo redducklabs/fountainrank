@@ -4,15 +4,18 @@ import { ShareButton } from "./ShareButton";
 import { StatusBlock } from "./StatusBlock";
 import { AttributeList } from "./AttributeList";
 import { NotesList } from "./NotesList";
+import { ContributeSection } from "./ContributeSection";
 
 export function FountainDetail({
   detail,
   notes,
   now,
+  isAuthenticated,
 }: {
   detail: Detail;
   notes: NoteOut[];
   now?: Date;
+  isAuthenticated: boolean;
 }) {
   const renderNow = now ?? new Date();
   const { latitude, longitude } = detail.location;
@@ -65,6 +68,11 @@ export function FountainDetail({
         </div>
       )}
       <NotesList notes={notes} now={renderNow} />
+      <ContributeSection
+        fountainId={detail.id}
+        dimensions={detail.dimensions}
+        isAuthenticated={isAuthenticated}
+      />
       <p className="text-xs text-slate-400">
         Added {formatDate(detail.created_at)}
         {detail.last_rated_at ? ` · Last rated ${formatDate(detail.last_rated_at)}` : ""}

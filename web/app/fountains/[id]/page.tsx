@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getFountainDetailServer, getFountainNotesServer } from "../../../lib/fountains";
 import { log } from "../../../lib/server/log";
+import { getViewer } from "../../../lib/server/viewer";
 import { FountainDetail } from "../../../components/fountain/FountainDetail";
 import { SiteHeader } from "../../../components/SiteHeader";
 
@@ -11,14 +12,16 @@ const shell = "mx-auto min-h-dvh max-w-2xl bg-white px-6 py-10";
 export default async function FountainPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const requestId = crypto.randomUUID();
-  const [{ data, status }, notesRes] = await Promise.all([
+  const [{ data, status }, notesRes, viewer] = await Promise.all([
     getFountainDetailServer(id, requestId),
     getFountainNotesServer(id, requestId),
+    getViewer(requestId),
   ]);
+  const isAuthenticated = viewer.state === "authed";
 
   if (status === 404) {
     log("info", "fountain not found", { requestId, id, status });
-    notFound(); // renders not-found UI AND returns HTTP 404 (SEO/crawlers)
+    notFound();
   }
   if (!data) {
     log("error", "failed to load fountain", { requestId, id, status });
@@ -50,7 +53,7 @@ export default async function FountainPage({ params }: { params: Promise<{ id: s
           ← Back to the map
         </Link>
         <div className="mt-6">
-          <FountainDetail detail={data} notes={notes} />
+          <FountainDetail detail={data} notes={notes} isAuthenticated={isAuthenticated} />
         </div>
       </main>
     </>

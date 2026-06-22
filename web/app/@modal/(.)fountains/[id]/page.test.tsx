@@ -5,11 +5,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const getDetail = vi.fn();
 const getNotes = vi.fn();
+const getViewerFn = vi.fn();
 const logFn = vi.fn();
 
 vi.mock("../../../../lib/fountains", () => ({
   getFountainDetailServer: (...a: unknown[]) => getDetail(...a),
   getFountainNotesServer: (...a: unknown[]) => getNotes(...a),
+}));
+vi.mock("../../../../lib/server/viewer", () => ({
+  getViewer: (...a: unknown[]) => getViewerFn(...a),
 }));
 vi.mock("../../../../lib/server/log", () => ({ log: (...a: unknown[]) => logFn(...a) }));
 vi.mock("../../../../components/fountain/DetailOverlay", () => ({
@@ -18,8 +22,10 @@ vi.mock("../../../../components/fountain/DetailOverlay", () => ({
   ),
 }));
 vi.mock("../../../../components/fountain/FountainDetail", () => ({
-  FountainDetail: ({ notes }: { notes: unknown[] }) => (
-    <div data-testid="detail">notes:{notes.length}</div>
+  FountainDetail: ({ notes, isAuthenticated }: { notes: unknown[]; isAuthenticated: boolean }) => (
+    <div data-testid="detail" data-authed={String(isAuthenticated)}>
+      notes:{notes.length}
+    </div>
   ),
 }));
 
@@ -30,7 +36,9 @@ const params = Promise.resolve({ id: "f1" });
 beforeEach(() => {
   getDetail.mockReset();
   getNotes.mockReset();
+  getViewerFn.mockReset();
   logFn.mockReset();
+  getViewerFn.mockResolvedValue({ state: "anonymous" });
 });
 
 describe("FountainModal route (overlay)", () => {
@@ -63,5 +71,24 @@ describe("FountainModal route (overlay)", () => {
     getNotes.mockResolvedValue({ data: undefined, status: 0 });
     render(await FountainModal({ params }));
     expect(screen.getByText(/Couldn.t load this fountain/i)).toBeInTheDocument();
+  });
+  it("passes isAuthenticated=true when viewer.state is authed", async () => {
+    getDetail.mockResolvedValue({ data: { id: "f1" }, status: 200 });
+    getNotes.mockResolvedValue({ data: [], status: 200 });
+    getViewerFn.mockResolvedValue({
+      state: "authed",
+      displayName: "Sam",
+      avatarUrl: null,
+      isAdmin: false,
+    });
+    render(await FountainModal({ params }));
+    expect(screen.getByTestId("detail")).toHaveAttribute("data-authed", "true");
+  });
+  it("passes isAuthenticated=false when viewer.state is anonymous", async () => {
+    getDetail.mockResolvedValue({ data: { id: "f1" }, status: 200 });
+    getNotes.mockResolvedValue({ data: [], status: 200 });
+    getViewerFn.mockResolvedValue({ state: "anonymous" });
+    render(await FountainModal({ params }));
+    expect(screen.getByTestId("detail")).toHaveAttribute("data-authed", "false");
   });
 });

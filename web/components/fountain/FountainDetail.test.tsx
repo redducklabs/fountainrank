@@ -1,9 +1,15 @@
 // @vitest-environment jsdom
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { components } from "@fountainrank/api-client";
 import type { FountainDetail as Detail } from "../../lib/fountains";
 import { FountainDetail } from "./FountainDetail";
+
+vi.mock("./ContributeSection", () => ({
+  ContributeSection: ({ isAuthenticated }: { isAuthenticated: boolean }) => (
+    <div data-testid="contribute-section">{isAuthenticated ? "authed" : "anon"}</div>
+  ),
+}));
 
 const now = new Date("2026-06-22T12:00:00Z");
 const base: Detail = {
@@ -28,30 +34,51 @@ const base: Detail = {
 
 describe("FountainDetail", () => {
   it("working + overall + votes", () => {
-    render(<FountainDetail detail={base} notes={[]} now={now} />);
+    render(<FountainDetail detail={base} notes={[]} now={now} isAuthenticated={false} />);
     expect(screen.getByText("Working")).toBeInTheDocument();
     expect(screen.getByText("4.3")).toBeInTheDocument();
     expect(screen.getByText("128 ratings")).toBeInTheDocument();
   });
   it("out of order", () => {
-    render(<FountainDetail detail={{ ...base, is_working: false }} notes={[]} now={now} />);
+    render(
+      <FountainDetail
+        detail={{ ...base, is_working: false }}
+        notes={[]}
+        now={now}
+        isAuthenticated={false}
+      />,
+    );
     expect(screen.getByText("Out of order")).toBeInTheDocument();
   });
   it("unrated overall + unrated dimension", () => {
-    render(<FountainDetail detail={{ ...base, average_rating: null }} notes={[]} now={now} />);
+    render(
+      <FountainDetail
+        detail={{ ...base, average_rating: null }}
+        notes={[]}
+        now={now}
+        isAuthenticated={false}
+      />,
+    );
     expect(screen.getAllByText("Not yet rated").length).toBeGreaterThan(0);
   });
   it("creator comment + caption only when present", () => {
-    const { rerender } = render(<FountainDetail detail={base} notes={[]} now={now} />);
+    const { rerender } = render(
+      <FountainDetail detail={base} notes={[]} now={now} isAuthenticated={false} />,
+    );
     expect(screen.queryByText("Cold and fast")).not.toBeInTheDocument();
     rerender(
-      <FountainDetail detail={{ ...base, comments: "Cold and fast" }} notes={[]} now={now} />,
+      <FountainDetail
+        detail={{ ...base, comments: "Cold and fast" }}
+        notes={[]}
+        now={now}
+        isAuthenticated={false}
+      />,
     );
     expect(screen.getByText("Cold and fast")).toBeInTheDocument();
     expect(screen.getByText("From the person who added this fountain")).toBeInTheDocument();
   });
   it("renders meta (added + last rated) and the Directions + Share actions", () => {
-    render(<FountainDetail detail={base} notes={[]} now={now} />);
+    render(<FountainDetail detail={base} notes={[]} now={now} isAuthenticated={false} />);
     expect(screen.getByText(/Added Jun 2026/)).toBeInTheDocument();
     expect(screen.getByText(/Last rated Jun 2026/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /directions/i })).toBeInTheDocument();
@@ -63,6 +90,7 @@ describe("FountainDetail", () => {
         detail={{ ...base, current_status: "ok", last_verified_at: "2026-06-19T12:00:00Z" }}
         notes={[]}
         now={now}
+        isAuthenticated={false}
       />,
     );
     expect(screen.getByText("Verified working")).toBeInTheDocument();
@@ -74,6 +102,7 @@ describe("FountainDetail", () => {
         detail={{ ...base, current_status: "reported_issue", is_working: true }}
         notes={[]}
         now={now}
+        isAuthenticated={false}
       />,
     );
     expect(screen.getByText("Working")).toBeInTheDocument();
@@ -83,19 +112,23 @@ describe("FountainDetail", () => {
         detail={{ ...base, current_status: "reported_issue", is_working: false }}
         notes={[]}
         now={now}
+        isAuthenticated={false}
       />,
     );
     expect(screen.getByText("Out of order")).toBeInTheDocument();
     expect(screen.getByText(/Issue reported recently/)).toBeInTheDocument();
   });
   it("placement note shown only when present", () => {
-    const { rerender } = render(<FountainDetail detail={base} notes={[]} now={now} />);
+    const { rerender } = render(
+      <FountainDetail detail={base} notes={[]} now={now} isAuthenticated={false} />,
+    );
     expect(screen.queryByText(/east entrance/)).not.toBeInTheDocument();
     rerender(
       <FountainDetail
         detail={{ ...base, placement_note: "Behind the playground, east entrance" }}
         notes={[]}
         now={now}
+        isAuthenticated={false}
       />,
     );
     expect(screen.getByText(/east entrance/)).toBeInTheDocument();
@@ -131,13 +164,22 @@ describe("FountainDetail", () => {
         latest_observation_value: "no",
       },
     ];
-    render(<FountainDetail detail={{ ...base, attributes }} notes={[]} now={now} />);
+    render(
+      <FountainDetail
+        detail={{ ...base, attributes }}
+        notes={[]}
+        now={now}
+        isAuthenticated={false}
+      />,
+    );
     expect(screen.getByText("Features")).toBeInTheDocument();
     expect(screen.getByText("Bottle filler")).toBeInTheDocument();
     expect(screen.getByText("latest: No")).toBeInTheDocument();
   });
   it("renders community notes (author from author_display_name); omitted when empty", () => {
-    const { rerender } = render(<FountainDetail detail={base} notes={[]} now={now} />);
+    const { rerender } = render(
+      <FountainDetail detail={base} notes={[]} now={now} isAuthenticated={false} />,
+    );
     expect(screen.queryByText("Community notes")).not.toBeInTheDocument();
     rerender(
       <FountainDetail
@@ -152,10 +194,19 @@ describe("FountainDetail", () => {
           },
         ]}
         now={now}
+        isAuthenticated={false}
       />,
     );
     expect(screen.getByText("Community notes")).toBeInTheDocument();
     expect(screen.getByText("Hidden tap on the north wall")).toBeInTheDocument();
     expect(screen.getByText(/Sam/)).toBeInTheDocument();
+  });
+  it("signed-out: renders contribute section as anon", () => {
+    render(<FountainDetail detail={base} notes={[]} now={now} isAuthenticated={false} />);
+    expect(screen.getByTestId("contribute-section")).toHaveTextContent("anon");
+  });
+  it("signed-in: renders contribute section as authed", () => {
+    render(<FountainDetail detail={base} notes={[]} now={now} isAuthenticated={true} />);
+    expect(screen.getByTestId("contribute-section")).toHaveTextContent("authed");
   });
 });
