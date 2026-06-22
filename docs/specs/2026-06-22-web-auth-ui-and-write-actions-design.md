@@ -11,6 +11,13 @@
 > actions + Logto access token + revalidation) and the **auth-aware shell** that every later slice
 > reuses (6b-2 add-fountain, 6c filters, 6d gamification surfacing, 6e mobile, and the 6g moderation
 > cluster the admin menu will eventually link to).
+>
+> **Revision note (spec-review round 1):** admin authorization was redesigned to be **authoritative
+> at request time** via a **subject-based** allowlist (`ADMIN_SUBJECTS`), reconciled on every
+> authenticated request — replacing the earlier email-allowlist-reconciled-at-profile-sync design,
+> which was not authoritative enough for a privilege boundary (stale grants/demotions, unverified
+> email). Other round-1 fixes (CSRF origin pinning, return-path hardening, fail-closed admin gate,
+> concrete env delivery, internal plan sequencing) are folded in below.
 
 ## 1. Goal & scope
 
@@ -29,11 +36,13 @@ the first writes to an **existing** fountain.
    - Signed out → a **"Sign in"** button that goes **directly** to Logto (no `/account` hop) and
      **returns the user to the page they were on**.
    - Signed in → the user's **avatar** opening a **user menu**: name, **Your account** (`/account`),
-     **Admin** (only when `is_admin`, → `/admin`), and **Sign out**.
-3. **Admin grant mechanism** — an **email allowlist** (`ADMIN_EMAILS` env) reconciled into the
-   existing `User.is_admin` column, so the "two user levels" (admin / regular) are actually usable.
-4. **`/admin` placeholder page** — admin-gated (server-side, authoritative via `GET /me`), a stub
-   landing page ("moderation tools coming soon"); the real moderation tooling is **6g**.
+     **Admin** (only when admin, → `/admin`), and **Sign out**.
+3. **Admin authorization** — a **subject allowlist** (`ADMIN_SUBJECTS` env) evaluated as the
+   authority on every authenticated request and synchronized into the existing `User.is_admin`
+   column, so the "two user levels" (admin / regular) are real, immediate, and revocable.
+4. **`/admin` placeholder page** — admin-gated server-side (authoritative via `GET /me`, fails
+   **closed**), a stub landing page ("moderation tools coming soon"); the real moderation tooling is
+   **6g**.
 5. **Write actions on an existing fountain**, in a grouped **Contribute** section of the detail
    panel: **rate** (1–5 stars per dimension), **verify "it's working" / report a problem**, and
    **add/update a note**. Signed-out visitors see an inline "Sign in to contribute" prompt that
@@ -43,10 +52,10 @@ the first writes to an **existing** fountain.
 
 - The **add-fountain** flow, map-pin placement, 409-duplicate, and attribute-observation editing →
   **6b-2**.
-- **Functional fountain moderation** (hide/unhide endpoints, `require_admin`, admin moderation UI) →
-  **6g** (the deferred #10–#13 cluster). This slice only makes the app **admin-aware** and links the
-  menu to the `/admin` placeholder.
-- Logto RBAC / roles in the JWT (the email-allowlist is the "for now" grant; RBAC is the long-term
+- **Functional fountain moderation** (hide/unhide endpoints, `require_admin`-gated routes, admin
+  moderation UI) → **6g** (the deferred #10–#13 cluster). This slice only makes the app
+  **admin-aware** and links the menu to the `/admin` placeholder.
+- Logto RBAC / roles in the JWT (the subject allowlist is the "for now" grant; RBAC is the long-term
   path), browser **geolocation / proximity** (`is_proximate` is always `false` on web), **optimistic
   UI**, note **prefill / delete**, gamification surfacing (6d), photos, and mobile (6e).
 
@@ -54,14 +63,20 @@ the first writes to an **existing** fountain.
 
 - **`User.is_admin: bool`** (default false) already exists (`backend/app/models.py`), and
   **`GET /api/v1/me` already returns `is_admin`** (`MeResponse`, surfaced in the generated web
-  client type). The role concept exists at the data + API layer; only the **grant** and the **UI**
-  are missing.
+  client type). The role concept exists at the data + API layer; only the **authority/grant** and the
+  **UI** are missing.
 - Moderation **data hooks** (`is_hidden` on `Fountain`, `FountainNote`, `ConditionReport`,
-  `AttributeObservation`) already exist — used by 6g, not this slice.
+  `AttributeObservation`) already exist — used by 6g, not this slice. Note: a note upsert
+  deliberately leaves `is_hidden` untouched (`backend/app/routers/fountains.py`), so a previously
+  hidden note stays hidden after edit (see §7.3).
 - **Auth plumbing:** `web/lib/logto.ts` (`getLogtoConfig`, `API_RESOURCE`, `resources:[API_RESOURCE]`);
   `web/app/actions/auth.ts` (`signInAction`, `signOutAction`); `web/app/callback/route.ts`;
   `web/lib/server/api.ts` (`getAuthedApiClient` via RSC token + `authedClientHeaders`);
   `web/lib/server/sync.ts` (`syncProfile`); `SignInButton`/`SignOutButton`; the `/account` page.
+- `backend/app/auth.py`: `get_current_user` validates the Logto resource JWT (signature/iss/aud/exp
+  via JWKS) and resolves the local user through `get_or_create_user`; the validated **`sub`** is the
+  trustworthy identity. `claims.get("email")` is **not** guaranteed verified (no `email_verified`
+  check), which is why admin authority is **subject-based**, not email-based (§4).
 - `@logto/next` 4.2.10 exports both `getAccessToken(config, resource?)` (server-action token — can
   persist a refreshed token to the writable cookie store) and `getAccessTokenRSC(...)` (RSC,
   read-only cookies). Reads use the RSC variant; **writes use `getAccessToken`** (§9.2).
@@ -81,9 +96,11 @@ fountain. From the generated client (`@fountainrank/api-client`):
   `working | broken | low_pressure | dirty | bad_taste | blocked | seasonal_unavailable | hours_limited`.
   Per-user-per-day dedup is server-enforced.
 - **`POST /api/v1/fountains/{id}/notes`** → **200** `NoteOut`. Body `AddNoteRequest { body:string }`
-  (trimmed, 1–1000). One note per user/fountain — a second submit **replaces** the first.
+  (trimmed, 1–1000). One note per user/fountain — a second submit **replaces** the first; moderation
+  fields are untouched (§7.3).
 - **`GET /api/v1/me`** → **200** `MeResponse { id, display_name, email, avatar_url, is_admin, created_at }`
-  (auth). Drives the header avatar/name and the admin gate.
+  (auth). Drives the header avatar/name and the admin gate; `is_admin` is reconciled to the
+  `ADMIN_SUBJECTS` authority before the response (§4).
 
 Rating dimensions come from the detail payload: `FountainDetail.dimensions` is built with an **outer
 join from `RatingType`** (`backend/app/routers/fountains.py`), so it lists **every** fountain-scoped
@@ -91,28 +108,38 @@ rating type (zero-vote included), ordered by `sort_order` — the rating form re
 **no extra `GET /rating-types`**. `NoteOut` carries **no user id / `is_mine`**, and the notes path is
 GET (list) + POST (upsert) only — hence the note form is an unprefilled upsert (§7.3).
 
-## 4. Backend — admin grant (email allowlist)
+## 4. Backend — admin authorization (subject allowlist, authoritative at request time)
 
-The only backend code change in this slice. Mirrors the existing `cors_allow_origins` pattern:
+The only backend code change in this slice. **Authority = `ADMIN_SUBJECTS`** (a set of Logto subject
+ids — the validated JWT `sub`, the only cryptographically trustworthy identity available on every
+request). Email is **not** used (the JWT `email` claim is not verified at request time, and fetching
+verified userinfo per request is too heavy).
 
-- **`Settings.admin_emails`** (`backend/app/config.py`): `Annotated[list[str], NoDecode] = []` with a
-  `mode="before"` validator accepting a comma-separated **or** JSON list (empty → `[]`), normalized to
-  **lowercase, trimmed**. Sourced from the `ADMIN_EMAILS` env (see §14).
-- **Reconcile `is_admin` authoritatively in `sync_me`** (`backend/app/routers/users.py`): after the
-  existing subject-match check + profile updates, set
-  `current_user.is_admin = current_user.email.strip().lower() in settings.admin_emails`
-  (add `settings: Depends(get_settings)`). The allowlist is **authoritative** — a user removed from
-  it is demoted on their next sync. `sync_me` already commits + refreshes + returns `MeResponse`.
-- **Creation-time correctness:** `get_current_user` (which has `settings` + the verified email
-  claim) computes `is_admin = email.lower() in settings.admin_emails` and passes it to
-  `get_or_create_user(..., is_admin=...)`, which sets it on the `ON CONFLICT DO NOTHING` INSERT so a
-  brand-new admin is correct on first sight. (Existing users — e.g. the owner — reconcile on their
-  next `sync_me`, i.e. next `/account` visit; documented in §10.) `get_current_user` itself stays
-  **side-effect-free for existing users** (no write on the hot read path).
+- **`Settings.admin_subjects`** (`backend/app/config.py`): `Annotated[list[str], NoDecode] = []` with
+  a `mode="before"` validator accepting a comma-separated **or** JSON list (empty → `[]`), trimmed.
+  Sourced from the `ADMIN_SUBJECTS` env (delivery in §14). Subjects are opaque ids, not secrets.
+- **Reconcile on every authenticated request, in `get_current_user`.** After resolving the user,
+  compute `desired = sub in settings.admin_subjects`; if `user.is_admin != desired`, set it and
+  **commit (write-if-changed only)**. After the first reconciliation the value matches and **no
+  further writes occur** — the comparison is O(1) and the write is one-shot per transition. This
+  makes `User.is_admin` an always-fresh synchronized cache and makes **grant and demotion take
+  effect immediately on the next authenticated request** (no `/account` visit, no indefinite stale
+  admin). The change is an independent user-row update (the row is already provisioned/flushed by
+  `get_or_create_user`); committing it in the dependency does not couple to the endpoint's own
+  transaction, and if a later rollback discards it, it simply reconciles again next request. Applies
+  to both the real-JWT path (`sub`) and the dev-auth seam (`x_dev_user` as the subject).
+- **`GET /me`** then returns the reconciled `is_admin`; **`/admin`** (web) gates on it authoritatively
+  (§5–§6). A reusable backend `require_admin` dependency (computing the same authority) is **deferred
+  to 6g**, where admin endpoints actually exist.
+- `sync_me` and `get_or_create_user` are **unchanged** with respect to admin (no creation-time or
+  profile-sync admin coupling — request-time reconciliation supersedes it).
+- **Logging:** an admin-status transition (false↔true) is logged once, structured, with the request
+  id, the (already-validated, already-logged-at-debug) `sub`, and the old→new value — **never** the
+  allowlist contents or any email. Steady state logs nothing extra.
 
-Rationale: email allowlist is declarative (no hand-editing the managed DB — respects the IaC rule),
-self-contained, and adequate for the single-admin "for now". Subject-based allowlisting and Logto
-RBAC are noted as the more robust future paths.
+Rationale: subject-based + request-time reconciliation is declarative (no hand-editing the managed
+DB), authoritative at the decision point, immediately revocable, and based on a verified identity.
+Logto RBAC (roles as JWT claims) is the documented long-term path.
 
 ## 5. Web — slim header + auth control
 
@@ -126,19 +153,34 @@ viewport**. A `variant: "hero" | "bar"` prop selects the tagline. `SiteHeader` i
 page (`app/page.tsx`, `hero`), the fountain standalone page, `/account`, and `/admin` (`bar`).
 
 The map page footer's "Sign in" link is made auth-aware (a sign-in trigger when signed out; hidden
-when signed in) so it is never a dead link to the old intermediate page.
+when signed in) so it is never a dead link. The signed-in footer's exact contents/spacing are pinned
+in the style guide + a test so removing the item doesn't regress mobile wrapping.
 
 ### 5.2 Auth state — `getViewer()`
 
-A new `web/lib/server/viewer.ts` (`server-only`) `getViewer()` returns a typed
-`Viewer = { authenticated:false } | { authenticated:true; displayName:string; avatarUrl:string|null; isAdmin:boolean }`:
-`getLogtoContext(getLogtoConfig(), { fetchUserInfo:false })` for `isAuthenticated`; when authenticated,
-`GET /api/v1/me` via `getAuthedApiClient(requestId)` for name/avatar/`is_admin`. **Non-fatal:** if
-`/me` fails while authenticated, return `{ authenticated:true, displayName:"", avatarUrl:null,
-isAdmin:false }` (avatar falls back to a generic glyph; menu still offers Account + Sign out; the
-header never blanks the page). Logged with `requestId`/`status` only — never the token. Reading the
-session cookie makes the rendering **dynamic**; `app/page.tsx` (today static) becomes dynamic — an
-acceptable change for an app shell.
+A new `web/lib/server/viewer.ts` (`server-only`) `getViewer()` returns a **discriminated** result so
+callers can fail closed:
+
+```
+type Viewer =
+  | { state: "anonymous" }
+  | { state: "authed"; displayName: string; avatarUrl: string | null; isAdmin: boolean }
+  | { state: "error" };   // a session exists but identity could not be confirmed
+```
+
+`getLogtoContext(getLogtoConfig(), { fetchUserInfo:false })` decides anonymous vs. has-session; when
+a session exists, `GET /api/v1/me` via `getAuthedApiClient(requestId)` fills name/avatar/`is_admin`.
+**Failure handling distinguishes the cases (do not collapse them):**
+- `/me` **401** (or a thrown token/session error) → `state:"anonymous"` (the session is no longer
+  usable → offer sign-in).
+- `/me` **5xx / network** → `state:"error"` (backend unavailable — never silently downgrade to
+  "authed non-admin", which would mask an outage and hide the Admin link).
+
+Header rendering: `anonymous` → Sign-in button; `authed` → avatar + menu (Admin item iff `isAdmin`);
+`error` → avatar + a minimal menu (Account, Sign out) with a subtle "couldn't load your account"
+note, **no Admin item**. Logged with `requestId`/`status` only — never the token. Reading the session
+cookie makes rendering **dynamic**; `app/page.tsx` (today static) becomes dynamic — an acceptable
+change for an app shell.
 
 ### 5.3 `AuthControl` + user menu (client)
 
@@ -146,8 +188,9 @@ acceptable change for an app shell.
 
 - **Signed out:** a "Sign in" button — `<form action={signInWithReturn.bind(null, returnTo)}>` where
   `returnTo` is the current path+query from `usePathname()`/`useSearchParams()` (§8).
-- **Signed in:** an **avatar button** (the `avatarUrl` image, or initials/glyph fallback) with
-  `aria-haspopup="menu"` + `aria-expanded`, toggling a **dropdown menu** (`role="menu"`):
+- **Signed in:** an **avatar button** (`aria-label="Open account menu"`; the image is decorative,
+  `alt=""`; initials/glyph fallback when `avatarUrl` is null) with `aria-haspopup="menu"` +
+  `aria-expanded`, toggling a **dropdown menu** (`role="menu"`):
   - the display name (non-interactive header),
   - **Your account** → `/account`,
   - **Admin** → `/admin` (**rendered only when `viewer.isAdmin`**),
@@ -155,16 +198,21 @@ acceptable change for an app shell.
   - Behavior: opens on click; closes on outside-click, `Escape`, or item activation; focus moves to
     the first item on open and returns to the avatar button on close; items are `role="menuitem"`.
 
-`signOutAction` is unchanged (returns to base URL `/`). The admin link is **never** the security
-boundary — `/admin` re-checks server-side (§6); hiding it is cosmetic.
+`signOutAction` is unchanged (returns to base URL `/`). The hidden Admin item is **cosmetic only** —
+`/admin` re-checks server-side and fails closed (§6).
 
 ## 6. Web — `/admin` placeholder
 
-`web/app/admin/page.tsx` (server, dynamic): call `getViewer()`. If **not authenticated** → redirect
-to sign-in with `returnTo="/admin"`. If **authenticated but not admin** → `notFound()` (404 — do not
-reveal the route exists). If **admin** → render `SiteHeader variant="bar"` + a stub body
-("Moderation tools are coming soon", listing the planned 6g actions). The gate is the authoritative
-`is_admin` from `GET /me`; no new backend endpoint is needed for the placeholder.
+`web/app/admin/page.tsx` (server, dynamic): call `getViewer()`. **Fails closed:**
+- `state:"anonymous"` → redirect to sign-in with `returnTo="/admin"`.
+- `state:"authed"` && **not** `isAdmin` → `notFound()` (404 — do not reveal the route).
+- `state:"error"` → render a clear "couldn't verify admin access — try again" state (NOT admin
+  content, NOT a 404).
+- `state:"authed"` && `isAdmin` → `SiteHeader variant="bar"` + a stub body ("Moderation tools are
+  coming soon", listing the planned 6g actions).
+
+The gate is the authoritative, request-time-reconciled `is_admin` from `GET /me` (§4). No new backend
+endpoint is needed for the placeholder.
 
 ## 7. Web — Contribute section (write actions)
 
@@ -182,7 +230,7 @@ One row per `detail.dimensions` entry: the dimension `name` + a keyboard-accessi
 group (the user's own rating, independent of the displayed community average). An untouched dimension
 is omitted from the payload; the user may rate **any subset**; **Submit is disabled until ≥1 star is
 set**. Submit POSTs `{ ratings:[{rating_type_id, stars}, …] }` for only the set dimensions; success →
-inline confirmation + revalidate (so the averages above update).
+inline confirmation + a fresh detail (§9.5).
 
 ### 7.2 Condition form
 
@@ -201,8 +249,7 @@ pure `conditionStatusLabel` helper):
 | `hours_limited` | "Only available certain hours" |
 
 Submit POSTs `{ status, is_proximate:false }` (always false on web — honest default; verified
-proximity is the mobile app's job later). Success → inline confirmation + revalidate (so the
-StatusBlock / "Last verified" trust line can update).
+proximity is the mobile app's job later). Success → inline confirmation + fresh detail (§9.5).
 
 ### 7.3 Note form
 
@@ -210,7 +257,10 @@ A textarea (1–1000 chars, trimmed, live counter) + **"Save note"**, with copy 
 any prior note. **Not prefilled** — `NoteOut` carries no user id and there is no "my note" lookup or
 DELETE, so the web layer cannot reliably identify "your note" (matching `author_display_name` would
 be fragile and is deliberately avoided). Submit POSTs `{ body }`; empty/whitespace rejected
-client-side; success → inline confirmation + revalidate (the new note appears in the 6a notes list).
+client-side; on success the confirmation reads a **neutral "Your note was saved."** — it does **not**
+claim the note now appears publicly, because a note that was previously **hidden by moderation stays
+hidden after an upsert** (the backend leaves `is_hidden` untouched), so it would not appear in the
+public list. The detail is refreshed (§9.5); whether a given note appears is the public list's call.
 
 ## 8. Shared — sign-in return path
 
@@ -218,28 +268,44 @@ Today `/callback` always redirects to `/account`. Logto's redirect URI must rema
 `/callback`, so the post-login destination travels out-of-band:
 
 - **`web/lib/return-path.ts`** — pure `safeReturnPath(value): string | null`, unit-tested. Accepts
-  only a **safe internal path**: a string that starts with a single `/` (not `//` or `/\`), contains
-  no scheme (`://`), no backslashes, no control characters, and is ≤512 chars; path + query + hash
-  allowed. Everything else → `null`. This is the open-redirect defense; it generalizes beyond
-  fountains so the **header** sign-in can return to *any* current page (map, detail, etc.) and the
-  Contribute prompt can return to `/fountains/{id}`.
+  only a **safe internal path** and is **hostile-input hardened**:
+  - must be a string starting with a single `/` (reject `//`, `/\`, and any scheme `://`),
+  - reject literal **and percent-encoded** backslashes/forward-slash pairs and control chars
+    (`%5c`, `%2f%2f`, `%00`–`%1f`), Unicode line/paragraph separators (` `/` `) and other
+    bidi/control code points,
+  - reject length > 512,
+  - path + query + hash otherwise allowed.
+
+  Implementation note: decode percent-encoding once and re-apply the disallow checks to the decoded
+  form (so `/%5c%5cevil` and `/%2f%2fevil` are rejected), and reject any value that still contains a
+  `%` that doesn't decode cleanly. This generalizes beyond fountains so the **header** sign-in can
+  return to *any* current page and the Contribute prompt can return to `/fountains/{id}`.
 - **`signInWithReturn(returnTo: string)`** server action (`web/app/actions/auth.ts`): validate via
-  `safeReturnPath`; if valid, set an **httpOnly, `SameSite=Lax`, `Secure` (prod), short `Max-Age`
-  (~600s)** cookie `fr_return_to` (via `cookies()`); then `await signIn(config, \`${baseUrl}/callback\`)`.
-  The existing `signInAction()` (used by `/account`) is left unchanged.
-- **`/callback`**: after `handleSignIn` succeeds, read `fr_return_to`, **delete it**, **re-validate**
-  with `safeReturnPath`, and redirect there; fall back to `/account` when absent/invalid. Failure
-  path unchanged (`/account?error=signin`). Re-validating on read means a tampered cookie can't drive
-  an open redirect.
+  `safeReturnPath`; if valid, set the cookie `fr_return_to` (via `cookies()`) with
+  **`path:"/"`, `httpOnly`, `SameSite:"lax"`, `Secure` in prod, `maxAge ~600s`**, **overwriting** any
+  prior value on every sign-in attempt; then `await signIn(config, \`${baseUrl}/callback\`)`. If
+  `returnTo` is invalid, set no cookie (callback falls back to `/account`). The existing
+  `signInAction()` (used by `/account`) is unchanged.
+- **`/callback`**: after `handleSignIn` succeeds, read `fr_return_to`, **delete it with the same
+  `path:"/"`**, **re-validate** with `safeReturnPath`, and redirect there; fall back to `/account`
+  when absent/invalid. Failure path unchanged (`/account?error=signin`). Re-validating on read means a
+  tampered cookie can't drive an open redirect.
 
 ## 9. Architecture & data flow
 
-### 9.1 Write mechanism — server actions
+### 9.1 Write mechanism — server actions (client input is untrusted)
 
-Writes are **Next.js Server Actions**: a client form collects typed input, calls a `"use server"`
-action that fetches the Logto access token **server-side**, calls the typed API client, revalidates,
-and returns a typed result. **The API token never reaches the browser** (`server-only` guards). Server
-actions get CSRF protection from Next's same-origin action checks; the session cookie is `SameSite=Lax`.
+Writes are **Next.js Server Actions**: a client form collects input and calls a `"use server"` action
+that fetches the Logto access token **server-side**, calls the typed API client, refreshes, and
+returns a typed result. **The API token never reaches the browser** (`server-only` guards).
+
+**Trust boundary:** a Server Action argument is **client-originated and untrusted** regardless of its
+TypeScript type — a caller can invoke the action with arbitrary serialized arguments. The TS types are
+a *developer-ergonomics* aid, **not** a security guarantee. Every action therefore **validates its
+input server-side as hostile** before any API call, and the backend independently re-validates and
+enforces auth. These controls are **JavaScript-required** (the star matrix and disclosures are
+interactive); no-JS progressive enhancement is explicitly out of scope for the Contribute controls
+(the detail panel is already client-interactive).
 
 `web/app/actions/contribute.ts` (`"use server"`):
 
@@ -252,15 +318,14 @@ submitCondition(fountainId, status: ConditionStatus): Promise<ActionResult>   //
 submitNote(fountainId, body: string): Promise<ActionResult>
 ```
 
-Each: mint `requestId`; **server-side input validation** (ratings non-empty + integer
-`rating_type_id` + `stars` ∈ 1–5; `status` ∈ the ConditionStatus set; `body` trimmed 1–1000) → on
-failure return `{ ok:false, error:"validation" }` **without** calling the API; obtain the authed
-action client (§9.2); POST via the typed client; on `2xx` → `revalidatePath(\`/fountains/${fountainId}\`)`
-and `{ ok:true }`; map non-2xx → `401→"unauthenticated"`, `404→"not_found"`, `422→"validation"`, else
-`"server"`; a thrown token/network error → `{ ok:false, error:"unauthenticated" }` (never an
-unhandled 500). Structured logs (action, `requestId`, `fountainId`, outcome `status`) — never the
-token, note body, or PII. Inputs are typed object args (not raw `FormData`) so the rating payload is
-type-checked end to end and the actions are unit-testable with a mocked client.
+Each: mint `requestId`; **server-side hostile-input validation** (`fountainId` is a UUID; `ratings`
+non-empty, each `rating_type_id` an integer, each `stars` an integer ∈ 1–5; `status` ∈ the
+ConditionStatus set; `body` a string, trimmed length 1–1000) → on failure return
+`{ ok:false, error:"validation" }` **without** calling the API; obtain the authed action client
+(§9.2); POST via the typed client; on `2xx` → refresh (§9.5) and `{ ok:true }`; map non-2xx →
+`401→"unauthenticated"`, `404→"not_found"`, `422→"validation"`, else `"server"`; a thrown
+token/network error → `{ ok:false, error:"unauthenticated" }` (never an unhandled 500). Structured
+logs (action, `requestId`, `fountainId`, outcome `status`) — never the token, note body, or PII.
 
 ### 9.2 Authed action client
 
@@ -268,7 +333,19 @@ type-checked end to end and the actions are unit-testable with a mocked client.
 but using **`getAccessToken`** (server-action variant, writable cookies) instead of
 `getAccessTokenRSC`. Reuses `authedClientHeaders`; `server-only`.
 
-### 9.3 Components
+### 9.3 Server Action CSRF / origin pinning (production)
+
+Next 16 protects Server Actions by comparing the request `Origin` to the `Host`/`X-Forwarded-Host`.
+Behind the DOKS NGINX ingress this only holds if the ingress preserves the public host. This slice
+therefore **requires**:
+- set `experimental.serverActions.allowedOrigins = ["fountainrank.com", "www.fountainrank.com"]` in
+  `web/next.config.ts` (explicit, reviewable) so action POSTs are accepted for both public origins;
+- **verify** in the prod-like environment that the web ingress forwards `Host`/`X-Forwarded-Host` as
+  the public host for action POSTs (the same trust-proxy concern noted in `claude_help/oauth-sso.md`);
+- a **post-deploy smoke step**: perform one authenticated write end-to-end against the deployed site
+  and confirm it succeeds (catches an ingress/origin misconfig that unit tests cannot).
+
+### 9.4 Components
 
 - `components/SiteHeader.tsx` (server) — slim bar; calls `getViewer()`; renders logo + `AuthControl`
   (+ tagline when `variant="hero"`).
@@ -279,112 +356,154 @@ but using **`getAccessToken`** (server-action variant, writable cookies) instead
   `useTransition` for pending/disabled/success/error; user text `break-words`.
 - Pure `conditionStatusLabel(status)` in `web/lib/map/format.ts` (with a generic title-cased fallback).
 
-### 9.4 Wiring
+### 9.5 Post-write refresh (decided — no implementation-time hedge)
+
+After a successful action: the action calls `revalidatePath(\`/fountains/${fountainId}\`)` (canonical
+detail) **and** the client calls `router.refresh()` on success. The client `router.refresh()` is the
+deterministic path that updates **both** the standalone route and the intercepted-modal segment
+(`web/app/@modal/(.)fountains/[id]/page.tsx`), so averages/status/notes are never stale after a write
+regardless of which segment is mounted. (Known product limitation, documented: map **pins** on `/`
+are not revalidated by a single fountain write — a `not_working` report recolors the pin on next map
+load; broad map revalidation is out of scope.)
+
+### 9.6 Wiring
 
 `FountainDetail` gains `isAuthenticated: boolean` and renders `<ContributeSection … />` at the bottom.
-Both detail routes (`app/fountains/[id]/page.tsx`, `app/@modal/(.)fountains/[id]/page.tsx`) add the
-viewer's `isAuthenticated` (derive from `getViewer()` or `getLogtoContext`) to their existing
-`Promise.all` and pass it down, and render `SiteHeader` (the standalone page; the modal keeps its
-overlay chrome). Both are already `force-dynamic`.
+Both detail routes (`app/fountains/[id]/page.tsx`, `app/@modal/(.)fountains/[id]/page.tsx`) derive
+`isAuthenticated` from `getViewer()` (`state==="authed"`) and pass it down, and the standalone page
+renders `SiteHeader`; the modal keeps its overlay chrome. Both are already `force-dynamic`.
 
 ## 10. Error handling & edge cases
 
 - **Signed-out submit impossible** — controls not rendered; the prompt is the only affordance.
 - **Session expired** (`401`/thrown token error) → form shows "Your session expired — sign in again";
-  read panel untouched. The header, on a `/me` failure, degrades to a minimal menu (Account + Sign
-  out), never blanks.
+  read panel untouched. `getViewer()` returns `anonymous` so the header offers sign-in.
+- **Backend down for `/me`** (`5xx`/network) → `getViewer()` returns `error`; the header shows a
+  degraded menu (no Admin), `/admin` shows a retry state (fails closed) — neither is silently treated
+  as "non-admin".
 - **Validation** (`"validation"`/`422`) → inline message; never blanks the panel.
 - **`404`** (fountain hidden/removed) → "This fountain is no longer available."
-- **Network/`5xx`** → "Couldn't save — please try again."; controls re-enable.
+- **Network/`5xx` on a write** → "Couldn't save — please try again."; controls re-enable.
 - **Double-submit** → controls disabled while pending.
-- **Admin reconciliation lag (documented):** after `ADMIN_EMAILS` ships, an **existing** user (the
-  owner) becomes admin on their next `sync_me` (i.e. next `/account` visit); new users are correct on
-  first sign-in. The header reflects admin once `GET /me` returns `is_admin:true`.
+- **Admin grant/demotion** — takes effect on the **next authenticated request** (§4); no stale-admin
+  window, no `/account` round-trip.
+- **Hidden prior note** — an upsert over a moderation-hidden note keeps it hidden; the success copy is
+  neutral and does not promise public visibility (§7.3).
 - **Unknown future `ConditionStatus`** → `conditionStatusLabel` title-cases generically.
-- **Revalidation scope (documented limitation):** `revalidatePath(\`/fountains/${id}\`)` refreshes the
-  detail; it does **not** refresh map pins on `/` (a `not_working` report won't instantly recolor the
-  pin — reflected on next load). Whether the intercepted-modal segment re-renders from the same
-  `revalidatePath` is verified during implementation (fallback: `router.refresh()` after success).
 - **XSS** — all contributor text renders as escaped React children; inputs sent as JSON.
-- **Accessibility** — star rating is a labeled radio group (keyboard, not color-only); the user menu
-  and "Report a problem" disclosure manage `aria-expanded`/focus/`Escape`; success/error use
-  `role="status"`/`aria-live="polite"`; `DetailOverlay` focus-trap unchanged.
+- **Accessibility** — star rating is a labeled radio group (keyboard, not color-only); the avatar
+  button has an `aria-label` and the menu/disclosure manage `aria-expanded`/focus/`Escape`;
+  success/error use `role="status"`/`aria-live="polite"`; `DetailOverlay` focus-trap unchanged.
 
 ## 11. Security considerations
 
+- **Admin authority** is `ADMIN_SUBJECTS` evaluated against the **verified JWT `sub`** on **every
+  authenticated request** (§4): immediate grant, immediate revocation, trustworthy identity (no
+  reliance on an unverified email claim). `User.is_admin` is a synchronized cache, never a lazily
+  reconciled source of truth. `/admin` and (later) `require_admin` enforce server-side; the hidden
+  menu item is cosmetic.
 - The API access token is fetched/used **only** in `server-only` modules and never serialized to the
   client; logs never include it.
-- **Open-redirect**: the return path is allowlisted to safe internal paths and **re-validated on read**
-  in the callback (§8).
-- **Admin authorization** is enforced **server-side** (`/admin` re-checks `GET /me.is_admin`); the
-  hidden menu item is cosmetic only. The `ADMIN_EMAILS` match uses the backend-accepted (verified)
-  email and is the single source of `is_admin`.
-- **CSRF**: writes are same-origin Next server actions; `fr_return_to` is httpOnly + `SameSite=Lax` +
-  `Secure` (prod).
-- Server-side input validation runs **before** any API call; the backend independently re-validates,
-  enforces auth, per-user upsert/dedup, and corroboration.
+- **Open-redirect**: `safeReturnPath` allowlists safe internal paths (literal + percent-encoded
+  hostile forms rejected) and is **re-validated on read** in the callback; the `fr_return_to` cookie
+  is `path:"/"` + httpOnly + `SameSite=Lax` + `Secure` (prod) + short-lived + overwritten/deleted with
+  the same path (§8).
+- **CSRF / origin**: writes are same-origin Next Server Actions with `allowedOrigins` pinned to the
+  two public hosts and an ingress-host verification + post-deploy write smoke (§9.3).
+- **Untrusted input**: Server Action arguments are validated server-side as hostile before any API
+  call (§9.1); the backend independently re-validates, enforces auth, per-user upsert/dedup, and
+  corroboration.
 
-## 12. Style guide
+## 12. Style guide (a same-commit prerequisite, not an afterthought)
 
-Add to `docs/style-guide.md`: the **slim site header** (hero vs bar variants, logo sizing, tagline),
-the **auth control** (sign-in button; **avatar button + user menu** — items, divider, admin item
-visibility, open/close/focus/`Escape` behavior), the **Contribute section** (heading + signed-out
-prompt + the auth-gated three-action layout), the **star-rating input**, the **condition action row +
-"Report a problem" disclosure**, the **note form** (textarea + counter + replace copy), the **inline
-form pending/success/error** convention, and the **`/admin` placeholder** shell. Update the "Detail
-overlay → Content" table.
+Per the house rule, the implementation plan's **first task** updates `docs/style-guide.md` (which
+still documents the old hero/header) before/with the new UI. Add: the **slim site header** (hero vs
+bar variants, logo sizing, tagline), the **auth control** (sign-in button; **avatar button + user
+menu** — items, divider, admin-item visibility, open/close/focus/`Escape` behavior, `aria-label`,
+decorative avatar `alt`), the **signed-in footer** contents/spacing, the **Contribute section**
+(heading + signed-out prompt + auth-gated three-action layout), the **star-rating input**, the
+**condition action row + "Report a problem" disclosure**, the **note form** (textarea + counter +
+replace copy), the **inline form pending/success/error** convention, and the **`/admin` placeholder**
+shell. Update the "Detail overlay → Content" table.
 
 ## 13. Testing
 
 **Backend (pytest, mirrors existing patterns):**
-- `Settings.admin_emails` parsing: comma-separated, JSON array, empty → `[]`, case/space normalization.
-- `sync_me` sets `is_admin=true` when the verified email ∈ allowlist and **clears** it when not
-  (authoritative); subject-mismatch path still 403; returns updated `MeResponse`.
-- `get_or_create_user` honors `is_admin` at creation; existing-user path is unchanged (no write).
+- `Settings.admin_subjects` parsing: comma-separated, JSON array, empty → `[]`, trimming.
+- `get_current_user` reconciliation: a `sub` in `ADMIN_SUBJECTS` → `is_admin` becomes true (one write)
+  and `GET /me` returns true on the same request; a `sub` removed from the allowlist → `is_admin`
+  **demoted** to false on the next request; **write-if-changed** (no write when already correct);
+  both real-JWT and dev-auth subjects; the admin-transition log line is emitted (no allowlist/email).
+- `GET /me` reflects the reconciled value; non-admin user → false.
 
 **Web (vitest + jsdom):**
-- `lib/return-path.test.ts`: `safeReturnPath` accepts `/fountains/{uuid}`, `/`, `/account?x=1`;
-  rejects `null`/empty, `//evil.com`, `https://evil`, `/\evil`, backslash/control-char variants, and
-  >512 chars.
+- `lib/return-path.test.ts`: `safeReturnPath` accepts `/fountains/{uuid}`, `/`, `/account?x=1#h`;
+  rejects `null`/empty, `//evil.com`, `https://evil`, `/\evil`, **percent-encoded** `/%5c%5cevil`,
+  `/%2f%2fevil`, `%00`/control chars, ` `/` `, malformed `%`, and >512 chars.
 - `lib/map/format.test.ts` (extend): `conditionStatusLabel` for all seven labels + `working` +
   unknown-status fallback.
-- `lib/server/viewer.test.ts`: signed-out; signed-in happy path (name/avatar/`is_admin`); `/me`
-  failure → degraded authenticated viewer; asserts token never logged (mock `getLogtoContext` + `/me`).
+- `lib/server/viewer.test.ts`: anonymous; authed happy path (name/avatar/`is_admin`); `/me` **401** →
+  `anonymous`; `/me` **5xx** → `error` (NOT authed-non-admin); token never logged (mock
+  `getLogtoContext` + `/me`).
 - `app/actions/contribute.test.ts`: each action with mocked authed client + token — happy path returns
-  `{ok:true}` and calls `revalidatePath`; validation short-circuits before any API call;
-  `401/404/422/5xx` → correct `ContributeError`; thrown token error → `"unauthenticated"`; token/body
-  never appear in logged fields.
-- Component tests: `AuthControl` (signed-out shows Sign in with bound return path; signed-in shows
-  avatar + menu; **Admin item present iff `isAdmin`**; menu opens/closes on click/outside/`Escape`;
-  Sign out posts `signOutAction`); `SiteHeader` (hero shows tagline, bar does not); `RatingForm`
-  (Submit disabled until ≥1 star; payload only set dimensions; pending disables; success/error);
-  `ConditionForm` (verify posts `working`; disclosure reveals seven labels; selecting posts the right
-  status); `NoteForm` (empty rejected; counter; success/error); `ContributeSection` (signed-out prompt
-  vs signed-in forms).
-- `app/admin/page.test.tsx`: unauthenticated → redirect; authenticated non-admin → `notFound`;
-  admin → renders the stub.
+  `{ok:true}` and triggers revalidate; validation short-circuits before any API call; **hostile/
+  malformed serialized payloads** (bad `fountainId`, out-of-range `stars`, unknown `status`, oversized
+  `body`) are rejected as `"validation"`; `401/404/422/5xx` → correct `ContributeError`; thrown token
+  error → `"unauthenticated"`; token/body never appear in logged fields.
+- Component tests: `AuthControl` (signed-out shows Sign in with bound return path; authed shows avatar
+  + menu with `aria-label`; **Admin item present iff `isAdmin`**; `error` state shows degraded menu w/o
+  Admin; menu opens/closes on click/outside/`Escape`; Sign out posts `signOutAction`); `SiteHeader`
+  (hero shows tagline, bar does not); `RatingForm` (Submit disabled until ≥1 star; payload only set
+  dimensions; pending disables; success/error); `ConditionForm` (verify posts `working`; disclosure
+  reveals seven labels; selecting posts the right status); `NoteForm` (empty rejected; counter; neutral
+  success copy); `ContributeSection` (signed-out prompt vs signed-in forms).
+- `app/admin/page.test.tsx`: anonymous → redirect; authed non-admin → `notFound`; `error` → retry
+  state (not admin content, not 404); admin → renders the stub.
 - Route tests (extend `app/fountains/[id]/page.test.tsx` + modal): `isAuthenticated` is threaded into
   `FountainDetail` for both auth states; existing 404/!data/non-fatal-notes assertions stay green.
+- **Post-deploy**: a manual/scripted authenticated-write smoke against the deployed site (§9.3).
 - Full local mirror before PR: `./run.ps1 check` (backend + workspace-js + web build + mobile). Mid-loop:
   `./run.ps1 check -Web` and `./run.ps1 check -Backend`.
 
 ## 14. Deployment / infra notes
 
-- **`ADMIN_EMAILS`** must be provided to the **backend** deployment (the owner's email(s),
-  comma-separated). It is **not** a repo secret and must not be committed; it is supplied via the
-  backend environment in the k8s/Terraform config and applied **through CI** (no manual cluster
-  mutation, per the IaC rules). Treat as standard config (or a k8s Secret if preferred since it is
-  PII). After deploy, the owner signs in and visits `/account` once to reconcile `is_admin` (§10).
-- No new web env vars. No DB migration (the `is_admin` column already exists). No API
-  contract/openapi change (the generated client already exposes every path + `is_admin`).
+- **`ADMIN_SUBJECTS`** delivery is concrete (deploy renders raw k8s YAML via `envsubst`, not generic
+  Terraform): add a **GitHub Actions variable** `ADMIN_SUBJECTS` (the owner's Logto subject id(s),
+  comma-separated — opaque ids, not secrets, so a `vars.` variable like `GOOGLE_DELEGATED_USER`/
+  `FROM_EMAIL`/`LOGTO_APP_ID`); reference it in `.github/workflows/deploy.yml` (`ADMIN_SUBJECTS:
+  ${{ vars.ADMIN_SUBJECTS }}`) and add `ADMIN_SUBJECTS` to that step's `export …` list; add an env
+  entry to `infra/k8s/backend.yaml` (`- name: ADMIN_SUBJECTS\n  value: "${ADMIN_SUBJECTS}"`). All
+  applied **through CI** (no manual cluster mutation, per the IaC rules); documented in
+  `docs/setup` / `claude_help/github-environments.md`. The owner obtains their `sub` from the Logto
+  admin console. With request-time reconciliation, the owner becomes admin on the **next
+  authenticated request** after deploy (e.g. the header loading `/me`) — no extra step.
+- **`web/next.config.ts`**: add `experimental.serverActions.allowedOrigins` for the two public hosts
+  (§9.3). No new web runtime env vars.
+- No DB migration (the `is_admin` column already exists). No API contract/openapi change (the
+  generated client already exposes every path + `is_admin`).
 
-## 15. Out of scope / follow-ups
+## 15. Implementation sequencing (single PR, internally gated)
+
+The owner chose one slice/PR; to keep it reviewable, the plan orders it as discrete,
+independently-verifiable steps (each with its own tests, green before the next):
+
+1. **Style guide** entries for all new UI (prerequisite, §12).
+2. **Backend** — `admin_subjects` setting + request-time reconciliation + logging + tests (§4, §13).
+3. **Shared sign-in return path** — `safeReturnPath` + `signInWithReturn` + callback change + tests (§8).
+4. **Header / auth shell** — `getViewer`, `SiteHeader`, `AuthControl`, footer; map hero slimmed;
+   `app/page.tsx` dynamic (§5).
+5. **`/admin`** placeholder (fail-closed gate) (§6).
+6. **Contribute server-action infrastructure** — `getAuthedApiClientForAction`, `contribute.ts`
+   actions, `next.config.ts` origins (§9).
+7. **The three forms** + `ContributeSection` wiring into `FountainDetail` + route threading (§7, §9.6).
+
+## 16. Out of scope / follow-ups
 
 - **6b-2** — add-fountain (map-pin placement, status/rating/attributes/comment/placement-note,
   409-duplicate) + attribute-observation editing built from `GET /attribute-types`.
-- **6g** — fountain **moderation**: `require_admin` dependency, hide/unhide endpoints (leveraging the
+- **6g** — fountain **moderation**: a `require_admin` dependency, hide/unhide endpoints (leveraging the
   existing `is_hidden` hooks), and the admin moderation pages the `/admin` menu will link to (the
   deferred #10–#13 cluster).
 - **6c** filters, **6d** gamification surfacing (meaningfully populated once writes exist), **6e**
-  mobile (reuses this authenticated-write pattern). Subject-based admin allowlisting / Logto RBAC and
-  instant map-pin refresh on status change are deferred.
+  mobile (reuses this authenticated-write pattern). Logto RBAC and instant map-pin refresh on status
+  change are deferred.
