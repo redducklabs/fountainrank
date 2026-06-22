@@ -199,8 +199,9 @@ jobs:
           GOOGLE_DELEGATED_USER: ${{ vars.GOOGLE_DELEGATED_USER }}
           FROM_EMAIL: ${{ vars.FROM_EMAIL }}
           LOGTO_APP_ID: ${{ vars.LOGTO_APP_ID }}
+          ADMIN_SUBJECTS: ${{ vars.ADMIN_SUBJECTS }}
         run: |
-          export NAMESPACE ENVIRONMENT IMAGE_TAG REGISTRY DOMAIN GOOGLE_DELEGATED_USER FROM_EMAIL LOGTO_APP_ID
+          export NAMESPACE ENVIRONMENT IMAGE_TAG REGISTRY DOMAIN GOOGLE_DELEGATED_USER FROM_EMAIL LOGTO_APP_ID ADMIN_SUBJECTS
           for f in backend web logto ingress basemap-tiles; do
             envsubst < "infra/k8s/$f.yaml" | kubectl apply -f -
           done
