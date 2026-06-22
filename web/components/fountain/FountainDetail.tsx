@@ -29,7 +29,7 @@ export function FountainDetail({
         />
       </div>
       {detail.placement_note && (
-        <p className="text-sm text-slate-600">
+        <p className="text-sm break-words text-slate-600">
           <span aria-hidden="true">📍 </span>
           {detail.placement_note}
         </p>
@@ -58,7 +58,7 @@ export function FountainDetail({
       <AttributeList attributes={detail.attributes} />
       {detail.comments && (
         <div>
-          <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+          <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm break-words text-slate-700">
             {detail.comments}
           </p>
           <p className="mt-1 text-xs text-slate-400">From the person who added this fountain</p>

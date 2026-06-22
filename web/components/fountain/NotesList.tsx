@@ -14,7 +14,7 @@ export function NotesList({ notes, now }: { notes: NoteOut[]; now: Date }) {
           return (
             <li
               key={note.id}
-              className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700"
+              className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm break-words text-slate-700"
             >
               <p>{note.body}</p>
               <p className="mt-1 text-xs text-slate-400">

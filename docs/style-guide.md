@@ -305,7 +305,9 @@ A "Community notes" section (heading styled as the attribute group heading). Eac
 (`rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700`) with the body, then a
 `text-xs text-slate-400` byline "— {author_display_name} · {relative time}" plus "· edited" when the
 note was edited. The section is omitted entirely when there are no notes. The author is always the
-backend's safe public `author_display_name`.
+backend's safe public `author_display_name`. User-generated free text (note body, placement note,
+creator comment) carries `break-words` so a long unbroken string (URL/token) can't overflow the
+narrow panel.
 
 ### Accessible fountains-in-view list (`web/components/map/FountainsInViewList.tsx`)
 
