@@ -1,4 +1,4 @@
-import { getFountainDetailServer } from "../../../../lib/fountains";
+import { getFountainDetailServer, getFountainNotesServer } from "../../../../lib/fountains";
 import { log } from "../../../../lib/server/log";
 import { FountainDetail } from "../../../../components/fountain/FountainDetail";
 import { DetailOverlay } from "../../../../components/fountain/DetailOverlay";
@@ -8,7 +8,10 @@ export const dynamic = "force-dynamic";
 export default async function FountainModal({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const requestId = crypto.randomUUID();
-  const { data, status } = await getFountainDetailServer(id, requestId);
+  const [{ data, status }, notesRes] = await Promise.all([
+    getFountainDetailServer(id, requestId),
+    getFountainNotesServer(id, requestId),
+  ]);
 
   if (status === 404) {
     log("info", "fountain not found (overlay)", { requestId, id, status });
@@ -26,9 +29,18 @@ export default async function FountainModal({ params }: { params: Promise<{ id: 
       </DetailOverlay>
     );
   }
+  const notesOk = notesRes.status >= 200 && notesRes.status < 300;
+  if (!notesOk) {
+    log("warn", "failed to load fountain notes (overlay)", {
+      requestId,
+      id,
+      status: notesRes.status,
+    });
+  }
+  const notes = notesOk && notesRes.data ? notesRes.data : [];
   return (
     <DetailOverlay>
-      <FountainDetail detail={data} />
+      <FountainDetail detail={data} notes={notes} />
     </DetailOverlay>
   );
 }
