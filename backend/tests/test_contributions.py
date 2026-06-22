@@ -22,8 +22,41 @@ def test_points_for_defaults_and_unknown():
     assert points_for("add_fountain") == 10
     assert points_for("rate") == 2
     assert points_for("first_in_area_bonus") == 15
+    assert points_for("verify_working") == 3
+    assert points_for("report_condition") == 2
     with pytest.raises(ValueError):
         points_for("nope")
+
+
+@pytest.mark.asyncio
+async def test_condition_event_target_pair_validation(session):
+    u = await _mk_user(session, 20)
+    # Legal: verify_working / report_condition target a condition_report.
+    ids = await record_contributions(
+        session,
+        [
+            ContributionSpec(
+                user_id=u.id,
+                event_type="verify_working",
+                dedup_key="verify:u20:f:20260622",
+                target_type="condition_report",
+            )
+        ],
+    )
+    assert len(ids) == 1
+    # Illegal pair: a condition event with the wrong target_type is rejected.
+    with pytest.raises(ValueError):
+        await record_contributions(
+            session,
+            [
+                ContributionSpec(
+                    user_id=u.id,
+                    event_type="report_condition",
+                    dedup_key="cond:bad",
+                    target_type="rating",
+                )
+            ],
+        )
 
 
 async def _total_points(session, user_id) -> int:

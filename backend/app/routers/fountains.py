@@ -668,6 +668,7 @@ async def submit_condition(
     ).scalar_one_or_none()
     if fountain is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="fountain not found")
+    prev_status = fountain.current_status
 
     report = ConditionReport(
         fountain_id=fountain.id,
@@ -707,11 +708,12 @@ async def submit_condition(
     await session.commit()
     await session.refresh(fountain)
     logger.info(
-        "condition reported fountain=%s user=%s report=%s status=%s current_status=%s event=%s",
+        "condition reported fountain=%s user=%s report=%s status=%s current_status=%s->%s event=%s",
         fountain.id,
         user.id,
         report.id,
         payload.status,
+        prev_status,
         fountain.current_status,
         "inserted" if inserted else "deduped",
     )
