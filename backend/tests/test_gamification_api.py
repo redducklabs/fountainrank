@@ -183,16 +183,28 @@ async def test_local_leaderboard_tie_and_null_location(client, session):
     session.add_all(
         [
             ContributionEvent(
-                user_id=u1.id, event_type="add_fountain", points=10, status="awarded",
-                dedup_key="lt1", location=point_geography(0.001, 0.001),
+                user_id=u1.id,
+                event_type="add_fountain",
+                points=10,
+                status="awarded",
+                dedup_key="lt1",
+                location=point_geography(0.001, 0.001),
             ),
             ContributionEvent(
-                user_id=u2.id, event_type="add_fountain", points=10, status="awarded",
-                dedup_key="lt2", location=point_geography(0.001, 0.001),
+                user_id=u2.id,
+                event_type="add_fountain",
+                points=10,
+                status="awarded",
+                dedup_key="lt2",
+                location=point_geography(0.001, 0.001),
             ),
             ContributionEvent(  # NULL location -> excluded by ST_DWithin despite 99 points
-                user_id=u3.id, event_type="add_fountain", points=99, status="awarded",
-                dedup_key="lt3", location=None,
+                user_id=u3.id,
+                event_type="add_fountain",
+                points=99,
+                status="awarded",
+                dedup_key="lt3",
+                location=None,
             ),
         ]
     )
