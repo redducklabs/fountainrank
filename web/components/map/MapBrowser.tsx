@@ -9,6 +9,7 @@ import maplibregl, {
 import "maplibre-gl/dist/maplibre-gl.css";
 import { BASEMAP, PIN_ASSETS, PILL_BG_ASSET } from "../../lib/map/style";
 import { fetchBbox, type FountainPin } from "../../lib/fountains";
+import { resolveApiBaseUrl } from "../../lib/api";
 import { pinsToFeatureCollection } from "../../lib/map/pins";
 import { normalizeBounds, shouldLoadPins, isAtCap } from "../../lib/map/bounds";
 import {
@@ -89,10 +90,17 @@ export default function MapBrowser() {
     typeof window !== "undefined" && new URLSearchParams(window.location.search).has("debug");
   const [diag, setDiag] = useState<{
     webgl: string;
+    apiBase: string;
     tiles: number;
     sourceLoaded: boolean;
     errors: string[];
-  }>(() => ({ webgl: debug ? webglInfo() : "", tiles: 0, sourceLoaded: false, errors: [] }));
+  }>(() => ({
+    webgl: debug ? webglInfo() : "",
+    apiBase: resolveApiBaseUrl(),
+    tiles: 0,
+    sourceLoaded: false,
+    errors: [],
+  }));
 
   useEffect(() => {
     if (!webglOk) return; // no WebGL2 → the UnsupportedHint renders; never touch MapLibre.
@@ -253,7 +261,14 @@ export default function MapBrowser() {
       if (norm.skip) return; // antimeridian/degenerate: keep prior pins
       setStatus("loading");
       try {
-        const data = await fetchBbox(norm.params, crypto.randomUUID());
+        // crypto.randomUUID throws if unavailable (older browsers / non-secure contexts);
+        // that would surface as this catch's "Couldn't load fountains" without a request ever
+        // being sent. Fall back so the per-request id never blocks the fetch.
+        const reqId =
+          typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+            ? crypto.randomUUID()
+            : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const data = await fetchBbox(norm.params, reqId);
         if (seq !== loadSeqRef.current) return; // stale response — a newer load is in progress
         setPins(data);
         // Normalise ranking_score: the API schema marks it optional (?), but PinInput requires
@@ -263,7 +278,9 @@ export default function MapBrowser() {
         setStatus(isAtCap(data.length) ? "capped" : data.length === 0 ? "empty" : "idle");
       } catch (e) {
         if (seq !== loadSeqRef.current) return; // stale error — don't clobber newer load's state
-        logMapError("bbox-fetch-failed", { name: (e as Error).name });
+        const detail = `${(e as Error).name}: ${(e as Error).message}`;
+        logMapError("bbox-fetch-failed", { detail });
+        setDiag((d) => ({ ...d, errors: [...d.errors.slice(-9), `bbox-fetch: ${detail}`] }));
         setStatus("error");
       }
     }
@@ -306,6 +323,7 @@ export default function MapBrowser() {
             webglOk {String(webglOk)} · status {status}
           </div>
           <div>webgl: {diag.webgl || "…"}</div>
+          <div>api: {diag.apiBase}</div>
           <div>
             basemap tiles seen: {diag.tiles} · sourceLoaded: {String(diag.sourceLoaded)}
           </div>
