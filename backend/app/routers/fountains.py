@@ -19,6 +19,7 @@ from app.contributions import (
     dk_first_fountain,
     dk_first_in_area,
     dk_first_rating,
+    dk_note,
     dk_observe_attr,
     dk_rate,
     dk_report_condition,
@@ -34,6 +35,7 @@ from app.models import (
     ConditionReport,
     Fountain,
     FountainAttributeConsensus,
+    FountainNote,
     Rating,
     RatingType,
     User,
@@ -41,6 +43,7 @@ from app.models import (
 from app.ranking import recompute_fountain_ranking
 from app.schemas import (
     AddFountainRequest,
+    AddNoteRequest,
     AttributeConsensusOut,
     ConditionReportRequest,
     Coordinates,
@@ -48,6 +51,7 @@ from app.schemas import (
     DuplicateFountainConflict,
     FountainDetail,
     FountainPin,
+    NoteOut,
     ObserveAttributesRequest,
     RateRequest,
     RatingInput,
@@ -718,3 +722,115 @@ async def submit_condition(
         "inserted" if inserted else "deduped",
     )
     return await serialize_fountain_detail(session, fountain)
+
+
+@router.post("/fountains/{fountain_id}/notes", response_model=NoteOut)
+async def submit_note(
+    fountain_id: uuid.UUID,
+    payload: AddNoteRequest,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> NoteOut:
+    fountain = (
+        await session.execute(
+            select(Fountain)
+            .where(Fountain.id == fountain_id, Fountain.is_hidden.is_(False))
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if fountain is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="fountain not found")
+
+    # Upsert the caller's one note. Set ONLY body + updated_at — moderation fields are left
+    # untouched so a hidden note stays hidden after an edit (no self-unhide bypass).
+    stmt = (
+        pg_insert(FountainNote)
+        .values(id=uuid.uuid4(), fountain_id=fountain.id, user_id=user.id, body=payload.body)
+        .on_conflict_do_update(
+            index_elements=["fountain_id", "user_id"],
+            set_={"body": payload.body, "updated_at": func.now()},
+        )
+        .returning(FountainNote.id, FountainNote.created_at, FountainNote.updated_at)
+    )
+    note = (await session.execute(stmt)).one()
+    await session.flush()
+
+    lat, lng = (
+        await session.execute(
+            select(latitude_of(Fountain.location), longitude_of(Fountain.location)).where(
+                Fountain.id == fountain.id
+            )
+        )
+    ).one()
+    inserted = await record_contributions(
+        session,
+        [
+            ContributionSpec(
+                user_id=user.id,
+                event_type="add_note",
+                dedup_key=dk_note(user.id, fountain.id),
+                fountain_id=fountain.id,
+                location=point_geography(float(lat), float(lng)),
+                target_type="note",
+                target_id=note.id,
+            )
+        ],
+    )
+    await session.commit()
+    logger.info(
+        "note saved fountain=%s user=%s note=%s event=%s",
+        fountain.id,
+        user.id,
+        note.id,
+        "inserted" if inserted else "deduped",
+    )
+    return NoteOut(
+        id=note.id,
+        body=payload.body,
+        author_display_name=user.display_name,
+        created_at=note.created_at,
+        updated_at=note.updated_at,
+    )
+
+
+@router.get("/fountains/{fountain_id}/notes", response_model=list[NoteOut])
+async def list_notes(
+    fountain_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> list[NoteOut]:
+    exists = (
+        await session.execute(
+            select(Fountain.id).where(Fountain.id == fountain_id, Fountain.is_hidden.is_(False))
+        )
+    ).scalar_one_or_none()
+    if exists is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="fountain not found")
+    rows = (
+        await session.execute(
+            select(
+                FountainNote.id,
+                FountainNote.body,
+                User.display_name,
+                FountainNote.created_at,
+                FountainNote.updated_at,
+            )
+            .join(User, User.id == FountainNote.user_id)
+            .where(
+                FountainNote.fountain_id == fountain_id,
+                FountainNote.is_hidden.is_(False),
+            )
+            .order_by(FountainNote.created_at.desc(), FountainNote.id.desc())
+            .limit(settings.max_results)
+        )
+    ).all()
+    return [
+        NoteOut(
+            id=r.id,
+            body=r.body,
+            author_display_name=r.display_name,
+            created_at=r.created_at,
+            updated_at=r.updated_at,
+        )
+        for r in rows
+    ]

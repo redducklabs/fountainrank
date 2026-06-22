@@ -72,3 +72,12 @@ def test_openapi_exposes_conditions_contract():
     # current_status / last_verified_at surfaced on pins + detail.
     assert "current_status" in components["FountainPin"]["properties"]
     assert "current_status" in components["FountainDetail"]["properties"]
+
+
+def test_openapi_exposes_notes_contract():
+    schema = app.openapi()
+    assert "/api/v1/fountains/{fountain_id}/notes" in schema["paths"]
+    note_path = schema["paths"]["/api/v1/fountains/{fountain_id}/notes"]
+    assert "get" in note_path and "post" in note_path
+    components = schema["components"]["schemas"]
+    assert "AddNoteRequest" in components and "NoteOut" in components

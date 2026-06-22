@@ -34,6 +34,7 @@ POINTS: dict[str, int] = {
     "observe_attribute": 2,
     "verify_working": 3,
     "report_condition": 2,
+    "add_note": 2,
 }
 
 # Allowed target_type per event_type (None = a pure bonus event with no source row).
@@ -48,6 +49,7 @@ EVENT_TARGET_TYPES: dict[str, set[str | None]] = {
     "observe_attribute": {"attribute_observation"},
     "verify_working": {"condition_report"},
     "report_condition": {"condition_report"},
+    "add_note": {"note"},
 }
 
 # Which user_contribution_stats counter each event_type increments (besides total_points).
@@ -57,6 +59,7 @@ _STAT_COUNTER: dict[str, str] = {
     "observe_attribute": "attributes_count",
     "verify_working": "verifications_count",
     "report_condition": "conditions_reported",
+    "add_note": "notes_count",
 }
 
 
@@ -113,6 +116,10 @@ def dk_verify(user_id: uuid.UUID, fountain_id: uuid.UUID, day: str) -> str:
 
 def dk_report_condition(user_id: uuid.UUID, fountain_id: uuid.UUID, day: str) -> str:
     return f"cond:{user_id}:{fountain_id}:{day}"
+
+
+def dk_note(user_id: uuid.UUID, fountain_id: uuid.UUID) -> str:
+    return f"note:{user_id}:{fountain_id}"
 
 
 def _validate(spec: ContributionSpec) -> None:
