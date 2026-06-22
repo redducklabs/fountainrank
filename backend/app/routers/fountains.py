@@ -329,6 +329,7 @@ async def serialize_fountain_detail(session: AsyncSession, fountain: Fountain) -
         last_rated_at=fountain.last_rated_at,
         current_status=fountain.current_status,
         last_verified_at=fountain.last_verified_at,
+        placement_note=fountain.placement_note,
         dimensions=dimensions,
         attributes=attributes,
     )
@@ -461,6 +462,10 @@ async def add_fountain(
     settings: Settings = Depends(get_settings),
 ) -> FountainDetail | JSONResponse:
     await _validate_rating_types(session, payload.ratings)
+    # Validate add-time attribute observations BEFORE creating the fountain — a bad
+    # observation 422s the whole add (the txn never commits).
+    if payload.observations:
+        await _validate_attribute_observations(session, payload.observations)
 
     # Serialize the proximity check + insert against concurrent adds (held until commit).
     await session.execute(select(func.pg_advisory_xact_lock(ADD_FOUNTAIN_LOCK_KEY)))
@@ -487,6 +492,7 @@ async def add_fountain(
         location=point,
         is_working=payload.is_working,
         comments=payload.comments,
+        placement_note=payload.placement_note,
         added_by_user_id=user.id,
     )
     session.add(fountain)
@@ -543,6 +549,25 @@ async def add_fountain(
         specs += _rating_contribution_specs(
             user_id=user.id, fountain_id=fountain.id, location=point, rating_ids=rating_ids
         )
+    if payload.observations:
+        obs_ids = await _upsert_attribute_observations(
+            session, fountain_id=fountain.id, user_id=user.id, observations=payload.observations
+        )
+        for attribute_type_id in obs_ids:
+            await recompute_attribute_consensus(session, fountain.id, attribute_type_id)
+        specs += [
+            ContributionSpec(
+                user_id=user.id,
+                event_type="observe_attribute",
+                dedup_key=dk_observe_attr(user.id, fountain.id, attribute_type_id),
+                fountain_id=fountain.id,
+                location=point,
+                target_type="attribute_observation",
+                target_id=observation_id,
+                event_metadata={"attribute_type_id": attribute_type_id},
+            )
+            for attribute_type_id, observation_id in obs_ids.items()
+        ]
     await record_contributions(session, specs)
 
     await session.commit()

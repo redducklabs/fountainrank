@@ -81,3 +81,10 @@ def test_openapi_exposes_notes_contract():
     assert "get" in note_path and "post" in note_path
     components = schema["components"]["schemas"]
     assert "AddNoteRequest" in components and "NoteOut" in components
+
+
+def test_openapi_add_fountain_has_placement_and_observations():
+    schema = app.openapi()
+    props = schema["components"]["schemas"]["AddFountainRequest"]["properties"]
+    assert "placement_note" in props and "observations" in props
+    assert "placement_note" in schema["components"]["schemas"]["FountainDetail"]["properties"]

@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
 NoteBody = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1000)]
 
@@ -106,6 +106,7 @@ class FountainDetail(BaseModel):
     last_rated_at: datetime | None
     current_status: str | None = None
     last_verified_at: datetime | None = None
+    placement_note: str | None = None
     dimensions: list[DimensionSummary]
     attributes: list[AttributeConsensusOut] = []
 
@@ -124,7 +125,17 @@ class AddFountainRequest(BaseModel):
     location: Coordinates
     is_working: bool = True
     comments: str | None = None
+    placement_note: str | None = Field(default=None, max_length=200)
     ratings: list[RatingInput] = Field(default_factory=list)
+    observations: list[AttributeObservationInput] = Field(default_factory=list)
+
+    @field_validator("placement_note", mode="before")
+    @classmethod
+    def _normalize_placement_note(cls, v: object) -> object:
+        if isinstance(v, str):
+            return v.strip() or None
+        # Non-str (and non-None) falls through to type validation -> 422 (never .strip() it).
+        return v
 
 
 class RateRequest(BaseModel):
