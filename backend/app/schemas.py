@@ -131,11 +131,11 @@ class AddFountainRequest(BaseModel):
 
     @field_validator("placement_note", mode="before")
     @classmethod
-    def _normalize_placement_note(cls, v: str | None) -> str | None:
-        if v is None:
-            return None
-        v = v.strip()
-        return v or None
+    def _normalize_placement_note(cls, v: object) -> object:
+        if isinstance(v, str):
+            return v.strip() or None
+        # Non-str (and non-None) falls through to type validation -> 422 (never .strip() it).
+        return v
 
 
 class RateRequest(BaseModel):

@@ -122,6 +122,25 @@ async def test_add_time_capture(client, test_user, session):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("bad", [123, True, [], {}])
+async def test_placement_note_non_string_is_422_not_500(client, bad):
+    r = await client.post(
+        "/api/v1/fountains",
+        json={"location": {"latitude": 12.0, "longitude": 12.0}, "placement_note": bad},
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_placement_note_too_long_is_422(client):
+    r = await client.post(
+        "/api/v1/fountains",
+        json={"location": {"latitude": 12.5, "longitude": 12.5}, "placement_note": "x" * 201},
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_add_time_illegal_observation_rolls_back(client, session):
     r = await client.post(
         "/api/v1/fountains",
