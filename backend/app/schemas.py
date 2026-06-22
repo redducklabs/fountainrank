@@ -1,8 +1,10 @@
 import uuid
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+
+NoteBody = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1000)]
 
 ConditionStatus = Literal[
     "working",
@@ -168,3 +170,15 @@ class ContributionEventOut(BaseModel):
 class MeContributionsOut(BaseModel):
     stats: ContributionStatsOut
     recent: list[ContributionEventOut]
+
+
+class AddNoteRequest(BaseModel):
+    body: NoteBody
+
+
+class NoteOut(BaseModel):
+    id: uuid.UUID
+    body: str
+    author_display_name: str
+    created_at: datetime
+    updated_at: datetime

@@ -530,3 +530,47 @@ class ConditionReport(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class FountainNote(Base):
+    """One current user note per fountain (#41), upsert to edit. Moderation-ready and
+    independent of aggregate rating/consensus logic."""
+
+    __tablename__ = "fountain_notes"
+    __table_args__ = (
+        UniqueConstraint("fountain_id", "user_id", name="uq_fountain_notes_fountain_id"),
+        # Partial index for the public (non-hidden) read path (spec §6.5).
+        Index(
+            "ix_fountain_notes_fountain_visible",
+            "fountain_id",
+            postgresql_where=text("is_hidden = false"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    fountain_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("fountains.id", ondelete="CASCADE", name="fk_fountain_notes_fountain"),
+        nullable=False,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE", name="fk_fountain_notes_user"),
+        nullable=False,
+    )
+    body: Mapped[str] = mapped_column(String, nullable=False)
+    is_hidden: Mapped[bool] = mapped_column(nullable=False, server_default=text("false"))
+    hidden_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("users.id", name="fk_fountain_notes_hidden_by"),
+        nullable=True,
+    )
+    hidden_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
