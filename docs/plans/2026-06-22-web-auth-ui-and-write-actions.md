@@ -377,13 +377,15 @@ export function safeReturnPath(value: string | null | undefined): string | null 
     return null;
   }
   if (
-    decoded.includes("\\") ||
-    decoded.includes("//") ||
+    decoded.includes("\\") || // any backslash (e.g. decoded %5c) is hostile
+    decoded.startsWith("//") || // protocol-relative after decode (covers decoded %2f%2f -> ///)
     decoded.startsWith("/\\") ||
     CONTROL_OR_SEPARATORS.test(decoded)
   ) {
     return null;
   }
+  // Note: a `//` *inside* the path (e.g. `/foo//bar`) is allowed — only a protocol-relative
+  // START is an open-redirect risk.
   return value;
 }
 ```
@@ -556,6 +558,11 @@ describe("getViewer", () => {
     expect(await getViewer("r1")).toEqual({ state: "anonymous" });
   });
 
+  it("returns anonymous when getLogtoContext throws (broken session)", async () => {
+    getLogtoContext.mockRejectedValue(new Error("bad cookie"));
+    expect(await getViewer("r1")).toEqual({ state: "anonymous" });
+  });
+
   it("returns authed with profile on success", async () => {
     getLogtoContext.mockResolvedValue({ isAuthenticated: true });
     GET.mockResolvedValue({
@@ -610,7 +617,15 @@ export type Viewer =
   | { state: "error" };
 
 export async function getViewer(requestId: string): Promise<Viewer> {
-  const { isAuthenticated } = await getLogtoContext(getLogtoConfig(), { fetchUserInfo: false });
+  // A broken/expired/malformed session cookie can make getLogtoContext throw — that means
+  // the session is no longer usable, so treat it as anonymous (offer sign-in), never crash
+  // the header/page.
+  let isAuthenticated = false;
+  try {
+    ({ isAuthenticated } = await getLogtoContext(getLogtoConfig(), { fetchUserInfo: false }));
+  } catch {
+    return { state: "anonymous" };
+  }
   if (!isAuthenticated) return { state: "anonymous" };
   try {
     const client = await getAuthedApiClient(requestId);
@@ -991,17 +1006,14 @@ git commit -m "feat(web): slim map hero + global SiteHeader on map/account/detai
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 
-const { getViewer, notFound, redirect } = vi.hoisted(() => ({
+const { getViewer, notFound } = vi.hoisted(() => ({
   getViewer: vi.fn(),
   notFound: vi.fn(() => {
     throw new Error("NEXT_NOT_FOUND");
   }),
-  redirect: vi.fn(() => {
-    throw new Error("NEXT_REDIRECT");
-  }),
 }));
 vi.mock("../../lib/server/viewer", () => ({ getViewer }));
-vi.mock("next/navigation", () => ({ notFound, redirect }));
+vi.mock("next/navigation", () => ({ notFound }));
 vi.mock("../../components/SiteHeader", () => ({ SiteHeader: () => <div data-testid="hdr" /> }));
 vi.mock("../actions/auth", () => ({ signInWithReturn: vi.fn() }));
 
@@ -1012,9 +1024,12 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-it("redirects anonymous", async () => {
+it("renders a sign-in prompt for anonymous (no cookie mutation during render)", async () => {
   getViewer.mockResolvedValue({ state: "anonymous" });
-  await expect(AdminPage()).rejects.toThrow("NEXT_REDIRECT");
+  render(await AdminPage());
+  // The sign-in form binds signInWithReturn to "/admin" (preserving the return path);
+  // we assert the prompt renders rather than auto-redirecting / mutating cookies in RSC.
+  expect(screen.getByRole("button", { name: /sign in/i })).toBeTruthy();
 });
 
 it("404s a non-admin", async () => {
@@ -1041,7 +1056,7 @@ it("renders the stub for an admin", async () => {
 - [ ] **Step 3: Implement** — `web/app/admin/page.tsx`:
 
 ```tsx
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 import { SiteHeader } from "../../components/SiteHeader";
 import { getViewer } from "../../lib/server/viewer";
 import { signInWithReturn } from "../actions/auth";
@@ -1051,8 +1066,26 @@ export const dynamic = "force-dynamic";
 export default async function AdminPage() {
   const viewer = await getViewer(crypto.randomUUID());
   if (viewer.state === "anonymous") {
-    await signInWithReturn("/admin"); // sets return cookie + redirects to Logto
-    redirect("/account"); // unreachable if signIn redirects; safety net
+    // IMPORTANT: do NOT call signInWithReturn() directly here — it mutates cookies, which is
+    // only allowed in a Server Action / Route Handler, never during an RSC render. Render a
+    // sign-in FORM instead; submitting it runs the action in a valid (cookie-writable) context.
+    return (
+      <>
+        <SiteHeader variant="bar" />
+        <main className="mx-auto max-w-2xl px-6 py-10">
+          <h1 className="text-lg font-bold text-[#0A357E]">Admin</h1>
+          <p className="mt-2 text-slate-600">Sign in to access the admin tools.</p>
+          <form action={signInWithReturn.bind(null, "/admin")} className="mt-3">
+            <button
+              type="submit"
+              className="rounded-full bg-[#F2C200] px-4 py-2 text-sm font-bold text-[#0A357E]"
+            >
+              Sign in
+            </button>
+          </form>
+        </main>
+      </>
+    );
   }
   if (viewer.state === "error") {
     return (
@@ -1300,6 +1333,20 @@ describe("submitRating", () => {
       error: "unauthenticated",
     });
   });
+  it("maps a POST/network throw to server (NOT unauthenticated)", async () => {
+    POST.mockRejectedValueOnce(new Error("ECONNREFUSED"));
+    expect(await submitRating(FID, [{ rating_type_id: 1, stars: 4 }])).toEqual({
+      ok: false,
+      error: "server",
+    });
+  });
+  it("rejects a non-positive rating_type_id (hostile input)", async () => {
+    expect(await submitRating(FID, [{ rating_type_id: 0, stars: 4 }])).toEqual({
+      ok: false,
+      error: "validation",
+    });
+    expect(getClient).not.toHaveBeenCalled();
+  });
 });
 
 describe("submitCondition", () => {
@@ -1374,8 +1421,18 @@ async function run(
   call: (client: Awaited<ReturnType<typeof getAuthedApiClientForAction>>) => Promise<{ response?: { status: number } }>,
 ): Promise<ActionResult> {
   const requestId = crypto.randomUUID();
+  // Split the two failure classes: a token/session failure (getAccessToken throws) is
+  // "unauthenticated"; a POST/network failure (backend down, fetch threw) is "server".
+  // Collapsing both into "unauthenticated" would tell users to sign in again when the
+  // backend is merely down.
+  let client: Awaited<ReturnType<typeof getAuthedApiClientForAction>>;
   try {
-    const client = await getAuthedApiClientForAction(requestId);
+    client = await getAuthedApiClientForAction(requestId);
+  } catch (err) {
+    log("warn", "contribute auth error", { requestId, action, fountainId, reason: (err as Error).name });
+    return fail("unauthenticated");
+  }
+  try {
     const { response } = await call(client);
     const status = response?.status ?? 0;
     const result = mapStatus(status);
@@ -1383,9 +1440,8 @@ async function run(
     if (result.ok) revalidatePath(`/fountains/${fountainId}`);
     return result;
   } catch (err) {
-    // getAccessToken / network throw on an expired or broken session.
     log("warn", "contribute action error", { requestId, action, fountainId, reason: (err as Error).name });
-    return fail("unauthenticated");
+    return fail("server");
   }
 }
 
@@ -1400,6 +1456,7 @@ export async function submitRating(
     !ratings.every(
       (r) =>
         Number.isInteger(r?.rating_type_id) &&
+        r.rating_type_id > 0 &&
         Number.isInteger(r?.stars) &&
         r.stars >= 1 &&
         r.stars <= 5,
@@ -1524,7 +1581,26 @@ it("disables submit until a star is set, then posts only set dimensions", async 
 
 - [ ] **Step 2: Run, verify fail.** `pnpm --filter web exec vitest run components/fountain/RatingForm.test.tsx`
 
-- [ ] **Step 3: Implement the forms.** Each follows this shape (shown for `RatingForm`; `ConditionForm`/`NoteForm` analogous):
+- [ ] **Step 3a: Shared error-copy module** — `web/components/fountain/contributeError.ts`:
+
+```ts
+import type { ContributeError } from "../../app/actions/contribute";
+
+export function errorText(e: ContributeError): string {
+  switch (e) {
+    case "unauthenticated":
+      return "Your session expired — please sign in again.";
+    case "not_found":
+      return "This fountain is no longer available.";
+    case "validation":
+      return "Please check your input and try again.";
+    default:
+      return "Couldn't save — please try again.";
+  }
+}
+```
+
+- [ ] **Step 3b: `RatingForm.tsx`** — uses **native radio inputs** (a real radio group per dimension: same `name`, so Arrow/Space keyboard nav and group semantics come for free), visually styled as stars. The input carries the accessible name (`aria-label`) and is `sr-only`; the `<label htmlFor>` is the visible clickable star.
 
 ```tsx
 "use client";
@@ -1532,6 +1608,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { components } from "@fountainrank/api-client";
 import { submitRating } from "../../app/actions/contribute";
+import { errorText } from "./contributeError";
 
 type Dimension = components["schemas"]["DimensionSummary"];
 
@@ -1560,22 +1637,34 @@ export function RatingForm({ fountainId, dimensions }: { fountainId: string; dim
       <h3 className="text-sm font-semibold text-slate-700">Rate it</h3>
       {dimensions.map((d) => (
         <fieldset key={d.rating_type_id} className="flex items-center justify-between py-1">
-          <legend className="sr-only">{d.name}</legend>
-          <span className="text-sm">{d.name}</span>
+          <legend className="text-sm">{d.name}</legend>
           <span className="flex gap-1">
-            {[1, 2, 3, 4, 5].map((n) => (
-              <button
-                key={n}
-                type="button"
-                role="radio"
-                aria-checked={stars[d.rating_type_id] === n}
-                aria-label={`${d.name}: ${n} star${n > 1 ? "s" : ""}`}
-                onClick={() => setStars((s) => ({ ...s, [d.rating_type_id]: n }))}
-                className={stars[d.rating_type_id] >= n ? "text-[#F2C200]" : "text-slate-300"}
-              >
-                ★
-              </button>
-            ))}
+            {[1, 2, 3, 4, 5].map((n) => {
+              const inputId = `dim-${d.rating_type_id}-star-${n}`;
+              return (
+                <span key={n} className="inline-flex">
+                  <input
+                    type="radio"
+                    id={inputId}
+                    name={`dim-${d.rating_type_id}`}
+                    value={n}
+                    checked={stars[d.rating_type_id] === n}
+                    aria-label={`${d.name}: ${n} star${n > 1 ? "s" : ""}`}
+                    onChange={() => setStars((s) => ({ ...s, [d.rating_type_id]: n }))}
+                    className="peer sr-only"
+                  />
+                  <label
+                    htmlFor={inputId}
+                    aria-hidden="true"
+                    className={`cursor-pointer text-lg peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-[#0A357E] ${
+                      stars[d.rating_type_id] >= n ? "text-[#F2C200]" : "text-slate-300"
+                    }`}
+                  >
+                    ★
+                  </label>
+                </span>
+              );
+            })}
           </span>
         </fieldset>
       ))}
@@ -1595,23 +1684,182 @@ export function RatingForm({ fountainId, dimensions }: { fountainId: string; dim
     </div>
   );
 }
+```
 
-function errorText(e: string): string {
-  if (e === "unauthenticated") return "Your session expired — please sign in again.";
-  if (e === "not_found") return "This fountain is no longer available.";
-  if (e === "validation") return "Please check your input and try again.";
-  return "Couldn't save — please try again.";
+- [ ] **Step 3c: `ConditionForm.tsx`** — primary verify button + a "Report a problem" disclosure (`aria-expanded`) with a labeled `<select>` of the seven problem statuses (default = first), then Submit.
+
+```tsx
+"use client";
+import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import type { components } from "@fountainrank/api-client";
+import { submitCondition } from "../../app/actions/contribute";
+import { conditionStatusLabel } from "../../lib/map/format";
+import { errorText } from "./contributeError";
+
+type ConditionStatus = components["schemas"]["ConditionReportRequest"]["status"];
+const PROBLEMS: ConditionStatus[] = [
+  "broken",
+  "low_pressure",
+  "dirty",
+  "bad_taste",
+  "blocked",
+  "seasonal_unavailable",
+  "hours_limited",
+];
+
+export function ConditionForm({ fountainId }: { fountainId: string }) {
+  const router = useRouter();
+  const [showProblems, setShowProblems] = useState(false);
+  const [problem, setProblem] = useState<ConditionStatus>(PROBLEMS[0]);
+  const [pending, start] = useTransition();
+  const [msg, setMsg] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
+
+  function report(status: ConditionStatus) {
+    start(async () => {
+      const res = await submitCondition(fountainId, status);
+      if (res.ok) {
+        setMsg({ tone: "ok", text: "Thanks — your report was saved." });
+        router.refresh();
+      } else {
+        setMsg({ tone: "err", text: errorText(res.error) });
+      }
+    });
+  }
+
+  return (
+    <div>
+      <h3 className="text-sm font-semibold text-slate-700">Is it working?</h3>
+      <div className="mt-1 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          disabled={pending}
+          onClick={() => report("working")}
+          className="rounded-full bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+        >
+          I checked — it&rsquo;s working
+        </button>
+        <button
+          type="button"
+          aria-expanded={showProblems}
+          onClick={() => setShowProblems((v) => !v)}
+          className="text-sm text-[#0C44A0] underline"
+        >
+          Report a problem
+        </button>
+      </div>
+      {showProblems && (
+        <div className="mt-2 flex items-center gap-2">
+          <label className="sr-only" htmlFor="problem-select">
+            Problem type
+          </label>
+          <select
+            id="problem-select"
+            value={problem}
+            onChange={(e) => setProblem(e.target.value as ConditionStatus)}
+            className="rounded border border-slate-300 px-2 py-1 text-sm"
+          >
+            {PROBLEMS.map((p) => (
+              <option key={p} value={p}>
+                {conditionStatusLabel(p)}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => report(problem)}
+            className="rounded-full bg-[#0A357E] px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+          >
+            Submit
+          </button>
+        </div>
+      )}
+      {msg && (
+        <p role="status" aria-live="polite" className={msg.tone === "ok" ? "text-emerald-700" : "text-red-700"}>
+          {msg.text}
+        </p>
+      )}
+    </div>
+  );
 }
 ```
 
-`ConditionForm`: a primary button calling `submitCondition(fountainId, "working")`, and a "Report a problem" disclosure (`aria-expanded`) that shows a `<select>`/radio list of the 7 problem statuses labeled via `conditionStatusLabel`, then a submit calling `submitCondition(fountainId, chosen)`. `NoteForm`: a `<textarea maxLength={1000}>` with a live `value.length`/1000 counter; client-guard empty/whitespace before calling `submitNote`; neutral success copy "Your note was saved." Reuse `errorText` (extract to a shared module `web/components/fountain/contributeError.ts` to stay DRY, or duplicate the tiny map — prefer extracting).
+- [ ] **Step 3d: `NoteForm.tsx`** — textarea (1–1000, counter), client-guards empty/whitespace before calling the action, neutral success copy.
+
+```tsx
+"use client";
+import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { submitNote } from "../../app/actions/contribute";
+import { errorText } from "./contributeError";
+
+export function NoteForm({ fountainId }: { fountainId: string }) {
+  const router = useRouter();
+  const [body, setBody] = useState("");
+  const [pending, start] = useTransition();
+  const [msg, setMsg] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
+  const trimmed = body.trim();
+
+  function submit() {
+    if (trimmed.length < 1 || trimmed.length > 1000) {
+      setMsg({ tone: "err", text: "Please enter 1–1000 characters." });
+      return;
+    }
+    start(async () => {
+      const res = await submitNote(fountainId, trimmed);
+      if (res.ok) {
+        setMsg({ tone: "ok", text: "Your note was saved." });
+        setBody("");
+        router.refresh();
+      } else {
+        setMsg({ tone: "err", text: errorText(res.error) });
+      }
+    });
+  }
+
+  return (
+    <div>
+      <h3 className="text-sm font-semibold text-slate-700">Your note</h3>
+      <textarea
+        value={body}
+        maxLength={1000}
+        rows={3}
+        aria-label="Your note"
+        onChange={(e) => setBody(e.target.value)}
+        className="mt-1 w-full break-words rounded border border-slate-300 p-2 text-sm"
+      />
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-slate-400">{body.length}/1000</span>
+        <button
+          type="button"
+          disabled={pending || trimmed.length === 0}
+          onClick={submit}
+          className="rounded-full bg-[#0A357E] px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+        >
+          Save note
+        </button>
+      </div>
+      <p className="text-xs text-slate-400">Submitting replaces any note you left here before.</p>
+      {msg && (
+        <p role="status" aria-live="polite" className={msg.tone === "ok" ? "text-emerald-700" : "text-red-700"}>
+          {msg.text}
+        </p>
+      )}
+    </div>
+  );
+}
+```
+
+Concrete test pointers (mirror the `RatingForm` test in Step 1; mock `../../app/actions/contribute` and `next/navigation`'s `useRouter` → `{ refresh: vi.fn() }`):
+- `ConditionForm.test.tsx`: clicking "I checked — it's working" calls `submitCondition("fid", "working")`; clicking "Report a problem" sets the disclosure (`aria-expanded=true`) and renders the 7 option labels (e.g. `screen.getByRole("option", { name: /broken \/ not working/i })`); changing the select + clicking Submit calls `submitCondition("fid", "low_pressure")`; an `{ ok:false, error:"server" }` result shows "Couldn't save — please try again."
+- `NoteForm.test.tsx`: typing updates the `N/1000` counter; clicking Save with only whitespace does NOT call `submitNote` and shows the 1–1000 message; a successful save calls `submitNote("fid", "hello")`, shows "Your note was saved.", clears the textarea, and calls `router.refresh()`.
 
 - [ ] **Step 4: Implement `ContributeSection.tsx`:**
 
 ```tsx
 "use client";
 import type { components } from "@fountainrank/api-client";
-import { usePathname } from "next/navigation"; // not needed if returnTo is static
 import { signInWithReturn } from "../../app/actions/auth";
 import { RatingForm } from "./RatingForm";
 import { ConditionForm } from "./ConditionForm";
@@ -1650,7 +1898,7 @@ export function ContributeSection({
 }
 ```
 
-(Drop the `usePathname` import if unused — eslint will flag it.)
+(`returnTo` is the static `/fountains/${fountainId}`, so no `usePathname` is needed here.)
 
 - [ ] **Step 5: Wire into `FountainDetail.tsx`** — add `isAuthenticated: boolean` to its props and render `<ContributeSection fountainId={detail.id} dimensions={detail.dimensions} isAuthenticated={isAuthenticated} />` after `NotesList`/before or after the actions row. Update `FountainDetail.test.tsx` to pass `isAuthenticated` (add a case asserting the signed-out prompt appears when false and the rating form heading appears when true; mock the contribute actions/`next/navigation`).
 
@@ -1725,7 +1973,8 @@ git commit -m "ci(backend): deliver ADMIN_SUBJECTS to backend deployment + post-
 Run: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File run.ps1 check`
 Expected: backend + workspace-js + web build + mobile all green. (If the pnpm store goes dirty after any WSL/Codex run: `rm -rf node_modules web/node_modules mobile/node_modules packages/*/node_modules && CI=true pnpm install`.)
 
-- [ ] **Step 2: Open the PR** off a `feat/web-auth-ui-and-write-actions` branch; get CI green; run **Codex Loop B** (PR review) until `VERDICT: APPROVED`; address every PR comment; squash-merge; `gh workflow run deploy.yml --ref main`; watch; run the post-deploy authenticated-write smoke (Task 13).
+- [ ] **Step 2: Open the PR** off a `feat/web-auth-ui-and-write-actions` branch; get CI green; run **Codex Loop B** (PR review) until `VERDICT: APPROVED`; address every PR comment; squash-merge. **Implementation is complete at merge.**
+- [ ] **Step 3 (separate, intentional release — not an automatic post-merge step):** when deliberately releasing, trigger the existing CI deploy workflow `gh workflow run deploy.yml --ref main` (deployment runs **in CI**, never from a local machine / `kubectl`), watch it, then run the post-deploy authenticated-write smoke (Task 13). The `ADMIN_SUBJECTS` GitHub Actions variable must exist before this deploy for the admin menu to appear.
 
 ---
 
