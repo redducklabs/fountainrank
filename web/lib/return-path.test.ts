@@ -36,6 +36,26 @@ describe("safeReturnPath", () => {
     expect(safeReturnPath("/a" + String.fromCharCode(0x2029) + "b")).toBeNull();
   });
 
+  it("rejects bidi/directional control code points (raw)", () => {
+    // U+202E RIGHT-TO-LEFT OVERRIDE (RLO) — inside a path
+    expect(safeReturnPath("/a" + String.fromCharCode(0x202e) + "b")).toBeNull();
+    // U+2066 LEFT-TO-RIGHT ISOLATE (LRI) — inside a path
+    expect(safeReturnPath("/a" + String.fromCharCode(0x2066) + "b")).toBeNull();
+    // U+200E LEFT-TO-RIGHT MARK (LRM)
+    expect(safeReturnPath("/a" + String.fromCharCode(0x200e) + "b")).toBeNull();
+    // U+200F RIGHT-TO-LEFT MARK (RLM)
+    expect(safeReturnPath("/a" + String.fromCharCode(0x200f) + "b")).toBeNull();
+    // U+061C ARABIC LETTER MARK (ALM)
+    expect(safeReturnPath("/a" + String.fromCharCode(0x061c) + "b")).toBeNull();
+  });
+
+  it("rejects percent-encoded bidi code points (decoded form must also be checked)", () => {
+    // U+202E encoded as UTF-8 %E2%80%AE — decodeURIComponent yields the char
+    expect(safeReturnPath("/a%E2%80%AEb")).toBeNull();
+    // U+2066 encoded as UTF-8 %E2%81%A6
+    expect(safeReturnPath("/a%E2%81%A6b")).toBeNull();
+  });
+
   it("rejects malformed percent-encoding and overly long values", () => {
     expect(safeReturnPath("/%zz")).toBeNull();
     expect(safeReturnPath("/" + "a".repeat(600))).toBeNull();

@@ -20,8 +20,16 @@ export async function getViewer(requestId: string): Promise<Viewer> {
     return { state: "anonymous" };
   }
   if (!isAuthenticated) return { state: "anonymous" };
+  // Token/session acquisition: a throw here means the session is no longer usable,
+  // so treat as anonymous (offer sign-in) rather than a backend error.
+  let client: Awaited<ReturnType<typeof getAuthedApiClient>>;
   try {
-    const client = await getAuthedApiClient(requestId);
+    client = await getAuthedApiClient(requestId);
+  } catch {
+    return { state: "anonymous" };
+  }
+  // /me fetch: a throw or non-2xx here indicates a backend/network problem → error.
+  try {
     const { data, response } = await client.GET("/api/v1/me");
     const status = response?.status ?? 0;
     if (data) {

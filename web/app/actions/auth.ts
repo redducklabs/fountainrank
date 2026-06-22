@@ -19,8 +19,8 @@ export async function signOutAction(): Promise<void> {
 export async function signInWithReturn(returnTo: string): Promise<void> {
   const config = getLogtoConfig();
   const safe = safeReturnPath(returnTo);
+  const store = await cookies();
   if (safe) {
-    const store = await cookies();
     store.set(RETURN_COOKIE, safe, {
       httpOnly: true,
       sameSite: "lax",
@@ -28,6 +28,8 @@ export async function signInWithReturn(returnTo: string): Promise<void> {
       path: "/",
       maxAge: 600,
     });
+  } else {
+    store.delete({ name: RETURN_COOKIE, path: "/" });
   }
   await signIn(config, `${config.baseUrl}/callback`);
 }

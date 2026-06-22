@@ -1,15 +1,23 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { getLogtoContext, GET } = vi.hoisted(() => ({ getLogtoContext: vi.fn(), GET: vi.fn() }));
+const { getLogtoContext, GET, getAuthedApiClient } = vi.hoisted(() => ({
+  getLogtoContext: vi.fn(),
+  GET: vi.fn(),
+  getAuthedApiClient: vi.fn(async () => ({ GET: vi.fn() })),
+}));
 
 vi.mock("server-only", () => ({}));
 vi.mock("@logto/next/server-actions", () => ({ getLogtoContext, getAccessTokenRSC: vi.fn() }));
-vi.mock("./api", () => ({ getAuthedApiClient: vi.fn(async () => ({ GET })) }));
+vi.mock("./api", () => ({ getAuthedApiClient }));
 vi.mock("../logto", () => ({ getLogtoConfig: () => ({}), API_RESOURCE: "https://api" }));
 
 import { getViewer } from "./viewer";
 
-afterEach(() => vi.clearAllMocks());
+afterEach(() => {
+  vi.clearAllMocks();
+  // Restore default: getAuthedApiClient resolves with a client that has GET
+  getAuthedApiClient.mockImplementation(async () => ({ GET }));
+});
 
 describe("getViewer", () => {
   it("returns anonymous when not authenticated", async () => {
@@ -19,6 +27,12 @@ describe("getViewer", () => {
 
   it("returns anonymous when getLogtoContext throws (broken session)", async () => {
     getLogtoContext.mockRejectedValue(new Error("bad cookie"));
+    expect(await getViewer("r1")).toEqual({ state: "anonymous" });
+  });
+
+  it("returns anonymous when getAuthedApiClient throws (token/session acquisition failure)", async () => {
+    getLogtoContext.mockResolvedValue({ isAuthenticated: true });
+    getAuthedApiClient.mockRejectedValue(new Error("no token"));
     expect(await getViewer("r1")).toEqual({ state: "anonymous" });
   });
 

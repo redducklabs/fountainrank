@@ -179,10 +179,12 @@ Actions **variable**, not a secret.
 > authenticated users, but does not itself convey a credential. Compare to
 > `GOOGLE_DELEGATED_USER` and `FROM_EMAIL` which follow the same pattern.
 
-### Post-deploy authenticated-write smoke
+### Post-deploy authenticated-write smoke (slice 6b-1)
 
-Run this after every deploy that touches contribution or admin code (slice 6b-1 and
-later) to confirm the full auth → write → persistence path is working.
+Run this after every deploy that touches contribution or admin code to confirm the
+full auth → write → persistence path is working. This procedure covers what slice
+6b-1 ships: ratings, condition reports, notes, and the admin placeholder. Moderation
+and status-update controls are deferred to slice 6g and are not verified here.
 
 **Prerequisites:** the `ADMIN_SUBJECTS` variable must be set in the `production`
 environment **before** the deploy that is being verified (the env var is baked into
@@ -196,13 +198,14 @@ the pod at deploy time; a redeploy is required if you add it after the fact).
 3. Navigate to any fountain detail page.
 4. Submit a **rating**: tap/click a star rating (1–5) and confirm. The page should
    reflect the new average without an error banner.
-5. Submit a **condition note**: open the Condition panel, choose a condition, and
-   submit. Confirm it appears in the condition history without an error.
-6. If the admin menu is visible (it appears only for subjects in `ADMIN_SUBJECTS`):
-   update the **status** (e.g. Active → Reported) via the admin panel and confirm the
-   badge updates.
-7. Sign out and verify the changes persist for an anonymous visitor (reload the
-   fountain page while signed out).
+5. Submit a **condition report**: open the Condition panel, choose a condition
+   ("it's working" or a problem code), and submit. Confirm it appears in the
+   condition history without an error.
+6. Save a **note** on the fountain detail page and confirm it persists.
+7. Confirm the **admin menu item** appears in the nav for the admin account, and
+   that `/admin` loads (it is a placeholder in this slice — no controls yet).
+8. Sign out and navigate directly to `/admin` — confirm a non-admin (anonymous)
+   visitor receives a 404 (fail-closed).
 
 **What to check in logs** (do not log token values or note body text):
 

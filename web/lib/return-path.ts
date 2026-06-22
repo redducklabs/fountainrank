@@ -10,6 +10,10 @@ function hasControlOrSeparator(s: string): boolean {
   for (let i = 0; i < s.length; i++) {
     const c = s.charCodeAt(i);
     if (c <= 0x1f || c === 0x7f || c === 0x2028 || c === 0x2029) return true;
+    // Bidi/directional control code points (LRM, RLM, ALM, LRE–RLO, LRI–PDI)
+    if (c === 0x200e || c === 0x200f || c === 0x061c) return true;
+    if (c >= 0x202a && c <= 0x202e) return true;
+    if (c >= 0x2066 && c <= 0x2069) return true;
   }
   return false;
 }
