@@ -233,6 +233,187 @@ When multiple fountains are close together at low zoom, they collapse into a clu
 - **Count label:** white `"Noto Sans Bold"` at 13 px, showing the abbreviated count (e.g. `"12"` or `"1.2k"`).
 - **Interaction:** clicking a cluster calls `getClusterExpansionZoom` and eases the map to that zoom at the cluster's centroid.
 
+### Slim site header (`web/components/SiteHeader.tsx`)
+
+Replaces the tall hero band introduced in Phase 3a. A shared **server component** that renders a
+narrow brand bar on every full-page route and an optional one-line tagline on the map page.
+
+**Variants** — controlled by a `variant: "hero" | "bar"` prop:
+
+| Variant | Use | Extra content |
+| ------- | --- | ------------- |
+| `hero`  | Map page (`/`) | One-line tagline "Find a drinking fountain near you." below the bar |
+| `bar`   | All other full-page routes (`/account`, `/admin`, fountain standalone) | Bar only — no tagline |
+
+**Structure:**
+
+```
+<header class="bg-gradient-to-b from-[#0A357E] to-[#0E4DA4] px-6 py-3 text-white">
+  <div class="mx-auto flex max-w-6xl items-center justify-between gap-4">
+    <!-- Wordmark link (left) -->
+    <a href="/" aria-label="FountainRank home">
+      <img src="/fountainrank-logo.png" alt="FountainRank" class="h-9 w-auto" />
+    </a>
+    <!-- AuthControl (right) -->
+    <AuthControl viewer={viewer} />
+  </div>
+  <!-- hero variant only -->
+  <p class="mx-auto mt-2 max-w-6xl text-sm font-semibold sm:text-base">
+    Find a drinking fountain near you.
+  </p>
+</header>
+```
+
+- Brand gradient: `bg-gradient-to-b from-[#0A357E] to-[#0E4DA4]`.
+- Compact height — `py-3` (vs. the old `py-6/py-8` hero) so the map dominates the viewport.
+- Wordmark: `next/image`, fixed display height `h-9 w-auto`, `priority`, meaningful `alt`.
+- Tagline (hero only): `text-sm font-semibold sm:text-base text-white` — a single sentence, no supporting subcopy.
+- `SiteHeader` is a dynamic async server component (reads the session cookie via `getViewer()`).
+
+### Auth control (`web/components/AuthControl.tsx`)
+
+A client component placed in the top-right of `SiteHeader`. Renders one of two affordances
+depending on the viewer state produced by `getViewer()`.
+
+#### Sign-in button (signed-out state)
+
+Displayed when `viewer.state === "anonymous"`. A gold pill button inside a `<form>` that
+triggers `signInWithReturn` (a server action that stores the current path in a cookie and
+redirects to Logto, returning the user to the page they signed in from).
+
+```tsx
+<form action={signInWithReturn.bind(null, returnTo)}>
+  <button type="submit" className="inline-flex shrink-0 items-center justify-center rounded-full bg-[#F2C200] px-5 py-2 text-sm font-semibold text-[#0A357E] transition hover:bg-[#ffce1f]">
+    Sign in
+  </button>
+</form>
+```
+
+- Same gold-pill style as the existing sign-in affordance (crown-gold fill, navy text).
+- `shrink-0` prevents wrapping under the wordmark on narrow viewports.
+- `returnTo` is derived from `usePathname()` + `useSearchParams()` on the client.
+
+#### Avatar button + user menu (signed-in state)
+
+Displayed when `viewer.state === "authed"` or `"error"`. A circular avatar button opens a
+dropdown user menu.
+
+**Avatar button:**
+
+```tsx
+<button
+  type="button"
+  aria-haspopup="menu"
+  aria-expanded={open}
+  aria-label="Open account menu"
+  className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-white/20 text-sm font-semibold text-white"
+>
+  {avatarUrl
+    ? <img src={avatarUrl} alt="" width={36} height={36} className="h-9 w-9 object-cover" />
+    : <span aria-hidden="true">{initial}</span>}
+</button>
+```
+
+- `aria-label="Open account menu"` — the accessible name (never omit; the image has `alt=""`).
+- Avatar image is **decorative** (`alt=""`); when no `avatarUrl`, an initials/glyph fallback
+  (`initial = displayName[0].toUpperCase()`) is wrapped in `aria-hidden="true"` (the button label
+  carries the accessible name).
+- `aria-haspopup="menu"` + `aria-expanded={open}` — communicate dropdown state to assistive tech.
+
+**User menu (dropdown):**
+
+```tsx
+<div role="menu" className="absolute right-0 mt-2 w-56 rounded-lg border border-slate-200 bg-white py-1 text-left shadow-lg">
+  <p className="px-3 py-2 text-sm font-semibold text-slate-700">{displayName}</p>
+  <!-- error state only -->
+  <p className="px-3 py-1 text-xs text-amber-700">Couldn't load your account.</p>
+
+  <a role="menuitem" href="/account" className="block px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Your account</a>
+  <!-- admin only -->
+  <a role="menuitem" href="/admin" className="block px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Admin</a>
+
+  <div class="my-1 border-t border-slate-100" />   <!-- divider -->
+
+  <form action={signOutAction}>
+    <button role="menuitem" type="submit" className="block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">Sign out</button>
+  </form>
+</div>
+```
+
+**Menu items:**
+
+| Item | Condition | Target |
+| ---- | --------- | ------ |
+| Display name (non-interactive header) | Always (authed) | — |
+| "Couldn't load your account." | `viewer.state === "error"` only | — |
+| **Your account** (`role="menuitem"`) | Always | `/account` |
+| **Admin** (`role="menuitem"`) | `viewer.isAdmin === true` only | `/admin` |
+| Divider (`border-t border-slate-100`) | Always | — |
+| **Sign out** (`role="menuitem"`, form submit) | Always | `signOutAction` |
+
+**Behavior:**
+
+- Opens on avatar button click; `aria-expanded` toggles.
+- Closes on: outside click, `Escape` key, or menu item activation.
+- On open: focus moves to the first `role="menuitem"` element.
+- On close (Escape or outside-click): focus returns to the avatar button.
+- Admin item is **rendered only when `viewer.isAdmin`** — hiding it is cosmetic; `/admin` re-checks
+  server-side and fails closed regardless.
+- Error state (`viewer.state === "error"`) shows a degraded menu: name header omitted, amber
+  "couldn't load" note shown, **no Admin item**, Account + Sign out remain.
+
+### Homepage footer (auth-aware)
+
+The map page `<footer>` is auth-aware. When signed out it shows a "Sign in" trigger (a form
+submitting `signInWithReturn` bound to `"/"`, styled as a plain text link). When signed in the
+item is hidden so the footer never shows a dead sign-in link.
+
+**Signed-out footer:**
+
+```
+© {year} FountainRank · <a>Privacy</a> · <a>Terms</a> · <form><button>Sign in</button></form>
+```
+
+**Signed-in footer:**
+
+```
+© {year} FountainRank · <a>Privacy</a> · <a>Terms</a>
+```
+
+- Footer text: `text-xs text-white/60`; links and the sign-in button: `hover:text-white hover:underline underline-offset-4`.
+- The sign-in button carries no additional styling beyond the footer link treatment (plain text,
+  not a pill) — distinct from the header's gold pill Sign-in button.
+- The signed-in variant (three items only) and its spacing are pinned in tests so removal of the
+  item doesn't regress mobile wrapping.
+
+### `/admin` placeholder page (`web/app/admin/page.tsx`)
+
+A server-gated page that **fails closed**: any non-admin visitor never sees admin content.
+
+**Gate logic:**
+
+| `getViewer()` result | Outcome |
+| -------------------- | ------- |
+| `anonymous` | Renders a "Sign in to access the admin tools." prompt + Sign-in button (form submitting `signInWithReturn("/admin")`). Does NOT redirect or mutate cookies during render. |
+| `authed` + `isAdmin: false` | `notFound()` — 404, does not reveal the route exists. |
+| `error` | Renders "Couldn't verify admin access — please try again." No admin content, no 404. |
+| `authed` + `isAdmin: true` | Renders the stub page (see below). |
+
+**Admin stub page** (shown to confirmed admins):
+
+- `SiteHeader variant="bar"` at the top.
+- `<h1>` "Admin" in `text-lg font-bold text-[#0A357E]`.
+- Body: "Moderation tools are coming soon." with a disc list of planned 6g actions (hide/unhide
+  fountains and notes; review reported content).
+- Layout: `mx-auto max-w-2xl px-6 py-10` — same constrained-width pattern as the legal text pages.
+
+**Sign-in prompt** (anonymous state): same layout container, heading "Admin", supporting copy
+"Sign in to access the admin tools.", gold pill "Sign in" button (`rounded-full bg-[#F2C200] px-4 py-2 text-sm font-bold text-[#0A357E]`).
+
+**Error state**: same layout, heading "Couldn't verify admin access", copy "Please try again in a moment." — neither 404 nor admin content.
+
+---
+
 ### Detail overlay (`web/components/fountain/DetailOverlay.tsx`, `FountainDetail.tsx`)
 
 Displayed when a user navigates to `/fountains/:id` from the map (intercepted by the
@@ -252,21 +433,23 @@ in a full standalone page (`web/app/fountains/[id]/page.tsx`).
 
 **Content (`FountainDetail`):**
 
-The panel now also renders (in document order): the **status block** (chip + advisory + trust
-line, see below) in place of the old standalone status chip; a **placement note** (`📍` prefix,
-shown only when `placement_note` is present); the **attribute consensus** group; a "from who added
-it" caption under the creator comment; and the **community notes** section.
+The panel renders (in document order): the **status block** (chip + advisory + trust line, see
+below) in place of the old standalone status chip; a **placement note** (`📍` prefix, shown only
+when `placement_note` is present); the **attribute consensus** group; a "from who added it"
+caption under the creator comment; the **community notes** section; and the **Contribute section**
+at the bottom (auth-gated write controls).
 
-| Element            | Styling                                                                                                                                                                                |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Heading            | `text-lg font-bold text-[#0A357E]`                                                                                                                                                     |
-| Status chip        | Pill badge: working → `bg-emerald-100 text-emerald-800`; out of order → `bg-red-100 text-red-800`. `rounded-full px-2.5 py-0.5 text-xs font-bold`.                                     |
-| Overall rating     | `text-2xl font-extrabold text-[#0A357E]` (formatted by `formatAverage()`); vote count in `text-sm text-slate-500`.                                                                     |
-| Per-dimension list | `<dl>` with `divide-y divide-slate-100 border-t border-slate-100`; dimension name `text-sm font-medium`, value `text-sm text-slate-600`.                                               |
-| Notes / comments   | `rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700`.                                                                                                           |
-| Meta line          | Added / last-rated dates, `text-xs text-slate-400`.                                                                                                                                    |
-| Directions button  | Gold pill: `rounded-full bg-[#F2C200] px-4 py-2 text-sm font-bold text-[#0A357E]`. Links to Google Maps directions.                                                                    |
-| Share button       | Outlined pill: `rounded-full border border-[#cdd6e6] bg-white px-4 py-2 text-sm font-bold text-[#0A357E]`. Uses `navigator.share` when available; falls back to `navigator.clipboard`. |
+| Element              | Styling                                                                                                                                                                                |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Heading              | `text-lg font-bold text-[#0A357E]`                                                                                                                                                     |
+| Status chip          | Pill badge: working → `bg-emerald-100 text-emerald-800`; out of order → `bg-red-100 text-red-800`. `rounded-full px-2.5 py-0.5 text-xs font-bold`.                                     |
+| Overall rating       | `text-2xl font-extrabold text-[#0A357E]` (formatted by `formatAverage()`); vote count in `text-sm text-slate-500`.                                                                     |
+| Per-dimension list   | `<dl>` with `divide-y divide-slate-100 border-t border-slate-100`; dimension name `text-sm font-medium`, value `text-sm text-slate-600`.                                               |
+| Notes / comments     | `rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700`.                                                                                                           |
+| Meta line            | Added / last-rated dates, `text-xs text-slate-400`.                                                                                                                                    |
+| Directions button    | Gold pill: `rounded-full bg-[#F2C200] px-4 py-2 text-sm font-bold text-[#0A357E]`. Links to Google Maps directions.                                                                    |
+| Share button         | Outlined pill: `rounded-full border border-[#cdd6e6] bg-white px-4 py-2 text-sm font-bold text-[#0A357E]`. Uses `navigator.share` when available; falls back to `navigator.clipboard`. |
+| **Contribute section** | Bottom of panel; heading `text-base font-semibold text-[#0A357E]`; signed-out prompt or three grouped forms (see below). |
 
 #### Status block (`StatusBlock.tsx`)
 
@@ -308,6 +491,173 @@ note was edited. The section is omitted entirely when there are no notes. The au
 backend's safe public `author_display_name`. User-generated free text (note body, placement note,
 creator comment) carries `break-words` so a long unbroken string (URL/token) can't overflow the
 narrow panel.
+
+#### Contribute section (`web/components/fountain/ContributeSection.tsx`)
+
+A grouped write-action section at the bottom of `FountainDetail`. Auth-gated: renders one of two
+states depending on whether the viewer is authenticated.
+
+**Signed-out prompt:**
+
+```tsx
+<section>
+  <h2 className="text-base font-semibold text-[#0A357E]">Contribute</h2>
+  <p className="mt-1 text-sm text-slate-600">Sign in to rate, verify, or leave a note.</p>
+  <form action={signInWithReturn.bind(null, `/fountains/${fountainId}`)}>
+    <button type="submit" className="mt-3 rounded-full bg-[#F2C200] px-4 py-2 text-sm font-bold text-[#0A357E]">
+      Sign in to contribute
+    </button>
+  </form>
+</section>
+```
+
+- The sign-in button binds `returnTo` to `/fountains/{id}` so the user lands back on the same
+  fountain after sign-in.
+- No write forms are rendered when signed out.
+
+**Signed-in layout:** the same section heading followed by the three forms stacked vertically
+with a divider (`border-t border-slate-100 my-4`) between each:
+
+1. Rating form (see below)
+2. Condition form (see below)
+3. Note form (see below)
+
+#### Star-rating input (`web/components/fountain/RatingForm.tsx`)
+
+One row per rating dimension from `FountainDetail.dimensions`. Each row: the dimension name
+(`text-sm font-medium text-slate-700`) and a 5-star radio group.
+
+**Radio group (per dimension):**
+
+```tsx
+<fieldset>
+  <legend className="sr-only">{dimension.name}</legend>
+  {[1, 2, 3, 4, 5].map((n) => (
+    <label key={n}>
+      <input type="radio" name={`dim-${id}`} value={n} className="sr-only" />
+      <span aria-hidden="true">{selected >= n ? "★" : "☆"}</span>
+      <span className="sr-only">{dimension.name}: {n} star{n > 1 ? "s" : ""}</span>
+    </label>
+  ))}
+</fieldset>
+```
+
+- The radio group is keyboard-accessible; arrow keys move between star values.
+- Labels are visually hidden (`sr-only`) so screen readers announce the dimension name and
+  star count for each option.
+- Stars are decorative Unicode glyphs (`aria-hidden`); the accessible label on each input is
+  the screen-reader text (e.g. "Clarity: 4 stars").
+- **Submit button** (`"Submit rating"`) is **disabled until at least one dimension has a star
+  set**. `disabled:opacity-50 disabled:cursor-not-allowed`.
+- Only dimensions with a star set are included in the payload; untouched dimensions are omitted.
+- While pending (form submitting): all controls disabled, button text "Submitting…".
+- Success: inline `role="status"` confirmation "Thanks for your rating!" replaces or appears
+  below the form.
+- Error: inline `role="status"` `aria-live="polite"` error message per the inline form convention
+  (see below).
+
+#### Condition action row + "Report a problem" disclosure (`web/components/fountain/ConditionForm.tsx`)
+
+A two-affordance row for submitting condition reports.
+
+**Primary action:**
+
+```tsx
+<button type="button" className="rounded-full bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50">
+  I checked — it's working
+</button>
+```
+
+Submits `{ status: "working", is_proximate: false }` immediately on click (no disclosure needed).
+
+**Secondary action — "Report a problem" disclosure:**
+
+```tsx
+<button type="button" aria-expanded={open} className="text-sm text-slate-500 underline underline-offset-4 hover:text-slate-700">
+  Report a problem
+</button>
+```
+
+- `aria-expanded` toggles when the disclosure opens/closes.
+- When expanded, reveals a `<select>` with the seven problem statuses (friendly labels from
+  `conditionStatusLabel`):
+
+| `ConditionStatus` | Label |
+| --- | --- |
+| `broken` | "Broken / not working" |
+| `low_pressure` | "Low water pressure" |
+| `dirty` | "Dirty" |
+| `bad_taste` | "Bad taste" |
+| `blocked` | "Blocked / clogged" |
+| `seasonal_unavailable` | "Shut off for the season" |
+| `hours_limited` | "Only available certain hours" |
+
+- Select: `rounded border border-slate-300 px-3 py-2 text-sm text-slate-700 w-full`.
+- A "Submit report" button (`rounded-full bg-[#0C44A0] px-4 py-2 text-sm font-bold text-white hover:bg-[#0A357E]`) confirms the selected status.
+- `is_proximate` is always `false` on web (proximity verification is the mobile app's job).
+- Both the primary button and the select submit button are disabled while pending.
+- Per-user-per-day deduplication is server-enforced; no client-side guard.
+
+#### Note form (`web/components/fountain/NoteForm.tsx`)
+
+A textarea + live character counter + save button for adding or replacing a community note.
+
+```tsx
+<div>
+  <label htmlFor="note-body" className="text-sm font-medium text-slate-700">
+    Your note
+  </label>
+  <textarea
+    id="note-body"
+    maxLength={1000}
+    rows={4}
+    className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm text-slate-700 break-words focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#0C44A0]"
+  />
+  <p className="mt-1 text-xs text-slate-400 text-right">{charCount}/1000</p>
+  <p className="mt-1 text-xs text-slate-500">
+    Submitting replaces any note you have previously added.
+  </p>
+  <button type="submit" className="mt-2 rounded-full bg-[#0C44A0] px-4 py-2 text-sm font-bold text-white hover:bg-[#0A357E] disabled:opacity-50">
+    Save note
+  </button>
+</div>
+```
+
+- **Character counter** (`{charCount}/1000`): updates live as the user types; displayed right-aligned in `text-xs text-slate-400`.
+- Empty or whitespace-only body is rejected **client-side** before submission (button remains disabled; no server call).
+- Copy states explicitly that submitting **replaces** any prior note — the note upsert is a
+  per-user per-fountain replace, not an append.
+- **Success copy** is neutral: "Your note was saved." — it does **not** promise public visibility,
+  because a previously moderation-hidden note stays hidden after an upsert.
+- All user-generated text in the form carries `break-words` to prevent long unbroken strings from
+  overflowing the narrow panel.
+- While pending: textarea and button disabled.
+
+#### Inline form pending / success / error convention
+
+All three Contribute forms (`RatingForm`, `ConditionForm`, `NoteForm`) follow the same state
+pattern:
+
+| State | UI |
+| ----- | -- |
+| **Idle** | Controls enabled; no status message. |
+| **Pending** | All controls disabled; submit button text changes (e.g. "Submitting…"). `useTransition` in-flight indicator. |
+| **Success** | Controls re-enabled (or form resets); an inline `<p role="status">` confirmation message appears below the button. |
+| **Error** | Controls re-enabled; an inline `<p role="status" aria-live="polite">` error message appears below the button. |
+
+**Error message copy by `ContributeError`:**
+
+| Error | Message |
+| ----- | ------- |
+| `unauthenticated` | "Your session expired — sign in again." |
+| `not_found` | "This fountain is no longer available." |
+| `validation` | "Invalid input — please check your entry." |
+| `server` | "Couldn't save — please try again." |
+
+- Error and success messages use `role="status"` + `aria-live="polite"` so screen readers
+  announce them without interrupting the user.
+- On a successful write, the client calls `router.refresh()` to re-render the detail with
+  updated averages / status / notes (both the standalone route and the intercepted-modal segment).
 
 ### Accessible fountains-in-view list (`web/components/map/FountainsInViewList.tsx`)
 
