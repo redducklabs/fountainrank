@@ -113,8 +113,11 @@ async def test_global_leaderboard_order_and_tie(client, session):
     await session.commit()
     rows = (await client.get("/api/v1/leaderboard/contributors")).json()
     pts = [r["points"] for r in rows]
-    assert pts == sorted(pts, reverse=True)  # descending
-    assert pts[0] == 100 and pts[-1] == 50
+    assert pts == [100, 100, 50]  # descending
+    # The two 100-point users are tie-broken by user_id ASC (deterministic).
+    tied = sorted([a, c], key=lambda u: str(u.id))
+    assert [r["display_name"] for r in rows[:2]] == [tied[0].display_name, tied[1].display_name]
+    assert rows[2]["display_name"] == b.display_name
     assert rows[0]["fountains_added"] is not None  # global rows carry counts
 
 
@@ -170,6 +173,37 @@ async def test_local_leaderboard(client, session):
     assert rows[0]["display_name"] == "LB-NEAR"
     assert rows[0]["points"] == 10  # reversed near event excluded; far excluded
     assert rows[0]["fountains_added"] is None  # local rows have null counts
+
+
+@pytest.mark.asyncio
+async def test_local_leaderboard_tie_and_null_location(client, session):
+    u1 = await _user(session, "loc-1")
+    u2 = await _user(session, "loc-2")
+    u3 = await _user(session, "loc-3")
+    session.add_all(
+        [
+            ContributionEvent(
+                user_id=u1.id, event_type="add_fountain", points=10, status="awarded",
+                dedup_key="lt1", location=point_geography(0.001, 0.001),
+            ),
+            ContributionEvent(
+                user_id=u2.id, event_type="add_fountain", points=10, status="awarded",
+                dedup_key="lt2", location=point_geography(0.001, 0.001),
+            ),
+            ContributionEvent(  # NULL location -> excluded by ST_DWithin despite 99 points
+                user_id=u3.id, event_type="add_fountain", points=99, status="awarded",
+                dedup_key="lt3", location=None,
+            ),
+        ]
+    )
+    await session.commit()
+    rows = (
+        await client.get("/api/v1/leaderboard/contributors?near_lat=0&near_lng=0&radius_m=5000")
+    ).json()
+    names = [r["display_name"] for r in rows]
+    assert "LOC-3" not in names  # null-location excluded
+    tied = sorted([u1, u2], key=lambda u: str(u.id))
+    assert names == [tied[0].display_name, tied[1].display_name]  # tie -> user_id ASC
 
 
 @pytest.mark.asyncio
