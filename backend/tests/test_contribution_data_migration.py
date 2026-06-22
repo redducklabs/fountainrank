@@ -3,6 +3,7 @@ so constraints are asserted against pg_constraint/pg_indexes + negative inserts)
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 
 @pytest.mark.asyncio
@@ -109,7 +110,7 @@ async def test_check_constraint_names_present(session):
 
 @pytest.mark.asyncio
 async def test_attribute_types_value_kind_check_enforced(session):
-    with pytest.raises(Exception):
+    with pytest.raises(IntegrityError):
         await session.execute(
             text(
                 "INSERT INTO attribute_types "
@@ -122,7 +123,7 @@ async def test_attribute_types_value_kind_check_enforced(session):
 
 @pytest.mark.asyncio
 async def test_attribute_types_category_check_enforced(session):
-    with pytest.raises(Exception):
+    with pytest.raises(IntegrityError):
         await session.execute(
             text(
                 "INSERT INTO attribute_types "
@@ -135,7 +136,7 @@ async def test_attribute_types_category_check_enforced(session):
 
 @pytest.mark.asyncio
 async def test_contribution_events_status_check_enforced(session, test_user):
-    with pytest.raises(Exception):
+    with pytest.raises(IntegrityError):
         await session.execute(
             text(
                 "INSERT INTO contribution_events "

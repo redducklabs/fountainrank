@@ -68,10 +68,16 @@ def upgrade() -> None:
         sa.Column("hidden_by_user_id", PgUUID(as_uuid=True), nullable=True),
         sa.Column("hidden_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column(
-            "created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
         ),
         sa.Column(
-            "updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
         ),
         sa.PrimaryKeyConstraint("id", name="pk_attribute_observations"),
         sa.ForeignKeyConstraint(
@@ -162,7 +168,10 @@ def upgrade() -> None:
         sa.Column("is_confirmed", sa.Boolean(), server_default=sa.text("false"), nullable=False),
         sa.Column("event_metadata", JSONB(), nullable=True),
         sa.Column(
-            "created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
         ),
         sa.CheckConstraint("status IN ('awarded','reversed')", name="status"),
         sa.PrimaryKeyConstraint("id", name="pk_contribution_events"),
@@ -203,7 +212,10 @@ def upgrade() -> None:
         sa.Column("verifications_count", sa.Integer(), server_default=sa.text("0"), nullable=False),
         sa.Column("notes_count", sa.Integer(), server_default=sa.text("0"), nullable=False),
         sa.Column(
-            "updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
         ),
         sa.PrimaryKeyConstraint("user_id", name="pk_user_contribution_stats"),
         sa.ForeignKeyConstraint(
@@ -222,9 +234,7 @@ def downgrade() -> None:
         "ix_fountain_attribute_consensus_attr_value", table_name="fountain_attribute_consensus"
     )
     op.drop_table("fountain_attribute_consensus")
-    op.drop_index(
-        "ix_attribute_observations_fountain_id_attr", table_name="attribute_observations"
-    )
+    op.drop_index("ix_attribute_observations_fountain_id_attr", table_name="attribute_observations")
     op.drop_table("attribute_observations")
     op.drop_index("ix_attribute_types_place_type", table_name="attribute_types")
     op.drop_index("uq_attribute_types_place_type", table_name="attribute_types")

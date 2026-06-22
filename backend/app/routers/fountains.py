@@ -1,3 +1,4 @@
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -9,12 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
 from app.config import Settings, get_settings
+from app.consensus import recompute_attribute_consensus
 from app.contributions import (
     ContributionSpec,
     dk_add_fountain,
     dk_first_fountain,
     dk_first_in_area,
     dk_first_rating,
+    dk_observe_attr,
     dk_rate,
     record_contributions,
 )
@@ -22,31 +25,53 @@ from app.db import get_session
 from app.geo import latitude_of, longitude_of, point_geography
 from app.geohash import geohash_encode
 from app.locks import ADD_FOUNTAIN_LOCK_KEY
-from app.models import Fountain, Rating, RatingType, User
+from app.models import (
+    AttributeObservation,
+    AttributeType,
+    Fountain,
+    FountainAttributeConsensus,
+    Rating,
+    RatingType,
+    User,
+)
 from app.ranking import recompute_fountain_ranking
 from app.schemas import (
     AddFountainRequest,
+    AttributeConsensusOut,
     Coordinates,
     DimensionSummary,
     DuplicateFountainConflict,
     FountainDetail,
     FountainPin,
+    ObserveAttributesRequest,
     RateRequest,
     RatingInput,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["fountains"])
+logger = logging.getLogger(__name__)
 
 
 async def _validate_rating_types(session: AsyncSession, ratings: list[RatingInput]) -> None:
     if not ratings:
         return
     ids = {r.rating_type_id for r in ratings}
+    # Only fountain-scoped dimensions are valid on a fountain (place_type scoping, #44):
+    # a restroom rating_type can't be applied here and is treated as unknown.
     known = set(
-        (await session.execute(select(RatingType.id).where(RatingType.id.in_(ids)))).scalars().all()
+        (
+            await session.execute(
+                select(RatingType.id).where(
+                    RatingType.id.in_(ids), RatingType.place_type == "fountain"
+                )
+            )
+        )
+        .scalars()
+        .all()
     )
     unknown = ids - known
     if unknown:
+        logger.warning("rejected unknown/non-fountain rating_type_id(s): %s", sorted(unknown))
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"unknown rating_type_id(s): {sorted(unknown)}",
@@ -125,6 +150,88 @@ def _rating_contribution_specs(
     return specs
 
 
+def _value_is_legal(value_kind: str, allowed_values: list[str] | None, value: str) -> bool:
+    if value == "unknown":  # unknown is always a legal observation
+        return True
+    if value_kind == "boolean":
+        return value in ("yes", "no")
+    return bool(allowed_values) and value in allowed_values  # enum
+
+
+async def _validate_attribute_observations(
+    session: AsyncSession, observations: list
+) -> dict[int, object]:
+    """Validate attribute_type ids (fountain-scoped, active) + value legality. 422 on bad input."""
+    ids = {o.attribute_type_id for o in observations}
+    # smallint-range guard: out-of-range ids cannot exist (the column is smallint) and
+    # would error the asyncpg bind — treat them as unknown -> 422 rather than a 500.
+    queryable = {i for i in ids if -(2**15) <= i < 2**15}
+    rows = (
+        (
+            await session.execute(
+                select(
+                    AttributeType.id, AttributeType.value_kind, AttributeType.allowed_values
+                ).where(
+                    AttributeType.id.in_(queryable),
+                    AttributeType.place_type == "fountain",
+                    AttributeType.is_active.is_(True),
+                )
+            )
+        ).all()
+        if queryable
+        else []
+    )
+    by_id = {r.id: r for r in rows}
+    unknown = ids - set(by_id)
+    if unknown:
+        logger.warning("rejected unknown/non-fountain attribute_type_id(s): %s", sorted(unknown))
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"unknown attribute_type_id(s): {sorted(unknown)}",
+        )
+    for o in observations:
+        spec = by_id[o.attribute_type_id]
+        if not _value_is_legal(spec.value_kind, spec.allowed_values, o.value):
+            logger.warning(
+                "rejected illegal attribute value %r for attribute_type_id %s",
+                o.value,
+                o.attribute_type_id,
+            )
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"illegal value for attribute_type_id {o.attribute_type_id}",
+            )
+    return by_id
+
+
+async def _upsert_attribute_observations(
+    session: AsyncSession, *, fountain_id: uuid.UUID, user_id: uuid.UUID, observations: list
+) -> dict[int, uuid.UUID]:
+    """Upsert the caller's observations (dedupe within request, last value wins). Returns
+    {attribute_type_id: observation_id} as the durable contribution target_id."""
+    value_by_type = {o.attribute_type_id: o.value for o in observations}
+    stmt = pg_insert(AttributeObservation).values(
+        [
+            {
+                "id": uuid.uuid4(),
+                "fountain_id": fountain_id,
+                "user_id": user_id,
+                "attribute_type_id": attribute_type_id,
+                "value": value,
+            }
+            for attribute_type_id, value in value_by_type.items()
+        ]
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["fountain_id", "user_id", "attribute_type_id"],
+        set_={"value": stmt.excluded.value, "updated_at": func.now()},
+    ).returning(AttributeObservation.attribute_type_id, AttributeObservation.id)
+    result = await session.execute(stmt)
+    obs_ids = {row.attribute_type_id: row.id for row in result}
+    await session.flush()
+    return obs_ids
+
+
 async def serialize_fountain_detail(session: AsyncSession, fountain: Fountain) -> FountainDetail:
     lat, lng = (
         await session.execute(
@@ -159,6 +266,46 @@ async def serialize_fountain_detail(session: AsyncSession, fountain: Fountain) -
         )
         for (rid, name, avg, votes) in dim_rows
     ]
+    # Attribute consensus: only attribute types observed at least once (have a consensus
+    # row); the full registry is served by GET /attribute-types.
+    attr_rows = (
+        await session.execute(
+            select(
+                FountainAttributeConsensus.attribute_type_id,
+                AttributeType.key,
+                AttributeType.name,
+                AttributeType.category,
+                FountainAttributeConsensus.consensus_value,
+                FountainAttributeConsensus.confidence,
+                FountainAttributeConsensus.yes_count,
+                FountainAttributeConsensus.no_count,
+                FountainAttributeConsensus.unknown_count,
+                FountainAttributeConsensus.value_counts,
+                FountainAttributeConsensus.observation_count,
+                FountainAttributeConsensus.latest_observation_value,
+            )
+            .join(AttributeType, AttributeType.id == FountainAttributeConsensus.attribute_type_id)
+            .where(FountainAttributeConsensus.fountain_id == fountain.id)
+            .order_by(AttributeType.sort_order)
+        )
+    ).all()
+    attributes = [
+        AttributeConsensusOut(
+            attribute_type_id=r.attribute_type_id,
+            key=r.key,
+            name=r.name,
+            category=r.category,
+            consensus_value=r.consensus_value,
+            confidence=r.confidence,
+            yes_count=r.yes_count,
+            no_count=r.no_count,
+            unknown_count=r.unknown_count,
+            value_counts=r.value_counts,
+            observation_count=r.observation_count,
+            latest_observation_value=r.latest_observation_value,
+        )
+        for r in attr_rows
+    ]
     return FountainDetail(
         id=fountain.id,
         location=Coordinates(latitude=float(lat), longitude=float(lng)),
@@ -170,6 +317,7 @@ async def serialize_fountain_detail(session: AsyncSession, fountain: Fountain) -
         created_at=fountain.created_at,
         last_rated_at=fountain.last_rated_at,
         dimensions=dimensions,
+        attributes=attributes,
     )
 
 
@@ -412,6 +560,59 @@ async def submit_ratings(
             rating_ids=rating_ids,
         ),
     )
+    await session.commit()
+    await session.refresh(fountain)
+    return await serialize_fountain_detail(session, fountain)
+
+
+@router.post("/fountains/{fountain_id}/attributes", response_model=FountainDetail)
+async def submit_attributes(
+    fountain_id: uuid.UUID,
+    payload: ObserveAttributesRequest,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> FountainDetail:
+    # Lock the fountain row for the txn so concurrent observers serialize their consensus
+    # recompute (mirrors submit_ratings' FOR UPDATE discipline).
+    fountain = (
+        await session.execute(
+            select(Fountain)
+            .where(Fountain.id == fountain_id, Fountain.is_hidden.is_(False))
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if fountain is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="fountain not found")
+
+    await _validate_attribute_observations(session, payload.observations)
+    obs_ids = await _upsert_attribute_observations(
+        session, fountain_id=fountain.id, user_id=user.id, observations=payload.observations
+    )
+    for attribute_type_id in obs_ids:
+        await recompute_attribute_consensus(session, fountain.id, attribute_type_id)
+
+    lat, lng = (
+        await session.execute(
+            select(latitude_of(Fountain.location), longitude_of(Fountain.location)).where(
+                Fountain.id == fountain.id
+            )
+        )
+    ).one()
+    loc = point_geography(float(lat), float(lng))
+    specs = [
+        ContributionSpec(
+            user_id=user.id,
+            event_type="observe_attribute",
+            dedup_key=dk_observe_attr(user.id, fountain.id, attribute_type_id),
+            fountain_id=fountain.id,
+            location=loc,
+            target_type="attribute_observation",
+            target_id=observation_id,
+            event_metadata={"attribute_type_id": attribute_type_id},
+        )
+        for attribute_type_id, observation_id in obs_ids.items()
+    ]
+    await record_contributions(session, specs)
     await session.commit()
     await session.refresh(fountain)
     return await serialize_fountain_detail(session, fountain)

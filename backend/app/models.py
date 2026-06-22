@@ -408,7 +408,9 @@ class ContributionEvent(Base):
         Index("ix_contribution_events_user_id", "user_id", "created_at"),
         Index("ix_contribution_events_event_type", "event_type"),
         Index("ix_contribution_events_target", "target_type", "target_id"),
-        Index("ix_contribution_events_location", "location", postgresql_using="gist"),
+        # The `location` GiST index is intentionally deferred to the gamification
+        # leaderboard slice that actually queries by area — the column is captured
+        # now (no backfill) but nothing reads it spatially in slice 1.
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
