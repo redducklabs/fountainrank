@@ -55,7 +55,15 @@ Reads (public — no auth):
 - `GET /api/v1/fountains/bbox?min_lat=&min_lng=&max_lat=&max_lng=` — fountains in
   a viewport envelope (`ST_Intersects`). Inverted bounds (min > max) → `422`.
 - `GET /api/v1/fountains/{fountain_id}` — full detail with a per-dimension
-  average/vote breakdown. Unknown id → `404`.
+  average/vote breakdown plus crowd-sourced `attributes` (consensus per attribute
+  type, observed types only). Unknown id → `404`.
+- `GET /api/v1/attribute-types` — the seeded fountain attribute definitions
+  (bottle filler, dual-height, accessibility observations), in `sort_order`.
+
+Authenticated read (caller's own data only):
+
+- `GET /api/v1/me/contributions` — the caller's contribution-point stats + recent
+  contribution events (the gamification substrate). Auth required.
 
 Writes (require auth — see below):
 
@@ -65,11 +73,18 @@ Writes (require auth — see below):
   fountain with a typed `409` body `{ "detail": "duplicate_fountain", "fountain_id": <uuid> }`
   so the client can route the user to confirm/rate the existing fountain; unknown
   `rating_type_id` or out-of-range `stars` → `422`. Returns the created fountain
-  detail (`201`).
+  detail (`201`). Adds and ratings emit contribution events (points); the
+  `first_in_area_bonus` is awarded only when no other fountain exists within
+  `first_in_area_radius_m` (default 600 m) of the new point.
 - `POST /api/v1/fountains/{fountain_id}/ratings` — create/update this user's
   ratings for a fountain (atomic upsert on `(fountain, user, dimension)`). Body:
   `{ "ratings": [{ "rating_type_id", "stars" }] }` (non-empty). Unknown fountain
   → `404`. Returns the updated fountain detail.
+- `POST /api/v1/fountains/{fountain_id}/attributes` — create/update this user's
+  structured attribute observations (`yes`/`no`/`unknown`), upsert on
+  `(fountain, user, attribute_type)`; recomputes the consensus shown in detail.
+  Body: `{ "observations": [{ "attribute_type_id", "value" }] }` (non-empty).
+  Unknown/non-fountain `attribute_type_id` or an illegal `value` → `422`.
 
 **Production auth (Phase 2a):** write endpoints require a Logto JWT access token —
 `Authorization: Bearer <token>` — validated via JWKS (`iss`/`aud`/`exp`, ES384). The

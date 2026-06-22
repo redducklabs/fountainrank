@@ -30,6 +30,44 @@ class DimensionSummary(BaseModel):
     vote_count: int
 
 
+class AttributeTypeOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    key: str
+    place_type: str
+    category: str
+    name: str
+    description: str
+    value_kind: str
+    allowed_values: list[str] | None
+    sort_order: int
+
+
+class AttributeObservationInput(BaseModel):
+    attribute_type_id: int
+    value: str
+
+
+class ObserveAttributesRequest(BaseModel):
+    observations: list[AttributeObservationInput] = Field(min_length=1)
+
+
+class AttributeConsensusOut(BaseModel):
+    attribute_type_id: int
+    key: str
+    name: str
+    category: str
+    consensus_value: str | None
+    confidence: str
+    yes_count: int
+    no_count: int
+    unknown_count: int
+    value_counts: dict[str, int] | None
+    observation_count: int
+    latest_observation_value: str | None
+
+
 class FountainPin(BaseModel):
     id: uuid.UUID
     location: Coordinates
@@ -51,6 +89,7 @@ class FountainDetail(BaseModel):
     created_at: datetime
     last_rated_at: datetime | None
     dimensions: list[DimensionSummary]
+    attributes: list[AttributeConsensusOut] = []
 
 
 class DuplicateFountainConflict(BaseModel):
@@ -82,3 +121,29 @@ class MeResponse(BaseModel):
 
 class SyncProfileRequest(BaseModel):
     userinfo_token: str = Field(min_length=1)
+
+
+class ContributionStatsOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    total_points: int
+    fountains_added: int
+    ratings_count: int
+    attributes_count: int
+    conditions_reported: int
+    verifications_count: int
+    notes_count: int
+
+
+class ContributionEventOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    event_type: str
+    points: int
+    fountain_id: uuid.UUID | None
+    created_at: datetime
+
+
+class MeContributionsOut(BaseModel):
+    stats: ContributionStatsOut
+    recent: list[ContributionEventOut]

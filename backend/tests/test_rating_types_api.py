@@ -1,3 +1,9 @@
+import pytest
+from sqlalchemy import delete
+
+from app.models import RatingType
+
+
 async def test_list_rating_types_returns_seeded_dimensions(client):
     resp = await client.get("/api/v1/rating-types")
     assert resp.status_code == 200
@@ -9,3 +15,42 @@ async def test_list_rating_types_returns_seeded_dimensions(client):
         "description": "How clear and clean the water looks",
         "sort_order": 1,
     }
+
+
+@pytest.mark.asyncio
+async def test_rating_types_excludes_non_fountain(client, session):
+    # A non-fountain dimension must not leak into the fountain rating-types list (#44).
+    session.add(
+        RatingType(
+            id=90, name="RestroomCleanliness", description="x", sort_order=90, place_type="restroom"
+        )
+    )
+    await session.commit()
+    try:
+        resp = await client.get("/api/v1/rating-types")
+        assert 90 not in {rt["id"] for rt in resp.json()}
+    finally:
+        await session.execute(delete(RatingType).where(RatingType.id == 90))
+        await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_fountain_detail_excludes_non_fountain_dimensions(client, session):
+    # A non-fountain dimension must not appear as an (empty) dimension in fountain detail.
+    session.add(
+        RatingType(
+            id=91, name="RestroomOdor", description="x", sort_order=91, place_type="restroom"
+        )
+    )
+    await session.commit()
+    try:
+        fid = (
+            await client.post(
+                "/api/v1/fountains", json={"location": {"latitude": 5.0, "longitude": 6.0}}
+            )
+        ).json()["id"]
+        detail = (await client.get(f"/api/v1/fountains/{fid}")).json()
+        assert 91 not in {d["rating_type_id"] for d in detail["dimensions"]}
+    finally:
+        await session.execute(delete(RatingType).where(RatingType.id == 91))
+        await session.commit()

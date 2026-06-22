@@ -54,12 +54,16 @@ class User(Base):
 
 class RatingType(Base):
     __tablename__ = "rating_types"
+    # place_type scopes dimensions to a kind of place (#44). All current rows are
+    # 'fountain'; restroom dimensions will be added as place_type='restroom' rows.
+    __table_args__ = (Index("ix_rating_types_place_type", "place_type", "sort_order"),)
 
     # Stable seed ids (1=Clarity, 2=Taste, 3=Pressure, 4=Appearance); not autoincrement.
     id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, autoincrement=False)
     name: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     description: Mapped[str] = mapped_column(String, nullable=False)
     sort_order: Mapped[int] = mapped_column(nullable=False)
+    place_type: Mapped[str] = mapped_column(nullable=False, server_default=text("'fountain'"))
 
 
 class Fountain(Base):
@@ -273,4 +277,202 @@ class FountainImportEvent(Base):
     prior_values: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class AttributeType(Base):
+    """Registry of structured fountain attributes (#38/#42). Rows, not columns:
+    new attributes are seed rows, no schema migration per attribute. Scoped by
+    place_type (#44) so restroom attributes can coexist later."""
+
+    __tablename__ = "attribute_types"
+    __table_args__ = (
+        # SHORT CHECK names — the ck convention renders them to
+        # ck_attribute_types_value_kind / ck_attribute_types_category (the
+        # stars_range/created_source trap: a full name double-prefixes).
+        CheckConstraint("value_kind IN ('boolean','enum')", name="value_kind"),
+        CheckConstraint(
+            "category IN ('physical','accessibility','access','usability')", name="category"
+        ),
+        Index("uq_attribute_types_place_type", "place_type", "key", unique=True),
+        Index("ix_attribute_types_place_type", "place_type", "is_active", "sort_order"),
+    )
+
+    # Stable seed ids (like rating_types); not autoincrement.
+    id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, autoincrement=False)
+    key: Mapped[str] = mapped_column(String, nullable=False)
+    place_type: Mapped[str] = mapped_column(nullable=False, server_default=text("'fountain'"))
+    category: Mapped[str] = mapped_column(String, nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str] = mapped_column(String, nullable=False)
+    value_kind: Mapped[str] = mapped_column(String, nullable=False)
+    # JSONB list of canonical enum values (null for boolean kinds).
+    allowed_values: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    sort_order: Mapped[int] = mapped_column(nullable=False)
+    is_active: Mapped[bool] = mapped_column(nullable=False, server_default=text("true"))
+
+
+class AttributeObservation(Base):
+    """One user's current observation of one attribute on one fountain (#38).
+    Upsert to edit (mirrors ratings). Hidden rows are excluded from consensus."""
+
+    __tablename__ = "attribute_observations"
+    __table_args__ = (
+        UniqueConstraint(
+            "fountain_id",
+            "user_id",
+            "attribute_type_id",
+            name="uq_attribute_observations_fountain_id",
+        ),
+        Index("ix_attribute_observations_fountain_id_attr", "fountain_id", "attribute_type_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    fountain_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("fountains.id", ondelete="CASCADE", name="fk_attribute_observations_fountain"),
+        nullable=False,
+    )
+    # NOT NULL in slice 1 — every observation is a user observation. The deferred
+    # OSM tag-mapping pass adds the nullable-user import path then (spec §6.2).
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE", name="fk_attribute_observations_user"),
+        nullable=False,
+    )
+    attribute_type_id: Mapped[int] = mapped_column(
+        SmallInteger,
+        ForeignKey("attribute_types.id", name="fk_attribute_observations_attr_type"),
+        nullable=False,
+    )
+    value: Mapped[str] = mapped_column(String, nullable=False)
+    is_hidden: Mapped[bool] = mapped_column(nullable=False, server_default=text("false"))
+    hidden_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("users.id", name="fk_attribute_observations_hidden_by"),
+        nullable=True,
+    )
+    hidden_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class FountainAttributeConsensus(Base):
+    """Denormalized per-(fountain, attribute) consensus, recomputed on write and on
+    moderation hide/unhide (excludes hidden observations). Read-fast for detail/filters."""
+
+    __tablename__ = "fountain_attribute_consensus"
+    __table_args__ = (
+        Index("ix_fountain_attribute_consensus_attr_value", "attribute_type_id", "consensus_value"),
+    )
+
+    fountain_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("fountains.id", ondelete="CASCADE", name="fk_consensus_fountain"),
+        primary_key=True,
+    )
+    attribute_type_id: Mapped[int] = mapped_column(
+        SmallInteger,
+        ForeignKey("attribute_types.id", name="fk_consensus_attr_type"),
+        primary_key=True,
+    )
+    consensus_value: Mapped[str | None] = mapped_column(String, nullable=True)
+    confidence: Mapped[str] = mapped_column(String, nullable=False)
+    yes_count: Mapped[int] = mapped_column(nullable=False, server_default=text("0"))
+    no_count: Mapped[int] = mapped_column(nullable=False, server_default=text("0"))
+    unknown_count: Mapped[int] = mapped_column(nullable=False, server_default=text("0"))
+    value_counts: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    observation_count: Mapped[int] = mapped_column(nullable=False, server_default=text("0"))
+    latest_observation_value: Mapped[str | None] = mapped_column(String, nullable=True)
+    last_observed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class ContributionEvent(Base):
+    """Append-only, idempotent log of accepted point-worthy contributions — the
+    gamification substrate (points/badges/first-X/leaderboards derive from it).
+    Written in the same txn as the contribution it records; dedup_key is the
+    anti-farming + first-ever-detector spine."""
+
+    __tablename__ = "contribution_events"
+    __table_args__ = (
+        CheckConstraint("status IN ('awarded','reversed')", name="status"),
+        UniqueConstraint("dedup_key", name="uq_contribution_events_dedup_key"),
+        Index("ix_contribution_events_user_id", "user_id", "created_at"),
+        Index("ix_contribution_events_event_type", "event_type"),
+        Index("ix_contribution_events_target", "target_type", "target_id"),
+        # The `location` GiST index is intentionally deferred to the gamification
+        # leaderboard slice that actually queries by area — the column is captured
+        # now (no backfill) but nothing reads it spatially in slice 1.
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE", name="fk_contribution_events_user"),
+        nullable=False,
+    )
+    # SET NULL so a deleted fountain keeps the audit/points record.
+    fountain_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("fountains.id", ondelete="SET NULL", name="fk_contribution_events_fountain"),
+        nullable=True,
+    )
+    # Durable link to the exact contributing row (rating/observation/etc). Not a
+    # hard FK (targets span many tables); integrity enforced in the chokepoint.
+    target_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    target_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
+    event_type: Mapped[str] = mapped_column(String, nullable=False)
+    points: Mapped[int] = mapped_column(nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, server_default=text("'awarded'"))
+    parent_event_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey(
+            "contribution_events.id",
+            ondelete="SET NULL",
+            name="fk_contribution_events_parent",
+        ),
+        nullable=True,
+    )
+    location: Mapped[WKBElement | None] = mapped_column(
+        Geography(geometry_type="POINT", srid=4326, spatial_index=False), nullable=True
+    )
+    dedup_key: Mapped[str] = mapped_column(String, nullable=False)
+    is_confirmed: Mapped[bool] = mapped_column(nullable=False, server_default=text("false"))
+    # NOT `metadata` — that name is reserved by SQLAlchemy's Base.metadata.
+    event_metadata: Mapped[dict | None] = mapped_column("event_metadata", JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class UserContributionStats(Base):
+    """Denormalized per-user counters — the hot-path profile/leaderboard cache.
+    contribution_events is the source of truth; this is incremented on event insert."""
+
+    __tablename__ = "user_contribution_stats"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE", name="fk_user_contribution_stats_user"),
+        primary_key=True,
+    )
+    total_points: Mapped[int] = mapped_column(nullable=False, server_default=text("0"))
+    fountains_added: Mapped[int] = mapped_column(nullable=False, server_default=text("0"))
+    ratings_count: Mapped[int] = mapped_column(nullable=False, server_default=text("0"))
+    attributes_count: Mapped[int] = mapped_column(nullable=False, server_default=text("0"))
+    conditions_reported: Mapped[int] = mapped_column(nullable=False, server_default=text("0"))
+    verifications_count: Mapped[int] = mapped_column(nullable=False, server_default=text("0"))
+    notes_count: Mapped[int] = mapped_column(nullable=False, server_default=text("0"))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )

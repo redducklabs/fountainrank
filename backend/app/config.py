@@ -63,6 +63,9 @@ class Settings(BaseSettings):
     nearby_default_radius_m: float = 1000.0
     nearby_max_radius_m: float = 50_000.0
     max_results: int = 500
+    # Award the "first in area" contribution bonus only if NO other fountain (including
+    # imported ones) already exists within this radius of a new add (gamification §10).
+    first_in_area_radius_m: float = 600.0
 
     # --- OSM ingestion (see docs/specs/2026-06-21-osm-fountain-ingestion-design.md) ---
     # Auto-update an imported-only, unrated fountain's location only if it moved <= this.

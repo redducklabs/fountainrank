@@ -1,3 +1,4 @@
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -9,34 +10,67 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
 from app.config import Settings, get_settings
+from app.consensus import recompute_attribute_consensus
+from app.contributions import (
+    ContributionSpec,
+    dk_add_fountain,
+    dk_first_fountain,
+    dk_first_in_area,
+    dk_first_rating,
+    dk_observe_attr,
+    dk_rate,
+    record_contributions,
+)
 from app.db import get_session
 from app.geo import latitude_of, longitude_of, point_geography
 from app.locks import ADD_FOUNTAIN_LOCK_KEY
-from app.models import Fountain, Rating, RatingType, User
+from app.models import (
+    AttributeObservation,
+    AttributeType,
+    Fountain,
+    FountainAttributeConsensus,
+    Rating,
+    RatingType,
+    User,
+)
 from app.ranking import recompute_fountain_ranking
 from app.schemas import (
     AddFountainRequest,
+    AttributeConsensusOut,
     Coordinates,
     DimensionSummary,
     DuplicateFountainConflict,
     FountainDetail,
     FountainPin,
+    ObserveAttributesRequest,
     RateRequest,
     RatingInput,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["fountains"])
+logger = logging.getLogger(__name__)
 
 
 async def _validate_rating_types(session: AsyncSession, ratings: list[RatingInput]) -> None:
     if not ratings:
         return
     ids = {r.rating_type_id for r in ratings}
+    # Only fountain-scoped dimensions are valid on a fountain (place_type scoping, #44):
+    # a restroom rating_type can't be applied here and is treated as unknown.
     known = set(
-        (await session.execute(select(RatingType.id).where(RatingType.id.in_(ids)))).scalars().all()
+        (
+            await session.execute(
+                select(RatingType.id).where(
+                    RatingType.id.in_(ids), RatingType.place_type == "fountain"
+                )
+            )
+        )
+        .scalars()
+        .all()
     )
     unknown = ids - known
     if unknown:
+        logger.warning("rejected unknown/non-fountain rating_type_id(s): %s", sorted(unknown))
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"unknown rating_type_id(s): {sorted(unknown)}",
@@ -45,7 +79,7 @@ async def _validate_rating_types(session: AsyncSession, ratings: list[RatingInpu
 
 async def _upsert_ratings(
     session: AsyncSession, *, fountain_id: uuid.UUID, user_id: uuid.UUID, ratings: list[RatingInput]
-) -> None:
+) -> dict[int, uuid.UUID]:
     # Atomic upsert via ON CONFLICT on the (fountain_id, user_id, rating_type_id) unique
     # constraint. A SELECT-then-INSERT would race two concurrent submissions for the same
     # user/fountain/dimension (both see no row, both INSERT) -> one hits IntegrityError ->
@@ -54,7 +88,7 @@ async def _upsert_ratings(
     # twice — Postgres rejects "ON CONFLICT ... cannot affect row a second time".
     stars_by_type = {r.rating_type_id: r.stars for r in ratings}
     if not stars_by_type:
-        return
+        return {}
     stmt = pg_insert(Rating).values(
         [
             {
@@ -67,12 +101,134 @@ async def _upsert_ratings(
             for rating_type_id, stars in stars_by_type.items()
         ]
     )
+    # RETURNING (rating_type_id, id) gives the durable contribution target_id for each
+    # affected row (DO UPDATE returns the conflict row too), so a `rate` event can link
+    # to the exact ratings row for future confirmation/moderation.
     stmt = stmt.on_conflict_do_update(
         index_elements=["fountain_id", "user_id", "rating_type_id"],
         set_={"stars": stmt.excluded.stars, "updated_at": func.now()},
-    )
-    await session.execute(stmt)
+    ).returning(Rating.rating_type_id, Rating.id)
+    result = await session.execute(stmt)
+    rating_ids = {row.rating_type_id: row.id for row in result}
     await session.flush()
+    return rating_ids
+
+
+def _rating_contribution_specs(
+    *,
+    user_id: uuid.UUID,
+    fountain_id: uuid.UUID,
+    location: object,
+    rating_ids: dict[int, uuid.UUID],
+) -> list[ContributionSpec]:
+    """Build `rate` (one per dimension) + a `first_rating_bonus` spec. Dedup keys make
+    re-rates/bonus idempotent in the chokepoint — no first-detection query needed."""
+    specs = [
+        ContributionSpec(
+            user_id=user_id,
+            event_type="rate",
+            dedup_key=dk_rate(user_id, fountain_id, rating_type_id),
+            fountain_id=fountain_id,
+            location=location,
+            target_type="rating",
+            target_id=rating_id,
+            event_metadata={"rating_type_id": rating_type_id},
+        )
+        for rating_type_id, rating_id in rating_ids.items()
+    ]
+    if rating_ids:
+        specs.append(
+            ContributionSpec(
+                user_id=user_id,
+                event_type="first_rating_bonus",
+                dedup_key=dk_first_rating(fountain_id),
+                fountain_id=fountain_id,
+                location=location,
+            )
+        )
+    return specs
+
+
+def _value_is_legal(value_kind: str, allowed_values: list[str] | None, value: str) -> bool:
+    if value == "unknown":  # unknown is always a legal observation
+        return True
+    if value_kind == "boolean":
+        return value in ("yes", "no")
+    return bool(allowed_values) and value in allowed_values  # enum
+
+
+async def _validate_attribute_observations(
+    session: AsyncSession, observations: list
+) -> dict[int, object]:
+    """Validate attribute_type ids (fountain-scoped, active) + value legality. 422 on bad input."""
+    ids = {o.attribute_type_id for o in observations}
+    # smallint-range guard: out-of-range ids cannot exist (the column is smallint) and
+    # would error the asyncpg bind — treat them as unknown -> 422 rather than a 500.
+    queryable = {i for i in ids if -(2**15) <= i < 2**15}
+    rows = (
+        (
+            await session.execute(
+                select(
+                    AttributeType.id, AttributeType.value_kind, AttributeType.allowed_values
+                ).where(
+                    AttributeType.id.in_(queryable),
+                    AttributeType.place_type == "fountain",
+                    AttributeType.is_active.is_(True),
+                )
+            )
+        ).all()
+        if queryable
+        else []
+    )
+    by_id = {r.id: r for r in rows}
+    unknown = ids - set(by_id)
+    if unknown:
+        logger.warning("rejected unknown/non-fountain attribute_type_id(s): %s", sorted(unknown))
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"unknown attribute_type_id(s): {sorted(unknown)}",
+        )
+    for o in observations:
+        spec = by_id[o.attribute_type_id]
+        if not _value_is_legal(spec.value_kind, spec.allowed_values, o.value):
+            logger.warning(
+                "rejected illegal attribute value %r for attribute_type_id %s",
+                o.value,
+                o.attribute_type_id,
+            )
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"illegal value for attribute_type_id {o.attribute_type_id}",
+            )
+    return by_id
+
+
+async def _upsert_attribute_observations(
+    session: AsyncSession, *, fountain_id: uuid.UUID, user_id: uuid.UUID, observations: list
+) -> dict[int, uuid.UUID]:
+    """Upsert the caller's observations (dedupe within request, last value wins). Returns
+    {attribute_type_id: observation_id} as the durable contribution target_id."""
+    value_by_type = {o.attribute_type_id: o.value for o in observations}
+    stmt = pg_insert(AttributeObservation).values(
+        [
+            {
+                "id": uuid.uuid4(),
+                "fountain_id": fountain_id,
+                "user_id": user_id,
+                "attribute_type_id": attribute_type_id,
+                "value": value,
+            }
+            for attribute_type_id, value in value_by_type.items()
+        ]
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["fountain_id", "user_id", "attribute_type_id"],
+        set_={"value": stmt.excluded.value, "updated_at": func.now()},
+    ).returning(AttributeObservation.attribute_type_id, AttributeObservation.id)
+    result = await session.execute(stmt)
+    obs_ids = {row.attribute_type_id: row.id for row in result}
+    await session.flush()
+    return obs_ids
 
 
 async def serialize_fountain_detail(session: AsyncSession, fountain: Fountain) -> FountainDetail:
@@ -96,6 +252,7 @@ async def serialize_fountain_detail(session: AsyncSession, fountain: Fountain) -
                 Rating,
                 (Rating.rating_type_id == RatingType.id) & (Rating.fountain_id == fountain.id),
             )
+            .where(RatingType.place_type == "fountain")  # don't leak future restroom dims
             .group_by(RatingType.id, RatingType.name, RatingType.sort_order)
             .order_by(RatingType.sort_order)
         )
@@ -109,6 +266,46 @@ async def serialize_fountain_detail(session: AsyncSession, fountain: Fountain) -
         )
         for (rid, name, avg, votes) in dim_rows
     ]
+    # Attribute consensus: only attribute types observed at least once (have a consensus
+    # row); the full registry is served by GET /attribute-types.
+    attr_rows = (
+        await session.execute(
+            select(
+                FountainAttributeConsensus.attribute_type_id,
+                AttributeType.key,
+                AttributeType.name,
+                AttributeType.category,
+                FountainAttributeConsensus.consensus_value,
+                FountainAttributeConsensus.confidence,
+                FountainAttributeConsensus.yes_count,
+                FountainAttributeConsensus.no_count,
+                FountainAttributeConsensus.unknown_count,
+                FountainAttributeConsensus.value_counts,
+                FountainAttributeConsensus.observation_count,
+                FountainAttributeConsensus.latest_observation_value,
+            )
+            .join(AttributeType, AttributeType.id == FountainAttributeConsensus.attribute_type_id)
+            .where(FountainAttributeConsensus.fountain_id == fountain.id)
+            .order_by(AttributeType.sort_order)
+        )
+    ).all()
+    attributes = [
+        AttributeConsensusOut(
+            attribute_type_id=r.attribute_type_id,
+            key=r.key,
+            name=r.name,
+            category=r.category,
+            consensus_value=r.consensus_value,
+            confidence=r.confidence,
+            yes_count=r.yes_count,
+            no_count=r.no_count,
+            unknown_count=r.unknown_count,
+            value_counts=r.value_counts,
+            observation_count=r.observation_count,
+            latest_observation_value=r.latest_observation_value,
+        )
+        for r in attr_rows
+    ]
     return FountainDetail(
         id=fountain.id,
         location=Coordinates(latitude=float(lat), longitude=float(lng)),
@@ -120,6 +317,7 @@ async def serialize_fountain_detail(session: AsyncSession, fountain: Fountain) -
         created_at=fountain.created_at,
         last_rated_at=fountain.last_rated_at,
         dimensions=dimensions,
+        attributes=attributes,
     )
 
 
@@ -273,11 +471,58 @@ async def add_fountain(
     session.add(fountain)
     await session.flush()
 
+    # Emit contribution events. add_fountain + first_fountain are idempotent via dedup keys.
+    specs = [
+        ContributionSpec(
+            user_id=user.id,
+            event_type="add_fountain",
+            dedup_key=dk_add_fountain(fountain.id),
+            fountain_id=fountain.id,
+            location=point,
+            target_type="fountain",
+            target_id=fountain.id,
+        ),
+        ContributionSpec(
+            user_id=user.id,
+            event_type="first_fountain_bonus",
+            dedup_key=dk_first_fountain(user.id),
+            fountain_id=fountain.id,
+            location=point,
+        ),
+    ]
+    # "First in area" requires the area to be genuinely unmapped — NO other non-hidden
+    # fountain (including imported ones) within first_in_area_radius_m. The add advisory
+    # lock (held until commit) serializes this precheck against concurrent adds.
+    others_nearby = (
+        await session.execute(
+            select(func.count())
+            .select_from(Fountain)
+            .where(
+                Fountain.id != fountain.id,
+                Fountain.is_hidden.is_(False),
+                func.ST_DWithin(Fountain.location, point, settings.first_in_area_radius_m),
+            )
+        )
+    ).scalar_one()
+    if others_nearby == 0:
+        specs.append(
+            ContributionSpec(
+                user_id=user.id,
+                event_type="first_in_area_bonus",
+                dedup_key=dk_first_in_area(fountain.id),
+                fountain_id=fountain.id,
+                location=point,
+            )
+        )
     if payload.ratings:
-        await _upsert_ratings(
+        rating_ids = await _upsert_ratings(
             session, fountain_id=fountain.id, user_id=user.id, ratings=payload.ratings
         )
         await recompute_fountain_ranking(session, fountain.id)
+        specs += _rating_contribution_specs(
+            user_id=user.id, fountain_id=fountain.id, location=point, rating_ids=rating_ids
+        )
+    await record_contributions(session, specs)
 
     await session.commit()
     await session.refresh(fountain)
@@ -308,10 +553,81 @@ async def submit_ratings(
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="fountain not found")
 
     await _validate_rating_types(session, payload.ratings)
-    await _upsert_ratings(
+    rating_ids = await _upsert_ratings(
         session, fountain_id=fountain.id, user_id=user.id, ratings=payload.ratings
     )
     await recompute_fountain_ranking(session, fountain.id)
+    # Rebuild the location as a SQL expression (binding a loaded WKBElement would need
+    # Shapely); mirrors how add_fountain passes the point_geography expression.
+    lat, lng = (
+        await session.execute(
+            select(latitude_of(Fountain.location), longitude_of(Fountain.location)).where(
+                Fountain.id == fountain.id
+            )
+        )
+    ).one()
+    await record_contributions(
+        session,
+        _rating_contribution_specs(
+            user_id=user.id,
+            fountain_id=fountain.id,
+            location=point_geography(float(lat), float(lng)),
+            rating_ids=rating_ids,
+        ),
+    )
+    await session.commit()
+    await session.refresh(fountain)
+    return await serialize_fountain_detail(session, fountain)
+
+
+@router.post("/fountains/{fountain_id}/attributes", response_model=FountainDetail)
+async def submit_attributes(
+    fountain_id: uuid.UUID,
+    payload: ObserveAttributesRequest,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> FountainDetail:
+    # Lock the fountain row for the txn so concurrent observers serialize their consensus
+    # recompute (mirrors submit_ratings' FOR UPDATE discipline).
+    fountain = (
+        await session.execute(
+            select(Fountain)
+            .where(Fountain.id == fountain_id, Fountain.is_hidden.is_(False))
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if fountain is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="fountain not found")
+
+    await _validate_attribute_observations(session, payload.observations)
+    obs_ids = await _upsert_attribute_observations(
+        session, fountain_id=fountain.id, user_id=user.id, observations=payload.observations
+    )
+    for attribute_type_id in obs_ids:
+        await recompute_attribute_consensus(session, fountain.id, attribute_type_id)
+
+    lat, lng = (
+        await session.execute(
+            select(latitude_of(Fountain.location), longitude_of(Fountain.location)).where(
+                Fountain.id == fountain.id
+            )
+        )
+    ).one()
+    loc = point_geography(float(lat), float(lng))
+    specs = [
+        ContributionSpec(
+            user_id=user.id,
+            event_type="observe_attribute",
+            dedup_key=dk_observe_attr(user.id, fountain.id, attribute_type_id),
+            fountain_id=fountain.id,
+            location=loc,
+            target_type="attribute_observation",
+            target_id=observation_id,
+            event_metadata={"attribute_type_id": attribute_type_id},
+        )
+        for attribute_type_id, observation_id in obs_ids.items()
+    ]
+    await record_contributions(session, specs)
     await session.commit()
     await session.refresh(fountain)
     return await serialize_fountain_detail(session, fountain)

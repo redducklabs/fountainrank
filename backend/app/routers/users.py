@@ -2,12 +2,19 @@ import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
 from app.db import get_session
-from app.models import User
-from app.schemas import MeResponse, SyncProfileRequest
+from app.models import ContributionEvent, User, UserContributionStats
+from app.schemas import (
+    ContributionEventOut,
+    ContributionStatsOut,
+    MeContributionsOut,
+    MeResponse,
+    SyncProfileRequest,
+)
 from app.userinfo import (
     UserinfoError,
     UserinfoFetcher,
@@ -27,6 +34,45 @@ async def get_me(current_user: Annotated[User, Depends(get_current_user)]) -> Us
     # Auth failures are raised by get_current_user (401). Unexpected errors propagate
     # to the centralized exception handler in main.py (logged 500) — not swallowed here.
     return current_user
+
+
+_ZERO_STATS = ContributionStatsOut(
+    total_points=0,
+    fountains_added=0,
+    ratings_count=0,
+    attributes_count=0,
+    conditions_reported=0,
+    verifications_count=0,
+    notes_count=0,
+)
+
+
+@router.get("/me/contributions", response_model=MeContributionsOut)
+async def get_my_contributions(
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> MeContributionsOut:
+    # Auth-required, caller's own data only — never another user's history.
+    stats_row = (
+        await session.execute(
+            select(UserContributionStats).where(UserContributionStats.user_id == current_user.id)
+        )
+    ).scalar_one_or_none()
+    stats = ContributionStatsOut.model_validate(stats_row) if stats_row else _ZERO_STATS
+    recent_rows = (
+        (
+            await session.execute(
+                select(ContributionEvent)
+                .where(ContributionEvent.user_id == current_user.id)
+                .order_by(ContributionEvent.created_at.desc())
+                .limit(20)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    recent = [ContributionEventOut.model_validate(r) for r in recent_rows]
+    return MeContributionsOut(stats=stats, recent=recent)
 
 
 @router.post("/me/sync", response_model=MeResponse)
