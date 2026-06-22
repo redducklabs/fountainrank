@@ -65,6 +65,7 @@ function UserMenu({
         !buttonRef.current?.contains(e.target as Node)
       ) {
         setOpen(false);
+        buttonRef.current?.focus();
       }
     };
     document.addEventListener("keydown", onKey);

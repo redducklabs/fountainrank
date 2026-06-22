@@ -57,4 +57,18 @@ describe("AuthControl", () => {
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("menu")).toBeNull();
   });
+
+  it("closes the menu and restores focus to the button on outside-click", () => {
+    render(
+      <AuthControl
+        viewer={{ state: "authed", displayName: "Aron", avatarUrl: null, isAdmin: false }}
+      />,
+    );
+    const button = screen.getByRole("button", { name: /open account menu/i });
+    fireEvent.click(button);
+    expect(screen.getByRole("menu")).toBeTruthy();
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(document.activeElement).toBe(button);
+  });
 });
