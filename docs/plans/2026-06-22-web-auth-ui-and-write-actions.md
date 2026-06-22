@@ -997,7 +997,7 @@ git commit -m "feat(web): slim map hero + global SiteHeader on map/account/detai
 - Create: `web/app/admin/page.tsx`
 - Test: `web/app/admin/page.test.tsx`
 
-**Interfaces:** Consumes `getViewer` (Task 6), `SiteHeader`. Anonymous → redirect to sign-in (`returnTo="/admin"`); authed non-admin → `notFound()`; `error` → retry state (not admin content, not 404); admin → stub.
+**Interfaces:** Consumes `getViewer` (Task 6), `SiteHeader`, `signInWithReturn` (Task 5). Anonymous → render a **sign-in prompt form** bound to `/admin` (NOT an RSC redirect/cookie mutation — see the MAJOR fix below); authed non-admin → `notFound()`; `error` → retry state (not admin content, not 404); admin → stub.
 
 - [ ] **Step 1: Write failing test** — `web/app/admin/page.test.tsx`:
 
@@ -1027,8 +1027,9 @@ afterEach(() => {
 it("renders a sign-in prompt for anonymous (no cookie mutation during render)", async () => {
   getViewer.mockResolvedValue({ state: "anonymous" });
   render(await AdminPage());
-  // The sign-in form binds signInWithReturn to "/admin" (preserving the return path);
-  // we assert the prompt renders rather than auto-redirecting / mutating cookies in RSC.
+  // Assert the ADMIN-specific prompt (a stable contract that the return path is preserved),
+  // not just any sign-in button — so a future edit can't silently drop the /admin context.
+  expect(screen.getByText(/sign in to access the admin tools/i)).toBeTruthy();
   expect(screen.getByRole("button", { name: /sign in/i })).toBeTruthy();
 });
 
@@ -1257,7 +1258,7 @@ export async function getAuthedApiClientForAction(requestId: string): Promise<Ap
 - [ ] **Step 5: Write failing tests for contribute actions** — `web/app/actions/contribute.test.ts`:
 
 ```ts
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { POST, getClient, revalidatePath, log } = vi.hoisted(() => ({
   POST: vi.fn(),
@@ -1273,12 +1274,8 @@ vi.mock("../../lib/server/log", () => ({ log }));
 import { submitRating, submitCondition, submitNote } from "./contribute";
 
 const FID = "123e4567-e89b-12d3-a456-426614174000";
-beforeEachClient(); // see note: set getClient default per test below
+beforeEach(() => getClient.mockImplementation(async () => ({ POST })));
 afterEach(() => vi.clearAllMocks());
-
-function beforeEachClient() {
-  getClient.mockImplementation(async () => ({ POST }));
-}
 
 describe("submitRating", () => {
   it("validation fails BEFORE any API call for empty ratings", async () => {
@@ -1381,7 +1378,6 @@ describe("submitNote", () => {
 });
 ```
 
-(Note: add `import { beforeEach } from "vitest"` and replace the `beforeEachClient()` helper with a `beforeEach(() => getClient.mockImplementation(async () => ({ POST })))` when implementing — shown inline for clarity.)
 
 - [ ] **Step 6: Run, verify fail.** `pnpm --filter web exec vitest run app/actions/contribute.test.ts`
 
@@ -1833,7 +1829,7 @@ export function NoteForm({ fountainId }: { fountainId: string }) {
         <span className="text-xs text-slate-400">{body.length}/1000</span>
         <button
           type="button"
-          disabled={pending || trimmed.length === 0}
+          disabled={pending}
           onClick={submit}
           className="rounded-full bg-[#0A357E] px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
         >
@@ -1982,6 +1978,6 @@ Expected: backend + workspace-js + web build + mobile all green. (If the pnpm st
 
 **Spec coverage:** §1 scope → Tasks 1–13. §4 admin authority → Tasks 2–3. §5 header/auth/getViewer → Tasks 6–8. §6 /admin → Task 9. §7 contribute forms → Tasks 10–12. §8 return path → Tasks 4–5. §9 server actions/CSRF/refresh → Tasks 11–12. §12 style guide → Task 1. §13 tests → folded into each task. §14 deploy/next.config → Tasks 11 (origins) + 13 (env). §15 sequencing → task order matches.
 
-**Placeholder scan:** the `beforeEachClient()` shim in Task 11's test is explicitly flagged to be replaced with `beforeEach(...)` at implementation; all other steps carry real code. Form components in Task 12 show the full `RatingForm` and the shape of the other two (analogous) — implementers reproduce the pattern; this is intentional to avoid 3× near-identical code blocks, with each form's distinct behavior + tests specified.
+**Placeholder scan:** all steps carry real, runnable code — Task 12 includes full `RatingForm`, `ConditionForm`, `NoteForm`, and the shared `contributeError` module; Task 11's test uses a real `beforeEach`. No shims or "analogous" prose remain.
 
 **Type consistency:** `Viewer` (Task 6) is consumed unchanged in Tasks 7/9/12; `ActionResult`/`ContributeError` (Task 11) consumed in Task 12; `submitRating/Condition/Note` signatures match between Task 11 (produces) and Task 12 (consumes); `safeReturnPath` (Task 4) consumed in Tasks 5/(callback); `getAuthedApiClientForAction` (Task 11) consumed by the actions; `conditionStatusLabel` (Task 10) consumed by `ConditionForm`.
