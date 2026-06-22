@@ -83,6 +83,23 @@ class Settings(BaseSettings):
     osm_tag_max_value_len: int = 255
     osm_tags_max_bytes: int = 4096
 
+    # Logto subjects (the validated JWT `sub`) granted admin. Opaque, case-sensitive ids —
+    # trimmed but NEVER lowercased. NoDecode + a custom parser: a bare list[str] from env
+    # crashes startup on a comma-separated/empty value (same reasoning as cors_allow_origins).
+    admin_subjects: Annotated[list[str], NoDecode] = []
+
+    @field_validator("admin_subjects", mode="before")
+    @classmethod
+    def _parse_admin_subjects(cls, v: object) -> object:
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                return []
+            if s.startswith("["):
+                return json.loads(s)
+            return [sub.strip() for sub in s.split(",") if sub.strip()]
+        return v
+
     # --- Phase 2a (Logto auth) ---
     # Logto OIDC authority. Issuer + JWKS are DERIVED from this so the backend never
     # depends on the OIDC discovery document (which emits http:// until TRUST_PROXY_HEADER

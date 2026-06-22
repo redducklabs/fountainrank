@@ -98,3 +98,29 @@ def test_cors_allows_prod_web_origins():
     # regardless of other default origins that may be added or removed.
     origins = set(Settings().cors_allow_origins)
     assert {"https://fountainrank.com", "https://www.fountainrank.com"} <= origins
+
+
+def test_admin_subjects_default_is_empty(monkeypatch):
+    monkeypatch.delenv("ADMIN_SUBJECTS", raising=False)
+    assert Settings().admin_subjects == []
+
+
+def test_admin_subjects_parses_comma_separated(monkeypatch):
+    monkeypatch.setenv("ADMIN_SUBJECTS", " sub-a , sub-b ")
+    assert Settings().admin_subjects == ["sub-a", "sub-b"]
+
+
+def test_admin_subjects_parses_json_array(monkeypatch):
+    monkeypatch.setenv("ADMIN_SUBJECTS", '["sub-c"]')
+    assert Settings().admin_subjects == ["sub-c"]
+
+
+def test_admin_subjects_empty_env_is_empty_list(monkeypatch):
+    monkeypatch.setenv("ADMIN_SUBJECTS", "")
+    assert Settings().admin_subjects == []
+
+
+def test_admin_subjects_not_lowercased(monkeypatch):
+    # Logto sub is opaque/case-sensitive — must NOT be normalized.
+    monkeypatch.setenv("ADMIN_SUBJECTS", "AbC-123")
+    assert Settings().admin_subjects == ["AbC-123"]
