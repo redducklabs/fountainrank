@@ -34,4 +34,14 @@ describe("isDisplayableEmail", () => {
   it("returns false for empty string", () => {
     expect(isDisplayableEmail("")).toBe(false);
   });
+
+  it("returns false for a whitespace-only string", () => {
+    expect(isDisplayableEmail("   ")).toBe(false);
+  });
+
+  it("returns false for a whitespace-padded Apple private relay address", () => {
+    // The trim must happen before the suffix check, or the padded relay would leak.
+    expect(isDisplayableEmail("abc123@privaterelay.appleid.com ")).toBe(false);
+    expect(isDisplayableEmail("  sub_x@users.noreply.fountainrank.com")).toBe(false);
+  });
 });

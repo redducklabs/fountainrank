@@ -7,9 +7,12 @@
  */
 export function isDisplayableEmail(email: string | null | undefined): boolean {
   if (!email) return false;
-  // Lowercase once so suffix checks are case-insensitive, matching the backend's
-  // accept_email normalization.
-  const normalized = email.toLowerCase();
+  // Trim + lowercase once so suffix checks are robust to surrounding whitespace and
+  // case, matching the backend's accept_email normalization (which rejects whitespace).
+  // Without the trim, a padded relay like "x@privaterelay.appleid.com " would slip past
+  // the suffix check and leak the relay address.
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) return false;
   if (normalized.endsWith("@users.noreply.fountainrank.com")) return false;
   if (normalized.endsWith("@privaterelay.appleid.com")) return false;
   return true;
