@@ -41,3 +41,24 @@ def test_openapi_exposes_me_sync_endpoint():
     assert "SyncProfileRequest" in schema["components"]["schemas"]
     ref = op["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
     assert ref.endswith("/MeResponse")
+
+
+def test_openapi_exposes_contribution_data_contract():
+    schema = app.openapi()
+    paths = schema["paths"]
+    assert "/api/v1/attribute-types" in paths
+    assert "/api/v1/fountains/{fountain_id}/attributes" in paths
+    assert "/api/v1/me/contributions" in paths
+
+    components = schema["components"]["schemas"]
+    for name in (
+        "AttributeTypeOut",
+        "AttributeConsensusOut",
+        "ObserveAttributesRequest",
+        "MeContributionsOut",
+        "ContributionStatsOut",
+    ):
+        assert name in components
+
+    # FountainDetail now carries the attribute consensus list.
+    assert "attributes" in components["FountainDetail"]["properties"]
