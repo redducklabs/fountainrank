@@ -121,3 +121,29 @@ class MeResponse(BaseModel):
 
 class SyncProfileRequest(BaseModel):
     userinfo_token: str = Field(min_length=1)
+
+
+class ContributionStatsOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    total_points: int
+    fountains_added: int
+    ratings_count: int
+    attributes_count: int
+    conditions_reported: int
+    verifications_count: int
+    notes_count: int
+
+
+class ContributionEventOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    event_type: str
+    points: int
+    fountain_id: uuid.UUID | None
+    created_at: datetime
+
+
+class MeContributionsOut(BaseModel):
+    stats: ContributionStatsOut
+    recent: list[ContributionEventOut]
