@@ -252,6 +252,11 @@ in a full standalone page (`web/app/fountains/[id]/page.tsx`).
 
 **Content (`FountainDetail`):**
 
+The panel now also renders (in document order): the **status block** (chip + advisory + trust
+line, see below) in place of the old standalone status chip; a **placement note** (`📍` prefix,
+shown only when `placement_note` is present); the **attribute consensus** group; a "from who added
+it" caption under the creator comment; and the **community notes** section.
+
 | Element            | Styling                                                                                                                                                                                |
 | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Heading            | `text-lg font-bold text-[#0A357E]`                                                                                                                                                     |
@@ -262,6 +267,45 @@ in a full standalone page (`web/app/fountains/[id]/page.tsx`).
 | Meta line          | Added / last-rated dates, `text-xs text-slate-400`.                                                                                                                                    |
 | Directions button  | Gold pill: `rounded-full bg-[#F2C200] px-4 py-2 text-sm font-bold text-[#0A357E]`. Links to Google Maps directions.                                                                    |
 | Share button       | Outlined pill: `rounded-full border border-[#cdd6e6] bg-white px-4 py-2 text-sm font-bold text-[#0A357E]`. Uses `navigator.share` when available; falls back to `navigator.clipboard`. |
+
+#### Status block (`StatusBlock.tsx`)
+
+A small stack under the detail heading: a status **chip**, an optional **advisory line**, and a
+**trust line**.
+
+- **Chip** — driven by the fountain's `current_status` for the corroborated categories, and by the
+  `is_working` baseline otherwise:
+  | `current_status` | Label | Tone |
+  | --- | --- | --- |
+  | `ok` | "Verified working" | emerald (`bg-emerald-100 text-emerald-800`) |
+  | `degraded` | "Working — issues reported" | amber (`bg-amber-100 text-amber-800`) |
+  | `not_working` | "Not working" | red (`bg-red-100 text-red-800`) |
+  | `reported_issue` | baseline ("Working" / "Out of order") | emerald / red |
+  | `null` / unexpected | baseline ("Working" / "Out of order") | emerald / red |
+  Chip shape: `rounded-full px-2.5 py-0.5 text-xs font-bold`.
+- **Advisory line** — only for `reported_issue` (a non-flipping advisory): `text-xs text-amber-700`
+  with a decorative `aria-hidden` ⚠, "Issue reported recently — not yet confirmed". The baseline
+  chip is preserved so the working/out-of-order distinction is never lost.
+- **Trust line** — `text-xs text-slate-400`: "Last verified {relative}" (relative time, with a
+  precise day-resolution date in the `title`) when `last_verified_at` is set, else "Not yet
+  verified by anyone".
+
+#### Attribute consensus (`AttributeList.tsx`)
+
+Observed attributes grouped by category. Group heading: `text-xs font-semibold uppercase
+tracking-wide text-slate-500` (category labels: physical→"Features", accessibility→"Accessibility",
+access→"Access"; unknown categories title-cased). Each row: attribute name (`text-slate-600`) left,
+value right with emphasis by confidence — high/medium `text-slate-700`; low `text-slate-400` + a
+muted `(N reports)` hint; `mixed` `text-amber-700` "Mixed" + a muted `latest: …` hint; all-unknown
+`text-slate-400` "Unknown". No raw vote tallies.
+
+#### Community notes (`NotesList.tsx`)
+
+A "Community notes" section (heading styled as the attribute group heading). Each note is a card
+(`rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700`) with the body, then a
+`text-xs text-slate-400` byline "— {author_display_name} · {relative time}" plus "· edited" when the
+note was edited. The section is omitted entirely when there are no notes. The author is always the
+backend's safe public `author_display_name`.
 
 ### Accessible fountains-in-view list (`web/components/map/FountainsInViewList.tsx`)
 
