@@ -8,10 +8,10 @@ from app.geo import point_geography
 from app.main import app
 from app.models import ContributionEvent, Fountain, User, UserContributionStats
 
-# A point inside an empty ~1km cell, a far cell, and a near point in the first cell.
+# An empty area, a far-away (own empty) area, and a point ~50 m from C1.
 C1 = {"latitude": 37.7749, "longitude": -122.4194}
-C2 = {"latitude": 34.0522, "longitude": -118.2437}  # different geohash6 cell (LA)
-C1_NEAR = {"latitude": 37.77535, "longitude": -122.4194}  # ~50 m from C1: same cell, not a dup
+C2 = {"latitude": 34.0522, "longitude": -118.2437}  # far from C1 (LA): its own empty area
+C1_NEAR = {"latitude": 37.77535, "longitude": -122.4194}  # ~50 m from C1: same area, not a dup
 
 
 async def _points(session, user_id) -> int:
@@ -48,7 +48,8 @@ async def test_add_bonus_dedup_sequence(client, test_user, session):
     assert r2.status_code == 201
     assert await _points(session, test_user.id) == 55
 
-    # 3) Same user, same cell as #1 (~50 m, not a dup): add(10) only; first_in_area consumed. -> 65
+    # 3) Same user, ~50 m from #1 (within first_in_area radius, not a dup): add(10) only;
+    #    the area is already mapped by F1 so no first_in_area. -> 65
     r3 = await client.post("/api/v1/fountains", json={"location": C1_NEAR, "is_working": True})
     assert r3.status_code == 201
     assert await _points(session, test_user.id) == 65
@@ -148,6 +149,28 @@ async def test_rating_imported_fountain_no_orphan_events(client, test_user, sess
         )
     ).scalar_one()
     assert null_user == 0
+
+
+@pytest.mark.asyncio
+async def test_no_first_in_area_when_imported_fountain_nearby(client, test_user, session):
+    # An imported (non-user) fountain already maps this area — even though it has no
+    # contribution event, the spatial precheck must see it.
+    imported = Fountain(
+        location=point_geography(37.7749, -122.4194),
+        is_working=True,
+        created_source="osm",
+        added_by_user_id=None,
+    )
+    session.add(imported)
+    await session.commit()
+
+    # User adds a NEW fountain ~50 m away (within first_in_area radius, > duplicate threshold).
+    r = await client.post("/api/v1/fountains", json={"location": C1_NEAR})
+    assert r.status_code == 201
+    types = await _event_types(session, test_user.id)
+    assert "add_fountain" in types
+    assert "first_in_area_bonus" not in types  # area already mapped by the import
+    assert await _points(session, test_user.id) == 15  # add(10) + first_fountain(5), no +15
 
 
 @pytest.mark.asyncio

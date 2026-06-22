@@ -223,7 +223,7 @@ Append-only log of accepted, point-worthy contributions. **Written in the same t
 | `event_metadata` | JSONB, nullable | denormalized detail for badge queries (e.g. `{attribute_type_id, rating_type_id, status}`). **ORM attribute + column are both `event_metadata`** — NOT `metadata` (reserved by SQLAlchemy `Base.metadata`) |
 | `created_at` | timestamptz | |
 
-Unique `dedup_key` (convention name `uq_contribution_events_dedup_key`) is the anti-farming spine. Index `(user_id, created_at desc)`; GiST on `location` for local leaderboards; index `(event_type)` for badge queries; index `(target_type, target_id)` for confirmation/moderation lookups. The `target_type`/`target_id`/`parent_event_id`/`status` columns exist from slice 1 (populated by slice-1 emitters where applicable) so confirmation bonuses, accepted-report bonuses, and moderation reversal need **no backfill** when their logic ships in later slices.
+Unique `dedup_key` (convention name `uq_contribution_events_dedup_key`) is the anti-farming spine. Index `(user_id, created_at desc)`; index `(event_type)` for badge queries; index `(target_type, target_id)` for confirmation/moderation lookups. (The GiST index on `location` for local leaderboards is **deferred to the leaderboard slice** that queries it — the column is captured from slice 1, the index added later, to avoid geography-index/`alembic check` churn now.) The `target_type`/`target_id`/`parent_event_id`/`status` columns exist from slice 1 (populated by slice-1 emitters where applicable) so confirmation bonuses, accepted-report bonuses, and moderation reversal need **no backfill** when their logic ships in later slices.
 
 **Domain validation (Codex review-2):** `status` gets a DB CHECK (closed 2-value set). `event_type` and `target_type` are **deliberately NOT DB CHECKs** — both domains grow across slices (new event/target types each slice), and a CHECK would force a migration per addition; instead they are validated in the single `contributions.py` chokepoint (the only writer), with unit tests covering accepted values and rejection of unknown ones. This keeps the security-relevant `target_type` (used for moderation reversal) constrained by the one code path that writes it, without per-slice migrations.
 
@@ -265,7 +265,7 @@ The points values below are **defaults in one rules module**, tunable; the *stru
 | Action | event_type | dedup_key (idempotency) | points (default) | confirm bonus later? |
 |---|---|---|---|---|
 | Add a fountain | `add_fountain` | `add_fountain:{fountain_id}` | 10 | — |
-| …first ever in a ~1km cell | `first_in_area_bonus` | `first_in_area:{geohash6}` | +15 | — |
+| …first add in an unmapped area | `first_in_area_bonus` | `first_in_area:{fountain_id}` | +15 | — |
 | …user's first fountain | `first_fountain_bonus` | `first_fountain:{user_id}` | +5 | — |
 | Rate a dimension (per fountain-dimension, first time) | `rate` | `rate:{user_id}:{fountain_id}:{rating_type_id}` | 2 | — |
 | First rating on a fountain (by anyone) | `first_rating_bonus` | `first_rating:{fountain_id}` | +5 | — |
@@ -277,7 +277,7 @@ The points values below are **defaults in one rules module**, tunable; the *stru
 Notes:
 - **Re-editing** a rating/attribute/note does **not** re-award (dedup_key already exists → ON CONFLICT DO NOTHING). This is the anti-farming guarantee #38/#39/gamification-doc demand.
 - **Repeatable** actions (verify/condition) dedup **per day** so a user can re-verify over time but not spam in one session; an additional per-(user,fountain,day) cap is enforced in the rules module.
-- `geohash6` ≈ 1.2km cell — good enough for "first in area"; computed in Python from the point (no PostGIS dependency for the key). *Codex: validate cell size / collision behavior.*
+- **First-in-area is gated by a spatial precheck**, not a geohash-of-events key (revised in PR #54 review): at add time, `first_in_area_bonus` is awarded only if NO other non-hidden fountain — **including imported ones** — exists within `first_in_area_radius_m` (default 600 m) of the new point. The add advisory lock serializes this against concurrent adds. A geohash-of-`contribution_events` key would wrongly award it next to the ~360 imported fountains (which emit no events); the spatial precheck reads the `fountains` table, so imports correctly occupy an area.
 - Confirmation bonuses (`is_confirmed` flips when a 2nd distinct user corroborates) are **designed here, implemented in the gamification slice** — the column exists so no backfill.
 
 ---

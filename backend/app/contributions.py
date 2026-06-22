@@ -83,8 +83,10 @@ def dk_first_fountain(user_id: uuid.UUID) -> str:
     return f"first_fountain:{user_id}"
 
 
-def dk_first_in_area(geohash: str) -> str:
-    return f"first_in_area:{geohash}"
+def dk_first_in_area(fountain_id: uuid.UUID) -> str:
+    # Per-fountain key; the spatial "no other fountain within radius" precheck at the call
+    # site is the actual gate (so imported fountains correctly occupy an area).
+    return f"first_in_area:{fountain_id}"
 
 
 def dk_rate(user_id: uuid.UUID, fountain_id: uuid.UUID, rating_type_id: int) -> str:

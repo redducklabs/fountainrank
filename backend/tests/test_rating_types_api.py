@@ -32,3 +32,25 @@ async def test_rating_types_excludes_non_fountain(client, session):
     finally:
         await session.execute(delete(RatingType).where(RatingType.id == 90))
         await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_fountain_detail_excludes_non_fountain_dimensions(client, session):
+    # A non-fountain dimension must not appear as an (empty) dimension in fountain detail.
+    session.add(
+        RatingType(
+            id=91, name="RestroomOdor", description="x", sort_order=91, place_type="restroom"
+        )
+    )
+    await session.commit()
+    try:
+        fid = (
+            await client.post(
+                "/api/v1/fountains", json={"location": {"latitude": 5.0, "longitude": 6.0}}
+            )
+        ).json()["id"]
+        detail = (await client.get(f"/api/v1/fountains/{fid}")).json()
+        assert 91 not in {d["rating_type_id"] for d in detail["dimensions"]}
+    finally:
+        await session.execute(delete(RatingType).where(RatingType.id == 91))
+        await session.commit()

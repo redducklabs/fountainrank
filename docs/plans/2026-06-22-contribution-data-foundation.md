@@ -255,6 +255,15 @@
 - Deploy via CI (migrations `0005`/`0006` apply in the deploy); probe `GET /api/v1/attribute-types` live; verify a sample attribute upsert + `/me/contributions` against prod (or staging) per the spec.
 - Update `handoffs/` with the slice outcome + next slice (#40 status/verification).
 
+## Amendments (PR #54 Codex review)
+
+These deviations from the tasks above were made during implementation and approved via the PR review loop:
+
+- **First-in-area is a spatial precheck, not a geohash key.** `app/geohash.py` (Task 1) was **removed**. `first_in_area_bonus` is now awarded only when no other non-hidden fountain (including imported ones) exists within `settings.first_in_area_radius_m` (default 600 m) of the new add — so the ~360 imported San Diego fountains correctly occupy an area. dedup_key is `first_in_area:{fountain_id}`; the add advisory lock serializes the precheck. (Resolves the geohash-ignores-imports MAJOR.)
+- **`contribution_events.location` GiST index deferred** to the leaderboard slice that queries it (column kept; no slice-1 reader). Tasks 2/3 lines that add/verify `ix_contribution_events_location` are superseded.
+- **`0006` downgrade is destructive-with-cleanup:** it deletes dependent `fountain_attribute_consensus` / `attribute_observations` rows for the seeded ids before deleting the types (FKs intentionally lack CASCADE to protect prod). Verified by a downgrade-with-observation round-trip.
+- **Fountain detail `dimensions` filtered by `place_type='fountain'`** (not just the list endpoint), so future restroom dimensions don't leak as empty fountain dimensions.
+
 ## Out of scope (later slices, per spec §13)
 
 #40 conditions/verification + `current_status`; #41 notes; #42 access-context attribute seeds + `placement_note`; #43 filters on bbox/nearby; #39 capture UI (web+mobile); gamification surfacing (badges, leaderboards, profile/local progress, confirmation bonuses, moderation reversal endpoints); #44 place generalization migration. The schema hooks for all of these (hidden fields, `target_type`/`target_id`/`parent_event_id`/`status`, `place_type`) exist now so they need no backfill.

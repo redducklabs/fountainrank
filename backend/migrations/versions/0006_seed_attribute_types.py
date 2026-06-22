@@ -84,4 +84,13 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute("DELETE FROM attribute_types WHERE id IN (1, 2, 3, 4, 5, 6, 7)")
+    # DESTRUCTIVE (schema rollback only, not a data-preserving path): the seeded
+    # attribute_types are referenced by attribute_observations / fountain_attribute_consensus
+    # via FKs WITHOUT ON DELETE CASCADE (deliberate — prod is protected from accidental
+    # type deletion). Remove dependents first so the seed-row delete doesn't FK-fail once
+    # any observation exists.
+    op.execute(
+        "DELETE FROM fountain_attribute_consensus WHERE attribute_type_id IN (1,2,3,4,5,6,7)"
+    )
+    op.execute("DELETE FROM attribute_observations WHERE attribute_type_id IN (1,2,3,4,5,6,7)")
+    op.execute("DELETE FROM attribute_types WHERE id IN (1,2,3,4,5,6,7)")

@@ -23,7 +23,6 @@ from app.contributions import (
 )
 from app.db import get_session
 from app.geo import latitude_of, longitude_of, point_geography
-from app.geohash import geohash_encode
 from app.locks import ADD_FOUNTAIN_LOCK_KEY
 from app.models import (
     AttributeObservation,
@@ -253,6 +252,7 @@ async def serialize_fountain_detail(session: AsyncSession, fountain: Fountain) -
                 Rating,
                 (Rating.rating_type_id == RatingType.id) & (Rating.fountain_id == fountain.id),
             )
+            .where(RatingType.place_type == "fountain")  # don't leak future restroom dims
             .group_by(RatingType.id, RatingType.name, RatingType.sort_order)
             .order_by(RatingType.sort_order)
         )
@@ -471,7 +471,7 @@ async def add_fountain(
     session.add(fountain)
     await session.flush()
 
-    # Emit contribution events (idempotent via dedup keys; first-X bonuses self-detect).
+    # Emit contribution events. add_fountain + first_fountain are idempotent via dedup keys.
     specs = [
         ContributionSpec(
             user_id=user.id,
@@ -489,16 +489,31 @@ async def add_fountain(
             fountain_id=fountain.id,
             location=point,
         ),
-        ContributionSpec(
-            user_id=user.id,
-            event_type="first_in_area_bonus",
-            dedup_key=dk_first_in_area(
-                geohash_encode(payload.location.latitude, payload.location.longitude)
-            ),
-            fountain_id=fountain.id,
-            location=point,
-        ),
     ]
+    # "First in area" requires the area to be genuinely unmapped — NO other non-hidden
+    # fountain (including imported ones) within first_in_area_radius_m. The add advisory
+    # lock (held until commit) serializes this precheck against concurrent adds.
+    others_nearby = (
+        await session.execute(
+            select(func.count())
+            .select_from(Fountain)
+            .where(
+                Fountain.id != fountain.id,
+                Fountain.is_hidden.is_(False),
+                func.ST_DWithin(Fountain.location, point, settings.first_in_area_radius_m),
+            )
+        )
+    ).scalar_one()
+    if others_nearby == 0:
+        specs.append(
+            ContributionSpec(
+                user_id=user.id,
+                event_type="first_in_area_bonus",
+                dedup_key=dk_first_in_area(fountain.id),
+                fountain_id=fountain.id,
+                location=point,
+            )
+        )
     if payload.ratings:
         rating_ids = await _upsert_ratings(
             session, fountain_id=fountain.id, user_id=user.id, ratings=payload.ratings
