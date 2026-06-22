@@ -27,6 +27,7 @@ from app.contributions import (
     record_contributions,
 )
 from app.db import get_session
+from app.display import public_display_name
 from app.geo import latitude_of, longitude_of, point_geography
 from app.locks import ADD_FOUNTAIN_LOCK_KEY
 from app.models import (
@@ -787,7 +788,7 @@ async def submit_note(
     return NoteOut(
         id=note.id,
         body=payload.body,
-        author_display_name=user.display_name,
+        author_display_name=public_display_name(user.display_name, user.logto_user_id),
         created_at=note.created_at,
         updated_at=note.updated_at,
     )
@@ -812,6 +813,7 @@ async def list_notes(
                 FountainNote.id,
                 FountainNote.body,
                 User.display_name,
+                User.logto_user_id,
                 FountainNote.created_at,
                 FountainNote.updated_at,
             )
@@ -828,7 +830,7 @@ async def list_notes(
         NoteOut(
             id=r.id,
             body=r.body,
-            author_display_name=r.display_name,
+            author_display_name=public_display_name(r.display_name, r.logto_user_id),
             created_at=r.created_at,
             updated_at=r.updated_at,
         )

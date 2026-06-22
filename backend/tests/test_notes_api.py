@@ -137,6 +137,31 @@ async def test_event_emitted_and_no_double_award(client, test_user, session):
 
 
 @pytest.mark.asyncio
+async def test_public_note_does_not_leak_logto_subject(client, test_user, session):
+    from app.display import ANONYMOUS_DISPLAY_NAME
+
+    fid = await _add_fountain(client)
+    # Simulate provisioning that fell back to the Logto subject (no name/username):
+    # display_name == logto_user_id (the raw subject).
+    sub = "auth0|deadbeefsubject"
+    leaky = User(logto_user_id=sub, email="leak@example.com", display_name=sub)
+    session.add(leaky)
+    await session.commit()
+    app.dependency_overrides[get_current_user] = lambda: leaky
+    try:
+        await client.post(
+            f"/api/v1/fountains/{fid}/notes", json={"body": "hi from a synced-less user"}
+        )
+    finally:
+        app.dependency_overrides[get_current_user] = lambda: test_user
+
+    notes = (await client.get(f"/api/v1/fountains/{fid}/notes")).json()
+    assert len(notes) == 1
+    assert notes[0]["author_display_name"] == ANONYMOUS_DISPLAY_NAME
+    assert sub not in notes[0]["author_display_name"]
+
+
+@pytest.mark.asyncio
 async def test_notes_404_on_missing_fountain(client):
     assert (await client.get(f"/api/v1/fountains/{uuid.uuid4()}/notes")).status_code == 404
 
