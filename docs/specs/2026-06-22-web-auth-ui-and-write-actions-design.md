@@ -118,6 +118,8 @@ verified userinfo per request is too heavy).
 - **`Settings.admin_subjects`** (`backend/app/config.py`): `Annotated[list[str], NoDecode] = []` with
   a `mode="before"` validator accepting a comma-separated **or** JSON list (empty → `[]`), trimmed.
   Sourced from the `ADMIN_SUBJECTS` env (delivery in §14). Subjects are opaque ids, not secrets.
+  Matching is **exact, case-sensitive, and trim-only** — a Logto `sub` is opaque and must **never**
+  be lowercased/normalized (do not copy the email-normalization habit into subject handling).
 - **Reconcile on every authenticated request, in `get_current_user`.** After resolving the user,
   compute `desired = sub in settings.admin_subjects`; if `user.is_admin != desired`, set it and
   **commit (write-if-changed only)**. After the first reconciliation the value matches and **no
@@ -271,7 +273,7 @@ Today `/callback` always redirects to `/account`. Logto's redirect URI must rema
   only a **safe internal path** and is **hostile-input hardened**:
   - must be a string starting with a single `/` (reject `//`, `/\`, and any scheme `://`),
   - reject literal **and percent-encoded** backslashes/forward-slash pairs and control chars
-    (`%5c`, `%2f%2f`, `%00`–`%1f`), Unicode line/paragraph separators (` `/` `) and other
+    (`%5c`, `%2f%2f`, `%00`–`%1f`), Unicode line/paragraph separators (`U+2028`/`U+2029`) and other
     bidi/control code points,
   - reject length > 512,
   - path + query + hash otherwise allowed.
@@ -343,7 +345,9 @@ therefore **requires**:
 - **verify** in the prod-like environment that the web ingress forwards `Host`/`X-Forwarded-Host` as
   the public host for action POSTs (the same trust-proxy concern noted in `claude_help/oauth-sso.md`);
 - a **post-deploy smoke step**: perform one authenticated write end-to-end against the deployed site
-  and confirm it succeeds (catches an ingress/origin misconfig that unit tests cannot).
+  and confirm it succeeds (catches an ingress/origin misconfig that unit tests cannot). The procedure
+  is captured as a **reproducible runbook/script entry delivered with the PR** (it need not run from
+  local deploy tooling) and must not log tokens or contributor note bodies.
 
 ### 9.4 Components
 
@@ -435,11 +439,14 @@ shell. Update the "Detail overlay → Content" table.
   **demoted** to false on the next request; **write-if-changed** (no write when already correct);
   both real-JWT and dev-auth subjects; the admin-transition log line is emitted (no allowlist/email).
 - `GET /me` reflects the reconciled value; non-admin user → false.
+- an authenticated **write** endpoint (e.g. submit a rating) succeeds **immediately after an admin
+  transition**, proving the `get_current_user` write-if-changed commit does not break the endpoint's
+  own later transaction/commit on the shared `AsyncSession`.
 
 **Web (vitest + jsdom):**
 - `lib/return-path.test.ts`: `safeReturnPath` accepts `/fountains/{uuid}`, `/`, `/account?x=1#h`;
   rejects `null`/empty, `//evil.com`, `https://evil`, `/\evil`, **percent-encoded** `/%5c%5cevil`,
-  `/%2f%2fevil`, `%00`/control chars, ` `/` `, malformed `%`, and >512 chars.
+  `/%2f%2fevil`, `%00`/control chars, `U+2028`/`U+2029`, malformed `%`, and >512 chars.
 - `lib/map/format.test.ts` (extend): `conditionStatusLabel` for all seven labels + `working` +
   unknown-status fallback.
 - `lib/server/viewer.test.ts`: anonymous; authed happy path (name/avatar/`is_admin`); `/me` **401** →
