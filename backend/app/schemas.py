@@ -183,6 +183,21 @@ class MeContributionsOut(BaseModel):
     recent: list[ContributionEventOut]
 
 
+class BadgeOut(BaseModel):
+    key: str
+    name: str
+    description: str
+
+
+class ContributorRow(BaseModel):
+    display_name: str
+    points: int
+    # Populated for the global leaderboard; null for the local (in-area) leaderboard,
+    # where these global counters would be misleading.
+    fountains_added: int | None = None
+    ratings_count: int | None = None
+
+
 class AddNoteRequest(BaseModel):
     body: NoteBody
 

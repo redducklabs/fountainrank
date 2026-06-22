@@ -422,9 +422,9 @@ class ContributionEvent(Base):
         Index("ix_contribution_events_user_id", "user_id", "created_at"),
         Index("ix_contribution_events_event_type", "event_type"),
         Index("ix_contribution_events_target", "target_type", "target_id"),
-        # The `location` GiST index is intentionally deferred to the gamification
-        # leaderboard slice that actually queries by area — the column is captured
-        # now (no backfill) but nothing reads it spatially in slice 1.
+        # location GiST index is managed via spatial_index=True on the column below
+        # (geoalchemy2 + alembic_helpers); created as idx_contribution_events_location
+        # in migration 0010 for the local contributor leaderboard.
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -458,7 +458,7 @@ class ContributionEvent(Base):
         nullable=True,
     )
     location: Mapped[WKBElement | None] = mapped_column(
-        Geography(geometry_type="POINT", srid=4326, spatial_index=False), nullable=True
+        Geography(geometry_type="POINT", srid=4326, spatial_index=True), nullable=True
     )
     dedup_key: Mapped[str] = mapped_column(String, nullable=False)
     is_confirmed: Mapped[bool] = mapped_column(nullable=False, server_default=text("false"))
