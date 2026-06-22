@@ -120,6 +120,8 @@ class Fountain(Base):
     last_verified_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Free-text approximate placement (#42), e.g. "near the north restrooms".
+    placement_note: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class Rating(Base):

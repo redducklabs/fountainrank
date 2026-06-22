@@ -3,7 +3,8 @@ from sqlalchemy import select
 
 from app.models import AttributeType
 
-EXPECTED_KEYS = {
+# The original Slice-1 physical/accessibility booleans (Slice 4 added access-category rows).
+SLICE1_KEYS = {
     "bottle_filler",
     "dual_height",
     "lower_spout",
@@ -21,11 +22,12 @@ async def test_seeded_fountain_attribute_types(session):
         .scalars()
         .all()
     )
-    assert {r.key for r in rows} == EXPECTED_KEYS
-    assert len(rows) == 7
-    for r in rows:
-        assert r.value_kind == "boolean"  # slice-1 rows are all boolean
-        assert r.allowed_values is None
+    keys = {r.key for r in rows}
+    assert SLICE1_KEYS <= keys  # the original 7 are still present
+    by_key = {r.key: r for r in rows}
+    for k in SLICE1_KEYS:
+        r = by_key[k]
+        assert r.value_kind == "boolean" and r.allowed_values is None
         assert r.category in ("physical", "accessibility")
         assert r.is_active is True
 
@@ -35,4 +37,4 @@ async def test_attribute_types_endpoint_returns_seeded(client):
     r = await client.get("/api/v1/attribute-types")
     assert r.status_code == 200
     keys = {a["key"] for a in r.json()}
-    assert keys == EXPECTED_KEYS
+    assert SLICE1_KEYS <= keys
