@@ -1,8 +1,12 @@
 "use server";
 
 import { signIn, signOut } from "@logto/next/server-actions";
+import { cookies } from "next/headers";
 
 import { getLogtoConfig } from "../../lib/logto";
+import { safeReturnPath } from "../../lib/return-path";
+
+export const RETURN_COOKIE = "fr_return_to";
 
 export async function signInAction(): Promise<void> {
   const config = getLogtoConfig();
@@ -12,4 +16,20 @@ export async function signInAction(): Promise<void> {
 export async function signOutAction(): Promise<void> {
   const config = getLogtoConfig();
   await signOut(config, config.baseUrl);
+}
+
+export async function signInWithReturn(returnTo: string): Promise<void> {
+  const config = getLogtoConfig();
+  const safe = safeReturnPath(returnTo);
+  if (safe) {
+    const store = await cookies();
+    store.set(RETURN_COOKIE, safe, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: 600,
+    });
+  }
+  await signIn(config, `${config.baseUrl}/callback`);
 }

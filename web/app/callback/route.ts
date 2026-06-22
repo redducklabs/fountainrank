@@ -1,9 +1,12 @@
 import { handleSignIn } from "@logto/next/server-actions";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import type { NextRequest } from "next/server";
 
 import { getLogtoConfig } from "../../lib/logto";
 import { log } from "../../lib/server/log";
+import { safeReturnPath } from "../../lib/return-path";
+import { RETURN_COOKIE } from "../actions/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -27,5 +30,9 @@ export async function GET(request: NextRequest): Promise<void> {
     log("warn", "logto callback failed", { requestId, reason: (error as Error).name });
   }
   // redirect() throws NEXT_REDIRECT, so it must run OUTSIDE the try/catch above.
-  redirect(ok ? "/account" : "/account?error=signin");
+  if (!ok) redirect("/account?error=signin");
+  const store = await cookies();
+  const raw = store.get(RETURN_COOKIE)?.value;
+  store.delete({ name: RETURN_COOKIE, path: "/" });
+  redirect(safeReturnPath(raw) ?? "/account");
 }
