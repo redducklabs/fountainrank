@@ -1,5 +1,11 @@
 // Open-redirect defense for the post-sign-in return path. Accepts ONLY a safe internal
 // path; everything else -> null. Re-validated on read in app/callback/route.ts.
+
+// Name of the httpOnly cookie that carries the post-sign-in return path. Lives here (a plain
+// module) rather than in the "use server" actions module, where only async function exports
+// are legal and a non-function export breaks `next build`.
+export const RETURN_COOKIE = "fr_return_to";
+
 function hasControlOrSeparator(s: string): boolean {
   for (let i = 0; i < s.length; i++) {
     const c = s.charCodeAt(i);

@@ -4,9 +4,7 @@ import { signIn, signOut } from "@logto/next/server-actions";
 import { cookies } from "next/headers";
 
 import { getLogtoConfig } from "../../lib/logto";
-import { safeReturnPath } from "../../lib/return-path";
-
-export const RETURN_COOKIE = "fr_return_to";
+import { RETURN_COOKIE, safeReturnPath } from "../../lib/return-path";
 
 export async function signInAction(): Promise<void> {
   const config = getLogtoConfig();

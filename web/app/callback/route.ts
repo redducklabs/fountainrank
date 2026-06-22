@@ -5,8 +5,7 @@ import type { NextRequest } from "next/server";
 
 import { getLogtoConfig } from "../../lib/logto";
 import { log } from "../../lib/server/log";
-import { safeReturnPath } from "../../lib/return-path";
-import { RETURN_COOKIE } from "../actions/auth";
+import { RETURN_COOKIE, safeReturnPath } from "../../lib/return-path";
 
 export const dynamic = "force-dynamic";
 
