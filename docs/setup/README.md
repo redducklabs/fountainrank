@@ -199,13 +199,16 @@ the pod at deploy time; a redeploy is required if you add it after the fact).
 4. Submit a **rating**: tap/click a star rating (1–5) and confirm. The page should
    reflect the new average without an error banner.
 5. Submit a **condition report**: open the Condition panel, choose a condition
-   ("it's working" or a problem code), and submit. Confirm it appears in the
-   condition history without an error.
+   ("it's working" or a problem code), and submit. Confirm the operational
+   status / "Last verified" trust line updates without an error (this slice
+   surfaces the derived status, not a raw condition-history list).
 6. Save a **note** on the fountain detail page and confirm it persists.
 7. Confirm the **admin menu item** appears in the nav for the admin account, and
    that `/admin` loads (it is a placeholder in this slice — no controls yet).
-8. Sign out and navigate directly to `/admin` — confirm a non-admin (anonymous)
-   visitor receives a 404 (fail-closed).
+8. Verify the `/admin` fail-closed gate: while **signed out**, `/admin` shows a
+   sign-in prompt (not the admin page); while **signed in with a non-admin
+   account**, `/admin` returns a 404. (Both confirm a non-admin never sees admin
+   content.)
 
 **What to check in logs** (do not log token values or note body text):
 
