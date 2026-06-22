@@ -2,16 +2,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 // vi.mock factories are hoisted above top-level consts, so the mock fns must come from
 // vi.hoisted() (also hoisted) — a plain `const x = vi.fn()` would be undefined at mock time.
-const { getAccessTokenRSC, makeClient } = vi.hoisted(() => ({
+const { getAccessTokenRSC, getAccessToken, makeClient } = vi.hoisted(() => ({
   getAccessTokenRSC: vi.fn(),
+  getAccessToken: vi.fn(),
   makeClient: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
-vi.mock("@logto/next/server-actions", () => ({ getAccessTokenRSC }));
+vi.mock("@logto/next/server-actions", () => ({ getAccessTokenRSC, getAccessToken }));
 vi.mock("@fountainrank/api-client", () => ({ makeClient }));
 
-import { authedClientHeaders, getAuthedApiClient } from "./api";
+import { authedClientHeaders, getAuthedApiClient, getAuthedApiClientForAction } from "./api";
 import { API_RESOURCE } from "../logto";
 
 const ENV = {
@@ -52,6 +53,24 @@ describe("getAuthedApiClient", () => {
     );
     expect(makeClient).toHaveBeenCalledWith("https://api.fountainrank.com", {
       headers: { Authorization: "Bearer tok-123", "X-Request-ID": "rid-1" },
+    });
+    expect(client).toBe(sentinel);
+  });
+});
+
+describe("getAuthedApiClientForAction", () => {
+  it("mints a server-action token and attaches it", async () => {
+    for (const [k, v] of Object.entries(ENV)) vi.stubEnv(k, v);
+    getAccessToken.mockResolvedValue("tok-act");
+    const sentinel = { POST: vi.fn() };
+    makeClient.mockReturnValue(sentinel);
+    const client = await getAuthedApiClientForAction("rid-2");
+    expect(getAccessToken).toHaveBeenCalledWith(
+      expect.objectContaining({ resources: [API_RESOURCE] }),
+      API_RESOURCE,
+    );
+    expect(makeClient).toHaveBeenCalledWith("https://api.fountainrank.com", {
+      headers: { Authorization: "Bearer tok-act", "X-Request-ID": "rid-2" },
     });
     expect(client).toBe(sentinel);
   });
