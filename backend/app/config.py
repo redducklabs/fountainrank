@@ -66,6 +66,10 @@ class Settings(BaseSettings):
     # Award the "first in area" contribution bonus only if NO other fountain (including
     # imported ones) already exists within this radius of a new add (gamification §10).
     first_in_area_radius_m: float = 600.0
+    # Operational status (#40): only reports within this many days count toward the
+    # derived current_status; an authoritative status needs >= this many distinct users.
+    condition_freshness_days: int = 90
+    condition_corroboration_min: int = 2
 
     # --- OSM ingestion (see docs/specs/2026-06-21-osm-fountain-ingestion-design.md) ---
     # Auto-update an imported-only, unrated fountain's location only if it moved <= this.

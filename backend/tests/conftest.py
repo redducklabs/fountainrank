@@ -32,7 +32,7 @@ async def clean_db(engine):
                 # Reference tables (rating_types, attribute_types) are migration-seeded
                 # and intentionally NOT truncated.
                 "TRUNCATE contribution_events, user_contribution_stats, "
-                "fountain_attribute_consensus, attribute_observations, "
+                "fountain_attribute_consensus, attribute_observations, condition_reports, "
                 "fountain_import_events, osm_fountain_import_candidates, "
                 "fountain_provenances, osm_fountain_import_runs, ratings, fountains, users "
                 "RESTART IDENTITY CASCADE"

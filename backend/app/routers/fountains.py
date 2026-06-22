@@ -1,5 +1,6 @@
 import logging
 import uuid
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import JSONResponse
@@ -9,6 +10,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
+from app.conditions import recompute_fountain_status
 from app.config import Settings, get_settings
 from app.consensus import recompute_attribute_consensus
 from app.contributions import (
@@ -19,6 +21,8 @@ from app.contributions import (
     dk_first_rating,
     dk_observe_attr,
     dk_rate,
+    dk_report_condition,
+    dk_verify,
     record_contributions,
 )
 from app.db import get_session
@@ -27,6 +31,7 @@ from app.locks import ADD_FOUNTAIN_LOCK_KEY
 from app.models import (
     AttributeObservation,
     AttributeType,
+    ConditionReport,
     Fountain,
     FountainAttributeConsensus,
     Rating,
@@ -37,6 +42,7 @@ from app.ranking import recompute_fountain_ranking
 from app.schemas import (
     AddFountainRequest,
     AttributeConsensusOut,
+    ConditionReportRequest,
     Coordinates,
     DimensionSummary,
     DuplicateFountainConflict,
@@ -316,6 +322,8 @@ async def serialize_fountain_detail(session: AsyncSession, fountain: Fountain) -
         ranking_score=fountain.ranking_score,
         created_at=fountain.created_at,
         last_rated_at=fountain.last_rated_at,
+        current_status=fountain.current_status,
+        last_verified_at=fountain.last_verified_at,
         dimensions=dimensions,
         attributes=attributes,
     )
@@ -342,6 +350,8 @@ async def nearby_fountains(
                 Fountain.average_rating,
                 Fountain.rating_count,
                 Fountain.ranking_score,
+                Fountain.current_status,
+                Fountain.last_verified_at,
                 distance,
             )
             .where(Fountain.is_hidden.is_(False))
@@ -358,9 +368,11 @@ async def nearby_fountains(
             average_rating=avg,
             rating_count=count,
             ranking_score=score,
+            current_status=cur_status,
+            last_verified_at=last_verified,
             distance_m=float(dist),
         )
-        for (rid, rlat, rlng, working, avg, count, score, dist) in rows
+        for (rid, rlat, rlng, working, avg, count, score, cur_status, last_verified, dist) in rows
     ]
 
 
@@ -392,6 +404,8 @@ async def fountains_in_bbox(
                 Fountain.average_rating,
                 Fountain.rating_count,
                 Fountain.ranking_score,
+                Fountain.current_status,
+                Fountain.last_verified_at,
             )
             .where(Fountain.is_hidden.is_(False))
             .where(func.ST_Intersects(Fountain.location, envelope))
@@ -406,9 +420,11 @@ async def fountains_in_bbox(
             average_rating=avg,
             rating_count=count,
             ranking_score=score,
+            current_status=cur_status,
+            last_verified_at=last_verified,
             distance_m=None,
         )
-        for (rid, rlat, rlng, working, avg, count, score) in rows
+        for (rid, rlat, rlng, working, avg, count, score, cur_status, last_verified) in rows
     ]
 
 
@@ -630,4 +646,75 @@ async def submit_attributes(
     await record_contributions(session, specs)
     await session.commit()
     await session.refresh(fountain)
+    return await serialize_fountain_detail(session, fountain)
+
+
+@router.post("/fountains/{fountain_id}/conditions", response_model=FountainDetail)
+async def submit_condition(
+    fountain_id: uuid.UUID,
+    payload: ConditionReportRequest,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> FountainDetail:
+    # One captured timestamp drives the row created_at, the status recompute window, and the
+    # per-day dedup key — so they can never straddle a UTC-midnight boundary.
+    report_time = datetime.now(tz=UTC)
+    fountain = (
+        await session.execute(
+            select(Fountain)
+            .where(Fountain.id == fountain_id, Fountain.is_hidden.is_(False))
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if fountain is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="fountain not found")
+    prev_status = fountain.current_status
+
+    report = ConditionReport(
+        fountain_id=fountain.id,
+        user_id=user.id,
+        status=payload.status,
+        is_proximate=payload.is_proximate,
+        created_at=report_time,
+    )
+    session.add(report)
+    await session.flush()
+    await recompute_fountain_status(session, fountain.id, now=report_time)
+
+    lat, lng = (
+        await session.execute(
+            select(latitude_of(Fountain.location), longitude_of(Fountain.location)).where(
+                Fountain.id == fountain.id
+            )
+        )
+    ).one()
+    day = report_time.strftime("%Y%m%d")
+    is_verify = payload.status == "working"
+    spec = ContributionSpec(
+        user_id=user.id,
+        event_type="verify_working" if is_verify else "report_condition",
+        dedup_key=(
+            dk_verify(user.id, fountain.id, day)
+            if is_verify
+            else dk_report_condition(user.id, fountain.id, day)
+        ),
+        fountain_id=fountain.id,
+        location=point_geography(float(lat), float(lng)),
+        target_type="condition_report",
+        target_id=report.id,
+        event_metadata={"status": payload.status},
+    )
+    inserted = await record_contributions(session, [spec])
+    await session.commit()
+    await session.refresh(fountain)
+    logger.info(
+        "condition reported fountain=%s user=%s report=%s status=%s current_status=%s->%s event=%s",
+        fountain.id,
+        user.id,
+        report.id,
+        payload.status,
+        prev_status,
+        fountain.current_status,
+        "inserted" if inserted else "deduped",
+    )
     return await serialize_fountain_detail(session, fountain)

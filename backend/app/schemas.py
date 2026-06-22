@@ -1,7 +1,19 @@
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+ConditionStatus = Literal[
+    "working",
+    "broken",
+    "low_pressure",
+    "dirty",
+    "bad_taste",
+    "blocked",
+    "seasonal_unavailable",
+    "hours_limited",
+]
 
 
 class Coordinates(BaseModel):
@@ -76,6 +88,8 @@ class FountainPin(BaseModel):
     rating_count: int
     ranking_score: float | None = None
     distance_m: float | None = None
+    current_status: str | None = None
+    last_verified_at: datetime | None = None
 
 
 class FountainDetail(BaseModel):
@@ -88,8 +102,15 @@ class FountainDetail(BaseModel):
     ranking_score: float | None
     created_at: datetime
     last_rated_at: datetime | None
+    current_status: str | None = None
+    last_verified_at: datetime | None = None
     dimensions: list[DimensionSummary]
     attributes: list[AttributeConsensusOut] = []
+
+
+class ConditionReportRequest(BaseModel):
+    status: ConditionStatus
+    is_proximate: bool = False
 
 
 class DuplicateFountainConflict(BaseModel):
