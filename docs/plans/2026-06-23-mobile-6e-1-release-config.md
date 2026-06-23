@@ -154,10 +154,10 @@ module.exports = [
 ];
 ```
 
-- [ ] **Step 5: Install** to materialize `vitest` and refresh the lockfile, from Git Bash:
+- [ ] **Step 5: Install** to materialize `vitest`/`@types/node` and refresh the lockfile, from Git Bash. Use `--no-frozen-lockfile` because adding deps changes the lockfile and `CI=true` otherwise forces `--frozen-lockfile`:
 
 ```bash
-cd /d/repos/fountainrank && CI=true pnpm install
+cd /d/repos/fountainrank && CI=true pnpm install --no-frozen-lockfile
 ```
 
 - [ ] **Step 6: Write the failing test** — `mobile/lib/config.test.ts`:
@@ -216,7 +216,7 @@ describe("parseMobileConfig", () => {
   });
 
   it("requires a non-empty authCallbackScheme", () => {
-    expect(() => parseMobileConfig({ ...VALID, authCallbackScheme: "" })).toThrow(/scheme/);
+    expect(() => parseMobileConfig({ ...VALID, authCallbackScheme: "" })).toThrow(/scheme/i);
   });
 });
 ```
@@ -371,17 +371,13 @@ git -C /d/repos/fountainrank commit -m "feat(mobile): build-info formatter (slic
 **Interfaces:**
 - Produces the resolved `Constants.expoConfig` consumed by `App.tsx` (Task 5): `extra` (validated by `parseMobileConfig`), `version`, `ios.buildNumber`, `android.versionCode`.
 
-- [ ] **Step 1: Add `expo-constants` at the SDK-56-correct version** (Expo resolves the version), from Git Bash:
+- [ ] **Step 1: Add `expo-constants` at the SDK-56-correct version.** Get the version Expo bundles for this SDK from `node_modules/.pnpm/expo@*/node_modules/expo/bundledNativeModules.json` (`expo-constants` → `~56.0.18`), add it to `mobile/package.json` `dependencies`, then install with `--no-frozen-lockfile` (adding a dep changes the lockfile). From Git Bash:
 
 ```bash
-cd /d/repos/fountainrank && CI=true pnpm --filter mobile exec expo install expo-constants
+# add "expo-constants": "~56.0.18" to mobile/package.json dependencies, then:
+cd /d/repos/fountainrank && CI=true pnpm install --no-frozen-lockfile
 ```
-Then refresh the lockfile if `expo install` did not already (it uses the workspace pnpm):
-
-```bash
-cd /d/repos/fountainrank && CI=true pnpm install
-```
-Expected: `expo-constants` added to `mobile/package.json` `dependencies`; `pnpm-lock.yaml` updated.
+(Deterministic alternative to `expo install`, which can hit the frozen-lockfile/no-TTY edges in this workspace.) Expected: `expo-constants` in `mobile/package.json` `dependencies`; `pnpm-lock.yaml` updated; `mobile/node_modules/expo-constants` resolves to `56.0.18`.
 
 - [ ] **Step 2: Create `mobile/app.config.ts`** (replaces `app.json`; non-secret config only; `EXPO_PUBLIC_*` env overrides may point at an alternate **HTTPS** endpoint, e.g. staging — not local cleartext):
 
