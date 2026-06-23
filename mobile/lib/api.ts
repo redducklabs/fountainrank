@@ -32,6 +32,17 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * The numeric HTTP status of an `ApiError`, or `null` for anything else
+ * (network/offline errors have no status; a bare `{ status }` object is NOT an
+ * ApiError). Use for value-specific branching (e.g. 404 -> "not found"). See
+ * `resolveViewState` for the structural offline-vs-error classification this
+ * complements.
+ */
+export function apiErrorStatus(error: unknown): number | null {
+  return error instanceof ApiError ? error.status : null;
+}
+
 type FetchResult<T> = { data?: T; error?: unknown; response: Response };
 
 /**
