@@ -240,10 +240,10 @@ narrow brand bar on every full-page route and an optional one-line tagline on th
 
 **Variants** — controlled by a `variant: "hero" | "bar"` prop:
 
-| Variant | Use | Extra content |
-| ------- | --- | ------------- |
-| `hero`  | Map page (`/`) | One-line tagline "Find a drinking fountain near you." below the bar |
-| `bar`   | All other full-page routes (`/account`, `/admin`, fountain standalone) | Bar only — no tagline |
+| Variant | Use                                                                    | Extra content                                                       |
+| ------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `hero`  | Map page (`/`)                                                         | One-line tagline "Find a drinking fountain near you." below the bar |
+| `bar`   | All other full-page routes (`/account`, `/admin`, fountain standalone) | Bar only — no tagline                                               |
 
 **Structure:**
 
@@ -283,7 +283,10 @@ redirects to Logto, returning the user to the page they signed in from).
 
 ```tsx
 <form action={signInWithReturn.bind(null, returnTo)}>
-  <button type="submit" className="inline-flex shrink-0 items-center justify-center rounded-full bg-[#F2C200] px-5 py-2 text-sm font-semibold text-[#0A357E] transition hover:bg-[#ffce1f]">
+  <button
+    type="submit"
+    className="inline-flex shrink-0 items-center justify-center rounded-full bg-[#F2C200] px-5 py-2 text-sm font-semibold text-[#0A357E] transition hover:bg-[#ffce1f]"
+  >
     Sign in
   </button>
 </form>
@@ -308,9 +311,11 @@ dropdown user menu.
   aria-label="Open account menu"
   className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-white/20 text-sm font-semibold text-white"
 >
-  {avatarUrl
-    ? <img src={avatarUrl} alt="" width={36} height={36} className="h-9 w-9 object-cover" />
-    : <span aria-hidden="true">{initial}</span>}
+  {avatarUrl ? (
+    <img src={avatarUrl} alt="" width={36} height={36} className="h-9 w-9 object-cover" />
+  ) : (
+    <span aria-hidden="true">{initial}</span>
+  )}
 </button>
 ```
 
@@ -342,14 +347,14 @@ dropdown user menu.
 
 **Menu items:**
 
-| Item | Condition | Target |
-| ---- | --------- | ------ |
-| Display name (non-interactive header) | Always (authed) | — |
-| "Couldn't load your account." | `viewer.state === "error"` only | — |
-| **Your account** (`role="menuitem"`) | Always | `/account` |
-| **Admin** (`role="menuitem"`) | `viewer.isAdmin === true` only | `/admin` |
-| Divider (`border-t border-slate-100`) | Always | — |
-| **Sign out** (`role="menuitem"`, form submit) | Always | `signOutAction` |
+| Item                                          | Condition                       | Target          |
+| --------------------------------------------- | ------------------------------- | --------------- |
+| Display name (non-interactive header)         | Always (authed)                 | —               |
+| "Couldn't load your account."                 | `viewer.state === "error"` only | —               |
+| **Your account** (`role="menuitem"`)          | Always                          | `/account`      |
+| **Admin** (`role="menuitem"`)                 | `viewer.isAdmin === true` only  | `/admin`        |
+| Divider (`border-t border-slate-100`)         | Always                          | —               |
+| **Sign out** (`role="menuitem"`, form submit) | Always                          | `signOutAction` |
 
 **Behavior:**
 
@@ -392,12 +397,12 @@ A server-gated page that **fails closed**: any non-admin visitor never sees admi
 
 **Gate logic:**
 
-| `getViewer()` result | Outcome |
-| -------------------- | ------- |
-| `anonymous` | Renders a "Sign in to access the admin tools." prompt + Sign-in button (form submitting `signInWithReturn("/admin")`). Does NOT redirect or mutate cookies during render. |
-| `authed` + `isAdmin: false` | `notFound()` — 404, does not reveal the route exists. |
-| `error` | Renders "Couldn't verify admin access — please try again." No admin content, no 404. |
-| `authed` + `isAdmin: true` | Renders the stub page (see below). |
+| `getViewer()` result        | Outcome                                                                                                                                                                   |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `anonymous`                 | Renders a "Sign in to access the admin tools." prompt + Sign-in button (form submitting `signInWithReturn("/admin")`). Does NOT redirect or mutate cookies during render. |
+| `authed` + `isAdmin: false` | `notFound()` — 404, does not reveal the route exists.                                                                                                                     |
+| `error`                     | Renders "Couldn't verify admin access — please try again." No admin content, no 404.                                                                                      |
+| `authed` + `isAdmin: true`  | Renders the stub page (see below).                                                                                                                                        |
 
 **Admin stub page** (shown to confirmed admins):
 
@@ -439,17 +444,17 @@ when `placement_note` is present); the **attribute consensus** group; a "from wh
 caption under the creator comment; the **community notes** section; and the **Contribute section**
 at the bottom (auth-gated write controls).
 
-| Element              | Styling                                                                                                                                                                                |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Heading              | `text-lg font-bold text-[#0A357E]`                                                                                                                                                     |
-| Status chip          | Pill badge: working → `bg-emerald-100 text-emerald-800`; out of order → `bg-red-100 text-red-800`. `rounded-full px-2.5 py-0.5 text-xs font-bold`.                                     |
-| Overall rating       | `text-2xl font-extrabold text-[#0A357E]` (formatted by `formatAverage()`); vote count in `text-sm text-slate-500`.                                                                     |
-| Per-dimension list   | `<dl>` with `divide-y divide-slate-100 border-t border-slate-100`; dimension name `text-sm font-medium`, value `text-sm text-slate-600`.                                               |
-| Notes / comments     | `rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700`.                                                                                                           |
-| Meta line            | Added / last-rated dates, `text-xs text-slate-400`.                                                                                                                                    |
-| Directions button    | Gold pill: `rounded-full bg-[#F2C200] px-4 py-2 text-sm font-bold text-[#0A357E]`. Links to Google Maps directions.                                                                    |
-| Share button         | Outlined pill: `rounded-full border border-[#cdd6e6] bg-white px-4 py-2 text-sm font-bold text-[#0A357E]`. Uses `navigator.share` when available; falls back to `navigator.clipboard`. |
-| **Contribute section** | Bottom of panel; heading `text-base font-semibold text-[#0A357E]`; signed-out prompt or three grouped forms (see below). |
+| Element                | Styling                                                                                                                                                                                |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Heading                | `text-lg font-bold text-[#0A357E]`                                                                                                                                                     |
+| Status chip            | Pill badge: working → `bg-emerald-100 text-emerald-800`; out of order → `bg-red-100 text-red-800`. `rounded-full px-2.5 py-0.5 text-xs font-bold`.                                     |
+| Overall rating         | `text-2xl font-extrabold text-[#0A357E]` (formatted by `formatAverage()`); vote count in `text-sm text-slate-500`.                                                                     |
+| Per-dimension list     | `<dl>` with `divide-y divide-slate-100 border-t border-slate-100`; dimension name `text-sm font-medium`, value `text-sm text-slate-600`.                                               |
+| Notes / comments       | `rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700`.                                                                                                           |
+| Meta line              | Added / last-rated dates, `text-xs text-slate-400`.                                                                                                                                    |
+| Directions button      | Gold pill: `rounded-full bg-[#F2C200] px-4 py-2 text-sm font-bold text-[#0A357E]`. Links to Google Maps directions.                                                                    |
+| Share button           | Outlined pill: `rounded-full border border-[#cdd6e6] bg-white px-4 py-2 text-sm font-bold text-[#0A357E]`. Uses `navigator.share` when available; falls back to `navigator.clipboard`. |
+| **Contribute section** | Bottom of panel; heading `text-base font-semibold text-[#0A357E]`; signed-out prompt or three grouped forms (see below).                                                               |
 
 #### Status block (`StatusBlock.tsx`)
 
@@ -504,7 +509,10 @@ states depending on whether the viewer is authenticated.
   <h2 className="text-base font-semibold text-[#0A357E]">Contribute</h2>
   <p className="mt-1 text-sm text-slate-600">Sign in to rate, verify, or leave a note.</p>
   <form action={signInWithReturn.bind(null, `/fountains/${fountainId}`)}>
-    <button type="submit" className="mt-3 rounded-full bg-[#F2C200] px-4 py-2 text-sm font-bold text-[#0A357E]">
+    <button
+      type="submit"
+      className="mt-3 rounded-full bg-[#F2C200] px-4 py-2 text-sm font-bold text-[#0A357E]"
+    >
       Sign in to contribute
     </button>
   </form>
@@ -536,7 +544,9 @@ One row per rating dimension from `FountainDetail.dimensions`. Each row: the dim
     <label key={n}>
       <input type="radio" name={`dim-${id}`} value={n} className="sr-only" />
       <span aria-hidden="true">{selected >= n ? "★" : "☆"}</span>
-      <span className="sr-only">{dimension.name}: {n} star{n > 1 ? "s" : ""}</span>
+      <span className="sr-only">
+        {dimension.name}: {n} star{n > 1 ? "s" : ""}
+      </span>
     </label>
   ))}
 </fieldset>
@@ -563,7 +573,10 @@ A two-affordance row for submitting condition reports.
 **Primary action:**
 
 ```tsx
-<button type="button" className="rounded-full bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50">
+<button
+  type="button"
+  className="rounded-full bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50"
+>
   I checked — it's working
 </button>
 ```
@@ -573,7 +586,11 @@ Submits `{ status: "working", is_proximate: false }` immediately on click (no di
 **Secondary action — "Report a problem" disclosure:**
 
 ```tsx
-<button type="button" aria-expanded={open} className="text-sm text-slate-500 underline underline-offset-4 hover:text-slate-700">
+<button
+  type="button"
+  aria-expanded={open}
+  className="text-sm text-slate-500 underline underline-offset-4 hover:text-slate-700"
+>
   Report a problem
 </button>
 ```
@@ -582,15 +599,15 @@ Submits `{ status: "working", is_proximate: false }` immediately on click (no di
 - When expanded, reveals a `<select>` with the seven problem statuses (friendly labels from
   `conditionStatusLabel`):
 
-| `ConditionStatus` | Label |
-| --- | --- |
-| `broken` | "Broken / not working" |
-| `low_pressure` | "Low water pressure" |
-| `dirty` | "Dirty" |
-| `bad_taste` | "Bad taste" |
-| `blocked` | "Blocked / clogged" |
-| `seasonal_unavailable` | "Shut off for the season" |
-| `hours_limited` | "Only available certain hours" |
+| `ConditionStatus`      | Label                          |
+| ---------------------- | ------------------------------ |
+| `broken`               | "Broken / not working"         |
+| `low_pressure`         | "Low water pressure"           |
+| `dirty`                | "Dirty"                        |
+| `bad_taste`            | "Bad taste"                    |
+| `blocked`              | "Blocked / clogged"            |
+| `seasonal_unavailable` | "Shut off for the season"      |
+| `hours_limited`        | "Only available certain hours" |
 
 - Select: `rounded border border-slate-300 px-3 py-2 text-sm text-slate-700 w-full`.
 - A "Submit report" button (`rounded-full bg-[#0C44A0] px-4 py-2 text-sm font-bold text-white hover:bg-[#0A357E]`) confirms the selected status.
@@ -617,7 +634,10 @@ A textarea + live character counter + save button for adding or replacing a comm
   <p className="mt-1 text-xs text-slate-500">
     Submitting replaces any note you have previously added.
   </p>
-  <button type="submit" className="mt-2 rounded-full bg-[#0C44A0] px-4 py-2 text-sm font-bold text-white hover:bg-[#0A357E] disabled:opacity-50">
+  <button
+    type="submit"
+    className="mt-2 rounded-full bg-[#0C44A0] px-4 py-2 text-sm font-bold text-white hover:bg-[#0A357E] disabled:opacity-50"
+  >
     Save note
   </button>
 </div>
@@ -638,21 +658,21 @@ A textarea + live character counter + save button for adding or replacing a comm
 All three Contribute forms (`RatingForm`, `ConditionForm`, `NoteForm`) follow the same state
 pattern:
 
-| State | UI |
-| ----- | -- |
-| **Idle** | Controls enabled; no status message. |
-| **Pending** | All controls disabled; submit button text changes (e.g. "Submitting…"). `useTransition` in-flight indicator. |
+| State       | UI                                                                                                                 |
+| ----------- | ------------------------------------------------------------------------------------------------------------------ |
+| **Idle**    | Controls enabled; no status message.                                                                               |
+| **Pending** | All controls disabled; submit button text changes (e.g. "Submitting…"). `useTransition` in-flight indicator.       |
 | **Success** | Controls re-enabled (or form resets); an inline `<p role="status">` confirmation message appears below the button. |
-| **Error** | Controls re-enabled; an inline `<p role="status" aria-live="polite">` error message appears below the button. |
+| **Error**   | Controls re-enabled; an inline `<p role="status" aria-live="polite">` error message appears below the button.      |
 
 **Error message copy by `ContributeError`:**
 
-| Error | Message |
-| ----- | ------- |
-| `unauthenticated` | "Your session expired — sign in again." |
-| `not_found` | "This fountain is no longer available." |
-| `validation` | "Invalid input — please check your entry." |
-| `server` | "Couldn't save — please try again." |
+| Error             | Message                                    |
+| ----------------- | ------------------------------------------ |
+| `unauthenticated` | "Your session expired — sign in again."    |
+| `not_found`       | "This fountain is no longer available."    |
+| `validation`      | "Invalid input — please check your entry." |
+| `server`          | "Couldn't save — please try again."        |
 
 - Error and success messages use `role="status"` + `aria-live="polite"` so screen readers
   announce them without interrupting the user.
@@ -712,16 +732,17 @@ the site header.
 
 **Variants:**
 
-| State | Rendering |
-| ----- | --------- |
-| `!webglOk` | Returns `null` — not rendered at all. |
+| State                           | Rendering                                                                                                                          |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `!webglOk`                      | Returns `null` — not rendered at all.                                                                                              |
 | Signed out (`!isAuthenticated`) | Wrapped in a `<form action={signInWithReturn.bind(null, "/?add=1")}>` so clicking submits the server action (no client JS needed). |
-| Signed in (`isAuthenticated`) | Plain `<button type="button" onClick={onEnter}>`. |
+| Signed in (`isAuthenticated`)   | Plain `<button type="button" onClick={onEnter}>`.                                                                                  |
 
 **Styles:**
 
 ```tsx
-className="absolute bottom-24 right-4 z-40 inline-flex items-center gap-2 rounded-full bg-[#F2C200] px-4 py-3 text-sm font-bold text-[#0A357E] shadow-lg transition hover:bg-[#ffce1f]"
+className =
+  "absolute bottom-24 right-4 z-40 inline-flex items-center gap-2 rounded-full bg-[#F2C200] px-4 py-3 text-sm font-bold text-[#0A357E] shadow-lg transition hover:bg-[#ffce1f]";
 ```
 
 - Crown-gold fill (`bg-[#F2C200]`), navy text (`text-[#0A357E]`) — same as the primary
@@ -760,14 +781,14 @@ not hidden, but the panel draws on top via `z-40`).
 
 **Steps (controlled by `phase`):**
 
-| Phase | Panel content | Primary action |
-| ----- | ------------- | -------------- |
-| `placing` | Instruction text + optional GPS fallback note + coordinate readout + keyboard controls | "Next: details" (disabled until `pin && placeable`) |
-| `details` | Coordinate readout + working-status toggle | "Add fountain" (`onSubmit`) |
-| `submitting` | `role="status"` "Adding…" | — |
-| `done` | `role="status"` "Fountain added." | — |
-| `duplicate` | `role="status"` "A fountain already exists here." + "View it" link | — |
-| `error` | `role="status"` error copy + retry or sign-in affordance | "Try again" / "Sign in" |
+| Phase        | Panel content                                                                          | Primary action                                      |
+| ------------ | -------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| `placing`    | Instruction text + optional GPS fallback note + coordinate readout + keyboard controls | "Next: details" (disabled until `pin && placeable`) |
+| `details`    | Coordinate readout + working-status toggle                                             | "Add fountain" (`onSubmit`)                         |
+| `submitting` | `role="status"` "Adding…"                                                              | —                                                   |
+| `done`       | `role="status"` "Fountain added."                                                      | —                                                   |
+| `duplicate`  | `role="status"` "A fountain already exists here." + "View it" link                     | —                                                   |
+| `error`      | `role="status"` error copy + retry or sign-in affordance                               | "Try again" / "Sign in"                             |
 
 **Cancel button:** `aria-label="Cancel"`, top-right of the panel header, always visible
 while the panel is open.
@@ -810,14 +831,14 @@ interaction — required for keyboard-only and assistive-technology users.
 
 **Controls:**
 
-| Control | Button label | `aria-label` | Action |
-| ------- | ------------ | ------------ | ------ |
-| Place at center | "Place at map center" | same | Calls `onPlaceAtCenter`; drops/moves pin to the map's current center |
-| Nudge N | ↑ | "Nudge north" | Calls `onNudge("n")` |
-| Nudge S | ↓ | "Nudge south" | Calls `onNudge("s")` |
-| Nudge E | → | "Nudge east" | Calls `onNudge("e")` |
-| Nudge W | ← | "Nudge west" | Calls `onNudge("w")` |
-| Next | "Next: details" | same | Calls `onNext` |
+| Control         | Button label          | `aria-label`  | Action                                                               |
+| --------------- | --------------------- | ------------- | -------------------------------------------------------------------- |
+| Place at center | "Place at map center" | same          | Calls `onPlaceAtCenter`; drops/moves pin to the map's current center |
+| Nudge N         | ↑                     | "Nudge north" | Calls `onNudge("n")`                                                 |
+| Nudge S         | ↓                     | "Nudge south" | Calls `onNudge("s")`                                                 |
+| Nudge E         | →                     | "Nudge east"  | Calls `onNudge("e")`                                                 |
+| Nudge W         | ←                     | "Nudge west"  | Calls `onNudge("w")`                                                 |
+| Next            | "Next: details"       | same          | Calls `onNext`                                                       |
 
 **Disabled state:** All keyboard controls (`Place at map center`, nudge buttons, Next)
 are `disabled` when `!placeable` (zoom < `PLACE_MIN_ZOOM` or viewport span >
@@ -881,8 +902,13 @@ location).
 
 ```tsx
 <div className="mt-3 space-y-2">
-  <p role="status" className="text-sm text-slate-700">A fountain already exists here.</p>
-  <Link href={`/fountains/${duplicateId}`} className="inline-block rounded-full bg-[#F2C200] px-4 py-2 text-sm font-bold text-[#0A357E]">
+  <p role="status" className="text-sm text-slate-700">
+    A fountain already exists here.
+  </p>
+  <Link
+    href={`/fountains/${duplicateId}`}
+    className="inline-block rounded-full bg-[#F2C200] px-4 py-2 text-sm font-bold text-[#0A357E]"
+  >
     View it
   </Link>
 </div>
@@ -983,7 +1009,9 @@ small-caps `<legend>`.
   className="rounded border border-slate-300 px-2 py-1 text-sm"
 >
   {c.options.map((opt) => (
-    <option key={opt} value={opt}>{opt}</option>
+    <option key={opt} value={opt}>
+      {opt}
+    </option>
   ))}
 </select>
 ```
@@ -1049,7 +1077,13 @@ Renders one `StarGroup` per `RatingTypeOut` in the add-fountain details step.
 <div className="mt-3 space-y-1">
   <p className="text-sm font-semibold text-slate-700">Rate it (optional)</p>
   {types.map((t) => (
-    <StarGroup key={t.id} id={t.id} name={t.name} value={value[t.id] ?? 0} onChange={(s) => onChange(t.id, s)} />
+    <StarGroup
+      key={t.id}
+      id={t.id}
+      name={t.name}
+      value={value[t.id] ?? 0}
+      onChange={(s) => onChange(t.id, s)}
+    />
   ))}
 </div>
 ```
@@ -1057,3 +1091,19 @@ Renders one `StarGroup` per `RatingTypeOut` in the add-fountain details step.
 - Section heading: `"Rate it (optional)"`, `text-sm font-semibold text-slate-700`.
 - Graceful-skip: if the API returns no rating types the section is hidden (`return null`).
 - Unrated dimensions (`value === 0`) are excluded from the submitted payload.
+
+---
+
+## Mobile (React Native)
+
+The mobile app (Expo / React Native) has its own component system, established in
+slice 6e-2 (app shell). It does **not** use the web Tailwind classes above.
+
+### Diagnostics surface (slice 6e-1, temporary)
+
+A minimal startup screen used to verify release configuration before the real
+app shell lands. Shows: the app name, backend reachability (`loading` -> `ok` /
+`error` from `GET /healthz`), the version/build label (`vX.Y.Z (build N)`), and
+the resolved (public) API base URL. If the runtime config fails validation it
+renders an "invalid configuration" state naming the bad field (no secret values).
+No tokens or PII. Superseded by the 6e-2 app shell.

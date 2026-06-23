@@ -115,8 +115,8 @@ function Invoke-WebCheck {
 }
 
 function Invoke-MobileCheck {
-    Write-Section 'check: mobile (eslint + typecheck + expo-doctor)'
-    Invoke-Native -Exe 'pnpm' -Arguments @('exec', 'turbo', 'run', 'lint', 'typecheck', '--filter=mobile') -WorkingDir $RepoRoot
+    Write-Section 'check: mobile (eslint + typecheck + vitest + expo-doctor)'
+    Invoke-Native -Exe 'pnpm' -Arguments @('exec', 'turbo', 'run', 'lint', 'typecheck', 'test', '--filter=mobile') -WorkingDir $RepoRoot
     if (-not $Fast) {
         Invoke-Native -Exe 'pnpm' -Arguments @('dlx', 'expo-doctor') -WorkingDir (Join-Path $RepoRoot 'mobile')
     }
