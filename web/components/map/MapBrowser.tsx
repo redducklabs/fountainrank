@@ -6,6 +6,8 @@ import maplibregl, {
   type MapLayerMouseEvent,
   type GeoJSONSource,
 } from "maplibre-gl";
+import { createPlacementMap, type PlacementMap } from "./placement-map";
+import { useAddFountainMode } from "./useAddFountainMode";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { BASEMAP, PIN_ASSETS, PILL_BG_ASSET } from "../../lib/map/style";
 import { fetchBbox, type FountainPin } from "../../lib/fountains";
@@ -74,16 +76,34 @@ function webglInfo(): string {
   }
 }
 
-export default function MapBrowser() {
+export default function MapBrowser({
+  isAuthenticated = false,
+  autoEnterAdd = false,
+  hadAddParam = false,
+}: {
+  isAuthenticated?: boolean;
+  autoEnterAdd?: boolean;
+  hadAddParam?: boolean;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const loadSeqRef = useRef(0);
+  const [placementMap, setPlacementMap] = useState<PlacementMap | null>(null);
   const router = useRouter();
   const pathname = usePathname();
   const [pins, setPins] = useState<FountainPin[]>([]);
   const [status, setStatus] = useState<Status>("idle");
   const [webglOk] = useState(isWebglSupported);
   const activeId = activeIdFromPath(pathname);
+  const add = useAddFountainMode(placementMap, {
+    isAuthenticated,
+    webglOk,
+    autoEnter: autoEnterAdd,
+    hadAddParam,
+  });
+  // Suppress browse nav while add-mode is active (ref avoids stale closure).
+  const addActiveRef = useRef(false);
+  addActiveRef.current = add.active;
   // Opt-in on-screen diagnostics: visit `?debug` to surface GPU info, tile/source load
   // progress, and MapLibre's own error events (otherwise invisible). No effect for normal users.
   const debug =
@@ -199,8 +219,10 @@ export default function MapBrowser() {
         selectedHaloLayer(""),
         selectedPinLayer(""),
       ].forEach((l) => map.addLayer(l));
+      setPlacementMap(createPlacementMap(map));
       // cluster click -> expand
       map.on("click", "clusters", (e) => {
+        if (addActiveRef.current) return;
         const f = map.queryRenderedFeatures(e.point, { layers: ["clusters"] })[0];
         const cid = f?.properties?.cluster_id as number | undefined;
         const src = map.getSource("fountains") as GeoJSONSource;
@@ -215,6 +237,7 @@ export default function MapBrowser() {
       });
       // pin click -> open detail route (soft nav; map stays mounted)
       const openPin = (e: MapLayerMouseEvent) => {
+        if (addActiveRef.current) return;
         const id = e.features?.[0]?.properties?.id as string | undefined;
         if (id) router.push(`/fountains/${id}`);
       };
@@ -289,6 +312,7 @@ export default function MapBrowser() {
       clearTimeout(timer);
       map.remove();
       mapRef.current = null;
+      setPlacementMap(null);
     };
   }, [router, webglOk, debug]);
 
@@ -316,6 +340,8 @@ export default function MapBrowser() {
       {status === "capped" && <CapHint />}
       {status === "error" && <ErrorToast onRetry={retry} />}
       {!webglOk && <UnsupportedHint />}
+      {webglOk && add.fab}
+      {add.panel}
       {debug && (
         <div className="absolute left-2 top-2 z-[60] max-h-[45%] w-[92%] overflow-auto rounded bg-black/85 p-2 font-mono text-[10px] leading-tight text-emerald-300">
           <div>
@@ -335,11 +361,13 @@ export default function MapBrowser() {
           )}
         </div>
       )}
-      <FountainsInViewList
-        pins={pins}
-        activeId={activeId}
-        onOpen={(id) => router.push(`/fountains/${id}`)}
-      />
+      {!add.active && (
+        <FountainsInViewList
+          pins={pins}
+          activeId={activeId}
+          onOpen={(id) => router.push(`/fountains/${id}`)}
+        />
+      )}
     </div>
   );
 }
