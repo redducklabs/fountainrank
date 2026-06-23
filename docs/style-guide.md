@@ -1133,3 +1133,39 @@ Expo Router: a bottom-tab group (`(tabs)`: Map · Add · Account) with
 stack-pushed detail (`fountains/[id]`) and `diagnostics`. Sign-in affordances
 stay hidden/disabled until `isAuthConfigured` is true (auth-unavailable mode,
 spec §21).
+
+### Map (slice 6e-3)
+
+The Map tab (`mobile/app/(tabs)/index.tsx`) is a **full-bleed** MapLibre map (no
+`ScreenContainer` padding) with floating overlays. When `isMapConfigured` is
+false it falls back to a centered "map unavailable" `ScreenContainer` state. Pin
+mapping, icon/pill selection, bounds, and filter→query logic are pure helpers in
+`lib/map/` (unit-tested); the components below are the untested shell.
+
+- **`FountainMap`** (`mobile/components/map/FountainMap.tsx`) — the MapLibre
+  (`@maplibre/maplibre-react-native`) map: Protomaps basemap, a clustered
+  `GeoJSONSource`, and four `Layer`s (cluster circle, cluster count, pins,
+  rating pill). MapLibre logo hidden; attribution kept. Tapping a cluster
+  expands it (`flyTo` the cluster-expansion zoom); tapping a pin navigates to the
+  detail route.
+- **Fountain pins** — icon by state (mirrors web): `pin-broken` when not working
+  (or `current_status === "not_working"`), `pin-gold` when working and
+  `ranking_score` strictly exceeds 4, else `pin-standard`. Bottom-anchored,
+  `icon-size` 0.5. Assets in `mobile/assets/pins/`.
+- **Rating pill** — a brand-blue text label (`★ 4.2`) with a white text-halo,
+  shown only at zoom ≥ 13 and only for rated fountains (the layer filters out
+  null pills). No 9-patch background (deferred from the web pill for simplicity).
+- **`MapFilters`** (`mobile/components/map/MapFilters.tsx`) — a horizontal
+  scrollable row of pill **chips**: "Working now", "Bottle filler", "Wheelchair"
+  (toggles), and a minimum-rating chip cycling "Any rating" → "3★+" → "4★+".
+  Active chip = brand-blue fill with `onBrand` text; inactive = `surface` fill
+  with a `border` outline. `accessibilityRole="button"` + `selected` state.
+- **Locate button** — a 44×44 circular `surface` `Pressable` (◎ glyph,
+  brand-blue) at the bottom-right, shown only once foreground location is
+  granted; recenters the camera on the user. Denial hides it (non-blocking).
+- **Map overlay banner** — a centered pill at the bottom showing a single status
+  derived from `resolveViewState` plus map-specific notes: a spinner on first
+  load; "Zoom in to see fountains" below the fetch zoom; "You appear to be
+  offline" / "Couldn't load fountains" (both tap-to-retry); "No fountains in this
+  area"; or "Showing the first 500 — zoom in for more" when capped. Hidden when
+  idle/ready.

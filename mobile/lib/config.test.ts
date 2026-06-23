@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isAuthConfigured, parseMobileConfig } from "./config";
+import { isAuthConfigured, isMapConfigured, parseMobileConfig } from "./config";
 
 const VALID = {
   apiBaseUrl: "https://api.fountainrank.com",
@@ -85,5 +85,49 @@ describe("isAuthConfigured", () => {
 
   it("is true when a logtoAppId is present", () => {
     expect(isAuthConfigured(parseMobileConfig({ ...VALID, logtoAppId: "abc123" }))).toBe(true);
+  });
+});
+
+describe("basemapStyleUrl", () => {
+  it("omits basemapStyleUrl when absent (map-unavailable mode)", () => {
+    expect("basemapStyleUrl" in parseMobileConfig(VALID)).toBe(false);
+  });
+
+  it("parses a present https basemapStyleUrl", () => {
+    const withMap = { ...VALID, basemapStyleUrl: "https://cdn.example.com/style.light.json" };
+    expect(parseMobileConfig(withMap).basemapStyleUrl).toBe(
+      "https://cdn.example.com/style.light.json",
+    );
+  });
+
+  it("accepts a basemapStyleUrl with a cache-busting query string", () => {
+    const withMap = { ...VALID, basemapStyleUrl: "https://cdn.example.com/style.light.json?v=3" };
+    expect(parseMobileConfig(withMap).basemapStyleUrl).toBe(
+      "https://cdn.example.com/style.light.json?v=3",
+    );
+  });
+
+  it("rejects a non-https basemapStyleUrl", () => {
+    expect(() =>
+      parseMobileConfig({ ...VALID, basemapStyleUrl: "http://cdn.example.com/style.json" }),
+    ).toThrow(/https/);
+  });
+
+  it("rejects a present-but-empty basemapStyleUrl", () => {
+    // Empty hits the requireNonEmpty branch ("is required"), mirroring the
+    // present-but-empty logtoAppId case; assert on the field name to cover both
+    // the "required" and "https" rejection paths.
+    expect(() => parseMobileConfig({ ...VALID, basemapStyleUrl: "" })).toThrow(/basemapStyleUrl/);
+  });
+});
+
+describe("isMapConfigured", () => {
+  it("is false when basemapStyleUrl is absent", () => {
+    expect(isMapConfigured(parseMobileConfig(VALID))).toBe(false);
+  });
+
+  it("is true when a basemapStyleUrl is present", () => {
+    const withMap = { ...VALID, basemapStyleUrl: "https://cdn.example.com/style.light.json" };
+    expect(isMapConfigured(parseMobileConfig(withMap))).toBe(true);
   });
 });
