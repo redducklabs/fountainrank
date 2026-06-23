@@ -22,6 +22,7 @@ export function useAddFountainMode(
   const placeable = state.bound ? canPlace(zoom, state.bound) : false;
   // Refs so the imperative map handlers always read the latest values (no stale closure).
   const placeableRef = useRef(placeable);
+  // eslint-disable-next-line react-hooks/refs
   placeableRef.current = placeable;
 
   const recomputeBound = useCallback(() => {
@@ -88,6 +89,7 @@ export function useAddFountainMode(
 
   // Recompute the bound when the fix changes (after geolocation resolves).
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (active) recomputeBound();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fix]);

@@ -103,6 +103,7 @@ export default function MapBrowser({
   });
   // Suppress browse nav while add-mode is active (ref avoids stale closure).
   const addActiveRef = useRef(false);
+  // eslint-disable-next-line react-hooks/refs
   addActiveRef.current = add.active;
   // Opt-in on-screen diagnostics: visit `?debug` to surface GPU info, tile/source load
   // progress, and MapLibre's own error events (otherwise invisible). No effect for normal users.
