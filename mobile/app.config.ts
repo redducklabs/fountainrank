@@ -7,7 +7,7 @@ const config: ExpoConfig = {
   version: "0.1.0",
   scheme: "com.redducklabs.fountainrank",
   platforms: ["ios", "android"],
-  plugins: ["expo-router"],
+  plugins: ["expo-router", "@maplibre/maplibre-react-native"],
   runtimeVersion: { policy: "appVersion" },
   ios: {
     bundleIdentifier: "com.redducklabs.fountainrank",
