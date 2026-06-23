@@ -4,23 +4,24 @@
 
 **Goal:** Ship an authenticated add-a-fountain flow on the web — an overlay on the home map with tap-to-drop + draggable + keyboard pin placement, a client-side GPS bound (proximity when a fix exists; precision-gated fallback otherwise), working-status capture, 409-duplicate handling, and (PR 2) optional rating / attribute / comment / placement-note capture built dynamically from the live API.
 
-**Architecture:** All logic lives in **pure, unit-tested modules** — geo helpers (`web/lib/map/placement.ts`) and a pure state-machine reducer (`web/lib/add-fountain-machine.ts`) — so the imperative MapLibre glue (which cannot run under jsdom: no WebGL) stays a thin seam, exactly as `MapBrowser` is already handled in this repo. Writes go through a Next.js Server Action (`web/app/actions/add-fountain.ts`) that fetches the Logto token server-side and POSTs the typed client; the token never reaches the browser. The GPS bound is a **client-side UX guard, not a security control** (the public create endpoint receives only the pin location).
+**Architecture:** All logic lives in **pure, unit-tested modules** — geo helpers (`web/lib/map/placement.ts`) and a pure state-machine reducer (`web/lib/add-fountain-machine.ts`). The imperative MapLibre work is hidden behind a narrow **`PlacementMap` adapter** (`web/components/map/placement-map.ts`) so the orchestration hook (`useAddFountainMode`) can be unit-tested against a fake map (jsdom has no WebGL); only the thin adapter itself relies on build + manual verification. Writes go through a Next.js Server Action (`web/app/actions/add-fountain.ts`) that fetches the Logto token server-side and POSTs the typed client; the token never reaches the browser. The GPS bound is a **client-side UX guard, not a security control** (the public create endpoint receives only the pin location).
 
-**Tech Stack:** Next.js 16 (App Router, RSC + Server Actions), React 19, TypeScript, Tailwind, MapLibre GL JS v5, `@logto/next` 4.2.10, `@fountainrank/api-client` (openapi-typescript + openapi-fetch), Vitest + jsdom.
+**Tech Stack:** Next.js 16 (App Router, RSC + Server Actions), React 19, TypeScript, Tailwind, MapLibre GL JS v5, `@logto/next` 4.2.10, `@fountainrank/api-client` (openapi-typescript + openapi-fetch), Vitest + jsdom + `@testing-library/react`.
 
 **Spec:** `docs/specs/2026-06-22-web-add-fountain-design.md` (Codex-approved). Read it before starting; section refs below point into it.
 
 ## Global Constraints
 
 - **No AI attribution** in commits/PRs; **no time estimates** anywhere. Conventional Commits; frequent commits; one task at a time.
-- **Windows host:** file tools use backslash paths (`D:\repos\fountainrank\...`); the Bash tool is Git Bash (forward slashes). Run the task runner as `powershell.exe -NoProfile -ExecutionPolicy Bypass -File run.ps1 <args>` (no `pwsh`).
+- **Claude Code runs on Windows:** file tools use backslash paths (`D:\repos\fountainrank\...`); the Bash tool is Git Bash (forward slashes). Run the task runner as `powershell.exe -NoProfile -ExecutionPolicy Bypass -File run.ps1 <args>` (no `pwsh`). Any path handed to **Codex** in a review prompt must be **repo-relative** (per `claude_help/codex-review-process.md`).
 - **Local mirror gates the PR:** `./run.ps1 check` (backend + workspace-js + web build + mobile) must be green before PR. Mid-loop: `./run.ps1 check -Web`. Per-web-file: `pnpm --filter web exec vitest run <path>`.
-- **`"use server"` export rule:** a `"use server"` module may export **only async functions**. Constants/types shared with the client live in a plain module (`web/lib/add-fountain.ts`). This breaks `next build` (not vitest) if violated — so Tasks 6 and 9 MUST run the full `./run.ps1 check -Web` (incl. `next build`), not just vitest.
+- **`"use server"` export rule:** a `"use server"` module may export **only async functions**. Constants/types shared with the client live in a plain module (`web/lib/add-fountain.ts`). This breaks `next build` (not vitest) if violated — so Task 8 and Task 11 MUST run the full `./run.ps1 check -Web` (incl. `next build`), not just vitest.
 - **Web lint/format quirks:** eslint forbids duplicate imports (merge named imports into the existing line from a module); Prettier's Tailwind plugin reorders `className` utilities — run `pnpm --filter web exec prettier --write <files>` before committing so `prettier --check` passes.
 - **Security invariants (spec §8, §11):** the API access token lives only in `server-only` modules, never serialized to the client or logged; Server Action arguments are **untrusted** and validated server-side as hostile before any API call; the GPS bound is a client guard only; the action logs **only** `requestId`/action/outcome/status — never coordinates, comments, placement notes, rating/observation values, or the token.
 - **Backend is unchanged** (`POST /api/v1/fountains`, `GET /api/v1/rating-types`, `GET /api/v1/attribute-types` already live). No DB migration, no openapi/client regeneration, no new env vars; `serverActions.allowedOrigins` already set in 6b-1.
-- **Two PRs:** Tasks 1–6 = **PR 1** (one branch off `main`); Tasks 7–9 = **PR 2** (a fresh branch off updated `main` after PR 1 merges). Each PR: full `./run.ps1 check` green → open PR → Codex Loop B + all comments → squash-merge → deploy → verify.
+- **Two PRs:** Tasks 1–8 = **PR 1** (one branch off `main`); Tasks 9–11 = **PR 2** (a fresh branch off updated `main` after PR 1 merges). Each PR: full `./run.ps1 check` green → open PR → Codex Loop B + all comments → squash-merge → deploy → verify.
 - **Constants (spec §6):** `BOUND_RADIUS_MIN_M = 150`, `ACCURACY_MAX_M = 1000`, `PLACE_MIN_ZOOM = 16`, `FALLBACK_MAX_SPAN_M = 4000`, `NUDGE_STEP_M = 5`.
+- **Add-time `comments` cap:** validate `comments` length ≤ **1000** client-side (the backend leaves it unbounded; cap to match the notes convention).
 
 ---
 
@@ -28,19 +29,21 @@
 
 **PR 1 — minimal add:**
 - Modify `docs/style-guide.md` — PR-1 elements (Task 1).
-- Modify `web/lib/map/constants.ts` — add the placement constants (Task 2).
-- Create `web/lib/map/placement.ts` (+ `placement.test.ts`) — pure geo helpers: `boundFromFix`, `clampToBound`, `inBound`, `haversineMeters`, `canPlace` (Task 2).
+- Modify `web/lib/map/constants.ts` — placement constants (Task 2).
+- Create `web/lib/map/placement.ts` (+ `placement.test.ts`) — pure geo helpers: `boundFromFix`, `clampToBound`, `inBound`, `haversineMeters`, `canPlace`, `ringFeatureCollection` (Task 2).
 - Create `web/lib/add-fountain.ts` (+ `add-fountain.test.ts`) — shared types + `isValidAddFountainInput` + `toAddFountainBody` (Task 3).
 - Create `web/app/actions/add-fountain.ts` (+ `web/app/actions/add-fountain.test.ts`) — the `addFountain` Server Action (Task 3).
 - Create `web/lib/add-fountain-machine.ts` (+ `add-fountain-machine.test.ts`) — pure add-mode reducer (Task 4).
 - Create `web/components/map/AddFountainPanel.tsx` (+ test) and `web/components/map/AddFountainFab.tsx` (+ test) — presentational (Task 5).
-- Create `web/components/map/useAddFountainMode.ts` — the hook (map glue) (Task 6).
-- Modify `web/components/map/MapBrowser.tsx`, `web/components/map/MapBrowserLoader.tsx`, `web/app/page.tsx` (+ `web/app/page.test.tsx`) — thread `isAuthenticated`/`autoEnterAdd`, mount the hook, suppress browse interactions, strip `?add=1` (Task 6).
+- Create `web/components/map/placement-map.ts` — the `PlacementMap` adapter interface + MapLibre impl (Task 6).
+- Create `web/components/map/useAddFountainMode.tsx` (+ test) — orchestration hook, unit-tested against a fake `PlacementMap` (Task 7).
+- Modify `web/components/map/MapBrowser.tsx`, `web/components/map/MapBrowserLoader.tsx`, `web/app/page.tsx` (+ `web/app/page.test.tsx`) — wiring (Task 8).
 
 **PR 2 — optional fields:**
-- Modify `docs/style-guide.md` — PR-2 elements (Task 7).
-- Create `web/lib/catalog.ts` (+ `catalog.test.ts`) — `buildAttributeGroups` + a session-cached catalog fetch (Task 8).
-- Create `web/components/fountain/StarGroup.tsx` (extracted from `RatingForm`) + `web/components/map/RatingFields.tsx` + `web/components/map/AttributeObservationFields.tsx` (+ tests); modify `web/components/fountain/RatingForm.tsx` to reuse `StarGroup`; extend `AddFountainPanel` + `useAddFountainMode` + the `addFountain` action for the optional fields (Task 9).
+- Modify `docs/style-guide.md` — PR-2 elements (Task 9).
+- Create `web/lib/catalog.ts` (+ `catalog.test.ts`) — `buildAttributeGroups` + module-cached catalog fetches (Task 9).
+- Create `web/components/fountain/StarGroup.tsx` (extracted from `RatingForm`, + test); modify `web/components/fountain/RatingForm.tsx` to reuse it (Task 10).
+- Create `web/components/map/RatingFields.tsx` + `web/components/map/AttributeObservationFields.tsx` (+ tests); extend `AddFountainPanel`, `useAddFountainMode`, and `addFountain` for the optional fields (Task 11).
 
 ---
 
@@ -51,7 +54,7 @@
 **Files:**
 - Modify: `docs/style-guide.md`
 
-Per spec §12, document the new elements before building them: the **Add-fountain FAB** (placement, sizing, signed-out vs signed-in behavior, hidden-when-no-WebGL2), the **placement panel / bottom sheet** (steps: placing → details → result; primary action per step; Cancel/Escape), the **bound ring + pin + coordinate readout + out-of-bound note**, the **keyboard placement controls** ("Place at map center" button + N/S/E/W nudge controls + their disabled state below `PLACE_MIN_ZOOM` / over `FALLBACK_MAX_SPAN_M`), the **"We couldn't confirm your location" fallback message**, the **working-status toggle** (Yes/No, default Yes), and the **duplicate-conflict result** (message + "View it" link).
+Per spec §12, document the new elements before building them: the **Add-fountain FAB** (placement, sizing, signed-out vs signed-in behavior, hidden-when-no-WebGL2), the **placement panel / bottom sheet** (steps: placing → details → result; primary action per step; Cancel/Escape + focus behavior), the **bound ring + pin + coordinate readout + out-of-bound note**, the **keyboard placement controls** ("Place at map center" button + N/S/E/W nudge controls + their disabled state below `PLACE_MIN_ZOOM` / over `FALLBACK_MAX_SPAN_M`), the **"We couldn't confirm your location" fallback message**, the **working-status toggle** (Yes/No, default Yes), and the **duplicate-conflict result** (message + "View it" link).
 
 - [ ] **Step 1:** Read `docs/style-guide.md` (match its structure/voice; reuse the palette `#0A357E`, `#F2C200`, slate/emerald/amber/red).
 - [ ] **Step 2:** Add the entries above (element name, purpose, structure, states, a11y, example classes).
@@ -72,13 +75,7 @@ git commit -m "docs(style-guide): add add-fountain FAB, placement panel, keyboar
 - Test: `web/lib/map/placement.test.ts`
 
 **Interfaces:**
-- Produces:
-  - constants `BOUND_RADIUS_MIN_M=150`, `ACCURACY_MAX_M=1000`, `PLACE_MIN_ZOOM=16`, `FALLBACK_MAX_SPAN_M=4000`.
-  - `type LngLat = { lng: number; lat: number }`
-  - `type ViewportBounds = { west: number; south: number; east: number; north: number }`
-  - `type Bound = { kind:"circle"; center:LngLat; radiusM:number } | { kind:"viewport"; bounds:ViewportBounds }`
-  - `type GpsFix = { ok:true; lat:number; lng:number; accuracy:number } | { ok:false }`
-  - `haversineMeters(a,b): number`, `boundFromFix(fix, viewport): Bound`, `clampToBound(point, bound): LngLat`, `inBound(point, bound): boolean`, `canPlace(zoom, bound): boolean`.
+- Produces: constants `BOUND_RADIUS_MIN_M=150`, `ACCURACY_MAX_M=1000`, `PLACE_MIN_ZOOM=16`, `FALLBACK_MAX_SPAN_M=4000`; types `LngLat`, `ViewportBounds`, `Bound`, `GpsFix`; `haversineMeters`, `boundFromFix`, `clampToBound`, `inBound`, `canPlace`, `ringFeatureCollection`.
 
 - [ ] **Step 1: Add constants** — append to `web/lib/map/constants.ts`:
 
@@ -100,15 +97,15 @@ import {
   clampToBound,
   haversineMeters,
   inBound,
+  ringFeatureCollection,
   type Bound,
 } from "./placement";
 
 const SEATTLE = { lng: -122.3321, lat: 47.6062 };
 
 describe("haversineMeters", () => {
-  it("is ~0 for the same point and grows with distance", () => {
+  it("is ~0 for the same point and ~111km per latitude degree", () => {
     expect(haversineMeters(SEATTLE, SEATTLE)).toBeCloseTo(0, 5);
-    // ~1 degree of latitude ≈ 111 km
     const d = haversineMeters({ lng: 0, lat: 0 }, { lng: 0, lat: 1 });
     expect(d).toBeGreaterThan(110000);
     expect(d).toBeLessThan(112000);
@@ -123,15 +120,17 @@ describe("boundFromFix", () => {
       center: { lng: -122.3, lat: 47.6 },
       radiusM: 150,
     });
-    expect(
-      boundFromFix({ ok: true, lat: 47.6, lng: -122.3, accuracy: 400 }, vp),
-    ).toMatchObject({ kind: "circle", radiusM: 400 });
+    expect(boundFromFix({ ok: true, lat: 47.6, lng: -122.3, accuracy: 400 }, vp)).toMatchObject({
+      kind: "circle",
+      radiusM: 400,
+    });
   });
   it("falls back to viewport when no fix or accuracy is too poor", () => {
     expect(boundFromFix({ ok: false }, vp)).toEqual({ kind: "viewport", bounds: vp });
-    expect(
-      boundFromFix({ ok: true, lat: 47.6, lng: -122.3, accuracy: 2000 }, vp),
-    ).toEqual({ kind: "viewport", bounds: vp });
+    expect(boundFromFix({ ok: true, lat: 47.6, lng: -122.3, accuracy: 2000 }, vp)).toEqual({
+      kind: "viewport",
+      bounds: vp,
+    });
   });
 });
 
@@ -143,8 +142,7 @@ describe("clampToBound", () => {
   });
   it("pulls an out-of-bound point onto the ring (circle)", () => {
     const b: Bound = { kind: "circle", center: SEATTLE, radiusM: 150 };
-    const far = { lng: SEATTLE.lng + 0.05, lat: SEATTLE.lat };
-    const clamped = clampToBound(far, b);
+    const clamped = clampToBound({ lng: SEATTLE.lng + 0.05, lat: SEATTLE.lat }, b);
     expect(haversineMeters(SEATTLE, clamped)).toBeLessThanOrEqual(151);
     expect(inBound(clamped, b)).toBe(true);
   });
@@ -174,6 +172,15 @@ describe("canPlace", () => {
   it("rejects a fallback viewport wider than FALLBACK_MAX_SPAN_M even at high zoom", () => {
     expect(canPlace(17, wideVp)).toBe(false);
     expect(canPlace(17, tightVp)).toBe(true);
+  });
+});
+
+describe("ringFeatureCollection", () => {
+  it("returns an empty FC for a viewport bound and a closed ring for a circle", () => {
+    expect(ringFeatureCollection({ kind: "viewport", bounds: { west: 0, south: 0, east: 1, north: 1 } }).features).toHaveLength(0);
+    const fc = ringFeatureCollection({ kind: "circle", center: SEATTLE, radiusM: 150 });
+    expect(fc.features).toHaveLength(1);
+    expect(fc.features[0].geometry.type).toBe("LineString");
   });
 });
 ```
@@ -261,6 +268,23 @@ export function canPlace(zoom: number, bound: Bound): boolean {
   }
   return true;
 }
+
+// A dashed ring polyline for a circle bound (empty for a viewport bound). Pure -> testable.
+export function ringFeatureCollection(bound: Bound | null): GeoJSON.FeatureCollection {
+  if (!bound || bound.kind !== "circle") return { type: "FeatureCollection", features: [] };
+  const { center, radiusM } = bound;
+  const dLat = radiusM / 111320;
+  const dLngBase = radiusM / (111320 * Math.cos((center.lat * Math.PI) / 180));
+  const coords: [number, number][] = [];
+  for (let i = 0; i <= 64; i++) {
+    const a = (i / 64) * 2 * Math.PI;
+    coords.push([center.lng + dLngBase * Math.cos(a), center.lat + dLat * Math.sin(a)]);
+  }
+  return {
+    type: "FeatureCollection",
+    features: [{ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: coords } }],
+  };
+}
 ```
 
 - [ ] **Step 5: Run, verify pass.** `pnpm --filter web exec vitest run lib/map/placement.test.ts` → PASS.
@@ -270,7 +294,7 @@ export function canPlace(zoom: number, bound: Bound): boolean {
 ```bash
 pnpm --filter web exec prettier --write web/lib/map/constants.ts web/lib/map/placement.ts web/lib/map/placement.test.ts
 git add web/lib/map/constants.ts web/lib/map/placement.ts web/lib/map/placement.test.ts
-git commit -m "feat(web): placement geo helpers + bound/zoom gate (slice 6b-2)"
+git commit -m "feat(web): placement geo helpers + bound/zoom gate + ring geometry (slice 6b-2)"
 ```
 
 ---
@@ -278,19 +302,13 @@ git commit -m "feat(web): placement geo helpers + bound/zoom gate (slice 6b-2)"
 ### Task 3: Shared add-fountain module + the `addFountain` Server Action
 
 **Files:**
-- Create: `web/lib/add-fountain.ts`
-- Test: `web/lib/add-fountain.test.ts`
-- Create: `web/app/actions/add-fountain.ts`
-- Test: `web/app/actions/add-fountain.test.ts`
+- Create: `web/lib/add-fountain.ts` (+ `web/lib/add-fountain.test.ts`)
+- Create: `web/app/actions/add-fountain.ts` (+ `web/app/actions/add-fountain.test.ts`)
 
 **Interfaces:**
 - Consumes: `getAuthedApiClientForAction` (`web/lib/server/api.ts`), `log` (`web/lib/server/log.ts`), `@fountainrank/api-client` types.
-- Produces (plain module `web/lib/add-fountain.ts`):
-  - `type AddFountainInput` (mirrors `AddFountainRequest`: `location{latitude,longitude}`, `is_working`, optional `comments`, `placement_note`, `ratings[]`, `observations[]`).
-  - `type AddFountainError = "unauthenticated" | "validation" | "server"`.
-  - `type AddFountainResult = { ok:true; fountainId:string } | { ok:false; error:"duplicate"; fountainId:string } | { ok:false; error:AddFountainError }`.
-  - `isUuid(v): boolean`, `isValidAddFountainInput(input): boolean`, `toAddFountainBody(input): AddFountainRequest`.
-- Produces (`"use server"` `web/app/actions/add-fountain.ts`): `addFountain(input: AddFountainInput): Promise<AddFountainResult>`.
+- Produces (plain module): `type AddFountainInput`, `type AddFountainError = "unauthenticated" | "validation" | "server"`, `type AddFountainResult = { ok:true; fountainId:string } | { ok:false; error:"duplicate"; fountainId:string } | { ok:false; error:AddFountainError }`, `isUuid`, `isValidAddFountainInput`, `toAddFountainBody`.
+- Produces (`"use server"`): `addFountain(input: AddFountainInput): Promise<AddFountainResult>`.
 
 - [ ] **Step 1: Write the failing test (shared)** — `web/lib/add-fountain.test.ts`:
 
@@ -303,10 +321,7 @@ import {
   type AddFountainInput,
 } from "./add-fountain";
 
-const base: AddFountainInput = {
-  location: { latitude: 47.6, longitude: -122.3 },
-  is_working: true,
-};
+const base: AddFountainInput = { location: { latitude: 47.6, longitude: -122.3 }, is_working: true };
 
 describe("isUuid", () => {
   it("accepts a UUID, rejects junk", () => {
@@ -320,39 +335,36 @@ describe("isValidAddFountainInput", () => {
   it("accepts a minimal valid input", () => {
     expect(isValidAddFountainInput(base)).toBe(true);
   });
+  it("rejects hostile non-object / missing-location shapes", () => {
+    for (const bad of [null, undefined, 42, "x", [], {}, { is_working: true }] as unknown[]) {
+      expect(isValidAddFountainInput(bad as AddFountainInput)).toBe(false);
+    }
+    expect(
+      isValidAddFountainInput({ location: [1, 2] as unknown as AddFountainInput["location"], is_working: true }),
+    ).toBe(false);
+  });
   it("rejects out-of-range / non-finite coordinates", () => {
-    expect(isValidAddFountainInput({ ...base, location: { latitude: 91, longitude: 0 } })).toBe(
-      false,
-    );
-    expect(
-      isValidAddFountainInput({ ...base, location: { latitude: 0, longitude: 181 } }),
-    ).toBe(false);
-    expect(
-      isValidAddFountainInput({ ...base, location: { latitude: NaN, longitude: 0 } }),
-    ).toBe(false);
+    expect(isValidAddFountainInput({ ...base, location: { latitude: 91, longitude: 0 } })).toBe(false);
+    expect(isValidAddFountainInput({ ...base, location: { latitude: 0, longitude: 181 } })).toBe(false);
+    expect(isValidAddFountainInput({ ...base, location: { latitude: NaN, longitude: 0 } })).toBe(false);
   });
   it("rejects a non-boolean is_working", () => {
-    expect(isValidAddFountainInput({ ...base, is_working: "yes" as unknown as boolean })).toBe(
-      false,
-    );
+    expect(isValidAddFountainInput({ ...base, is_working: "yes" as unknown as boolean })).toBe(false);
   });
-  it("rejects an oversized placement note", () => {
+  it("rejects oversized comments / placement note", () => {
     expect(isValidAddFountainInput({ ...base, placement_note: "x".repeat(201) })).toBe(false);
     expect(isValidAddFountainInput({ ...base, placement_note: "x".repeat(200) })).toBe(true);
+    expect(isValidAddFountainInput({ ...base, comments: "x".repeat(1001) })).toBe(false);
+    expect(isValidAddFountainInput({ ...base, comments: "x".repeat(1000) })).toBe(true);
   });
-  it("rejects bad ratings / observations", () => {
-    expect(
-      isValidAddFountainInput({ ...base, ratings: [{ rating_type_id: 0, stars: 3 }] }),
-    ).toBe(false);
-    expect(
-      isValidAddFountainInput({ ...base, ratings: [{ rating_type_id: 1, stars: 6 }] }),
-    ).toBe(false);
-    expect(
-      isValidAddFountainInput({ ...base, observations: [{ attribute_type_id: 1, value: "" }] }),
-    ).toBe(false);
-    expect(
-      isValidAddFountainInput({ ...base, observations: [{ attribute_type_id: 1, value: "yes" }] }),
-    ).toBe(true);
+  it("rejects bad ratings / observations (incl. hostile non-arrays and null entries)", () => {
+    expect(isValidAddFountainInput({ ...base, ratings: "nope" as unknown as [] })).toBe(false);
+    expect(isValidAddFountainInput({ ...base, ratings: [null as unknown as { rating_type_id: number; stars: number }] })).toBe(false);
+    expect(isValidAddFountainInput({ ...base, ratings: [{ rating_type_id: 0, stars: 3 }] })).toBe(false);
+    expect(isValidAddFountainInput({ ...base, ratings: [{ rating_type_id: 1, stars: 6 }] })).toBe(false);
+    expect(isValidAddFountainInput({ ...base, observations: [{ attribute_type_id: 1, value: "" }] })).toBe(false);
+    expect(isValidAddFountainInput({ ...base, observations: [{ attribute_type_id: 1, value: 9 as unknown as string }] })).toBe(false);
+    expect(isValidAddFountainInput({ ...base, observations: [{ attribute_type_id: 1, value: "yes" }] })).toBe(true);
   });
 });
 
@@ -364,12 +376,14 @@ describe("toAddFountainBody", () => {
       placement_note: "near gate",
     });
   });
-  it("includes non-empty rating/observation arrays", () => {
+  it("includes non-empty rating/observation arrays and trimmed comments", () => {
     const body = toAddFountainBody({
       ...base,
+      comments: " hi ",
       ratings: [{ rating_type_id: 1, stars: 4 }],
       observations: [{ attribute_type_id: 2, value: "yes" }],
     });
+    expect(body.comments).toBe("hi");
     expect(body.ratings).toEqual([{ rating_type_id: 1, stars: 4 }]);
     expect(body.observations).toEqual([{ attribute_type_id: 2, value: "yes" }]);
   });
@@ -398,8 +412,10 @@ export type AddFountainResult =
   | { ok: false; error: "duplicate"; fountainId: string }
   | { ok: false; error: AddFountainError };
 
-const UUID_RE =
-  /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+export const COMMENTS_MAX = 1000;
+export const PLACEMENT_NOTE_MAX = 200;
+
+const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
 export function isUuid(v: unknown): v is string {
   return typeof v === "string" && UUID_RE.test(v);
@@ -408,30 +424,35 @@ export function isUuid(v: unknown): v is string {
 // A Server Action argument is client-originated regardless of its TS type — validate as hostile
 // before any API call (spec §8). Returns true only when every field is well-formed.
 export function isValidAddFountainInput(input: AddFountainInput): boolean {
-  if (!input || typeof input !== "object") return false;
+  if (!input || typeof input !== "object" || Array.isArray(input)) return false;
   const loc = input.location;
-  if (!loc || typeof loc !== "object") return false;
+  if (!loc || typeof loc !== "object" || Array.isArray(loc)) return false;
   const { latitude, longitude } = loc;
   if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) return false;
   if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) return false;
   if (typeof input.is_working !== "boolean") return false;
-  if (input.comments != null && typeof input.comments !== "string") return false;
+  if (input.comments != null) {
+    if (typeof input.comments !== "string") return false;
+    if (input.comments.trim().length > COMMENTS_MAX) return false;
+  }
   if (input.placement_note != null) {
     if (typeof input.placement_note !== "string") return false;
-    if (input.placement_note.trim().length > 200) return false;
+    if (input.placement_note.trim().length > PLACEMENT_NOTE_MAX) return false;
   }
   if (input.ratings != null) {
     if (!Array.isArray(input.ratings)) return false;
     for (const r of input.ratings) {
-      if (!Number.isInteger(r?.rating_type_id) || r.rating_type_id <= 0) return false;
-      if (!Number.isInteger(r?.stars) || r.stars < 1 || r.stars > 5) return false;
+      if (!r || typeof r !== "object") return false;
+      if (!Number.isInteger(r.rating_type_id) || r.rating_type_id <= 0) return false;
+      if (!Number.isInteger(r.stars) || r.stars < 1 || r.stars > 5) return false;
     }
   }
   if (input.observations != null) {
     if (!Array.isArray(input.observations)) return false;
     for (const o of input.observations) {
-      if (!Number.isInteger(o?.attribute_type_id) || o.attribute_type_id <= 0) return false;
-      if (typeof o?.value !== "string" || o.value.trim().length === 0) return false;
+      if (!o || typeof o !== "object") return false;
+      if (!Number.isInteger(o.attribute_type_id) || o.attribute_type_id <= 0) return false;
+      if (typeof o.value !== "string" || o.value.trim().length === 0) return false;
     }
   }
   return true;
@@ -457,16 +478,12 @@ export function toAddFountainBody(
 
 - [ ] **Step 4: Run, verify pass.** `pnpm --filter web exec vitest run lib/add-fountain.test.ts` → PASS.
 
-- [ ] **Step 5: Write the failing test (action)** — `web/app/actions/add-fountain.test.ts` (mirror `contribute.test.ts`'s hoisted-mock style):
+- [ ] **Step 5: Write the failing test (action)** — `web/app/actions/add-fountain.test.ts`:
 
 ```ts
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { POST, getClient, log } = vi.hoisted(() => ({
-  POST: vi.fn(),
-  getClient: vi.fn(),
-  log: vi.fn(),
-}));
+const { POST, getClient, log } = vi.hoisted(() => ({ POST: vi.fn(), getClient: vi.fn(), log: vi.fn() }));
 vi.mock("server-only", () => ({}));
 vi.mock("../../lib/server/api", () => ({ getAuthedApiClientForAction: getClient }));
 vi.mock("../../lib/server/log", () => ({ log }));
@@ -482,13 +499,23 @@ beforeEach(() => getClient.mockImplementation(async () => ({ POST })));
 afterEach(() => vi.clearAllMocks());
 
 describe("addFountain", () => {
-  it("validation fails BEFORE any API call for bad coordinates", async () => {
-    const res = await addFountain({ ...input, location: { latitude: 999, longitude: 0 } });
-    expect(res).toEqual({ ok: false, error: "validation" });
+  it("rejects hostile/malformed payloads BEFORE any API call", async () => {
+    const hostile: unknown[] = [
+      null,
+      [],
+      { is_working: true },
+      { location: { latitude: 999, longitude: 0 }, is_working: true },
+      { location: { latitude: 1, longitude: 1 }, is_working: "x" },
+      { location: { latitude: 1, longitude: 1 }, is_working: true, ratings: "nope" },
+      { location: { latitude: 1, longitude: 1 }, is_working: true, comments: "x".repeat(1001) },
+    ];
+    for (const bad of hostile) {
+      expect(await addFountain(bad as AddFountainInput)).toEqual({ ok: false, error: "validation" });
+    }
     expect(getClient).not.toHaveBeenCalled();
   });
 
-  it("returns the new id on 201", async () => {
+  it("returns the new id on 201 and posts the expected body", async () => {
     POST.mockResolvedValue({ data: { id: NEW_ID }, error: undefined, response: { status: 201 } });
     expect(await addFountain(input)).toEqual({ ok: true, fountainId: NEW_ID });
     expect(POST).toHaveBeenCalledWith(
@@ -511,13 +538,16 @@ describe("addFountain", () => {
     expect(await addFountain(input)).toEqual({ ok: false, error: "server" });
   });
 
-  it("maps 401/422/5xx", async () => {
+  it("maps 401/422/5xx and logs each non-success outcome with status", async () => {
     POST.mockResolvedValue({ error: {}, response: { status: 401 } });
     expect(await addFountain(input)).toEqual({ ok: false, error: "unauthenticated" });
     POST.mockResolvedValue({ error: {}, response: { status: 422 } });
     expect(await addFountain(input)).toEqual({ ok: false, error: "validation" });
     POST.mockResolvedValue({ error: {}, response: { status: 503 } });
     expect(await addFountain(input)).toEqual({ ok: false, error: "server" });
+    // every non-success branch logged with a status field
+    expect(log.mock.calls.every((c) => c[0] === "warn")).toBe(true);
+    expect(log.mock.calls.some((c) => c[2]?.status === 401)).toBe(true);
   });
 
   it("treats a thrown token error as unauthenticated and a POST throw as server", async () => {
@@ -588,7 +618,10 @@ export async function addFountain(input: AddFountainInput): Promise<AddFountainR
       log("warn", "add-fountain", { requestId, outcome: "malformed-409", status });
       return { ok: false, error: "server" };
     }
-    if (status === 401) return { ok: false, error: "unauthenticated" };
+    if (status === 401) {
+      log("warn", "add-fountain", { requestId, outcome: "unauthenticated", status });
+      return { ok: false, error: "unauthenticated" };
+    }
     if (status === 422) {
       log("warn", "add-fountain", { requestId, outcome: "validation", status });
       return { ok: false, error: "validation" };
@@ -617,8 +650,7 @@ git commit -m "feat(web): addFountain server action + hostile-input validation +
 ### Task 4: Pure add-mode state machine
 
 **Files:**
-- Create: `web/lib/add-fountain-machine.ts`
-- Test: `web/lib/add-fountain-machine.test.ts`
+- Create: `web/lib/add-fountain-machine.ts` (+ `web/lib/add-fountain-machine.test.ts`)
 
 **Interfaces:**
 - Consumes: `Bound`, `LngLat`, `clampToBound` (Task 2); `AddFountainError` (Task 3).
@@ -641,66 +673,43 @@ describe("addReducer", () => {
     expect(s.working).toBe(true);
     expect(s.pin).toBeNull();
   });
-
   it("CANCEL resets to idle", () => {
     expect(addReducer(placing, { type: "CANCEL" })).toEqual(initialAddState);
   });
-
   it("DROP_PIN clamps to the bound", () => {
     const s = addReducer(placing, { type: "DROP_PIN", point: { lng: -122.0, lat: 47.6 } });
     expect(s.pin).not.toBeNull();
-    // clamped within the 150m circle, so far less than the 0.3deg requested offset
     expect(Math.abs(s.pin!.lng - -122.3)).toBeLessThan(0.01);
   });
-
   it("SET_BOUND re-clamps an existing pin", () => {
     const dropped = addReducer(placing, { type: "DROP_PIN", point: { lng: -122.3005, lat: 47.6 } });
-    const tighter: Bound = { kind: "circle", center: { lng: -122.3, lat: 47.6 }, radiusM: 150 };
-    const s = addReducer(dropped, { type: "SET_BOUND", bound: tighter });
-    expect(s.bound).toEqual(tighter);
+    const s = addReducer(dropped, { type: "SET_BOUND", bound: circle });
+    expect(s.bound).toEqual(circle);
+    expect(s.pin).not.toBeNull();
   });
-
   it("NUDGE moves the pin and clamps; no-op without a pin", () => {
     expect(addReducer(placing, { type: "NUDGE", dir: "n" }).pin).toBeNull();
     const dropped = addReducer(placing, { type: "DROP_PIN", point: { lng: -122.3, lat: 47.6 } });
-    const up = addReducer(dropped, { type: "NUDGE", dir: "n" });
-    expect(up.pin!.lat).toBeGreaterThan(dropped.pin!.lat);
+    expect(addReducer(dropped, { type: "NUDGE", dir: "n" }).pin!.lat).toBeGreaterThan(dropped.pin!.lat);
   });
-
-  it("NEXT requires a pin and only advances from placing", () => {
-    expect(addReducer(placing, { type: "NEXT" }).phase).toBe("placing"); // no pin yet
+  it("NEXT requires a pin and only advances from placing; BACK returns", () => {
+    expect(addReducer(placing, { type: "NEXT" }).phase).toBe("placing");
     const dropped = addReducer(placing, { type: "DROP_PIN", point: { lng: -122.3, lat: 47.6 } });
-    expect(addReducer(dropped, { type: "NEXT" }).phase).toBe("details");
-  });
-
-  it("BACK returns details -> placing", () => {
-    const details: AddState = { ...placing, phase: "details", pin: { lng: -122.3, lat: 47.6 } };
+    const details = addReducer(dropped, { type: "NEXT" });
+    expect(details.phase).toBe("details");
     expect(addReducer(details, { type: "BACK" }).phase).toBe("placing");
   });
-
   it("SET_WORKING updates the flag", () => {
     expect(addReducer(placing, { type: "SET_WORKING", working: false }).working).toBe(false);
   });
-
-  it("submit lifecycle: start -> done/duplicate/error preserves pin & working", () => {
-    const details: AddState = {
-      ...placing,
-      phase: "details",
-      pin: { lng: -122.3, lat: 47.6 },
-      working: false,
-    };
+  it("submit lifecycle preserves pin & working on error", () => {
+    const details: AddState = { ...placing, phase: "details", pin: { lng: -122.3, lat: 47.6 }, working: false };
     expect(addReducer(details, { type: "SUBMIT_START" }).phase).toBe("submitting");
-    expect(addReducer(details, { type: "SUBMIT_DONE", fountainId: "f1" })).toMatchObject({
-      phase: "done",
-      newId: "f1",
-    });
-    expect(addReducer(details, { type: "SUBMIT_DUPLICATE", fountainId: "d1" })).toMatchObject({
-      phase: "duplicate",
-      duplicateId: "d1",
-    });
+    expect(addReducer(details, { type: "SUBMIT_DONE", fountainId: "f1" })).toMatchObject({ phase: "done", newId: "f1" });
+    expect(addReducer(details, { type: "SUBMIT_DUPLICATE", fountainId: "d1" })).toMatchObject({ phase: "duplicate", duplicateId: "d1" });
     const errored = addReducer(details, { type: "SUBMIT_ERROR", errorKind: "server" });
     expect(errored).toMatchObject({ phase: "error", errorKind: "server" });
-    expect(errored.pin).toEqual(details.pin); // preserved for retry
+    expect(errored.pin).toEqual(details.pin);
     expect(errored.working).toBe(false);
   });
 });
@@ -781,10 +790,7 @@ export function addReducer(state: AddState, action: AddAction): AddState {
         pin: state.pin ? clampToBound(state.pin, action.bound) : null,
       };
     case "DROP_PIN":
-      return {
-        ...state,
-        pin: state.bound ? clampToBound(action.point, state.bound) : action.point,
-      };
+      return { ...state, pin: state.bound ? clampToBound(action.point, state.bound) : action.point };
     case "NUDGE": {
       if (!state.pin) return state;
       const moved = nudged(state.pin, action.dir);
@@ -825,18 +831,16 @@ git commit -m "feat(web): pure add-mode state machine (placing/details/submit, c
 ### Task 5: Presentational `AddFountainPanel` + `AddFountainFab`
 
 **Files:**
-- Create: `web/components/map/AddFountainPanel.tsx`
-- Test: `web/components/map/AddFountainPanel.test.tsx`
-- Create: `web/components/map/AddFountainFab.tsx`
-- Test: `web/components/map/AddFountainFab.test.tsx`
+- Create: `web/components/map/AddFountainPanel.tsx` (+ test)
+- Create: `web/components/map/AddFountainFab.tsx` (+ test)
 
 **Interfaces:**
 - Consumes: `AddPhase`, `AddFountainError` (Tasks 3–4); `signInWithReturn` (`web/app/actions/auth.ts`).
 - Produces:
-  - `AddFountainFab({ isAuthenticated, webglOk, onEnter }: { isAuthenticated: boolean; webglOk: boolean; onEnter: () => void })` — hidden when `!webglOk`; signed-out renders a `signInWithReturn("/?add=1")` form; signed-in renders a button calling `onEnter`.
-  - `AddFountainPanel(props)` — presentational, all state + callbacks passed in (see the prop type in Step 3). Renders by `phase`; `role="status"`/`aria-live="polite"` outcomes; keyboard controls.
+  - `AddFountainFab({ isAuthenticated, webglOk, onEnter })` — returns `null` when `!webglOk`; signed-out renders a `signInWithReturn("/?add=1")` form; signed-in renders a button calling `onEnter`.
+  - `AddFountainPanel(props: AddFountainPanelProps)` — presentational; renders by `phase`; `Escape` calls `onCancel`; focuses the panel on mount; `role="status"` outcomes; the keyboard placement controls are **disabled when `!placeable`** (spec §6).
 
-These are presentational so they unit-test without a map (jsdom has no WebGL — the map glue is Task 6 and is covered by build + manual verify, as `MapBrowser` already is).
+(Presentational → unit-tested without a map.)
 
 - [ ] **Step 1: Write the failing FAB test** — `web/components/map/AddFountainFab.test.tsx`:
 
@@ -853,9 +857,7 @@ afterEach(cleanup);
 
 describe("AddFountainFab", () => {
   it("is hidden when WebGL is unavailable", () => {
-    const { container } = render(
-      <AddFountainFab isAuthenticated webglOk={false} onEnter={() => {}} />,
-    );
+    const { container } = render(<AddFountainFab isAuthenticated webglOk={false} onEnter={() => {}} />);
     expect(container.firstChild).toBeNull();
   });
   it("signed-in: clicking calls onEnter", () => {
@@ -867,10 +869,7 @@ describe("AddFountainFab", () => {
   it("signed-out: renders a sign-in submit (no onEnter)", () => {
     const onEnter = vi.fn();
     render(<AddFountainFab isAuthenticated={false} webglOk onEnter={onEnter} />);
-    expect(screen.getByRole("button", { name: /add a fountain/i })).toHaveProperty(
-      "type",
-      "submit",
-    );
+    expect(screen.getByRole("button", { name: /add a fountain/i })).toHaveProperty("type", "submit");
     expect(onEnter).not.toHaveBeenCalled();
   });
 });
@@ -884,6 +883,9 @@ describe("AddFountainFab", () => {
 "use client";
 import { signInWithReturn } from "../../app/actions/auth";
 
+const FAB_CLASS =
+  "absolute bottom-24 right-4 z-40 inline-flex items-center gap-2 rounded-full bg-[#F2C200] px-4 py-3 text-sm font-bold text-[#0A357E] shadow-lg transition hover:bg-[#ffce1f]";
+
 export function AddFountainFab({
   isAuthenticated,
   webglOk,
@@ -894,19 +896,17 @@ export function AddFountainFab({
   onEnter: () => void;
 }) {
   if (!webglOk) return null; // no map -> no placement
-  const className =
-    "absolute bottom-24 right-4 z-40 inline-flex items-center gap-2 rounded-full bg-[#F2C200] px-4 py-3 text-sm font-bold text-[#0A357E] shadow-lg transition hover:bg-[#ffce1f]";
   if (!isAuthenticated) {
     return (
       <form action={signInWithReturn.bind(null, "/?add=1")} className="contents">
-        <button type="submit" className={className} aria-label="Add a fountain">
+        <button type="submit" className={FAB_CLASS} aria-label="Add a fountain">
           <span aria-hidden="true">+</span> Add a fountain
         </button>
       </form>
     );
   }
   return (
-    <button type="button" onClick={onEnter} className={className} aria-label="Add a fountain">
+    <button type="button" onClick={onEnter} className={FAB_CLASS} aria-label="Add a fountain">
       <span aria-hidden="true">+</span> Add a fountain
     </button>
   );
@@ -943,12 +943,19 @@ const base: AddFountainPanelProps = {
 afterEach(cleanup);
 
 describe("AddFountainPanel", () => {
-  it("placing: Next is disabled until a placeable pin exists", () => {
+  it("Escape calls onCancel", () => {
+    const onCancel = vi.fn();
+    render(<AddFountainPanel {...base} onCancel={onCancel} />);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onCancel).toHaveBeenCalled();
+  });
+
+  it("placing: keyboard controls are disabled until placeable, then enabled", () => {
     const { rerender } = render(<AddFountainPanel {...base} />);
+    expect(screen.getByRole("button", { name: /place at map center/i })).toHaveProperty("disabled", true);
     expect(screen.getByRole("button", { name: /next/i })).toHaveProperty("disabled", true);
-    rerender(
-      <AddFountainPanel {...base} pin={{ lng: -122.3, lat: 47.6 }} placeable />,
-    );
+    rerender(<AddFountainPanel {...base} placeable pin={{ lng: -122.3, lat: 47.6 }} />);
+    expect(screen.getByRole("button", { name: /place at map center/i })).toHaveProperty("disabled", false);
     expect(screen.getByRole("button", { name: /next/i })).toHaveProperty("disabled", false);
   });
 
@@ -981,24 +988,15 @@ describe("AddFountainPanel", () => {
 
   it("details: working toggle defaults to Yes and can flip", () => {
     const onSetWorking = vi.fn();
-    render(
-      <AddFountainPanel
-        {...base}
-        phase="details"
-        pin={{ lng: -122.3, lat: 47.6 }}
-        onSetWorking={onSetWorking}
-      />,
-    );
-    const yes = screen.getByRole("radio", { name: /yes/i });
-    expect(yes).toHaveProperty("checked", true);
+    render(<AddFountainPanel {...base} phase="details" pin={{ lng: -122.3, lat: 47.6 }} onSetWorking={onSetWorking} />);
+    expect(screen.getByRole("radio", { name: /yes/i })).toHaveProperty("checked", true);
     fireEvent.click(screen.getByRole("radio", { name: /no/i }));
     expect(onSetWorking).toHaveBeenCalledWith(false);
   });
 
   it("duplicate: shows a View it link to the existing fountain", () => {
     render(<AddFountainPanel {...base} phase="duplicate" duplicateId="dup-1" />);
-    const link = screen.getByRole("link", { name: /view it/i });
-    expect(link.getAttribute("href")).toBe("/fountains/dup-1");
+    expect(screen.getByRole("link", { name: /view it/i }).getAttribute("href")).toBe("/fountains/dup-1");
   });
 
   it("error: shows a retry affordance and an aria-live message", () => {
@@ -1011,10 +1009,11 @@ describe("AddFountainPanel", () => {
 
 - [ ] **Step 6: Run, verify fail.** `pnpm --filter web exec vitest run components/map/AddFountainPanel.test.tsx` → FAIL.
 
-- [ ] **Step 7: Implement `AddFountainPanel.tsx`** (presentational; bottom sheet/card; per-phase UI):
+- [ ] **Step 7: Implement `AddFountainPanel.tsx`:**
 
 ```tsx
 "use client";
+import { useEffect, useRef } from "react";
 import Link from "next/link";
 import type { AddFountainError } from "../../lib/add-fountain";
 import type { AddPhase } from "../../lib/add-fountain-machine";
@@ -1044,26 +1043,34 @@ const ERROR_COPY: Record<AddFountainError, string> = {
 };
 
 export function AddFountainPanel(props: AddFountainPanelProps) {
-  const { phase } = props;
+  const { phase, onCancel } = props;
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (phase === "idle") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCancel();
+    };
+    document.addEventListener("keydown", onKey);
+    ref.current?.focus();
+    return () => document.removeEventListener("keydown", onKey);
+  }, [phase, onCancel]);
+
   if (phase === "idle") return null;
   return (
     <div
+      ref={ref}
       role="dialog"
       aria-label="Add a fountain"
-      className="absolute inset-x-0 bottom-0 z-40 mx-auto max-w-md rounded-t-2xl border border-slate-200 bg-white p-4 shadow-2xl sm:bottom-4 sm:right-4 sm:left-auto sm:mx-0 sm:rounded-2xl"
+      tabIndex={-1}
+      className="absolute inset-x-0 bottom-0 z-40 mx-auto max-w-md rounded-t-2xl border border-slate-200 bg-white p-4 shadow-2xl outline-none sm:bottom-4 sm:left-auto sm:right-4 sm:mx-0 sm:rounded-2xl"
     >
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-bold text-[#0A357E]">Add a fountain</h2>
-        <button
-          type="button"
-          onClick={props.onCancel}
-          aria-label="Cancel"
-          className="rounded p-1 text-slate-500 hover:bg-slate-100"
-        >
+        <button type="button" onClick={onCancel} aria-label="Cancel" className="rounded p-1 text-slate-500 hover:bg-slate-100">
           ✕
         </button>
       </div>
-
       {phase === "placing" && <PlacingStep {...props} />}
       {phase === "details" && <DetailsStep {...props} />}
       {(phase === "submitting" || phase === "done") && (
@@ -1073,14 +1080,9 @@ export function AddFountainPanel(props: AddFountainPanelProps) {
       )}
       {phase === "duplicate" && (
         <div className="mt-3 space-y-2">
-          <p role="status" className="text-sm text-slate-700">
-            A fountain already exists here.
-          </p>
+          <p role="status" className="text-sm text-slate-700">A fountain already exists here.</p>
           {props.duplicateId && (
-            <Link
-              href={`/fountains/${props.duplicateId}`}
-              className="inline-block rounded-full bg-[#F2C200] px-4 py-2 text-sm font-bold text-[#0A357E]"
-            >
+            <Link href={`/fountains/${props.duplicateId}`} className="inline-block rounded-full bg-[#F2C200] px-4 py-2 text-sm font-bold text-[#0A357E]">
               View it
             </Link>
           )}
@@ -1088,14 +1090,8 @@ export function AddFountainPanel(props: AddFountainPanelProps) {
       )}
       {phase === "error" && (
         <div className="mt-3 space-y-2">
-          <p role="status" className="text-sm text-red-700">
-            {props.errorKind ? ERROR_COPY[props.errorKind] : ERROR_COPY.server}
-          </p>
-          <button
-            type="button"
-            onClick={props.onSubmit}
-            className="rounded-full bg-[#0A357E] px-4 py-2 text-sm font-bold text-white"
-          >
+          <p role="status" className="text-sm text-red-700">{props.errorKind ? ERROR_COPY[props.errorKind] : ERROR_COPY.server}</p>
+          <button type="button" onClick={props.onSubmit} className="rounded-full bg-[#0A357E] px-4 py-2 text-sm font-bold text-white">
             Try again
           </button>
         </div>
@@ -1114,18 +1110,17 @@ function Coord({ pin }: { pin: LngLat | null }) {
 }
 
 function PlacingStep(props: AddFountainPanelProps) {
+  const dirs = { n: "north", s: "south", e: "east", w: "west" } as const;
+  const glyph = { n: "↑", s: "↓", e: "→", w: "←" } as const;
   return (
     <div>
-      <p className="mt-1 text-sm text-slate-600">
-        Tap the map where the fountain is, then drag the pin to fine-tune.
-      </p>
+      <p className="mt-1 text-sm text-slate-600">Tap the map where the fountain is, then drag the pin to fine-tune.</p>
       {props.gpsUnavailable && (
         <p className="mt-2 rounded bg-amber-50 px-2 py-1 text-xs text-amber-800">
-          We couldn&rsquo;t confirm your location — make sure the pin is exactly where the fountain
-          is.
+          We couldn&rsquo;t confirm your location — make sure the pin is exactly where the fountain is.
         </p>
       )}
-      {!props.placeable && props.pin === null && (
+      {!props.placeable && (
         <p className="mt-2 text-xs text-slate-500">Zoom in to place the fountain.</p>
       )}
       <Coord pin={props.pin} />
@@ -1133,21 +1128,22 @@ function PlacingStep(props: AddFountainPanelProps) {
         <button
           type="button"
           onClick={props.onPlaceAtCenter}
-          className="rounded-full border border-slate-300 px-3 py-1.5 text-sm text-slate-700"
+          disabled={!props.placeable}
+          className="rounded-full border border-slate-300 px-3 py-1.5 text-sm text-slate-700 disabled:opacity-40"
         >
           Place at map center
         </button>
-        <span className="inline-flex gap-1" aria-label="Nudge the pin">
+        <span className="inline-flex gap-1">
           {(["n", "s", "e", "w"] as const).map((d) => (
             <button
               key={d}
               type="button"
               onClick={() => props.onNudge(d)}
-              disabled={!props.pin}
-              aria-label={`Nudge ${{ n: "north", s: "south", e: "east", w: "west" }[d]}`}
+              disabled={!props.pin || !props.placeable}
+              aria-label={`Nudge ${dirs[d]}`}
               className="rounded border border-slate-300 px-2 py-1 text-xs disabled:opacity-40"
             >
-              {{ n: "↑", s: "↓", e: "→", w: "←" }[d]}
+              {glyph[d]}
             </button>
           ))}
         </span>
@@ -1174,34 +1170,18 @@ function DetailsStep(props: AddFountainPanelProps) {
         <legend className="text-sm font-semibold text-slate-700">Is it working?</legend>
         <div className="mt-1 flex gap-4">
           <label className="flex items-center gap-2 text-sm">
-            <input
-              type="radio"
-              name="working"
-              checked={props.working}
-              onChange={() => props.onSetWorking(true)}
-            />
+            <input type="radio" name="working" checked={props.working} onChange={() => props.onSetWorking(true)} />
             Yes
           </label>
           <label className="flex items-center gap-2 text-sm">
-            <input
-              type="radio"
-              name="working"
-              checked={!props.working}
-              onChange={() => props.onSetWorking(false)}
-            />
+            <input type="radio" name="working" checked={!props.working} onChange={() => props.onSetWorking(false)} />
             No
           </label>
         </div>
       </fieldset>
       <div className="mt-4 flex justify-between">
-        <button type="button" onClick={props.onBack} className="text-sm text-slate-600 underline">
-          Back
-        </button>
-        <button
-          type="button"
-          onClick={props.onSubmit}
-          className="rounded-full bg-[#F2C200] px-4 py-2 text-sm font-bold text-[#0A357E]"
-        >
+        <button type="button" onClick={props.onBack} className="text-sm text-slate-600 underline">Back</button>
+        <button type="button" onClick={props.onSubmit} className="rounded-full bg-[#F2C200] px-4 py-2 text-sm font-bold text-[#0A357E]">
           Add fountain
         </button>
       </div>
@@ -1217,179 +1197,380 @@ function DetailsStep(props: AddFountainPanelProps) {
 ```bash
 pnpm --filter web exec prettier --write web/components/map/AddFountainPanel.tsx web/components/map/AddFountainPanel.test.tsx web/components/map/AddFountainFab.tsx web/components/map/AddFountainFab.test.tsx
 git add web/components/map/AddFountainPanel.tsx web/components/map/AddFountainPanel.test.tsx web/components/map/AddFountainFab.tsx web/components/map/AddFountainFab.test.tsx
-git commit -m "feat(web): AddFountainPanel + FAB (presentational, keyboard placement, duplicate/error) (slice 6b-2)"
+git commit -m "feat(web): AddFountainPanel + FAB (keyboard placement, Escape/focus, gated controls) (slice 6b-2)"
 ```
 
 ---
 
-### Task 6: `useAddFountainMode` hook + MapBrowser/loader/page wiring (PR 1 integration)
+### Task 6: `PlacementMap` adapter (imperative MapLibre glue, behind a testable interface)
 
 **Files:**
-- Create: `web/components/map/useAddFountainMode.ts`
-- Modify: `web/components/map/MapBrowser.tsx`
-- Modify: `web/components/map/MapBrowserLoader.tsx`
-- Modify: `web/app/page.tsx`
-- Test: `web/app/page.test.tsx` (new)
+- Create: `web/components/map/placement-map.ts`
 
 **Interfaces:**
-- Consumes: `addReducer`/`initialAddState`/`NUDGE_STEP_M` (Task 4), `boundFromFix`/`clampToBound`/`canPlace`/`Bound`/`LngLat`/`GpsFix` (Task 2), `addFountain` (Task 3), `AddFountainPanel`/`AddFountainFab` (Task 5).
-- Produces: `useAddFountainMode(getMap: () => maplibregl.Map | null, opts: { isAuthenticated: boolean; autoEnter: boolean }): { active: boolean; fab: ReactNode; panel: ReactNode }` — encapsulates all map glue + state; `MapBrowser` renders `{fab}` and `{panel}` and consults `active` to suppress browse interactions.
+- Consumes: `maplibre-gl`, `Bound`/`LngLat`/`ViewportBounds`/`ringFeatureCollection` (Task 2), `PLACE_MIN_ZOOM` (Task 2).
+- Produces:
+  - `interface PlacementMap { getZoom(): number; getCenter(): LngLat; getViewport(): ViewportBounds; flyToFix(center: LngLat): void; subscribe(h: { onClick: (p: LngLat) => void; onMoveEnd: () => void }): () => void; setPin(p: LngLat | null, onDragEnd: (p: LngLat) => void): void; setRing(bound: Bound | null): void; teardown(): void }`
+  - `createPlacementMap(map: maplibregl.Map): PlacementMap`.
 
-> The hook's MapLibre glue cannot run under jsdom (no WebGL), exactly like `MapBrowser` itself — so it is covered by `next build` typecheck + the owner-driven manual verify (§13), while the **logic** it orchestrates is already unit-tested in Tasks 2 and 4. Keep the hook a thin orchestration layer; do not put testable logic here.
+This is the **only** module that touches MapLibre imperatively. It has no decision logic — it is verified by `tsc`/`next build` + the owner manual verify (§13), exactly as `MapBrowser` is. All decisions live in Tasks 2/4/7.
 
-- [ ] **Step 1: Implement `useAddFountainMode.ts`.** The hook owns: a `useReducer(addReducer, initialAddState)`; a maplibre `Marker` (draggable) for the pin; a `circle`/`viewport` indicator (a GeoJSON source + a line/fill layer named `add-bound` for the ring); a one-shot `navigator.geolocation.getCurrentPosition`; map `click` (drop), marker `dragend` (drop), and `moveend` (recompute bound + `canPlace`) listeners installed on `enter` and torn down on `cancel`/unmount.
+- [ ] **Step 1: Implement** — `web/components/map/placement-map.ts`:
+
+```ts
+import maplibregl from "maplibre-gl";
+import { PLACE_MIN_ZOOM } from "../../lib/map/constants";
+import { ringFeatureCollection, type Bound, type LngLat, type ViewportBounds } from "../../lib/map/placement";
+
+const RING_SOURCE = "add-bound";
+const RING_LAYER = "add-bound-line";
+
+export interface PlacementMap {
+  getZoom(): number;
+  getCenter(): LngLat;
+  getViewport(): ViewportBounds;
+  flyToFix(center: LngLat): void;
+  subscribe(h: { onClick: (p: LngLat) => void; onMoveEnd: () => void }): () => void;
+  setPin(p: LngLat | null, onDragEnd: (p: LngLat) => void): void;
+  setRing(bound: Bound | null): void;
+  teardown(): void;
+}
+
+export function createPlacementMap(map: maplibregl.Map): PlacementMap {
+  let marker: maplibregl.Marker | null = null;
+
+  function ensureRing() {
+    if (map.getSource(RING_SOURCE)) return;
+    map.addSource(RING_SOURCE, { type: "geojson", data: ringFeatureCollection(null) });
+    map.addLayer({
+      id: RING_LAYER,
+      type: "line",
+      source: RING_SOURCE,
+      paint: { "line-color": "#0A357E", "line-opacity": 0.4, "line-dasharray": [2, 2] },
+    });
+  }
+
+  return {
+    getZoom: () => map.getZoom(),
+    getCenter: () => {
+      const c = map.getCenter();
+      return { lng: c.lng, lat: c.lat };
+    },
+    getViewport: () => {
+      const b = map.getBounds();
+      return { west: b.getWest(), south: b.getSouth(), east: b.getEast(), north: b.getNorth() };
+    },
+    flyToFix: (center) =>
+      map.easeTo({ center: [center.lng, center.lat], zoom: Math.max(map.getZoom(), PLACE_MIN_ZOOM) }),
+    subscribe: ({ onClick, onMoveEnd }) => {
+      const click = (e: maplibregl.MapMouseEvent) => onClick({ lng: e.lngLat.lng, lat: e.lngLat.lat });
+      const move = () => onMoveEnd();
+      map.on("click", click);
+      map.on("moveend", move);
+      return () => {
+        map.off("click", click);
+        map.off("moveend", move);
+      };
+    },
+    setPin: (p, onDragEnd) => {
+      if (!p) {
+        marker?.remove();
+        marker = null;
+        return;
+      }
+      if (!marker) {
+        marker = new maplibregl.Marker({ draggable: true, color: "#0A357E" });
+        marker.on("dragend", () => {
+          const ll = marker!.getLngLat();
+          onDragEnd({ lng: ll.lng, lat: ll.lat });
+        });
+        marker.setLngLat([p.lng, p.lat]).addTo(map);
+      } else {
+        marker.setLngLat([p.lng, p.lat]);
+      }
+    },
+    setRing: (bound) => {
+      ensureRing();
+      const src = map.getSource(RING_SOURCE) as maplibregl.GeoJSONSource | undefined;
+      src?.setData(ringFeatureCollection(bound));
+    },
+    teardown: () => {
+      marker?.remove();
+      marker = null;
+      if (map.getLayer(RING_LAYER)) map.removeLayer(RING_LAYER);
+      if (map.getSource(RING_SOURCE)) map.removeSource(RING_SOURCE);
+    },
+  };
+}
+```
+
+- [ ] **Step 2: Typecheck only (no unit test — no WebGL in jsdom).** `pnpm --filter web exec tsc --noEmit` → no errors for this file (full build runs in Task 8).
+
+- [ ] **Step 3: Format + commit.**
+
+```bash
+pnpm --filter web exec prettier --write web/components/map/placement-map.ts
+git add web/components/map/placement-map.ts
+git commit -m "feat(web): PlacementMap adapter (testable MapLibre seam for add-fountain) (slice 6b-2)"
+```
+
+---
+
+### Task 7: `useAddFountainMode` hook (orchestration, unit-tested against a fake `PlacementMap`)
+
+**Files:**
+- Create: `web/components/map/useAddFountainMode.tsx`
+- Test: `web/components/map/useAddFountainMode.test.tsx`
+
+**Interfaces:**
+- Consumes: `PlacementMap` (Task 6), `addReducer`/`initialAddState` (Task 4), `boundFromFix`/`canPlace`/`GpsFix` (Task 2), `addFountain` (Task 3), `AddFountainFab`/`AddFountainPanel` (Task 5), `useRouter`.
+- Produces: `useAddFountainMode(placementMap: PlacementMap | null, opts: { isAuthenticated: boolean; webglOk: boolean; autoEnter: boolean; hadAddParam: boolean }): { active: boolean; fab: ReactNode; panel: ReactNode }`.
+
+Design notes that resolve the spec-review findings:
+- **`?add=1` is always stripped** when `hadAddParam` (authed or not); auto-enter only additionally when authed (spec §4, review MAJOR 1).
+- The FAB receives the **real `webglOk`** (review MAJOR 2).
+- Map event handlers read **refs** (`placeableRef`, `boundRef`) so there is no stale closure and no re-subscription churn (review MAJOR 3).
+- `DROP_PIN` (map click) and `placeAtCenter` are **gated on `placeable`** before dispatch; keyboard controls are disabled in the panel when `!placeable` (review MAJOR 4).
+- `fix` is **reset to `{ ok:false }` on every `enter`** before requesting a new position (review MINOR).
+
+- [ ] **Step 1: Write the failing test** — `web/components/map/useAddFountainMode.test.tsx` (a harness component drives the hook against a fake `PlacementMap`):
+
+```tsx
+// @vitest-environment jsdom
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import type { PlacementMap } from "./placement-map";
+
+const { addFountain, replace, push } = vi.hoisted(() => ({
+  addFountain: vi.fn(),
+  replace: vi.fn(),
+  push: vi.fn(),
+}));
+vi.mock("../../app/actions/add-fountain", () => ({ addFountain }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ replace, push }) }));
+
+import { useAddFountainMode } from "./useAddFountainMode";
+
+function makeFakeMap(zoom = 17) {
+  const calls = { pin: [] as ({ lng: number; lat: number } | null)[], ring: [] as unknown[], flyTo: [] as unknown[], unsub: 0, torn: 0 };
+  let onClick: ((p: { lng: number; lat: number }) => void) | null = null;
+  const map: PlacementMap = {
+    getZoom: () => zoom,
+    getCenter: () => ({ lng: -122.3, lat: 47.6 }),
+    getViewport: () => ({ west: -122.305, south: 47.598, east: -122.295, north: 47.602 }),
+    flyToFix: (c) => calls.flyTo.push(c),
+    subscribe: (h) => {
+      onClick = h.onClick;
+      return () => {
+        calls.unsub++;
+      };
+    },
+    setPin: (p) => calls.pin.push(p),
+    setRing: (b) => calls.ring.push(b),
+    teardown: () => {
+      calls.torn++;
+    },
+  };
+  return { map, calls, click: (p: { lng: number; lat: number }) => onClick?.(p) };
+}
+
+function Harness({ map, opts }: { map: PlacementMap | null; opts: Parameters<typeof useAddFountainMode>[1] }) {
+  const { fab, panel } = useAddFountainMode(map, opts);
+  return (
+    <div>
+      {fab}
+      {panel}
+    </div>
+  );
+}
+
+const geo = { getCurrentPosition: vi.fn() };
+beforeEach(() => {
+  Object.defineProperty(global.navigator, "geolocation", { value: geo, configurable: true });
+});
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+});
+
+describe("useAddFountainMode", () => {
+  it("FAB is null when WebGL is unavailable", () => {
+    const { map } = makeFakeMap();
+    render(<Harness map={map} opts={{ isAuthenticated: true, webglOk: false, autoEnter: false, hadAddParam: false }} />);
+    expect(screen.queryByRole("button", { name: /add a fountain/i })).toBeNull();
+  });
+
+  it("entering requests geolocation and shows the placing panel", () => {
+    geo.getCurrentPosition.mockImplementation((_ok, err) => err({ code: 1 }));
+    const { map } = makeFakeMap();
+    render(<Harness map={map} opts={{ isAuthenticated: true, webglOk: true, autoEnter: false, hadAddParam: false }} />);
+    fireEvent.click(screen.getByRole("button", { name: /add a fountain/i }));
+    expect(geo.getCurrentPosition).toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: /add a fountain/i })).toBeTruthy();
+    // no GPS -> fallback copy
+    expect(screen.getByText(/couldn.t confirm your location/i)).toBeTruthy();
+  });
+
+  it("a map click at street zoom drops a pin; below-zoom click is ignored", () => {
+    geo.getCurrentPosition.mockImplementation((_ok, err) => err({ code: 1 }));
+    const low = makeFakeMap(10);
+    const { rerender } = render(
+      <Harness map={low.map} opts={{ isAuthenticated: true, webglOk: true, autoEnter: false, hadAddParam: false }} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /add a fountain/i }));
+    act(() => low.click({ lng: -122.3, lat: 47.6 }));
+    expect(screen.getByText(/drop a pin to set the location/i)).toBeTruthy(); // still no pin (gated)
+
+    const ok = makeFakeMap(17);
+    rerender(<Harness map={ok.map} opts={{ isAuthenticated: true, webglOk: true, autoEnter: false, hadAddParam: false }} />);
+    fireEvent.click(screen.getByRole("button", { name: /add a fountain/i }));
+    act(() => ok.click({ lng: -122.3, lat: 47.6 }));
+    expect(screen.getByText(/lat 47\.6/i)).toBeTruthy(); // pin coord readout
+  });
+
+  it("auto-enters and strips ?add=1 when authed", () => {
+    geo.getCurrentPosition.mockImplementation((_ok, err) => err({ code: 1 }));
+    const { map } = makeFakeMap();
+    render(<Harness map={map} opts={{ isAuthenticated: true, webglOk: true, autoEnter: true, hadAddParam: true }} />);
+    expect(screen.getByRole("dialog", { name: /add a fountain/i })).toBeTruthy();
+    expect(replace).toHaveBeenCalledWith("/");
+  });
+
+  it("strips ?add=1 without entering when anonymous", () => {
+    const { map } = makeFakeMap();
+    render(<Harness map={map} opts={{ isAuthenticated: false, webglOk: true, autoEnter: false, hadAddParam: true }} />);
+    expect(screen.queryByRole("dialog", { name: /add a fountain/i })).toBeNull();
+    expect(replace).toHaveBeenCalledWith("/");
+  });
+
+  it("submit success navigates to the new fountain", async () => {
+    geo.getCurrentPosition.mockImplementation((_ok, err) => err({ code: 1 }));
+    addFountain.mockResolvedValue({ ok: true, fountainId: "new-1" });
+    const ok = makeFakeMap(17);
+    render(<Harness map={ok.map} opts={{ isAuthenticated: true, webglOk: true, autoEnter: false, hadAddParam: false }} />);
+    fireEvent.click(screen.getByRole("button", { name: /add a fountain/i }));
+    act(() => ok.click({ lng: -122.3, lat: 47.6 }));
+    fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /add fountain/i }));
+    });
+    expect(addFountain).toHaveBeenCalledWith(
+      expect.objectContaining({ location: { latitude: 47.6, longitude: -122.3 }, is_working: true }),
+    );
+    expect(push).toHaveBeenCalledWith("/fountains/new-1");
+  });
+
+  it("submit duplicate shows the View it link", async () => {
+    geo.getCurrentPosition.mockImplementation((_ok, err) => err({ code: 1 }));
+    addFountain.mockResolvedValue({ ok: false, error: "duplicate", fountainId: "dup-9" });
+    const ok = makeFakeMap(17);
+    render(<Harness map={ok.map} opts={{ isAuthenticated: true, webglOk: true, autoEnter: false, hadAddParam: false }} />);
+    fireEvent.click(screen.getByRole("button", { name: /add a fountain/i }));
+    act(() => ok.click({ lng: -122.3, lat: 47.6 }));
+    fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /add fountain/i }));
+    });
+    expect(screen.getByRole("link", { name: /view it/i }).getAttribute("href")).toBe("/fountains/dup-9");
+  });
+});
+```
+
+- [ ] **Step 2: Run, verify fail.** `pnpm --filter web exec vitest run components/map/useAddFountainMode.test.tsx` → FAIL.
+
+- [ ] **Step 3: Implement** — `web/components/map/useAddFountainMode.tsx`:
 
 ```tsx
 "use client";
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import type { ReactNode } from "react";
-import maplibregl from "maplibre-gl";
+import { useCallback, useEffect, useReducer, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { addFountain } from "../../app/actions/add-fountain";
 import { addReducer, initialAddState } from "../../lib/add-fountain-machine";
-import {
-  boundFromFix,
-  canPlace,
-  type Bound,
-  type GpsFix,
-  type LngLat,
-} from "../../lib/map/placement";
 import { GEOLOCATE_TIMEOUT_MS } from "../../lib/map/constants";
+import { boundFromFix, canPlace, type Bound, type GpsFix } from "../../lib/map/placement";
 import { AddFountainFab } from "./AddFountainFab";
 import { AddFountainPanel } from "./AddFountainPanel";
-
-function viewportOf(map: maplibregl.Map) {
-  const b = map.getBounds();
-  return { west: b.getWest(), south: b.getSouth(), east: b.getEast(), north: b.getNorth() };
-}
+import type { PlacementMap } from "./placement-map";
 
 export function useAddFountainMode(
-  getMap: () => maplibregl.Map | null,
-  opts: { isAuthenticated: boolean; autoEnter: boolean },
-) {
+  placementMap: PlacementMap | null,
+  opts: { isAuthenticated: boolean; webglOk: boolean; autoEnter: boolean; hadAddParam: boolean },
+): { active: boolean; fab: ReactNode; panel: ReactNode } {
   const [state, dispatch] = useReducer(addReducer, initialAddState);
-  const [zoom, setZoom] = useState(0);
   const [fix, setFix] = useState<GpsFix>({ ok: false });
-  const markerRef = useRef<maplibregl.Marker | null>(null);
+  const [zoom, setZoom] = useState(0);
   const router = useRouter();
   const active = state.phase !== "idle";
 
-  // Derive the bound from the current fix + viewport whenever either changes (during placing).
+  const placeable = state.bound ? canPlace(zoom, state.bound) : false;
+  // Refs so the imperative map handlers always read the latest values (no stale closure).
+  const placeableRef = useRef(placeable);
+  placeableRef.current = placeable;
+
   const recomputeBound = useCallback(() => {
-    const map = getMap();
-    if (!map) return;
-    const bound = boundFromFix(fix, viewportOf(map));
-    dispatch({ type: "SET_BOUND", bound });
-    setZoom(map.getZoom());
-  }, [getMap, fix]);
+    if (!placementMap) return;
+    dispatch({ type: "SET_BOUND", bound: boundFromFix(fix, placementMap.getViewport()) });
+    setZoom(placementMap.getZoom());
+  }, [placementMap, fix]);
 
   const enter = useCallback(() => {
-    const map = getMap();
-    if (!map) return;
+    if (!placementMap) return;
     dispatch({ type: "ENTER" });
-    setZoom(map.getZoom());
-    dispatch({ type: "SET_BOUND", bound: boundFromFix({ ok: false }, viewportOf(map)) });
+    setFix({ ok: false }); // reset stale GPS before the new request
+    setZoom(placementMap.getZoom());
+    dispatch({ type: "SET_BOUND", bound: boundFromFix({ ok: false }, placementMap.getViewport()) });
     navigator.geolocation?.getCurrentPosition(
       (pos) => {
-        const f: GpsFix = {
-          ok: true,
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude,
-          accuracy: pos.coords.accuracy,
-        };
+        const f: GpsFix = { ok: true, lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy };
         setFix(f);
-        map.easeTo({ center: [f.lng, f.lat], zoom: Math.max(map.getZoom(), 16) });
+        placementMap.flyToFix({ lng: f.lng, lat: f.lat });
       },
       () => setFix({ ok: false }),
       { enableHighAccuracy: false, timeout: GEOLOCATE_TIMEOUT_MS },
     );
-  }, [getMap]);
+  }, [placementMap]);
 
-  const cancel = useCallback(() => dispatch({ type: "CANCEL" }), []);
-
-  // Auto-enter after a post-sign-in return (?add=1 + authed), then strip the query (spec §4).
+  // Auto-enter (authed) + always strip ?add=1 when present (spec §4).
   useEffect(() => {
-    if (opts.autoEnter && opts.isAuthenticated && state.phase === "idle") {
-      enter();
-      router.replace("/");
-    }
+    if (!opts.hadAddParam) return;
+    if (opts.autoEnter && opts.isAuthenticated && placementMap) enter();
+    router.replace("/");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [opts.autoEnter, opts.isAuthenticated]);
+  }, [opts.hadAddParam, opts.autoEnter, opts.isAuthenticated, placementMap]);
 
-  // Map event wiring while active: click to drop, recompute bound on move, keep zoom fresh.
+  // Subscribe map events while active; handlers read refs so they never go stale.
   useEffect(() => {
-    const map = getMap();
-    if (!map || !active) return;
-    const onClick = (e: maplibregl.MapMouseEvent) =>
-      dispatch({ type: "DROP_PIN", point: { lng: e.lngLat.lng, lat: e.lngLat.lat } });
-    const onMove = () => recomputeBound();
-    map.on("click", onClick);
-    map.on("moveend", onMove);
-    return () => {
-      map.off("click", onClick);
-      map.off("moveend", onMove);
-    };
-  }, [getMap, active, recomputeBound]);
+    if (!placementMap || !active) return;
+    const unsub = placementMap.subscribe({
+      onClick: (p) => {
+        if (placeableRef.current) dispatch({ type: "DROP_PIN", point: p });
+      },
+      onMoveEnd: () => recomputeBound(),
+    });
+    return unsub;
+  }, [placementMap, active, recomputeBound]);
 
-  // Recompute the bound when the fix changes.
+  // Recompute the bound when the fix changes (after geolocation resolves).
   useEffect(() => {
     if (active) recomputeBound();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fix]);
 
-  // Reflect the pin as a draggable marker.
+  // Reflect pin + ring imperatively; tear everything down when leaving add-mode.
   useEffect(() => {
-    const map = getMap();
-    if (!map) return;
-    if (!state.pin) {
-      markerRef.current?.remove();
-      markerRef.current = null;
+    if (!placementMap) return;
+    if (!active) {
+      placementMap.teardown();
       return;
     }
-    if (!markerRef.current) {
-      const m = new maplibregl.Marker({ draggable: true, color: "#0A357E" });
-      m.on("dragend", () => {
-        const ll = m.getLngLat();
-        dispatch({ type: "DROP_PIN", point: { lng: ll.lng, lat: ll.lat } });
-      });
-      markerRef.current = m;
-      m.setLngLat([state.pin.lng, state.pin.lat]).addTo(map);
-    } else {
-      markerRef.current.setLngLat([state.pin.lng, state.pin.lat]);
-    }
-  }, [getMap, state.pin]);
-
-  // Draw/update the bound ring (circle) or clear it (viewport) — a GeoJSON source `add-bound`.
-  useEffect(() => {
-    const map = getMap();
-    if (!map || !map.isStyleLoaded?.()) return;
-    const fc = boundToFeatureCollection(state.bound);
-    const src = map.getSource("add-bound") as maplibregl.GeoJSONSource | undefined;
-    if (src) {
-      src.setData(fc);
-    } else if (active) {
-      map.addSource("add-bound", { type: "geojson", data: fc });
-      map.addLayer({
-        id: "add-bound",
-        type: "line",
-        source: "add-bound",
-        paint: { "line-color": "#0A357E", "line-opacity": 0.4, "line-dasharray": [2, 2] },
-      });
-    }
-    if (!active && map.getLayer("add-bound")) {
-      map.removeLayer("add-bound");
-      map.removeSource("add-bound");
-      markerRef.current?.remove();
-      markerRef.current = null;
-    }
-  }, [getMap, state.bound, active]);
+    placementMap.setPin(state.pin, (p) => dispatch({ type: "DROP_PIN", point: p }));
+    placementMap.setRing(state.bound);
+  }, [placementMap, active, state.pin, state.bound]);
 
   const placeAtCenter = useCallback(() => {
-    const map = getMap();
-    if (!map) return;
-    const c = map.getCenter();
-    dispatch({ type: "DROP_PIN", point: { lng: c.lng, lat: c.lat } });
-  }, [getMap]);
+    if (!placementMap || !placeableRef.current) return;
+    dispatch({ type: "DROP_PIN", point: placementMap.getCenter() });
+  }, [placementMap]);
 
   const submit = useCallback(async () => {
     if (!state.pin) return;
@@ -1408,10 +1589,8 @@ export function useAddFountainMode(
     }
   }, [state.pin, state.working, router]);
 
-  const placeable = state.bound ? canPlace(zoom, state.bound) : false;
-
   const fab: ReactNode = (
-    <AddFountainFab isAuthenticated={opts.isAuthenticated} webglOk onEnter={enter} />
+    <AddFountainFab isAuthenticated={opts.isAuthenticated} webglOk={opts.webglOk} onEnter={enter} />
   );
   const panel: ReactNode = (
     <AddFountainPanel
@@ -1422,7 +1601,7 @@ export function useAddFountainMode(
       gpsUnavailable={!fix.ok}
       duplicateId={state.duplicateId}
       errorKind={state.errorKind}
-      onCancel={cancel}
+      onCancel={() => dispatch({ type: "CANCEL" })}
       onPlaceAtCenter={placeAtCenter}
       onNudge={(dir) => dispatch({ type: "NUDGE", dir })}
       onNext={() => dispatch({ type: "NEXT" })}
@@ -1434,33 +1613,37 @@ export function useAddFountainMode(
 
   return { active, fab, panel };
 }
-
-function boundToFeatureCollection(bound: Bound | null): GeoJSON.FeatureCollection {
-  if (!bound || bound.kind !== "circle") return { type: "FeatureCollection", features: [] };
-  const { center, radiusM } = bound;
-  const pts: [number, number][] = [];
-  const dLat = radiusM / 111320;
-  for (let i = 0; i <= 64; i++) {
-    const a = (i / 64) * 2 * Math.PI;
-    const dLng = (radiusM / (111320 * Math.cos((center.lat * Math.PI) / 180))) * Math.cos(a);
-    pts.push([center.lng + dLng, center.lat + dLat * Math.sin(a)]);
-  }
-  return {
-    type: "FeatureCollection",
-    features: [{ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: pts } }],
-  };
-}
 ```
 
-> **Note:** `AddFountainFab` is rendered here with `webglOk` hardcoded `true` because the hook only mounts inside `MapBrowser` (which renders nothing map-related when `!webglOk`). The FAB's own `!webglOk` guard remains for unit-test clarity. If `MapBrowser` is refactored to always mount the FAB, thread the real `webglOk` here.
+- [ ] **Step 4: Run, verify pass.** `pnpm --filter web exec vitest run components/map/useAddFountainMode.test.tsx` → PASS. (If `navigator.geolocation` cannot be redefined in your jsdom, define it via `vi.stubGlobal("navigator", { ...navigator, geolocation: geo })` instead.)
 
-- [ ] **Step 2: Wire `MapBrowser.tsx`.** Add props and integrate the hook:
-  - Change the signature to `export default function MapBrowser({ isAuthenticated = false, autoEnterAdd = false }: { isAuthenticated?: boolean; autoEnterAdd?: boolean })`.
-  - After `mapRef` is set up, call: `const add = useAddFountainMode(() => mapRef.current, { isAuthenticated, autoEnter: autoEnterAdd });`
-  - In the pin-click handlers (`openPin`), early-return when `add.active` so a click in placement mode does not navigate: `const openPin = (e) => { if (add.active) return; ... }`.
-  - In the returned JSX, render `{add.fab}` and `{add.panel}` inside the root `<div className="absolute inset-0">` (siblings of the existing hints), and pass through the existing `FountainsInViewList` only when `!add.active` (hide it behind the panel): wrap it `{!add.active && <FountainsInViewList … />}`.
+- [ ] **Step 5: Format + commit.**
 
-- [ ] **Step 3: Wire `MapBrowserLoader.tsx`.** Accept and forward the props:
+```bash
+pnpm --filter web exec prettier --write web/components/map/useAddFountainMode.tsx web/components/map/useAddFountainMode.test.tsx
+git add web/components/map/useAddFountainMode.tsx web/components/map/useAddFountainMode.test.tsx
+git commit -m "feat(web): useAddFountainMode hook (gated drop, ?add=1 strip, submit nav) + fake-map tests (slice 6b-2)"
+```
+
+---
+
+### Task 8: Wire into `MapBrowser` / loader / page (PR 1 integration)
+
+**Files:**
+- Modify: `web/components/map/MapBrowser.tsx`
+- Modify: `web/components/map/MapBrowserLoader.tsx`
+- Modify: `web/app/page.tsx`
+- Test: `web/app/page.test.tsx` (new)
+
+- [ ] **Step 1: Wire `MapBrowser.tsx`.**
+  - Signature: `export default function MapBrowser({ isAuthenticated = false, autoEnterAdd = false, hadAddParam = false }: { isAuthenticated?: boolean; autoEnterAdd?: boolean; hadAddParam?: boolean })`.
+  - Add state `const [placementMap, setPlacementMap] = useState<PlacementMap | null>(null)`; inside the existing `map.on("load", ...)` handler (after layers are added), call `setPlacementMap(createPlacementMap(map))`. In the effect cleanup, `setPlacementMap(null)`.
+  - Call the hook: `const add = useAddFountainMode(placementMap, { isAuthenticated, webglOk, autoEnter: autoEnterAdd, hadAddParam });`
+  - **Suppress browse nav with a ref (no stale closure):** add `const addActiveRef = useRef(false); addActiveRef.current = add.active;` and in `openPin` early-return `if (addActiveRef.current) return;` (also guard the cluster-click handler the same way). Do **not** add `add.active` to the map-init effect deps.
+  - In the returned JSX root `<div className="absolute inset-0">`, render `{webglOk && add.fab}` and `{add.panel}` as siblings of the hints, and render `<FountainsInViewList … />` only when `!add.active`: `{!add.active && <FountainsInViewList … />}`.
+  - Import `useAddFountainMode` and `createPlacementMap`/`PlacementMap`.
+
+- [ ] **Step 2: Wire `MapBrowserLoader.tsx`:**
 
 ```tsx
 "use client";
@@ -1472,15 +1655,19 @@ const MapBrowser = dynamic(() => import("./MapBrowser"), {
 export default function MapBrowserLoader({
   isAuthenticated,
   autoEnterAdd,
+  hadAddParam,
 }: {
   isAuthenticated: boolean;
   autoEnterAdd: boolean;
+  hadAddParam: boolean;
 }) {
-  return <MapBrowser isAuthenticated={isAuthenticated} autoEnterAdd={autoEnterAdd} />;
+  return (
+    <MapBrowser isAuthenticated={isAuthenticated} autoEnterAdd={autoEnterAdd} hadAddParam={hadAddParam} />
+  );
 }
 ```
 
-- [ ] **Step 4: Wire `app/page.tsx`.** It is a server component; read `searchParams` (async in Next 16), call `getViewer`, and pass props:
+- [ ] **Step 3: Wire `app/page.tsx`** (server component; Next 16 async `searchParams`):
 
 ```tsx
 import Link from "next/link";
@@ -1497,30 +1684,31 @@ export default async function Home({
 }) {
   const [{ add }, viewer] = await Promise.all([searchParams, getViewer(crypto.randomUUID())]);
   const isAuthenticated = viewer.state === "authed";
-  const autoEnterAdd = add === "1" && isAuthenticated;
+  const hadAddParam = add === "1";
+  const autoEnterAdd = hadAddParam && isAuthenticated;
   return (
     <div className="flex min-h-dvh flex-col">
       <SiteHeader variant="hero" />
       <main className="relative flex-1">
-        <MapBrowserLoader isAuthenticated={isAuthenticated} autoEnterAdd={autoEnterAdd} />
+        <MapBrowserLoader
+          isAuthenticated={isAuthenticated}
+          autoEnterAdd={autoEnterAdd}
+          hadAddParam={hadAddParam}
+        />
       </main>
       <footer className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 bg-gradient-to-b from-[#0E4DA4] to-[#0A357E] px-6 py-3 text-xs text-white/60">
         <span>&copy; {new Date().getFullYear()} FountainRank</span>
-        <Link className="underline-offset-4 hover:text-white hover:underline" href="/privacy">
-          Privacy
-        </Link>
-        <Link className="underline-offset-4 hover:text-white hover:underline" href="/terms">
-          Terms
-        </Link>
+        <Link className="underline-offset-4 hover:text-white hover:underline" href="/privacy">Privacy</Link>
+        <Link className="underline-offset-4 hover:text-white hover:underline" href="/terms">Terms</Link>
       </footer>
     </div>
   );
 }
 ```
 
-> `getViewer` is called both here and inside `SiteHeader`. That mirrors the existing 6b-1 cost (the deferred follow-up to dedupe `/me` is out of scope for this slice); keep the second call.
+> `getViewer` is called both here and inside `SiteHeader` — that mirrors the existing 6b-1 cost (the dedupe is a deferred follow-up, out of scope). Keep the second call.
 
-- [ ] **Step 5: Update `web/app/page.test.tsx`.** The page is now async and takes `searchParams`. Mock `getViewer`, `SiteHeader`, and `MapBrowserLoader`, and assert prop threading:
+- [ ] **Step 4: Write `web/app/page.test.tsx`:**
 
 ```tsx
 // @vitest-environment jsdom
@@ -1531,8 +1719,13 @@ const { getViewer } = vi.hoisted(() => ({ getViewer: vi.fn() }));
 vi.mock("../lib/server/viewer", () => ({ getViewer }));
 vi.mock("../components/SiteHeader", () => ({ SiteHeader: () => <div data-testid="site-header" /> }));
 vi.mock("../components/map/MapBrowserLoader", () => ({
-  default: (p: { isAuthenticated: boolean; autoEnterAdd: boolean }) => (
-    <div data-testid="map" data-auth={String(p.isAuthenticated)} data-auto={String(p.autoEnterAdd)} />
+  default: (p: { isAuthenticated: boolean; autoEnterAdd: boolean; hadAddParam: boolean }) => (
+    <div
+      data-testid="map"
+      data-auth={String(p.isAuthenticated)}
+      data-auto={String(p.autoEnterAdd)}
+      data-had={String(p.hadAddParam)}
+    />
   ),
 }));
 
@@ -1546,76 +1739,56 @@ afterEach(() => {
 it("auto-enters add when ?add=1 and authed", async () => {
   getViewer.mockResolvedValue({ state: "authed", displayName: "A", avatarUrl: null, isAdmin: false });
   render(await Home({ searchParams: Promise.resolve({ add: "1" }) }));
-  expect(screen.getByTestId("map").getAttribute("data-auto")).toBe("true");
-  expect(screen.getByTestId("map").getAttribute("data-auth")).toBe("true");
+  const map = screen.getByTestId("map");
+  expect(map.getAttribute("data-auto")).toBe("true");
+  expect(map.getAttribute("data-had")).toBe("true");
 });
 
-it("does not auto-enter when ?add=1 but anonymous", async () => {
+it("flags hadAddParam but does not auto-enter when anonymous", async () => {
   getViewer.mockResolvedValue({ state: "anonymous" });
   render(await Home({ searchParams: Promise.resolve({ add: "1" }) }));
-  expect(screen.getByTestId("map").getAttribute("data-auto")).toBe("false");
-  expect(screen.getByTestId("map").getAttribute("data-auth")).toBe("false");
+  const map = screen.getByTestId("map");
+  expect(map.getAttribute("data-auto")).toBe("false");
+  expect(map.getAttribute("data-had")).toBe("true");
 });
 
-it("renders the header", async () => {
+it("renders the header and no add flags without ?add", async () => {
   getViewer.mockResolvedValue({ state: "anonymous" });
   render(await Home({ searchParams: Promise.resolve({}) }));
   expect(screen.getByTestId("site-header")).toBeTruthy();
+  expect(screen.getByTestId("map").getAttribute("data-had")).toBe("false");
 });
 ```
 
-- [ ] **Step 6: Run the web vitest subset.** `pnpm --filter web exec vitest run app/page.test.tsx components/map/AddFountainFab.test.tsx components/map/AddFountainPanel.test.tsx` → PASS.
+- [ ] **Step 5: Run the web vitest subset.** `pnpm --filter web exec vitest run app/page.test.tsx components/map/useAddFountainMode.test.tsx components/map/AddFountainPanel.test.tsx components/map/AddFountainFab.test.tsx` → PASS.
 
-- [ ] **Step 7: Full local web mirror (incl. `next build` — the `"use server"`/route gotcha).** `powershell.exe -NoProfile -ExecutionPolicy Bypass -File run.ps1 check -Web` → green (ESLint + Prettier + tsc + vitest + build). Fix any unused-import / Tailwind-order / type errors (e.g. the maplibre event types).
+- [ ] **Step 6: Full local web mirror (incl. `next build`).** `powershell.exe -NoProfile -ExecutionPolicy Bypass -File run.ps1 check -Web` → green. Fix any unused-import / Tailwind-order / maplibre-type errors.
 
-- [ ] **Step 8: Format + commit.**
+- [ ] **Step 7: Format + commit.**
 
 ```bash
-pnpm --filter web exec prettier --write web/components/map/useAddFountainMode.ts web/components/map/MapBrowser.tsx web/components/map/MapBrowserLoader.tsx web/app/page.tsx web/app/page.test.tsx
-git add web/components/map/useAddFountainMode.ts web/components/map/MapBrowser.tsx web/components/map/MapBrowserLoader.tsx web/app/page.tsx web/app/page.test.tsx
-git commit -m "feat(web): add-fountain placement mode on the home map (FAB, pin, bound, 409, ?add=1) (slice 6b-2)"
+pnpm --filter web exec prettier --write web/components/map/MapBrowser.tsx web/components/map/MapBrowserLoader.tsx web/app/page.tsx web/app/page.test.tsx
+git add web/components/map/MapBrowser.tsx web/components/map/MapBrowserLoader.tsx web/app/page.tsx web/app/page.test.tsx
+git commit -m "feat(web): mount add-fountain mode on the home map (FAB, suppression, ?add=1) (slice 6b-2)"
 ```
 
-- [ ] **Step 9: Full mirror + open PR 1.** Run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File run.ps1 check` (full: backend + workspace-js + web build + mobile) → green. Push the branch and open PR 1; then run **Codex Loop B** (`claude_help/codex-review-process.md`) + address every comment; squash-merge once CI is green and Codex `VERDICT: APPROVED`; deploy; verify per spec §13.
+- [ ] **Step 8: Full mirror + open PR 1.** `powershell.exe -NoProfile -ExecutionPolicy Bypass -File run.ps1 check` → green. Push, open PR 1, run **Codex Loop B** + address every comment, squash-merge on CI-green + `VERDICT: APPROVED`, deploy, verify per spec §13.
 
 ---
 
 ## PR 2 — optional fields (rating + attributes + comment + placement note)
 
-> Branch off updated `main` after PR 1 merges. Re-run the pnpm-store recovery if a Codex/WSL run dirtied it (`handoffs` gotcha): `rm -rf node_modules web/node_modules mobile/node_modules packages/*/node_modules && CI=true pnpm install`.
+> Branch off updated `main` after PR 1 merges. If a Codex/WSL run dirtied the pnpm store, recover first: `rm -rf node_modules web/node_modules mobile/node_modules packages/*/node_modules && CI=true pnpm install`.
 
-### Task 7: Style-guide entries for PR-2 UI (prerequisite)
-
-**Files:**
-- Modify: `docs/style-guide.md`
-
-Add: the **attribute observation controls** (boolean Yes/No/Unknown; enum select + Unknown; grouped by category; default Unknown), the **rating star-group** as used in the add flow, and the **comment + placement-note inputs** (textarea; ≤200 single-line with counter). Note the graceful-skip states (rating/attribute fetch failure).
-
-- [ ] **Step 1:** Add the entries (match structure/voice).
-- [ ] **Step 2:** Commit.
-
-```bash
-git add docs/style-guide.md
-git commit -m "docs(style-guide): add attribute/rating/comment add-fountain controls (slice 6b-2 PR2)"
-```
-
----
-
-### Task 8: Catalog fetch + `buildAttributeGroups`
+### Task 9: Catalog fetch (module-cached) + `buildAttributeGroups`
 
 **Files:**
-- Create: `web/lib/catalog.ts`
-- Test: `web/lib/catalog.test.ts`
+- Create: `web/lib/catalog.ts` (+ `web/lib/catalog.test.ts`)
 
 **Interfaces:**
-- Consumes: `@fountainrank/api-client` types (`AttributeTypeOut`, `RatingTypeOut`), `resolveApiBaseUrl`/`makeClient` (public, unauthenticated reads).
-- Produces:
-  - `type AttributeControl = { id:number; key:string; name:string; description:string; kind:"boolean"|"enum"; options:string[] }` (boolean → `["yes","no","unknown"]`; enum → `[...allowed_values,"unknown"]`).
-  - `type AttributeGroup = { category:string; controls:AttributeControl[] }`.
-  - `buildAttributeGroups(types: AttributeTypeOut[]): AttributeGroup[]` — group by `category`, controls + groups ordered by `sort_order`, unknown appended.
-  - `fetchRatingTypes(): Promise<RatingTypeOut[]>`, `fetchAttributeTypes(): Promise<AttributeTypeOut[]>` (thin unauthenticated client GETs; callers handle rejection by skipping the section).
+- Produces: `type AttributeControl`, `type AttributeGroup`, `buildAttributeGroups(types)`, `fetchRatingTypes()`, `fetchAttributeTypes()` (module-cached: a successful result is reused for the session; a rejection is **not** cached so a later attempt can retry).
 
-- [ ] **Step 1: Write the failing test** — `web/lib/catalog.test.ts` (pure `buildAttributeGroups`):
+- [ ] **Step 1: Write the failing test** — `web/lib/catalog.test.ts`:
 
 ```ts
 import { describe, expect, it } from "vitest";
@@ -1646,17 +1819,13 @@ describe("buildAttributeGroups", () => {
     expect(groups.map((g) => g.category)).toEqual(["physical", "access"]);
     expect(groups[0].controls.map((c) => c.name)).toEqual(["Bottle filler", "Dog bowl"]);
   });
-
   it("boolean -> yes/no/unknown; enum -> allowed_values + unknown", () => {
     const [g] = buildAttributeGroups([
       t({ id: 1, value_kind: "boolean" }),
       t({ id: 2, value_kind: "enum", allowed_values: ["cold", "ambient"], sort_order: 1 }),
     ]);
     expect(g.controls[0]).toMatchObject({ kind: "boolean", options: ["yes", "no", "unknown"] });
-    expect(g.controls[1]).toMatchObject({
-      kind: "enum",
-      options: ["cold", "ambient", "unknown"],
-    });
+    expect(g.controls[1]).toMatchObject({ kind: "enum", options: ["cold", "ambient", "unknown"] });
   });
 });
 ```
@@ -1689,72 +1858,91 @@ export function buildAttributeGroups(types: AttributeTypeOut[]): AttributeGroup[
   const byCat = new Map<string, AttributeControl[]>();
   for (const t of sorted) {
     const kind: "boolean" | "enum" = t.value_kind === "enum" ? "enum" : "boolean";
-    const options =
-      kind === "enum" ? [...(t.allowed_values ?? []), "unknown"] : ["yes", "no", "unknown"];
+    const options = kind === "enum" ? [...(t.allowed_values ?? []), "unknown"] : ["yes", "no", "unknown"];
     if (!byCat.has(t.category)) {
       byCat.set(t.category, []);
       order.push(t.category);
     }
-    byCat.get(t.category)!.push({
-      id: t.id,
-      key: t.key,
-      name: t.name,
-      description: t.description,
-      kind,
-      options,
-    });
+    byCat.get(t.category)!.push({ id: t.id, key: t.key, name: t.name, description: t.description, kind, options });
   }
   return order.map((category) => ({ category, controls: byCat.get(category)! }));
 }
 
-export async function fetchAttributeTypes(): Promise<AttributeTypeOut[]> {
-  const client = makeClient(resolveApiBaseUrl());
-  const { data, error } = await client.GET("/api/v1/attribute-types");
-  if (error || !data) throw new Error("attribute-types fetch failed");
+// Module-level session cache: reuse a successful fetch; do NOT cache a rejection (so a later
+// attempt retries). Public endpoints — no auth, no token.
+let ratingTypes: RatingTypeOut[] | null = null;
+let attributeTypes: AttributeTypeOut[] | null = null;
+
+export async function fetchRatingTypes(): Promise<RatingTypeOut[]> {
+  if (ratingTypes) return ratingTypes;
+  const { data, error } = await makeClient(resolveApiBaseUrl()).GET("/api/v1/rating-types");
+  if (error || !data) throw new Error("rating-types fetch failed");
+  ratingTypes = data;
   return data;
 }
 
-export async function fetchRatingTypes(): Promise<RatingTypeOut[]> {
-  const client = makeClient(resolveApiBaseUrl());
-  const { data, error } = await client.GET("/api/v1/rating-types");
-  if (error || !data) throw new Error("rating-types fetch failed");
+export async function fetchAttributeTypes(): Promise<AttributeTypeOut[]> {
+  if (attributeTypes) return attributeTypes;
+  const { data, error } = await makeClient(resolveApiBaseUrl()).GET("/api/v1/attribute-types");
+  if (error || !data) throw new Error("attribute-types fetch failed");
+  attributeTypes = data;
   return data;
 }
 ```
 
 - [ ] **Step 4: Run, verify pass.** `pnpm --filter web exec vitest run lib/catalog.test.ts` → PASS.
 
-- [ ] **Step 5: Format + commit.**
+- [ ] **Step 5: Style-guide + commit.** Add the PR-2 style-guide entries (attribute Yes/No/Unknown + enum controls; the add-flow rating star-group; comment textarea + placement-note input with counters; graceful-skip states), then:
 
 ```bash
 pnpm --filter web exec prettier --write web/lib/catalog.ts web/lib/catalog.test.ts
-git add web/lib/catalog.ts web/lib/catalog.test.ts
-git commit -m "feat(web): catalog fetch + buildAttributeGroups (rating/attribute types) (slice 6b-2)"
+git add web/lib/catalog.ts web/lib/catalog.test.ts docs/style-guide.md
+git commit -m "feat(web): catalog fetch (session-cached) + buildAttributeGroups; style-guide PR2 entries (slice 6b-2)"
 ```
 
 ---
 
-### Task 9: Optional fields in the add flow (rating, attributes, comment, placement note)
+### Task 10: Extract `StarGroup` (preserve `RatingForm` behavior + accessible names)
 
 **Files:**
-- Create: `web/components/fountain/StarGroup.tsx` (extract from `RatingForm`) + `web/components/fountain/StarGroup.test.tsx`
-- Modify: `web/components/fountain/RatingForm.tsx` (reuse `StarGroup`)
-- Create: `web/components/map/RatingFields.tsx` + `web/components/map/AttributeObservationFields.tsx` (+ tests)
-- Modify: `web/components/map/AddFountainPanel.tsx` + `AddFountainPanel.test.tsx`
-- Modify: `web/components/map/useAddFountainMode.ts`
-- Modify: `web/app/actions/add-fountain.ts` (pass the optional fields)
+- Create: `web/components/fountain/StarGroup.tsx` (+ `web/components/fountain/StarGroup.test.tsx`)
+- Modify: `web/components/fountain/RatingForm.tsx`
 
 **Interfaces:**
-- Produces: `StarGroup({ id, name, value, onChange }: { id:number; name:string; value:number; onChange:(stars:number)=>void })` — one labeled 1–5 radio group, emitting `(stars)`.
-- `RatingFields({ types, value, onChange }: { types: RatingTypeOut[]; value: Record<number,number>; onChange:(id:number, stars:number)=>void })` — renders one `StarGroup` per type, mapping `RatingTypeOut.id → rating_type_id`.
-- `AttributeObservationFields({ groups, value, onChange }: { groups: AttributeGroup[]; value: Record<number,string>; onChange:(attributeTypeId:number, v:string)=>void })`.
-- `AddFountainPanel` gains optional `details` props (ratingTypes, attributeGroups, ratings, observations, comments, placementNote + their onChange) — all optional so PR-1 tests still pass.
+- Produces: `StarGroup({ id, name, value, onChange }: { id: number; name: string; value: number; onChange: (stars: number) => void })` — one labeled 1–5 radio group; **each radio keeps the existing accessible name** `"{name}: {n} star(s)"` and input id `dim-{id}-star-{n}` so existing `RatingForm` selectors stay valid.
 
-- [ ] **Step 1: Extract `StarGroup` (TDD).** Write `web/components/fountain/StarGroup.test.tsx` asserting it renders 5 radios labeled by `name`, marks `value` checked, and calls `onChange(stars)` on select. Then create `StarGroup.tsx` by lifting the per-dimension radio markup out of `RatingForm.tsx`, and refactor `RatingForm` to render `StarGroup` per `DimensionSummary` (mapping `dimension.rating_type_id`). Run `pnpm --filter web exec vitest run components/fountain/StarGroup.test.tsx components/fountain/RatingForm.test.tsx` → PASS (RatingForm behavior unchanged).
+- [ ] **Step 1: Write the failing test** — `web/components/fountain/StarGroup.test.tsx`:
 
 ```tsx
-// web/components/fountain/StarGroup.tsx
+// @vitest-environment jsdom
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { StarGroup } from "./StarGroup";
+
+afterEach(cleanup);
+
+describe("StarGroup", () => {
+  it("renders per-radio accessible names and reports the chosen star", () => {
+    const onChange = vi.fn();
+    render(<StarGroup id={7} name="Clarity" value={0} onChange={onChange} />);
+    expect(screen.getByRole("radio", { name: /clarity: 1 star$/i })).toBeTruthy();
+    fireEvent.click(screen.getByRole("radio", { name: /clarity: 4 stars/i }));
+    expect(onChange).toHaveBeenCalledWith(4);
+  });
+  it("marks the current value checked", () => {
+    render(<StarGroup id={7} name="Taste" value={3} onChange={() => {}} />);
+    expect(screen.getByRole("radio", { name: /taste: 3 stars/i })).toHaveProperty("checked", true);
+  });
+});
+```
+
+- [ ] **Step 2: Run, verify fail.** `pnpm --filter web exec vitest run components/fountain/StarGroup.test.tsx` → FAIL.
+
+- [ ] **Step 3: Implement `StarGroup.tsx`** (lifted verbatim from the current `RatingForm` per-dimension markup, parameterized):
+
+```tsx
 "use client";
+
 export function StarGroup({
   id,
   name,
@@ -1767,38 +1955,83 @@ export function StarGroup({
   onChange: (stars: number) => void;
 }) {
   return (
-    <fieldset className="flex items-center justify-between gap-3">
-      <legend className="sr-only">{name}</legend>
-      <span className="text-sm text-slate-700">{name}</span>
-      <span className="flex gap-1" role="radiogroup" aria-label={name}>
-        {[1, 2, 3, 4, 5].map((s) => (
-          <label key={s} className="cursor-pointer">
-            <input
-              type="radio"
-              name={`stars-${id}`}
-              value={s}
-              checked={value === s}
-              onChange={() => onChange(s)}
-              className="peer sr-only"
-            />
-            <span aria-hidden="true" className={s <= value ? "text-[#F2C200]" : "text-slate-300"}>
-              ★
+    <fieldset className="flex items-center justify-between py-1">
+      <legend className="text-sm">{name}</legend>
+      <span className="flex gap-1">
+        {[1, 2, 3, 4, 5].map((n) => {
+          const inputId = `dim-${id}-star-${n}`;
+          return (
+            <span key={n} className="inline-flex">
+              <input
+                type="radio"
+                id={inputId}
+                name={`dim-${id}`}
+                value={n}
+                checked={value === n}
+                aria-label={`${name}: ${n} star${n > 1 ? "s" : ""}`}
+                onChange={() => onChange(n)}
+                className="peer sr-only"
+              />
+              <label
+                htmlFor={inputId}
+                aria-hidden="true"
+                className={`cursor-pointer text-lg peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-[#0A357E] ${
+                  value >= n ? "text-[#F2C200]" : "text-slate-300"
+                }`}
+              >
+                ★
+              </label>
             </span>
-            <span className="sr-only">
-              {s} star{s > 1 ? "s" : ""}
-            </span>
-          </label>
-        ))}
+          );
+        })}
       </span>
     </fieldset>
   );
 }
 ```
 
-- [ ] **Step 2: `RatingFields` (TDD, id-mapping test).** Write `web/components/map/RatingFields.test.tsx` proving selecting stars calls `onChange(ratingTypeOut.id, stars)` — i.e. the add form maps `RatingTypeOut.id` to `rating_type_id` (a mixup that used `rating_type_id` would fail because `RatingTypeOut` has no such field). Implement `RatingFields.tsx` rendering a `StarGroup` per `RatingTypeOut` (`id`, `name`). Run its test → PASS.
+- [ ] **Step 4: Refactor `RatingForm.tsx`** to render `StarGroup` per dimension (no behavior change). Replace the `dimensions.map(...)` `<fieldset>` block with:
 
 ```tsx
-// web/components/map/RatingFields.tsx
+import { StarGroup } from "./StarGroup";
+// ...
+{dimensions.map((d) => (
+  <StarGroup
+    key={d.rating_type_id}
+    id={d.rating_type_id}
+    name={d.name}
+    value={stars[d.rating_type_id] ?? 0}
+    onChange={(n) => setStars((s) => ({ ...s, [d.rating_type_id]: n }))}
+  />
+))}
+```
+
+- [ ] **Step 5: Run both, verify green (existing RatingForm tests must still pass).** `pnpm --filter web exec vitest run components/fountain/StarGroup.test.tsx components/fountain/RatingForm.test.tsx` → PASS.
+
+- [ ] **Step 6: Format + commit.**
+
+```bash
+pnpm --filter web exec prettier --write web/components/fountain/StarGroup.tsx web/components/fountain/StarGroup.test.tsx web/components/fountain/RatingForm.tsx
+git add web/components/fountain/StarGroup.tsx web/components/fountain/StarGroup.test.tsx web/components/fountain/RatingForm.tsx
+git commit -m "refactor(web): extract StarGroup from RatingForm (preserve a11y names) (slice 6b-2)"
+```
+
+---
+
+### Task 11: Optional fields in the add flow (rating, attributes, comment, placement note)
+
+**Files:**
+- Create: `web/components/map/RatingFields.tsx` (+ test), `web/components/map/AttributeObservationFields.tsx` (+ test)
+- Modify: `web/components/map/AddFountainPanel.tsx` (+ test), `web/components/map/useAddFountainMode.tsx` (+ test)
+
+**Interfaces:**
+- `RatingFields({ types, value, onChange }: { types: RatingTypeOut[]; value: Record<number, number>; onChange: (id: number, stars: number) => void })` — one `StarGroup` per type, mapping `RatingTypeOut.id → rating_type_id`.
+- `AttributeObservationFields({ groups, value, onChange }: { groups: AttributeGroup[]; value: Record<number, string>; onChange: (attributeTypeId: number, v: string) => void })`.
+- `AddFountainPanel` gains optional details props: `ratingTypes?`, `attributeGroups?`, `ratingValue?`, `obsValue?`, `comments?`, `placementNote?`, and `onRate?`, `onObserve?`, `onComments?`, `onPlacementNote?` — all optional so Task-5 tests stay green.
+
+- [ ] **Step 1: `RatingFields` (TDD, id-mapping).** `web/components/map/RatingFields.test.tsx`: selecting stars calls `onChange(type.id, n)` — proving the `RatingTypeOut.id → rating_type_id` mapping (a `rating_type_id` mixup fails because `RatingTypeOut` has no such field). Implement:
+
+```tsx
 "use client";
 import type { components } from "@fountainrank/api-client";
 import { StarGroup } from "../fountain/StarGroup";
@@ -1814,7 +2047,7 @@ export function RatingFields({
 }) {
   if (!types.length) return null;
   return (
-    <div className="mt-3 space-y-2">
+    <div className="mt-3 space-y-1">
       <p className="text-sm font-semibold text-slate-700">Rate it (optional)</p>
       {types.map((t) => (
         <StarGroup key={t.id} id={t.id} name={t.name} value={value[t.id] ?? 0} onChange={(s) => onChange(t.id, s)} />
@@ -1824,10 +2057,33 @@ export function RatingFields({
 }
 ```
 
-- [ ] **Step 3: `AttributeObservationFields` (TDD).** Write `web/components/map/AttributeObservationFields.test.tsx`: a fixture of `AttributeGroup[]` renders boolean Yes/No/Unknown radios + an enum select; selecting calls `onChange(attributeTypeId, value)`; default shown is Unknown. Implement `AttributeObservationFields.tsx`. Run → PASS.
+Test:
 
 ```tsx
-// web/components/map/AttributeObservationFields.tsx
+// @vitest-environment jsdom
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { RatingFields } from "./RatingFields";
+
+afterEach(cleanup);
+
+it("maps RatingTypeOut.id to the onChange id", () => {
+  const onChange = vi.fn();
+  render(
+    <RatingFields
+      types={[{ id: 11, name: "Coldness", description: "", sort_order: 0 }]}
+      value={{}}
+      onChange={onChange}
+    />,
+  );
+  fireEvent.click(screen.getByRole("radio", { name: /coldness: 5 stars/i }));
+  expect(onChange).toHaveBeenCalledWith(11, 5);
+});
+```
+
+- [ ] **Step 2: `AttributeObservationFields` (TDD).** `web/components/map/AttributeObservationFields.test.tsx`: a fixture renders boolean Yes/No/Unknown radios + an enum select; default shown is Unknown; selecting calls `onChange(id, value)`. Implement:
+
+```tsx
 "use client";
 import type { AttributeGroup } from "../../lib/catalog";
 
@@ -1853,12 +2109,13 @@ export function AttributeObservationFields({
               <div key={c.id} className="mt-1 flex items-center justify-between gap-2">
                 <span className="text-sm text-slate-700">{c.name}</span>
                 {c.kind === "boolean" ? (
-                  <span role="radiogroup" aria-label={c.name} className="flex gap-2 text-xs">
+                  <span className="flex gap-2 text-xs">
                     {c.options.map((opt) => (
                       <label key={opt} className="flex items-center gap-1">
                         <input
                           type="radio"
                           name={`attr-${c.id}`}
+                          aria-label={`${c.name}: ${opt}`}
                           checked={v === opt}
                           onChange={() => onChange(c.id, opt)}
                         />
@@ -1890,12 +2147,11 @@ export function AttributeObservationFields({
 }
 ```
 
-- [ ] **Step 4: Extend `AddFountainPanel` details step.** Add optional props for the catalog + values + onChange handlers + a `comments` textarea and a `placementNote` input (≤200, live counter). Only render each section when its data is present. Update `AddFountainPanel.test.tsx` with: rating section maps id→stars; attribute unknown is excluded by the parent (assert the onChange contract); placement-note counter caps at 200. The `onSubmit` contract is unchanged. Keep all new props optional so the Task-5 tests stay green.
+- [ ] **Step 3: Extend `AddFountainPanel` details step.** Add the optional props (above) and render, inside `DetailsStep`, after the working toggle and only when data is present: `<RatingFields … />`, `<AttributeObservationFields … />`, a **comment** `<textarea>` (counter, cap `COMMENTS_MAX`), and a **placement-note** single-line `<input>` (counter, cap `PLACEMENT_NOTE_MAX`). Keep all new props optional. Update `AddFountainPanel.test.tsx` with: placement-note input enforces a 200-char cap (counter shown); the comment textarea calls `onComments`. Run the panel test → PASS (and the Task-5 cases still pass).
 
-- [ ] **Step 5: Extend `useAddFountainMode`.** On entering `details` (first time), fire `fetchRatingTypes()` + `fetchAttributeTypes()` (best-effort; on rejection leave the lists empty so the sections are skipped). Hold `ratings`/`observations`/`comments`/`placementNote` in local state; pass them to the panel; include them in the `addFountain(...)` call in `submit` (only non-`unknown` observations; only set ratings; trimmed text). Convert `value` maps to the API arrays before submit.
+- [ ] **Step 4: Extend `useAddFountainMode`.** Add local state `ratingValue: Record<number,number>`, `obsValue: Record<number,string>`, `comments: string`, `placementNote: string`, plus `ratingTypes`/`attributeGroups` state. On first transition into `details`, call `fetchRatingTypes()`/`fetchAttributeTypes()` best-effort (`.then(setRatingTypes)` / `.then((t) => setAttributeGroups(buildAttributeGroups(t)))`; on rejection leave empty → sections skip). Pass everything to the panel. In `submit`, build the optional fields and pass them to `addFountain`:
 
 ```ts
-// in submit(), build the optional fields:
 const ratings = Object.entries(ratingValue)
   .filter(([, stars]) => stars >= 1)
   .map(([id, stars]) => ({ rating_type_id: Number(id), stars }));
@@ -1912,32 +2168,34 @@ const res = await addFountain({
 });
 ```
 
-- [ ] **Step 6: The action already accepts the optional fields** (Task 3 `toAddFountainBody` handles them). Add an action test asserting a full payload (ratings + observations + comment + placement note) is forwarded in the POST body. Run `pnpm --filter web exec vitest run app/actions/add-fountain.test.ts` → PASS.
+Update `useAddFountainMode.test.tsx` with a case: set a rating + a boolean attribute → submit → `addFountain` called with the mapped `ratings` + `observations` (unknown excluded). Run → PASS.
 
-- [ ] **Step 7: Run the web vitest subset + full web mirror.** `pnpm --filter web exec vitest run components/fountain/StarGroup.test.tsx components/fountain/RatingForm.test.tsx components/map/RatingFields.test.tsx components/map/AttributeObservationFields.test.tsx components/map/AddFountainPanel.test.tsx app/actions/add-fountain.test.ts` → PASS. Then `powershell.exe -NoProfile -ExecutionPolicy Bypass -File run.ps1 check -Web` → green (incl. `next build`).
+- [ ] **Step 5: The action already forwards the optional fields** (Task 3 `toAddFountainBody`). Add an action test asserting a full payload (ratings + observations + comment + placement note) is forwarded. Run `pnpm --filter web exec vitest run app/actions/add-fountain.test.ts` → PASS.
 
-- [ ] **Step 8: Format + commit.**
+- [ ] **Step 6: Run the PR-2 vitest subset + full web mirror.** `pnpm --filter web exec vitest run components/map/RatingFields.test.tsx components/map/AttributeObservationFields.test.tsx components/map/AddFountainPanel.test.tsx components/map/useAddFountainMode.test.tsx components/fountain/RatingForm.test.tsx app/actions/add-fountain.test.ts` → PASS. Then `powershell.exe -NoProfile -ExecutionPolicy Bypass -File run.ps1 check -Web` → green (incl. `next build`).
+
+- [ ] **Step 7: Format + commit.**
 
 ```bash
-pnpm --filter web exec prettier --write web/components/fountain/StarGroup.tsx web/components/fountain/StarGroup.test.tsx web/components/fountain/RatingForm.tsx web/components/map/RatingFields.tsx web/components/map/RatingFields.test.tsx web/components/map/AttributeObservationFields.tsx web/components/map/AttributeObservationFields.test.tsx web/components/map/AddFountainPanel.tsx web/components/map/AddFountainPanel.test.tsx web/components/map/useAddFountainMode.ts web/app/actions/add-fountain.ts web/app/actions/add-fountain.test.ts
-git add web/components/fountain/StarGroup.tsx web/components/fountain/StarGroup.test.tsx web/components/fountain/RatingForm.tsx web/components/map/RatingFields.tsx web/components/map/RatingFields.test.tsx web/components/map/AttributeObservationFields.tsx web/components/map/AttributeObservationFields.test.tsx web/components/map/AddFountainPanel.tsx web/components/map/AddFountainPanel.test.tsx web/components/map/useAddFountainMode.ts web/app/actions/add-fountain.ts web/app/actions/add-fountain.test.ts
+pnpm --filter web exec prettier --write web/components/map/RatingFields.tsx web/components/map/RatingFields.test.tsx web/components/map/AttributeObservationFields.tsx web/components/map/AttributeObservationFields.test.tsx web/components/map/AddFountainPanel.tsx web/components/map/AddFountainPanel.test.tsx web/components/map/useAddFountainMode.tsx web/components/map/useAddFountainMode.test.tsx
+git add web/components/map/RatingFields.tsx web/components/map/RatingFields.test.tsx web/components/map/AttributeObservationFields.tsx web/components/map/AttributeObservationFields.test.tsx web/components/map/AddFountainPanel.tsx web/components/map/AddFountainPanel.test.tsx web/components/map/useAddFountainMode.tsx web/components/map/useAddFountainMode.test.tsx
 git commit -m "feat(web): optional rating/attributes/comment/placement-note on add-fountain (slice 6b-2 PR2)"
 ```
 
-- [ ] **Step 9: Full mirror + open PR 2.** `powershell.exe -NoProfile -ExecutionPolicy Bypass -File run.ps1 check` → green. Push, open PR 2, run **Codex Loop B** + address all comments, squash-merge on CI-green + `VERDICT: APPROVED`, deploy, verify per spec §13.
+- [ ] **Step 8: Full mirror + open PR 2.** `powershell.exe -NoProfile -ExecutionPolicy Bypass -File run.ps1 check` → green. Push, open PR 2, run **Codex Loop B** + address all comments, squash-merge on CI-green + `VERDICT: APPROVED`, deploy, verify per spec §13.
 
 ---
 
 ## Self-Review (against the spec)
 
-- **§4 entry/auth** → Tasks 5 (FAB), 6 (page server/client split + `?add=1` strip). ✓
-- **§5 state machine / coupling containment** → Task 4 (pure reducer), Task 6 (thin `MapBrowser` seam). ✓
-- **§6 placement, GPS bound, fallback gate, keyboard path** → Tasks 2 (helpers/constants), 4 (clamp/nudge), 5 (keyboard controls), 6 (GPS + ring glue). ✓
-- **§7 details (working PR1; rating/attributes/comment/note PR2)** → Tasks 5 (working), 8–9 (optional fields). ✓
-- **§8 action + 409 via openapi-fetch `error` + logging** → Task 3. ✓
-- **§9 components** → Tasks 5–6, 8–9 file structure matches. ✓
-- **§10 edge cases** → covered across action (401/422/5xx/malformed-409), reducer (no-pin NEXT, preserved-on-error), helpers (clamp/zoom/span gate), FAB (no-WebGL). ✓
-- **§11 security** → Task 3 (hostile validation, logging), spec framing (client guard only). ✓
-- **§12 style guide** → Tasks 1, 7 (prerequisites). ✓
-- **§13 testing** → pure helpers (Task 2), machine (Task 4), action incl. malformed-409 + no-PII-log (Task 3), keyboard-only completion + duplicate link + working default (Task 5), `?add=1` (Task 6), attribute/rating builders + id-mapping (Tasks 8–9). The map glue (Task 6 hook) is covered by `next build` + owner manual verify, as `MapBrowser` already is (jsdom has no WebGL). ✓
-- **§15 two-PR sequencing** → Tasks 1–6 (PR1), 7–9 (PR2). ✓
+- **§4 entry/auth + `?add=1` strip (both authed & anon)** → Task 5 (FAB), Task 7 (hook: `hadAddParam` always strips, `autoEnter` only when authed), Task 8 (page server/client split). ✓
+- **§5 state machine / coupling containment** → Task 4 (pure reducer), Task 6 (`PlacementMap` adapter), Task 7 (thin hook), Task 8 (`addActiveRef` suppression — no stale closure). ✓
+- **§6 placement, GPS bound, fallback gate, keyboard path, gated drop** → Task 2 (helpers/constants + ring), Task 4 (clamp/nudge), Task 5 (keyboard controls disabled when `!placeable`), Task 7 (drop/center gated on `placeableRef`, fix reset on enter, GPS via adapter). ✓
+- **§7 details (working PR1; rating/attributes/comment/note PR2)** → Task 5 (working), Tasks 9–11 (optional fields, catalog cache). ✓
+- **§8 action + 409 via openapi-fetch `error` + malformed-409 + 401 log + logging hygiene** → Task 3. ✓
+- **§9 components** → Tasks 5–8, 9–11 file structure matches. ✓
+- **§10 edge cases** → action (401/422/5xx/malformed-409/hostile), reducer (no-pin NEXT, preserved-on-error), helpers (clamp/zoom/span gate), FAB (no-WebGL), hook (gated drop, fix reset). ✓
+- **§11 security** → Task 3 (hostile validation, comments cap, no-PII logging), client-guard-only framing. ✓
+- **§12 style guide** → Tasks 1, 9 (prerequisites). ✓
+- **§13 testing** → pure helpers + ring (Task 2), machine (Task 4), action incl. hostile + malformed-409 + no-PII-log + 401-log (Task 3), keyboard-only completion + Escape + gated controls + duplicate link + working default (Task 5), hook behavior incl. drop-gating + `?add=1` strip (both) + submit nav/duplicate via a **fake `PlacementMap`** (Task 7), page prop threading (Task 8), attribute/rating builders + id-mapping + StarGroup a11y (Tasks 9–11). The only build+manual-covered module is the thin `PlacementMap` adapter (Task 6), which has no decision logic. ✓
+- **§15 two-PR sequencing** → Tasks 1–8 (PR1), 9–11 (PR2). ✓
