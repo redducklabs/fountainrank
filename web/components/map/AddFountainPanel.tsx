@@ -21,6 +21,7 @@ export type AddFountainPanelProps = {
   onBack: () => void;
   onSetWorking: (working: boolean) => void;
   onSubmit: () => void;
+  onViewDuplicate?: () => void;
 };
 
 const ERROR_COPY: Record<AddFountainError, string> = {
@@ -78,6 +79,7 @@ export function AddFountainPanel(props: AddFountainPanelProps) {
           {props.duplicateId && (
             <Link
               href={`/fountains/${props.duplicateId}`}
+              onClick={props.onViewDuplicate}
               className="inline-block rounded-full bg-[#F2C200] px-4 py-2 text-sm font-bold text-[#0A357E]"
             >
               View it

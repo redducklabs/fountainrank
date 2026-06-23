@@ -62,11 +62,9 @@ export function addReducer(state: AddState, action: AddAction): AddState {
     case "CANCEL":
       return initialAddState;
     case "SET_BOUND":
-      return {
-        ...state,
-        bound: action.bound,
-        pin: state.pin ? clampToBound(state.pin, action.bound) : null,
-      };
+      // Only update the bound; NEVER silently move an already-placed pin — a placed coordinate is
+      // the user's choice (the hook also freezes bound recomputation once a pin exists).
+      return { ...state, bound: action.bound };
     case "DROP_PIN":
       return {
         ...state,

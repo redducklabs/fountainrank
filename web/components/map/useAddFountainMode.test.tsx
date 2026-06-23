@@ -24,6 +24,7 @@ function makeFakeMap(zoom = 17) {
     torn: 0,
   };
   let onClick: ((p: { lng: number; lat: number }) => void) | null = null;
+  let onMoveEnd: (() => void) | null = null;
   const map: PlacementMap = {
     getZoom: () => zoom,
     getCenter: () => ({ lng: -122.3, lat: 47.6 }),
@@ -31,6 +32,7 @@ function makeFakeMap(zoom = 17) {
     flyToFix: (c) => calls.flyTo.push(c),
     subscribe: (h) => {
       onClick = h.onClick;
+      onMoveEnd = h.onMoveEnd;
       return () => {
         calls.unsub++;
       };
@@ -41,7 +43,12 @@ function makeFakeMap(zoom = 17) {
       calls.torn++;
     },
   };
-  return { map, calls, click: (p: { lng: number; lat: number }) => onClick?.(p) };
+  return {
+    map,
+    calls,
+    click: (p: { lng: number; lat: number }) => onClick?.(p),
+    move: () => onMoveEnd?.(),
+  };
 }
 
 function Harness({
@@ -183,6 +190,27 @@ describe("useAddFountainMode", () => {
       }),
     );
     expect(push).toHaveBeenCalledWith("/fountains/new-1");
+    // add-mode resets after navigating so the home map isn't stranded under the detail modal
+    expect(screen.queryByRole("dialog", { name: /add a fountain/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /add a fountain/i })).toBeTruthy();
+  });
+
+  it("freezes a placed pin: a moveend (pan/zoom) does not rewrite it", () => {
+    geo.getCurrentPosition.mockImplementation((_ok: unknown, err: (e: { code: number }) => void) =>
+      err({ code: 1 }),
+    );
+    const ok = makeFakeMap(17);
+    render(
+      <Harness
+        map={ok.map}
+        opts={{ isAuthenticated: true, webglOk: true, autoEnter: false, hadAddParam: false }}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /add a fountain/i }));
+    act(() => ok.click({ lng: -122.3, lat: 47.6 }));
+    expect(screen.getByText(/lat 47\.60000/i)).toBeTruthy();
+    act(() => ok.move()); // pan/zoom must NOT silently move the placed pin
+    expect(screen.getByText(/lat 47\.60000/i)).toBeTruthy();
   });
 
   it("submit duplicate shows the View it link", async () => {

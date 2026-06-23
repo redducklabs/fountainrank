@@ -24,9 +24,15 @@ export function useAddFountainMode(
   const placeableRef = useRef(placeable);
   // eslint-disable-next-line react-hooks/refs
   placeableRef.current = placeable;
+  // Freeze bound recomputation once a pin exists so panning/zooming can NEVER silently rewrite a
+  // placed coordinate (the bound only gates the initial drop). Read via a ref in imperative handlers.
+  const hasPinRef = useRef(false);
+  // eslint-disable-next-line react-hooks/refs
+  hasPinRef.current = state.pin !== null;
 
   const recomputeBound = useCallback(() => {
     if (!placementMap) return;
+    if (hasPinRef.current) return; // bound frozen after a pin is placed
     dispatch({ type: "SET_BOUND", bound: boundFromFix(fix, placementMap.getViewport()) });
     setZoom(placementMap.getZoom());
   }, [placementMap, fix]);
@@ -118,8 +124,11 @@ export function useAddFountainMode(
       is_working: state.working,
     });
     if (res.ok) {
-      dispatch({ type: "SUBMIT_DONE", fountainId: res.fountainId });
+      // Navigate to the new fountain AND reset add-mode: the home map stays mounted beneath the
+      // intercepted detail modal, so leaving it active would strand it (suppressed browse, hidden
+      // FAB, lingering pin) once the modal closes.
       router.push(`/fountains/${res.fountainId}`);
+      dispatch({ type: "CANCEL" });
     } else if (res.error === "duplicate") {
       dispatch({ type: "SUBMIT_DUPLICATE", fountainId: res.fountainId });
     } else {
@@ -141,6 +150,7 @@ export function useAddFountainMode(
       duplicateId={state.duplicateId}
       errorKind={state.errorKind}
       onCancel={() => dispatch({ type: "CANCEL" })}
+      onViewDuplicate={() => dispatch({ type: "CANCEL" })}
       onPlaceAtCenter={placeAtCenter}
       onNudge={(dir) => dispatch({ type: "NUDGE", dir })}
       onNext={() => dispatch({ type: "NEXT" })}

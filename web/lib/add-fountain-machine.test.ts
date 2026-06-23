@@ -20,11 +20,13 @@ describe("addReducer", () => {
     expect(s.pin).not.toBeNull();
     expect(Math.abs(s.pin!.lng - -122.3)).toBeLessThan(0.01);
   });
-  it("SET_BOUND re-clamps an existing pin", () => {
+  it("SET_BOUND updates the bound WITHOUT moving an existing pin", () => {
     const dropped = addReducer(placing, { type: "DROP_PIN", point: { lng: -122.3005, lat: 47.6 } });
-    const s = addReducer(dropped, { type: "SET_BOUND", bound: circle });
-    expect(s.bound).toEqual(circle);
-    expect(s.pin).not.toBeNull();
+    // A far-away new bound must not drag the placed pin (no silent coordinate mutation).
+    const far: Bound = { kind: "circle", center: { lng: -100, lat: 40 }, radiusM: 150 };
+    const s = addReducer(dropped, { type: "SET_BOUND", bound: far });
+    expect(s.bound).toEqual(far);
+    expect(s.pin).toEqual(dropped.pin);
   });
   it("NUDGE moves the pin and clamps; no-op without a pin", () => {
     expect(addReducer(placing, { type: "NUDGE", dir: "n" }).pin).toBeNull();
