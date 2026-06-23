@@ -4,6 +4,7 @@ export type MobileConfig = {
   logtoAudience: string;
   authCallbackScheme: string;
   logtoAppId?: string;
+  basemapStyleUrl?: string;
 };
 
 function requireNonEmpty(value: unknown, field: string): string {
@@ -47,6 +48,14 @@ export function parseMobileConfig(extra: unknown): MobileConfig {
   if (e.logtoAppId !== undefined) {
     config.logtoAppId = requireNonEmpty(e.logtoAppId, "logtoAppId");
   }
+  // basemapStyleUrl is optional: when absent/blank the map screen shows an
+  // honest "map unavailable" state instead of crashing the app (spec section 21
+  // honest-degradation). Present: a valid https URL (a cache-busting query
+  // string is allowed). It is public config — a committed default ships in
+  // app.config.ts, overridable via EXPO_PUBLIC_BASEMAP_STYLE_URL.
+  if (e.basemapStyleUrl !== undefined) {
+    config.basemapStyleUrl = requireHttpsUrl(e.basemapStyleUrl, "basemapStyleUrl");
+  }
   return config;
 }
 
@@ -54,4 +63,10 @@ export function parseMobileConfig(extra: unknown): MobileConfig {
  * (auth-unavailable mode), so the app stays in a public-read state. */
 export function isAuthConfigured(config: MobileConfig): boolean {
   return typeof config.logtoAppId === "string" && config.logtoAppId.length > 0;
+}
+
+/** True only when a basemap style URL is configured. When false, the map screen
+ * renders an honest "map unavailable" state rather than crashing. */
+export function isMapConfigured(config: MobileConfig): boolean {
+  return typeof config.basemapStyleUrl === "string" && config.basemapStyleUrl.length > 0;
 }

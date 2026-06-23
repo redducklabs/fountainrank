@@ -27,6 +27,12 @@ const config: ExpoConfig = {
     logtoEndpoint: process.env.EXPO_PUBLIC_LOGTO_ENDPOINT ?? "https://auth.fountainrank.com",
     logtoAudience: process.env.EXPO_PUBLIC_LOGTO_AUDIENCE ?? "https://api.fountainrank.com",
     authCallbackScheme: "com.redducklabs.fountainrank",
+    // Public basemap style (Protomaps "light" on the DO Spaces CDN) — the same
+    // style the web client uses (see deploy.yml NEXT_PUBLIC_BASEMAP_STYLE_URL).
+    // Public, non-secret; overridable per build via EXPO_PUBLIC_BASEMAP_STYLE_URL.
+    basemapStyleUrl:
+      process.env.EXPO_PUBLIC_BASEMAP_STYLE_URL ??
+      "https://fountainrank-basemap.sfo3.cdn.digitaloceanspaces.com/style.light.json",
     // EAS project linkage (public, non-secret — visible in the expo.dev URL).
     // Created via `eas init` under the red-duck-labs org. `parseMobileConfig`
     // ignores this key; EAS reads it directly from the resolved Expo config.
