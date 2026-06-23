@@ -8,3 +8,18 @@
 # (auth) — which have no first-party DO-registry equivalent. They are pinned by version tag.
 # Revisit when: we mirror these into our DigitalOcean registry (then drop this + use ${REGISTRY}).
 AVD-KSV-0125
+
+# uuid@7.0.3 out-of-bounds write — reached ONLY via the Expo build toolchain
+# (expo → @expo/config-plugins → xcode@3.0.1), a BUILD-TIME prebuild dependency that
+# parses Xcode project files; it is not bundled into the shipped iOS/Android app, so the
+# flaw is not reachable at app runtime. The fixed line (uuid 11+) is a breaking major bump
+# that xcode@3.0.1 cannot consume, so we cannot force it without breaking `expo prebuild`.
+# Pre-existing on main; gating scanners (pnpm-audit high/critical, trivy-fs secrets) pass.
+# Revisit when: @expo/config-plugins / xcode upgrade their uuid dependency to a fixed line.
+CVE-2026-41907
+
+# postcss@8.4.31 XSS via improper escaping — a BUILD-TIME web tooling dependency (Next.js /
+# Tailwind compile pipeline); PostCSS does not process untrusted stylesheet input at app
+# runtime, so the flaw is not reachable in the deployed app. Pre-existing on main.
+# Revisit when: the web build toolchain bumps postcss to >= 8.5.10.
+CVE-2026-41305
