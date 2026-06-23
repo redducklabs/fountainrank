@@ -1,8 +1,15 @@
 "use client";
 import { useCallback, useEffect, useReducer, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import type { components } from "@fountainrank/api-client";
 import { addFountain } from "../../app/actions/add-fountain";
 import { addReducer, initialAddState } from "../../lib/add-fountain-machine";
+import {
+  buildAttributeGroups,
+  fetchAttributeTypes,
+  fetchRatingTypes,
+  type AttributeGroup,
+} from "../../lib/catalog";
 import { ACCURACY_MAX_M, GEOLOCATE_TIMEOUT_MS } from "../../lib/map/constants";
 import { boundFromFix, canPlace, type GpsFix } from "../../lib/map/placement";
 import { AddFountainFab } from "./AddFountainFab";
@@ -18,6 +25,15 @@ export function useAddFountainMode(
   const [zoom, setZoom] = useState(0);
   const router = useRouter();
   const active = state.phase !== "idle";
+
+  // PR-2 optional fields
+  const [ratingTypes, setRatingTypes] = useState<components["schemas"]["RatingTypeOut"][]>([]);
+  const [attributeGroups, setAttributeGroups] = useState<AttributeGroup[]>([]);
+  const [ratingValue, setRatingValue] = useState<Record<number, number>>({});
+  const [obsValue, setObsValue] = useState<Record<number, string>>({});
+  const [comments, setComments] = useState("");
+  const [placementNote, setPlacementNote] = useState("");
+  const catalogFetchedRef = useRef(false);
 
   const placeable = state.bound ? canPlace(zoom, state.bound) : false;
   // Refs so the imperative map handlers always read the latest values (no stale closure).
@@ -81,6 +97,18 @@ export function useAddFountainMode(
     router.replace("/"); // anonymous / not auto-enter: strip without entering
   }, [opts.hadAddParam, opts.autoEnter, opts.isAuthenticated, placementMap, enter, router]);
 
+  // Fetch catalog data (best-effort) when first entering the details phase.
+  useEffect(() => {
+    if (state.phase !== "details" || catalogFetchedRef.current) return;
+    catalogFetchedRef.current = true;
+    fetchRatingTypes()
+      .then(setRatingTypes)
+      .catch(() => {});
+    fetchAttributeTypes()
+      .then((t) => setAttributeGroups(buildAttributeGroups(t)))
+      .catch(() => {});
+  }, [state.phase]);
+
   // Subscribe map events while active; handlers read refs so they never go stale.
   useEffect(() => {
     if (!placementMap || !active) return;
@@ -119,9 +147,19 @@ export function useAddFountainMode(
   const submit = useCallback(async () => {
     if (!state.pin) return;
     dispatch({ type: "SUBMIT_START" });
+    const ratings = Object.entries(ratingValue)
+      .filter(([, stars]) => stars >= 1)
+      .map(([id, stars]) => ({ rating_type_id: Number(id), stars }));
+    const observations = Object.entries(obsValue)
+      .filter(([, v]) => v && v !== "unknown")
+      .map(([id, v]) => ({ attribute_type_id: Number(id), value: v }));
     const res = await addFountain({
       location: { latitude: state.pin.lat, longitude: state.pin.lng },
       is_working: state.working,
+      comments: comments.trim() || undefined,
+      placement_note: placementNote.trim() || undefined,
+      ratings: ratings.length ? ratings : undefined,
+      observations: observations.length ? observations : undefined,
     });
     if (res.ok) {
       // Navigate to the new fountain AND reset add-mode: the home map stays mounted beneath the
@@ -134,7 +172,7 @@ export function useAddFountainMode(
     } else {
       dispatch({ type: "SUBMIT_ERROR", errorKind: res.error });
     }
-  }, [state.pin, state.working, router]);
+  }, [state.pin, state.working, ratingValue, obsValue, comments, placementNote, router]);
 
   // Hide the FAB while add-mode is active so it can't re-enter and reset an in-progress flow.
   const fab: ReactNode = active ? null : (
@@ -157,6 +195,16 @@ export function useAddFountainMode(
       onBack={() => dispatch({ type: "BACK" })}
       onSetWorking={(working) => dispatch({ type: "SET_WORKING", working })}
       onSubmit={submit}
+      ratingTypes={ratingTypes}
+      attributeGroups={attributeGroups}
+      ratingValue={ratingValue}
+      obsValue={obsValue}
+      comments={comments}
+      placementNote={placementNote}
+      onRate={(id, stars) => setRatingValue((prev) => ({ ...prev, [id]: stars }))}
+      onObserve={(id, v) => setObsValue((prev) => ({ ...prev, [id]: v }))}
+      onComments={setComments}
+      onPlacementNote={setPlacementNote}
     />
   );
 

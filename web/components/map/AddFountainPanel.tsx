@@ -3,8 +3,13 @@ import { useEffect, useRef } from "react";
 import Link from "next/link";
 import { signInWithReturn } from "../../app/actions/auth";
 import type { AddFountainError } from "../../lib/add-fountain";
+import { COMMENTS_MAX, PLACEMENT_NOTE_MAX } from "../../lib/add-fountain";
 import type { AddPhase } from "../../lib/add-fountain-machine";
+import type { AttributeGroup } from "../../lib/catalog";
 import type { LngLat } from "../../lib/map/placement";
+import type { components } from "@fountainrank/api-client";
+import { AttributeObservationFields } from "./AttributeObservationFields";
+import { RatingFields } from "./RatingFields";
 
 export type AddFountainPanelProps = {
   phase: AddPhase;
@@ -22,6 +27,17 @@ export type AddFountainPanelProps = {
   onSetWorking: (working: boolean) => void;
   onSubmit: () => void;
   onViewDuplicate?: () => void;
+  // Optional PR-2 fields
+  ratingTypes?: components["schemas"]["RatingTypeOut"][];
+  attributeGroups?: AttributeGroup[];
+  ratingValue?: Record<number, number>;
+  obsValue?: Record<number, string>;
+  comments?: string;
+  placementNote?: string;
+  onRate?: (id: number, stars: number) => void;
+  onObserve?: (id: number, v: string) => void;
+  onComments?: (v: string) => void;
+  onPlacementNote?: (v: string) => void;
 };
 
 const ERROR_COPY: Record<AddFountainError, string> = {
@@ -184,6 +200,8 @@ function PlacingStep(props: AddFountainPanelProps) {
 }
 
 function DetailsStep(props: AddFountainPanelProps) {
+  const commentsLen = (props.comments ?? "").length;
+  const noteLen = (props.placementNote ?? "").length;
   return (
     <div className="mt-2">
       <Coord pin={props.pin} />
@@ -210,6 +228,61 @@ function DetailsStep(props: AddFountainPanelProps) {
           </label>
         </div>
       </fieldset>
+      {props.ratingTypes && props.ratingTypes.length > 0 && props.onRate && (
+        <RatingFields
+          types={props.ratingTypes}
+          value={props.ratingValue ?? {}}
+          onChange={props.onRate}
+        />
+      )}
+      {props.attributeGroups && props.attributeGroups.length > 0 && props.onObserve && (
+        <AttributeObservationFields
+          groups={props.attributeGroups}
+          value={props.obsValue ?? {}}
+          onChange={props.onObserve}
+        />
+      )}
+      {props.onComments !== undefined && (
+        <div className="mt-3">
+          <label className="block text-sm font-semibold text-slate-700" htmlFor="add-comments">
+            Comments (optional)
+          </label>
+          <textarea
+            id="add-comments"
+            className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-sm"
+            rows={3}
+            maxLength={COMMENTS_MAX}
+            value={props.comments ?? ""}
+            onChange={(e) => props.onComments!(e.target.value)}
+            aria-label="Comments"
+          />
+          <p className="mt-0.5 text-right text-xs text-slate-400">
+            {commentsLen}/{COMMENTS_MAX}
+          </p>
+        </div>
+      )}
+      {props.onPlacementNote !== undefined && (
+        <div className="mt-3">
+          <label
+            className="block text-sm font-semibold text-slate-700"
+            htmlFor="add-placement-note"
+          >
+            Placement note (optional)
+          </label>
+          <input
+            id="add-placement-note"
+            type="text"
+            className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-sm"
+            maxLength={PLACEMENT_NOTE_MAX}
+            value={props.placementNote ?? ""}
+            onChange={(e) => props.onPlacementNote!(e.target.value)}
+            aria-label="Placement note"
+          />
+          <p className="mt-0.5 text-right text-xs text-slate-400">
+            {noteLen}/{PLACEMENT_NOTE_MAX}
+          </p>
+        </div>
+      )}
       <div className="mt-4 flex justify-between">
         <button type="button" onClick={props.onBack} className="text-sm text-slate-600 underline">
           Back
