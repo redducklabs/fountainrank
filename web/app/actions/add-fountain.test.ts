@@ -92,4 +92,29 @@ describe("addFountain", () => {
     expect(logged).not.toContain("by the gate");
     expect(logged).not.toContain("47.6");
   });
+
+  it("forwards a full payload (ratings + observations + comment + placement note) in the POST body", async () => {
+    POST.mockResolvedValue({ data: { id: NEW_ID }, error: undefined, response: { status: 201 } });
+    const fullInput: AddFountainInput = {
+      ...input,
+      comments: " great fountain ",
+      placement_note: " near gate ",
+      ratings: [{ rating_type_id: 1, stars: 4 }],
+      observations: [{ attribute_type_id: 2, value: "yes" }],
+    };
+    expect(await addFountain(fullInput)).toEqual({ ok: true, fountainId: NEW_ID });
+    expect(POST).toHaveBeenCalledWith(
+      "/api/v1/fountains",
+      expect.objectContaining({
+        body: {
+          location: input.location,
+          is_working: true,
+          comments: "great fountain",
+          placement_note: "near gate",
+          ratings: [{ rating_type_id: 1, stars: 4 }],
+          observations: [{ attribute_type_id: 2, value: "yes" }],
+        },
+      }),
+    );
+  });
 });

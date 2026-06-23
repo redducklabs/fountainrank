@@ -894,3 +894,166 @@ location).
   detail page.
 - The duplicate fountain ID comes from the typed `DuplicateFountainConflict` error body
   (`error.fountain_id`), validated as a UUID before display.
+
+---
+
+## PR-2 add-fountain optional fields (slice 6b-2)
+
+### Star-group (`StarGroup`)
+
+A reusable 1–5 star radio group extracted from `RatingForm` into
+`web/components/fountain/StarGroup.tsx`. Used both in the existing rating form and in
+the add-fountain optional-fields details step.
+
+```tsx
+<fieldset className="flex items-center justify-between py-1">
+  <legend className="text-sm">{name}</legend>
+  <span className="flex gap-1">
+    {[1, 2, 3, 4, 5].map((n) => {
+      const inputId = `dim-${id}-star-${n}`;
+      return (
+        <span key={n} className="inline-flex">
+          <input
+            type="radio"
+            id={inputId}
+            name={`dim-${id}`}
+            value={n}
+            checked={value === n}
+            aria-label={`${name}: ${n} star${n > 1 ? "s" : ""}`}
+            onChange={() => onChange(n)}
+            className="peer sr-only"
+          />
+          <label
+            htmlFor={inputId}
+            aria-hidden="true"
+            className={`cursor-pointer text-lg peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-[#0A357E] ${
+              value >= n ? "text-[#F2C200]" : "text-slate-300"
+            }`}
+          >
+            ★
+          </label>
+        </span>
+      );
+    })}
+  </span>
+</fieldset>
+```
+
+- Radio inputs are visually hidden (`sr-only`) — the `★` label is the visible affordance.
+- Each radio carries `aria-label="{name}: {n} star(s)"` for screen readers.
+- Input IDs are `dim-{id}-star-{n}`; the radio group name is `dim-{id}`.
+- Gold fill (`text-[#F2C200]`) for selected-and-below; slate for unselected.
+- Focus ring on the visible label via `peer-focus-visible:outline`.
+- `value === 0` (no selection) shows all stars in slate.
+
+---
+
+### Attribute Yes/No/Unknown controls (`AttributeObservationFields`)
+
+Boolean attributes render as three inline radio buttons (Yes / No / Unknown); enum
+attributes render as a `<select>`. Grouped by `category` in a `<fieldset>` with a
+small-caps `<legend>`.
+
+**Boolean radio row:**
+
+```tsx
+<span className="flex gap-2 text-xs">
+  {["yes", "no", "unknown"].map((opt) => (
+    <label key={opt} className="flex items-center gap-1">
+      <input
+        type="radio"
+        name={`attr-${c.id}`}
+        aria-label={`${c.name}: ${opt}`}
+        checked={v === opt}
+        onChange={() => onChange(c.id, opt)}
+      />
+      {opt}
+    </label>
+  ))}
+</span>
+```
+
+**Enum select:**
+
+```tsx
+<select
+  aria-label={c.name}
+  value={v}
+  onChange={(e) => onChange(c.id, e.target.value)}
+  className="rounded border border-slate-300 px-2 py-1 text-sm"
+>
+  {c.options.map((opt) => (
+    <option key={opt} value={opt}>{opt}</option>
+  ))}
+</select>
+```
+
+- Default value for all controls is `"unknown"` (not pre-committed).
+- Unknown observations are excluded from the submitted payload (never sent to the API).
+- The category `<legend>` uses `text-xs font-semibold uppercase text-slate-500`.
+- Section heading: `"Details (optional)"`, `text-sm font-semibold text-slate-700`.
+- Graceful-skip: if the API returns an empty list the section is hidden (`return null`).
+
+---
+
+### Comment textarea and placement-note input (add-fountain details step)
+
+Two optional free-text fields in the `DetailsStep` of the add-fountain panel.
+
+**Comment textarea** (cap: 1000 characters):
+
+```tsx
+<label className="mt-3 block">
+  <span className="text-sm font-semibold text-slate-700">Comment (optional)</span>
+  <textarea
+    maxLength={1000}
+    value={comments}
+    onChange={(e) => onComments(e.target.value)}
+    rows={3}
+    className="mt-1 w-full rounded border border-slate-300 p-2 text-sm"
+    placeholder="Describe the fountain…"
+  />
+  <span className="text-xs text-slate-400">{comments.length}/1000</span>
+</label>
+```
+
+**Placement-note input** (cap: 200 characters):
+
+```tsx
+<label className="mt-2 block">
+  <span className="text-sm font-semibold text-slate-700">Placement note (optional)</span>
+  <input
+    type="text"
+    maxLength={200}
+    value={placementNote}
+    onChange={(e) => onPlacementNote(e.target.value)}
+    className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-sm"
+    placeholder="e.g. Near the park entrance"
+  />
+  <span className="text-xs text-slate-400">{placementNote.length}/200</span>
+</label>
+```
+
+- Character counters shown below each field (`text-xs text-slate-400`).
+- `maxLength` enforces the cap at the HTML level in addition to client-side validation.
+- Whitespace-only values are treated as empty and omitted from the API payload.
+- Both fields are optional — omitting them does not affect submission.
+
+---
+
+### Rating fields section (`RatingFields`)
+
+Renders one `StarGroup` per `RatingTypeOut` in the add-fountain details step.
+
+```tsx
+<div className="mt-3 space-y-1">
+  <p className="text-sm font-semibold text-slate-700">Rate it (optional)</p>
+  {types.map((t) => (
+    <StarGroup key={t.id} id={t.id} name={t.name} value={value[t.id] ?? 0} onChange={(s) => onChange(t.id, s)} />
+  ))}
+</div>
+```
+
+- Section heading: `"Rate it (optional)"`, `text-sm font-semibold text-slate-700`.
+- Graceful-skip: if the API returns no rating types the section is hidden (`return null`).
+- Unrated dimensions (`value === 0`) are excluded from the submitted payload.

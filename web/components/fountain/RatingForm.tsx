@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import type { components } from "@fountainrank/api-client";
 import { submitRating } from "../../app/actions/contribute";
 import { errorText } from "./contributeError";
+import { StarGroup } from "./StarGroup";
 
 type Dimension = components["schemas"]["DimensionSummary"];
 
@@ -37,37 +38,13 @@ export function RatingForm({
     <div>
       <h3 className="text-sm font-semibold text-slate-700">Rate it</h3>
       {dimensions.map((d) => (
-        <fieldset key={d.rating_type_id} className="flex items-center justify-between py-1">
-          <legend className="text-sm">{d.name}</legend>
-          <span className="flex gap-1">
-            {[1, 2, 3, 4, 5].map((n) => {
-              const inputId = `dim-${d.rating_type_id}-star-${n}`;
-              return (
-                <span key={n} className="inline-flex">
-                  <input
-                    type="radio"
-                    id={inputId}
-                    name={`dim-${d.rating_type_id}`}
-                    value={n}
-                    checked={stars[d.rating_type_id] === n}
-                    aria-label={`${d.name}: ${n} star${n > 1 ? "s" : ""}`}
-                    onChange={() => setStars((s) => ({ ...s, [d.rating_type_id]: n }))}
-                    className="peer sr-only"
-                  />
-                  <label
-                    htmlFor={inputId}
-                    aria-hidden="true"
-                    className={`cursor-pointer text-lg peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-[#0A357E] ${
-                      stars[d.rating_type_id] >= n ? "text-[#F2C200]" : "text-slate-300"
-                    }`}
-                  >
-                    ★
-                  </label>
-                </span>
-              );
-            })}
-          </span>
-        </fieldset>
+        <StarGroup
+          key={d.rating_type_id}
+          id={d.rating_type_id}
+          name={d.name}
+          value={stars[d.rating_type_id] ?? 0}
+          onChange={(n) => setStars((s) => ({ ...s, [d.rating_type_id]: n }))}
+        />
       ))}
       <button
         type="button"

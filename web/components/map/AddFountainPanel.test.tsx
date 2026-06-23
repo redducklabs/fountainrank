@@ -122,4 +122,41 @@ describe("AddFountainPanel", () => {
     expect(screen.getByRole("button", { name: /sign in/i })).toHaveProperty("type", "submit");
     expect(screen.queryByRole("button", { name: /try again/i })).toBeNull();
   });
+
+  it("details: placement-note input enforces 200-char cap and shows counter", () => {
+    const onPlacementNote = vi.fn();
+    render(
+      <AddFountainPanel
+        {...base}
+        phase="details"
+        pin={{ lng: -122.3, lat: 47.6 }}
+        placementNote="near gate"
+        onPlacementNote={onPlacementNote}
+      />,
+    );
+    const input = screen.getByRole("textbox", { name: /placement note/i });
+    expect(input).toBeTruthy();
+    expect(input).toHaveProperty("maxLength", 200);
+    // counter shows current length / max
+    expect(screen.getByText(/9\/200/)).toBeTruthy();
+    fireEvent.change(input, { target: { value: "by the gate" } });
+    expect(onPlacementNote).toHaveBeenCalledWith("by the gate");
+  });
+
+  it("details: comment textarea calls onComments", () => {
+    const onComments = vi.fn();
+    render(
+      <AddFountainPanel
+        {...base}
+        phase="details"
+        pin={{ lng: -122.3, lat: 47.6 }}
+        comments=""
+        onComments={onComments}
+      />,
+    );
+    const textarea = screen.getByRole("textbox", { name: /comments/i });
+    expect(textarea).toBeTruthy();
+    fireEvent.change(textarea, { target: { value: "great fountain" } });
+    expect(onComments).toHaveBeenCalledWith("great fountain");
+  });
 });

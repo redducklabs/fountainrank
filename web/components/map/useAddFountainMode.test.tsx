@@ -3,15 +3,31 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { PlacementMap } from "./placement-map";
 
-const { addFountain, replace, push, signInWithReturn } = vi.hoisted(() => ({
+const {
+  addFountain,
+  replace,
+  push,
+  signInWithReturn,
+  fetchRatingTypes,
+  fetchAttributeTypes,
+  buildAttributeGroups,
+} = vi.hoisted(() => ({
   addFountain: vi.fn(),
   replace: vi.fn(),
   push: vi.fn(),
   signInWithReturn: vi.fn(),
+  fetchRatingTypes: vi.fn(),
+  fetchAttributeTypes: vi.fn(),
+  buildAttributeGroups: vi.fn(),
 }));
 vi.mock("../../app/actions/add-fountain", () => ({ addFountain }));
 vi.mock("../../app/actions/auth", () => ({ signInWithReturn }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ replace, push }) }));
+vi.mock("../../lib/catalog", () => ({
+  fetchRatingTypes,
+  fetchAttributeTypes,
+  buildAttributeGroups,
+}));
 
 import { useAddFountainMode } from "./useAddFountainMode";
 
@@ -70,6 +86,10 @@ function Harness({
 const geo = { getCurrentPosition: vi.fn() };
 beforeEach(() => {
   Object.defineProperty(global.navigator, "geolocation", { value: geo, configurable: true });
+  // Default: empty catalogs (no optional controls). Individual tests override with fixtures.
+  fetchRatingTypes.mockReset().mockResolvedValue([]);
+  fetchAttributeTypes.mockReset().mockResolvedValue([]);
+  buildAttributeGroups.mockReset().mockReturnValue([]);
 });
 afterEach(() => {
   cleanup();
@@ -265,5 +285,99 @@ describe("useAddFountainMode", () => {
     fireEvent.click(screen.getByRole("button", { name: /add a fountain/i }));
     expect(calls.flyTo).toHaveLength(0);
     expect(screen.getByText(/couldn.t confirm your location/i)).toBeTruthy();
+  });
+
+  it("submits selected ratings + observations (unknown excluded) from the rendered controls", async () => {
+    geo.getCurrentPosition.mockImplementation((_ok: unknown, err: (e: { code: number }) => void) =>
+      err({ code: 1 }),
+    );
+    addFountain.mockResolvedValue({ ok: true, fountainId: "new-2" });
+    fetchRatingTypes.mockResolvedValue([
+      { id: 11, name: "Coldness", description: "", sort_order: 0 },
+    ]);
+    fetchAttributeTypes.mockResolvedValue([{ id: 0 }]); // content irrelevant; buildAttributeGroups mocked
+    buildAttributeGroups.mockReturnValue([
+      {
+        category: "physical",
+        controls: [
+          {
+            id: 5,
+            key: "filler",
+            name: "Bottle filler",
+            description: "",
+            kind: "boolean",
+            options: ["yes", "no", "unknown"],
+          },
+          {
+            id: 6,
+            key: "dog",
+            name: "Dog bowl",
+            description: "",
+            kind: "boolean",
+            options: ["yes", "no", "unknown"],
+          },
+        ],
+      },
+    ]);
+    const ok = makeFakeMap(17);
+    render(
+      <Harness
+        map={ok.map}
+        opts={{ isAuthenticated: true, webglOk: true, autoEnter: false, hadAddParam: false }}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /add a fountain/i }));
+    act(() => ok.click({ lng: -122.3, lat: 47.6 }));
+    fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    // catalog fetch resolves async -> wait for the rating control, then pick a star + one attribute
+    fireEvent.click(await screen.findByRole("radio", { name: /coldness: 4 stars/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /bottle filler: yes/i }));
+    // "Dog bowl" stays at its default (unknown) -> must be excluded from the payload
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /add fountain/i }));
+    });
+    expect(addFountain).toHaveBeenCalledWith(
+      expect.objectContaining({
+        location: { latitude: 47.6, longitude: -122.3 },
+        is_working: true,
+        ratings: [{ rating_type_id: 11, stars: 4 }],
+        observations: [{ attribute_type_id: 5, value: "yes" }],
+      }),
+    );
+    expect(push).toHaveBeenCalledWith("/fountains/new-2");
+  });
+
+  it("clears optional fields between adds (no stale carryover)", async () => {
+    geo.getCurrentPosition.mockImplementation((_ok: unknown, err: (e: { code: number }) => void) =>
+      err({ code: 1 }),
+    );
+    addFountain.mockResolvedValue({ ok: false, error: "server" }); // stay in the flow (no navigate)
+    fetchRatingTypes.mockResolvedValue([
+      { id: 11, name: "Coldness", description: "", sort_order: 0 },
+    ]);
+    const ok = makeFakeMap(17);
+    render(
+      <Harness
+        map={ok.map}
+        opts={{ isAuthenticated: true, webglOk: true, autoEnter: false, hadAddParam: false }}
+      />,
+    );
+    // First add: place -> details -> set a rating -> cancel
+    fireEvent.click(screen.getByRole("button", { name: /add a fountain/i }));
+    act(() => ok.click({ lng: -122.3, lat: 47.6 }));
+    fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    fireEvent.click(await screen.findByRole("radio", { name: /coldness: 4 stars/i }));
+    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+    // Second add: place -> details -> submit WITHOUT touching the rating
+    fireEvent.click(screen.getByRole("button", { name: /add a fountain/i }));
+    act(() => ok.click({ lng: -122.31, lat: 47.61 }));
+    fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    await screen.findByRole("radio", { name: /coldness: 1 star$/i }); // controls present again
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /add fountain/i }));
+    });
+    const lastCall = addFountain.mock.calls.at(-1)?.[0];
+    expect(lastCall.ratings).toBeUndefined();
+    expect(lastCall.observations).toBeUndefined();
   });
 });
