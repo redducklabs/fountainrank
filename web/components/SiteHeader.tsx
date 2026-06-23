@@ -7,7 +7,7 @@ export async function SiteHeader({ variant }: { variant: "hero" | "bar" }) {
   const requestId = crypto.randomUUID();
   const viewer = await getViewer(requestId);
   return (
-    <header className="bg-gradient-to-b from-[#0A357E] to-[#0E4DA4] px-6 py-3 text-white">
+    <header className="relative z-50 bg-gradient-to-b from-[#0A357E] to-[#0E4DA4] px-6 py-3 text-white">
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-4">
         <Link href="/" aria-label="FountainRank home">
           <Image

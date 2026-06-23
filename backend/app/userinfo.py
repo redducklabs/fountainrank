@@ -18,6 +18,7 @@ from app.config import Settings, get_settings
 MAX_USERINFO_BYTES = 65536
 _MAX_AVATAR_LEN = 2048
 SYNTHETIC_EMAIL_DOMAIN = "@users.noreply.fountainrank.com"
+APPLE_PRIVATE_RELAY_DOMAIN = "privaterelay.appleid.com"
 
 
 class UserinfoError(Exception):
@@ -109,6 +110,8 @@ def accept_email(claims: UserinfoClaims, *, current: str) -> str:
     if claims.email_verified is False:
         return current
     if email.lower().endswith(SYNTHETIC_EMAIL_DOMAIN):
+        return current
+    if email.lower().endswith("@" + APPLE_PRIVATE_RELAY_DOMAIN):
         return current
     if any(ch.isspace() for ch in email):
         return current

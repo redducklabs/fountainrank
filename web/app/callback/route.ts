@@ -6,6 +6,7 @@ import type { NextRequest } from "next/server";
 import { getLogtoConfig } from "../../lib/logto";
 import { log } from "../../lib/server/log";
 import { RETURN_COOKIE, safeReturnPath } from "../../lib/return-path";
+import { syncProfileForRoute } from "../../lib/server/sync";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +31,9 @@ export async function GET(request: NextRequest): Promise<void> {
   }
   // redirect() throws NEXT_REDIRECT, so it must run OUTSIDE the try/catch above.
   if (!ok) redirect("/account?error=signin");
+  // Best-effort: sync profile right after sign-in so the user's real name (e.g. from Apple
+  // via Logto userinfo) is captured immediately rather than waiting for /account to load.
+  await syncProfileForRoute(requestId);
   const store = await cookies();
   const raw = store.get(RETURN_COOKIE)?.value;
   store.delete({ name: RETURN_COOKIE, path: "/" });

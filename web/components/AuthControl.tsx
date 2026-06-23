@@ -100,7 +100,7 @@ function UserMenu({
         <div
           ref={menuRef}
           role="menu"
-          className="absolute right-0 mt-2 w-56 rounded-lg border border-slate-200 bg-white py-1 text-left shadow-lg"
+          className="absolute right-0 z-50 mt-2 w-56 rounded-lg border border-slate-200 bg-white py-1 text-left shadow-lg"
         >
           {name && <p className="px-3 py-2 text-sm font-semibold text-slate-700">{name}</p>}
           {degraded && (
