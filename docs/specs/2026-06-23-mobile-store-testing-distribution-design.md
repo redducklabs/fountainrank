@@ -1,6 +1,6 @@
 # FountainRank — Mobile Store Testing Distribution Design
 
-**Status:** Umbrella design spec — sliced for implementation · **Date:** 2026-06-23  
+**Status:** Umbrella design spec — sliced for implementation · **Date:** 2026-06-23
 **Scope:** Prepare a fully usable Expo / React Native mobile beta for
 installable iOS and Android test distribution through Apple TestFlight and
 Google Play testing tracks.

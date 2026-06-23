@@ -33,6 +33,12 @@ describe("parseMobileConfig", () => {
     expect(() => parseMobileConfig({ ...VALID, apiBaseUrl: "https://" })).toThrow(/https/);
   });
 
+  it("rejects malformed https URLs with no real host", () => {
+    for (const bad of ["https://?x", "https://#frag", "https://:", "https://-x.com"]) {
+      expect(() => parseMobileConfig({ ...VALID, apiBaseUrl: bad })).toThrow(/https/);
+    }
+  });
+
   it("rejects a URL containing whitespace", () => {
     expect(() => parseMobileConfig({ ...VALID, apiBaseUrl: "https://api .com" })).toThrow(
       /whitespace/,

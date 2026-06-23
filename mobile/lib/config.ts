@@ -20,7 +20,10 @@ function requireHttpsUrl(value: unknown, field: string): string {
   if (/[\s\p{Cc}]/u.test(s)) {
     throw new Error(`Mobile config: "${field}" must not contain whitespace or control characters`);
   }
-  if (!/^https:\/\/[^/]+(\/.*)?$/.test(s)) {
+  // Host must start with an alphanumeric (rejects hostless forms like
+  // "https://", "https://?x", "https://#frag", "https://:"), then host chars +
+  // optional :port + optional /path.
+  if (!/^https:\/\/[a-zA-Z0-9][a-zA-Z0-9.-]*(:\d+)?(\/.*)?$/.test(s)) {
     throw new Error(`Mobile config: "${field}" must be a valid https URL`);
   }
   return s;

@@ -198,6 +198,12 @@ describe("parseMobileConfig", () => {
     expect(() => parseMobileConfig({ ...VALID, apiBaseUrl: "https://" })).toThrow(/https/);
   });
 
+  it("rejects malformed https URLs with no real host", () => {
+    for (const bad of ["https://?x", "https://#frag", "https://:", "https://-x.com"]) {
+      expect(() => parseMobileConfig({ ...VALID, apiBaseUrl: bad })).toThrow(/https/);
+    }
+  });
+
   it("rejects a URL containing whitespace", () => {
     expect(() => parseMobileConfig({ ...VALID, apiBaseUrl: "https://api .com" })).toThrow(
       /whitespace/,
@@ -253,7 +259,10 @@ function requireHttpsUrl(value: unknown, field: string): string {
   if (/[\s\p{Cc}]/u.test(s)) {
     throw new Error(`Mobile config: "${field}" must not contain whitespace or control characters`);
   }
-  if (!/^https:\/\/[^/]+(\/.*)?$/.test(s)) {
+  // Host must start with an alphanumeric (rejects hostless forms like
+  // "https://", "https://?x", "https://#frag", "https://:"), then host chars +
+  // optional :port + optional /path.
+  if (!/^https:\/\/[a-zA-Z0-9][a-zA-Z0-9.-]*(:\d+)?(\/.*)?$/.test(s)) {
     throw new Error(`Mobile config: "${field}" must be a valid https URL`);
   }
   return s;
