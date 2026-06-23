@@ -3,6 +3,7 @@ import type { ExpoConfig } from "expo/config";
 const config: ExpoConfig = {
   name: "FountainRank",
   slug: "fountainrank",
+  owner: "red-duck-labs",
   version: "0.1.0",
   scheme: "com.redducklabs.fountainrank",
   platforms: ["ios", "android"],
@@ -26,6 +27,12 @@ const config: ExpoConfig = {
     logtoEndpoint: process.env.EXPO_PUBLIC_LOGTO_ENDPOINT ?? "https://auth.fountainrank.com",
     logtoAudience: process.env.EXPO_PUBLIC_LOGTO_AUDIENCE ?? "https://api.fountainrank.com",
     authCallbackScheme: "com.redducklabs.fountainrank",
+    // EAS project linkage (public, non-secret — visible in the expo.dev URL).
+    // Created via `eas init` under the red-duck-labs org. `parseMobileConfig`
+    // ignores this key; EAS reads it directly from the resolved Expo config.
+    eas: {
+      projectId: "820564bf-5f29-44c7-8ec7-edde67b77360",
+    },
   },
 };
 
