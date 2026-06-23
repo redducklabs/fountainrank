@@ -74,12 +74,15 @@ export default function MapScreen() {
   const capped = pinsQuery.data != null && isAtCap(pinsQuery.data.length);
   // Reuse the shared resolver so offline-vs-error classification stays single-sourced.
   // isLoading (= isPending && isFetching) is true only on the FIRST load, so a
-  // background refetch doesn't flash the spinner.
+  // background refetch doesn't flash the spinner. `isEmpty` is gated on isSuccess so
+  // the "no fountains" banner only appears after an enabled bbox query actually
+  // returned an empty array — never before the first request, and never for a
+  // disabled (idle / antimeridian-skipped / below-zoom) query.
   const viewState: ViewState = resolveViewState({
     isLoading: enabled && pinsQuery.isLoading,
     isError: pinsQuery.isError,
     error: pinsQuery.error,
-    isEmpty: (pinsQuery.data?.length ?? 0) === 0,
+    isEmpty: pinsQuery.isSuccess && (pinsQuery.data?.length ?? 0) === 0,
   });
 
   return (

@@ -56,7 +56,7 @@ honest "map unavailable" state instead of crashing.
 
 ## Map (slice 6e-3)
 
-The Map tab renders a native **MapLibre** map (`@maplibre/maplibre-react-native`)
+The Map tab wires a native **MapLibre** map (`@maplibre/maplibre-react-native`)
 with the Protomaps basemap, viewport-driven fountain pins from the production
 `GET /api/v1/fountains/bbox` API (working / broken / gold-rated icons + a rating
 pill at zoom ≥ 13), clustering, basic filters, foreground location, and pin →
