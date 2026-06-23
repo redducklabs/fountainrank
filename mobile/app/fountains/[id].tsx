@@ -7,6 +7,7 @@ import { FountainDetail } from "../../components/fountain/FountainDetail";
 import { ScreenContainer } from "../../components/ScreenContainer";
 import { QueryStateView } from "../../components/states/QueryStateView";
 import { apiErrorStatus, unwrap } from "../../lib/api";
+import { normalizeFountainId } from "../../lib/detail/id";
 import { useApi } from "../../providers/api-provider";
 import { colors, spacing, typography } from "../../theme";
 
@@ -28,7 +29,9 @@ function NotFound({ note }: { note: string }) {
 export default function FountainDetailScreen() {
   const { client } = useApi();
   const { id } = useLocalSearchParams<{ id: string | string[] }>();
-  const fountainId = typeof id === "string" && id.length > 0 ? id : null;
+  // Reject absent/array/malformed (non-UUID) ids client-side — the backend route
+  // param is a uuid.UUID, so a bad value would 422; show the honest not-found state.
+  const fountainId = normalizeFountainId(id);
   const now = new Date();
 
   const detailQuery = useQuery({
