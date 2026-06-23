@@ -2,9 +2,11 @@
 
 ## TL;DR
 
-**Slice 6b-1** — the authenticated app shell **and** the first contribution **writes** — is **designed, Codex-approved (spec + plan + PR), implemented (subagent-driven TDD, 13 tasks), merged, deployed to production, and unauthenticated-verified.** `main` HEAD = **`f8f38d7`** (`feat(web): auth header + admin-aware user menu + write actions on existing fountains (slice 6b-1) (#61)`).
+**Slice 6b-1** — the authenticated app shell **and** the first contribution **writes** — is **designed, Codex-approved (spec + plan + PR), implemented (subagent-driven TDD, 13 tasks), merged, deployed to production, and unauthenticated-verified.** Two follow-up rounds of **owner-reported fixes (#62)** are also merged + deployed. `main` HEAD = **`d9626f2`** (`fix(web): auth menu z-index + Apple Sign-in profile (name capture, hide relay email) (post-6b-1) (#62)`); the slice itself is `f8f38d7` (#61).
 
-What shipped: a **slim auth-aware site header** (one-click sign-in that returns you where you were; avatar **user menu** with Your account / Admin / Sign out), **request-time subject-based admin authority**, a **fail-closed `/admin` placeholder**, and a **Contribute section** on the fountain detail (rate / verify-report condition / add-note) via Next.js **Server Actions**.
+What shipped: a **slim auth-aware site header** (one-click sign-in that returns you where you were; avatar **user menu** with Your account / Admin / Sign out), **request-time subject-based admin authority**, a **fail-closed `/admin` placeholder**, and a **Contribute section** on the fountain detail (rate / verify-report condition / add-note) via Next.js **Server Actions**. Post-deploy fixes (#62): user menu z-index (was painting under the map), **Apple Sign-in profile** (sync-on-login captures the name; private-relay email hidden).
+
+**▶ NEXT (fresh session): brainstorm + build Slice 6b-2 — add-fountain.** See the "Slice 6b-2 resume guide" section below. Start with `superpowers:brainstorming` with the owner (UI is a collaborative track), then the spec→Codex→plan→Codex→branch→CI+Codex PR→squash-merge→deploy loop.
 
 **What remains in the web/UI track:** **6b-2 add-fountain** (map-pin placement + 409-duplicate + attribute observations), **6c discovery-filter UI**, **6d gamification surfacing** (now meaningfully populated once 6b-1/6b-2 produce contributions), **6e mobile**, and **6g fountain moderation** (the real `require_admin` endpoints + admin pages the `/admin` menu will eventually link to). Each is its own spec → Codex → plan → Codex → branch → CI + Codex PR + comments → squash-merge → deploy → verify loop.
 
@@ -37,20 +39,24 @@ What shipped: a **slim auth-aware site header** (one-click sign-in that returns 
 
 ---
 
+## Post-6b-1 fixes (#62, deployed — owner feedback on the live header)
+
+1. **User menu rendered under the map** → `web/components/SiteHeader.tsx` `<header>` gets `relative z-50` + the `AuthControl` dropdown gets `z-50` (the map is a positioned `<main>` and painted over the static header's dropdown).
+2. **Apple users showed the raw Logto subject instead of their name** → the name only arrives via Logto userinfo (`/me/sync`), which previously ran only on `/account`. Now `web/app/callback/route.ts` calls **`syncProfileForRoute(requestId)`** right after sign-in (best-effort, never breaks login; uses `getAccessToken` not the RSC variant; `postProfileSync` is timeout-bounded 3s). So the menu shows the name on next login. `web/lib/server/sync.ts` factored a shared `postProfileSync`.
+3. **Apple private-relay email** → backend `accept_email` (`backend/app/userinfo.py`) rejects `@privaterelay.appleid.com` (like the synthetic domain); web `web/lib/email.ts` `isDisplayableEmail()` (trim+lowercase; false for empty/synthetic/relay) gates the `/account` email row → **omitted** when there's no real shared email.
+
 ## Current production state
 
-- `main` HEAD `f8f38d7`. Deploy run `27989301777` **success**. Backend alembic unchanged (`0010_contrib_location_gist`).
-- `ADMIN_SUBJECTS = u934oipb1ues` (owner's Logto subject) set in the GitHub **`production` environment** (alongside the other deploy vars). Admin authority reconciles on the owner's next authenticated request.
-- **Unauthenticated post-deploy verify (automated, all green):** `api.fountainrank.com/readyz` 200; `www.fountainrank.com/` 200 (slim header + Sign in); `/admin` 200 → signed-out "Sign in to access the admin tools" (fail-closed); `/fountains/{id}` 200 → "Contribute" + "Sign in to contribute" (forms hidden when signed out).
+- `main` HEAD `d9626f2` (#62 fixes) on top of `f8f38d7` (#61 slice). Deploy runs `27989301777` (#61) and `27992517920` (#62) both **success**. Backend alembic unchanged (`0010_contrib_location_gist`).
+- `ADMIN_SUBJECTS = u934oipb1ues` (owner's Logto subject) set in the GitHub **`production` environment**; baked into the backend pod at the #62 deploy. Admin authority reconciles on the owner's next authenticated request.
+- **Unauthenticated post-deploy verify (automated, all green after both deploys):** `api.fountainrank.com/readyz` 200; `www.fountainrank.com/` 200 (slim header + Sign in); `/admin` 200 → signed-out "Sign in to access the admin tools" (fail-closed); `/fountains/{id}` 200 → "Contribute" + "Sign in to contribute" (forms hidden when signed out).
 - CI green on `main`.
 
-### Owner-driven signed-in smoke (NOT yet done — Claude can't authenticate as you)
-Sign in on `https://www.fountainrank.com` with the admin Logto account (`u934oipb1ues`), then:
-1. The header shows your **avatar**; the user menu has **Your account**, **Admin**, **Sign out**.
-2. On a fountain: **rate** (stars), **verify "it's working" / report a problem**, **save a note** — each succeeds (no error banner), and the panel reflects the change after refresh.
-3. Click **Admin** → `/admin` loads the placeholder.
-4. (Optional) Sign in with a **non-admin** account → `/admin` returns **404**.
-If admin doesn't appear: confirm you signed in with the account whose Logto User ID is `u934oipb1ues` (admin is per-subject, not per-email).
+### Owner-driven signed-in re-verify (Claude can't authenticate as you)
+**Sign OUT then sign IN again** (name capture runs at login — an existing session won't refresh until re-auth), then on `https://www.fountainrank.com`:
+1. User menu now opens **above the map**; shows your **avatar** + name; items: Your account, **Admin** (admin only), Sign out. For the Apple account the menu shows the **name** (not the `sub`); `/account` shows **no email row** (relay hidden).
+2. On a fountain: **rate**, **verify/report status**, **save a note** — each succeeds and the panel updates.
+3. Admin account (`u934oipb1ues`): **Admin** item shows → `/admin` loads; a non-admin gets **404**. (If admin doesn't appear, confirm you signed in with the account whose Logto User ID is `u934oipb1ues` — admin is per-subject, not per-email.)
 
 ---
 
@@ -61,6 +67,28 @@ Capture into a 6b-2/6c cleanup or address opportunistically:
 - Wrap `AuthControl` in `<Suspense>` for `useSearchParams` (page is dynamic so it builds, but it's the canonical pattern); add `aria-labelledby` to the user menu.
 - Test coverage nits: explicit `422→validation` test + `submitCondition`/`submitNote` throw-tests (shared `run()` so behavior is correct); `safeReturnPath("/foo//bar")` positive assertion; `/admin` error-state absence-of-admin-content assertion; cookie `secure` assertion; `getViewer` null-`avatarUrl` branch.
 - Style-guide entries were written descriptively pre-build; reconcile any drift with the shipped components.
+
+---
+
+## Slice 6b-2 resume guide — add-fountain (NEXT)
+
+**Goal:** an authenticated **add-a-fountain** flow on the web — place a pin on the map → set working status → optionally rate / set attributes / add a comment + placement note → submit, with **nearby-duplicate (409)** handling. This is the larger half of 6b (6b-1 did write-on-existing). **Brainstorm the design with the owner first** (`superpowers:brainstorming`; UI is a collaborative track), then spec→Codex→plan→Codex→branch→CI+Codex PR→squash-merge→deploy→verify.
+
+**Backend is already live — no backend change expected.** Contract (auth required; full bodies in the contribution backend handoff):
+- `POST /api/v1/fountains` → **201 `FountainDetail`** | **409 `{ detail:"duplicate_fountain", fountain_id }`** when one already exists within `duplicate_threshold_m` (10 m). Body `AddFountainRequest { location:{latitude,longitude}, is_working?=true, comments?, placement_note?(≤200), ratings?:[{rating_type_id,stars 1–5}], observations?:[{attribute_type_id,value}] }`. The generated client already exposes `AddFountainRequest` + `DuplicateFountainConflict`.
+- **Attributes must be built dynamically from `GET /api/v1/attribute-types`** — `AttributeTypeOut{ id,key,place_type,category,name,description,value_kind('boolean'|'enum'),allowed_values,sort_order }` (~13 types across physical/accessibility/access). `value` ∈ `yes|no|unknown` (boolean) or an `allowed_values` member / `unknown` (enum). **Do NOT hardcode the attribute set.**
+- `ConditionStatus` enum is still GET-less — hardcode it (see 6b-1's `conditionStatusLabel`).
+
+**Reuse the 6b-1 authenticated-write pattern (don't reinvent):**
+- A Next **Server Action** (extend `web/app/actions/contribute.ts` or a new `add-fountain` action) using `getAuthedApiClientForAction(requestId)` (token stays server-side), validate-before-API as hostile, and an error map that adds **409 → a `duplicate` result carrying `fountain_id`** (alongside `unauthenticated`/`validation`/`not_found`/`server`).
+- Auth-gate with `getViewer` (`state==="authed"`); signed-out → reuse `signInWithReturn` to return to the add flow.
+- Forms follow the 6b-1 components (`RatingForm` star pattern, the attribute toggles = yes/no/unknown built from `GET /attribute-types`).
+- **Map-pin placement** uses MapLibre GL JS — `web/components/map/MapBrowser.tsx` + `web/lib/map/*`. Needs a pin-drop interaction capturing `{latitude,longitude}` (no reverse-geocode). The map is a client component; the submit goes through a server action.
+- **409 flow:** on `duplicate`, surface the existing fountain (`fountain_id`) — "a fountain already exists here" with a link to view/contribute to it — instead of creating a second.
+
+**Suggested sub-slicing (smallest-risk-first, each its own PR/deploy):** (1) the add-fountain entry point + map-pin placement + minimal submit (location + is_working) + 409 handling; (2) layer in optional rating/attributes/comment/placement-note. Confirm with the owner during brainstorming.
+
+**Style guide:** add entries for the add-fountain affordance, the pin-placement UI, the attribute toggles, and the duplicate-confirm dialog as they're designed (`docs/style-guide.md`).
 
 ---
 
@@ -78,7 +106,7 @@ Capture into a 6b-2/6c cleanup or address opportunistically:
 ## Resume commands (copy-paste)
 
 ```bash
-git -C . log --oneline -3 origin/main        # HEAD = f8f38d7 slice 6b-1 (#61)
+git -C . log --oneline -3 origin/main        # HEAD = d9626f2 post-6b-1 fixes (#62); slice = f8f38d7 (#61)
 gh issue list --state open -L 30
 curl -s -o /dev/null -w "readyz %{http_code}\n" https://api.fountainrank.com/readyz
 # local checks (Windows, from Git Bash)
