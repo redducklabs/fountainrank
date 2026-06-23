@@ -1,8 +1,0 @@
-{
-  "expo": {
-    "name": "FountainRank",
-    "slug": "fountainrank",
-    "version": "0.0.0",
-    "platforms": ["ios", "android"]
-  }
-}
