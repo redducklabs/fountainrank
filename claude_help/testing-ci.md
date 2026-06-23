@@ -12,14 +12,14 @@ a status. Run it, read the output, then report what actually happened.
 
 Run them through the root task runner — `./run.ps1 check` is the full CI mirror:
 
-| Scope | Command | Runs |
-|---|---|---|
-| Everything | `./run.ps1 check` | backend + frontend + mobile (= CI) |
-| Backend | `./run.ps1 check -Backend` | `ruff check` + `ruff format --check` + `alembic upgrade head` + `alembic check` (no drift) + `pytest` |
-| Web | `./run.ps1 check -Web` | ESLint + Prettier + `tsc --noEmit` + `vitest run` + `next build` |
-| Mobile | `./run.ps1 check -Mobile` | `tsc --noEmit` + ESLint + `expo-doctor` |
-| api-client | `./run.ps1 check -ApiClient` | ESLint + `tsc --noEmit` + `vitest run` |
-| Fast loop | `./run.ps1 check -Fast` | as above but skips `next build` + `expo-doctor` |
+| Scope      | Command                      | Runs                                                                                                  |
+| ---------- | ---------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Everything | `./run.ps1 check`            | backend + frontend + mobile (= CI)                                                                    |
+| Backend    | `./run.ps1 check -Backend`   | `ruff check` + `ruff format --check` + `alembic upgrade head` + `alembic check` (no drift) + `pytest` |
+| Web        | `./run.ps1 check -Web`       | ESLint + Prettier + `tsc --noEmit` + `vitest run` + `next build`                                      |
+| Mobile     | `./run.ps1 check -Mobile`    | `tsc --noEmit` + ESLint + `vitest run` + `expo-doctor`                                                |
+| api-client | `./run.ps1 check -ApiClient` | ESLint + `tsc --noEmit` + `vitest run`                                                                |
+| Fast loop  | `./run.ps1 check -Fast`      | as above but skips `next build` + `expo-doctor`                                                       |
 
 `check` auto-starts the `db` container for backend steps and restores the files
 `next build` rewrites (`web/next-env.d.ts`, `web/tsconfig.json`) so it never
@@ -29,8 +29,8 @@ dirties the tree. The backend `pytest` and `alembic check` need the database;
 ## PR readiness — run the checks before you push
 
 **CI runs are not your dev loop. Never push code that hasn't passed the local
-mirror — verify green locally first.** Before you open a PR *or push another
-commit to one*:
+mirror — verify green locally first.** Before you open a PR _or push another
+commit to one_:
 
 1. **Run the full mirror green:** `./run.ps1 check` (backend + workspace-js + web
    build + mobile). If you only touched one workspace you may scope it
@@ -39,7 +39,7 @@ commit to one*:
    regenerated `api-client` that web/mobile no longer typecheck against) can't
    slip through.
 2. **Schema changed?** Confirm `alembic upgrade head` applies cleanly and
-   `alembic check` reports **no drift** — and verify constraint/index *names* in
+   `alembic check` reports **no drift** — and verify constraint/index _names_ in
    the DB (`pg_constraint`/`pg_indexes`), because `alembic check` does **not**
    compare CHECK-constraint definitions, so a misnamed check can ship silently.
 3. **Re-run after every change.** Each push triggers a full CI run; every push
@@ -69,11 +69,13 @@ via env.
 
 **The authoritative mirror is [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)**
 (landed in Phase 0f). Job ↔ local parity:
+
 - `backend` = `check -Backend` (ruff + format + `alembic upgrade head` + `alembic check` +
   pytest, against a `postgis/postgis:17-3.5` service published on **5436** so the backend's
   default `DATABASE_URL` reaches it — no env override, exactly like `run.ps1`).
 - `workspace-js` = the workspace-wide `turbo run lint typecheck test` (enforces **mobile**
-  lint+typecheck too) + `pnpm run format:check` + `turbo run build --filter=web`.
+  lint+typecheck+**test** too — mobile has a Vitest suite for its pure helpers) +
+  `pnpm run format:check` + `turbo run build --filter=web`.
 - `mobile-doctor` = `expo-doctor`.
 
 CodeQL runs via GitHub **default setup** (no workflow file). Security scanning lives in
