@@ -33,7 +33,14 @@ export function useAddFountainMode(
   const [obsValue, setObsValue] = useState<Record<number, string>>({});
   const [comments, setComments] = useState("");
   const [placementNote, setPlacementNote] = useState("");
-  const catalogFetchedRef = useRef(false);
+  // Clear user-entered optional fields so a prior add's values can never be submitted for a
+  // later fountain (the map stays mounted across adds). Catalogs persist (they're cached).
+  const resetOptional = useCallback(() => {
+    setRatingValue({});
+    setObsValue({});
+    setComments("");
+    setPlacementNote("");
+  }, []);
 
   const placeable = state.bound ? canPlace(zoom, state.bound) : false;
   // Refs so the imperative map handlers always read the latest values (no stale closure).
@@ -56,6 +63,7 @@ export function useAddFountainMode(
   const enter = useCallback(() => {
     if (!placementMap) return;
     dispatch({ type: "ENTER" });
+    resetOptional(); // never carry a prior add's optional fields into a new one
     setFix({ ok: false }); // reset stale GPS before the new request
     setZoom(placementMap.getZoom());
     dispatch({ type: "SET_BOUND", bound: boundFromFix({ ok: false }, placementMap.getViewport()) });
@@ -78,7 +86,7 @@ export function useAddFountainMode(
       () => setFix({ ok: false }),
       { enableHighAccuracy: false, timeout: GEOLOCATE_TIMEOUT_MS },
     );
-  }, [placementMap]);
+  }, [placementMap, resetOptional]);
 
   // Auto-enter (authed) + strip ?add=1 (spec §4). Anonymous/sign-in-abandoned strips immediately;
   // the authed auto-enter case DEFERS the strip until the map adapter exists so we don't lose the
@@ -97,16 +105,25 @@ export function useAddFountainMode(
     router.replace("/"); // anonymous / not auto-enter: strip without entering
   }, [opts.hadAddParam, opts.autoEnter, opts.isAuthenticated, placementMap, enter, router]);
 
-  // Fetch catalog data (best-effort) when first entering the details phase.
+  // Fetch catalog data (best-effort) on each entry to the details phase. The module-level fetchers
+  // cache a successful result and dedupe an in-flight call, but do NOT cache failures — so a failed
+  // catalog load retries on the next details entry. No hook-level failure caching.
   useEffect(() => {
-    if (state.phase !== "details" || catalogFetchedRef.current) return;
-    catalogFetchedRef.current = true;
+    if (state.phase !== "details") return;
+    let cancelled = false;
     fetchRatingTypes()
-      .then(setRatingTypes)
+      .then((t) => {
+        if (!cancelled) setRatingTypes(t);
+      })
       .catch(() => {});
     fetchAttributeTypes()
-      .then((t) => setAttributeGroups(buildAttributeGroups(t)))
+      .then((t) => {
+        if (!cancelled) setAttributeGroups(buildAttributeGroups(t));
+      })
       .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, [state.phase]);
 
   // Subscribe map events while active; handlers read refs so they never go stale.
@@ -167,12 +184,22 @@ export function useAddFountainMode(
       // FAB, lingering pin) once the modal closes.
       router.push(`/fountains/${res.fountainId}`);
       dispatch({ type: "CANCEL" });
+      resetOptional();
     } else if (res.error === "duplicate") {
       dispatch({ type: "SUBMIT_DUPLICATE", fountainId: res.fountainId });
     } else {
       dispatch({ type: "SUBMIT_ERROR", errorKind: res.error });
     }
-  }, [state.pin, state.working, ratingValue, obsValue, comments, placementNote, router]);
+  }, [
+    state.pin,
+    state.working,
+    ratingValue,
+    obsValue,
+    comments,
+    placementNote,
+    router,
+    resetOptional,
+  ]);
 
   // Hide the FAB while add-mode is active so it can't re-enter and reset an in-progress flow.
   const fab: ReactNode = active ? null : (
@@ -187,8 +214,14 @@ export function useAddFountainMode(
       gpsUnavailable={!fix.ok}
       duplicateId={state.duplicateId}
       errorKind={state.errorKind}
-      onCancel={() => dispatch({ type: "CANCEL" })}
-      onViewDuplicate={() => dispatch({ type: "CANCEL" })}
+      onCancel={() => {
+        dispatch({ type: "CANCEL" });
+        resetOptional();
+      }}
+      onViewDuplicate={() => {
+        dispatch({ type: "CANCEL" });
+        resetOptional();
+      }}
       onPlaceAtCenter={placeAtCenter}
       onNudge={(dir) => dispatch({ type: "NUDGE", dir })}
       onNext={() => dispatch({ type: "NEXT" })}
