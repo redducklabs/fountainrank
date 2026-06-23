@@ -1134,6 +1134,31 @@ stack-pushed detail (`fountains/[id]`) and `diagnostics`. Sign-in affordances
 stay hidden/disabled until `isAuthConfigured` is true (auth-unavailable mode,
 spec §21).
 
+### Account auth (slice 6e-5)
+
+The Account tab is a utility surface, not a marketing page. It uses
+`ScreenContainer`, the shared typography scale, and compact full-width controls.
+
+- **Public-read mode:** when native auth is unconfigured, show one muted body
+  note explaining that browsing is public and sign-in is unavailable in this
+  build. Do not show disabled fake sign-in controls.
+- **Signed out / reauth required:** show concise copy and a crown-gold primary
+  button (`colors.brandYellow`, navy text, 8px radius, min height 48). While the
+  browser auth session is opening, disable the button and change the label to an
+  in-progress state. Cancellation is a non-error note; SDK/auth errors use the
+  danger color.
+- **Signed in:** show a 64px circular avatar when `avatar_url` exists; otherwise
+  show a 64px brand-blue fallback circle with the profile initial. Display the
+  backend `display_name`, a non-synthetic email when available, and a compact
+  admin label when `is_admin` is true. Do not render raw user ids.
+- **Profile error:** show retry and sign-out controls. A 401/session-expired
+  state becomes the signed-out reauth-required state, not an offline/network
+  message.
+- **Accessibility and fit:** buttons use `accessibilityRole="button"` and
+  disabled state where applicable. Text must wrap inside the screen on small
+  devices; profile text uses `flex: 1` and `minWidth: 0` so long names/emails do
+  not push controls off-screen.
+
 ### Map (slice 6e-3)
 
 The Map tab (`mobile/app/(tabs)/index.tsx`) is a **full-bleed** MapLibre map (no

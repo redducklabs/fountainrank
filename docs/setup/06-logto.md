@@ -47,6 +47,17 @@ In the Logto admin console → **Applications → Create**:
   - **Redirect URI:** the app's custom scheme, e.g.
     `com.redducklabs.fountainrank://callback` (must match the Expo config).
   - Record the **App ID** (native apps are public clients — no secret).
+  - Mobile build variable: `EXPO_PUBLIC_LOGTO_APP_ID`.
+  - Enable mobile sign-in config only after the Native app type and exact
+    redirect URI are confirmed in this doc; then set
+    `EXPO_PUBLIC_LOGTO_NATIVE_AUTH_CONFIRMED=true` for the build. A lone app id
+    must not enable sign-in.
+
+  Current native app record (owner-confirmed 2026-06-23):
+  - Type: Native.
+  - Public App ID: `oikth3qbmnrhqd9jmkbc8`.
+  - Redirect URI: **pending owner confirmation** —
+    `com.redducklabs.fountainrank://callback`.
 
 - **Machine-to-Machine** — for the backend / any server-to-server calls.
   - Record **App ID** + **App secret**.
@@ -89,12 +100,13 @@ buttons; set branding (logo, colors) to match the eventual style guide.
 
 ## Outputs to record
 
-| Value | Becomes | Destination |
-|---|---|---|
-| `LOGTO_ENDPOINT` (`https://auth.fountainrank.com`) | web/mobile/backend config | GitHub Env **variable** |
-| Web `LOGTO_APP_ID` / `LOGTO_APP_SECRET` | web config | id = variable, secret = **secret** |
-| Native app ID | mobile config | variable |
-| M2M app ID / secret | backend config | id = variable, secret = **secret** |
+| Value                                              | Becomes                                                   | Destination                        |
+| -------------------------------------------------- | --------------------------------------------------------- | ---------------------------------- |
+| `LOGTO_ENDPOINT` (`https://auth.fountainrank.com`) | web/mobile/backend config                                 | GitHub Env **variable**            |
+| Web `LOGTO_APP_ID` / `LOGTO_APP_SECRET`            | web config                                                | id = variable, secret = **secret** |
+| Native app ID                                      | mobile config (`EXPO_PUBLIC_LOGTO_APP_ID`)                | variable                           |
+| Native auth confirmation flag                      | mobile config (`EXPO_PUBLIC_LOGTO_NATIVE_AUTH_CONFIRMED`) | variable                           |
+| M2M app ID / secret                                | backend config                                            | id = variable, secret = **secret** |
 
 **Hand me:** the endpoint and app IDs (not secrets) so I can wire the
 web/mobile/backend config in Phase 2. **You keep / set yourself:** the app
@@ -112,11 +124,11 @@ every deploy run.
 
 **GitHub → Settings → Environments → `production`:**
 
-| Item | Type | Value |
-|---|---|---|
-| `LOGTO_APP_ID` | **Variable** (not secret) | The real App ID from Step 1 above |
-| `LOGTO_APP_SECRET` | **Secret** | The real App Secret from Step 1 above |
-| `LOGTO_COOKIE_SECRET` | **Secret** | A random string ≥ 32 characters (generate with `openssl rand -base64 32`) |
+| Item                  | Type                      | Value                                                                     |
+| --------------------- | ------------------------- | ------------------------------------------------------------------------- |
+| `LOGTO_APP_ID`        | **Variable** (not secret) | The real App ID from Step 1 above                                         |
+| `LOGTO_APP_SECRET`    | **Secret**                | The real App Secret from Step 1 above                                     |
+| `LOGTO_COOKIE_SECRET` | **Secret**                | A random string ≥ 32 characters (generate with `openssl rand -base64 32`) |
 
 Do **not** paste the actual secret values here or into any file tracked by git.
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { AuthSessionError } from "./auth/state";
 import { ApiError, apiErrorStatus, buildAuthHeaders, createApiClient, unwrap } from "./api";
 
 describe("buildAuthHeaders", () => {
@@ -143,6 +144,74 @@ describe("createApiClient", () => {
     const client = createApiClient("https://api.fountainrank.com");
     expect("use" in client).toBe(false);
     expect("eject" in client).toBe(false);
+  });
+
+  it("attaches a Bearer token from the token provider", async () => {
+    let authorization: string | null = null;
+    const fetchMock: typeof fetch = async (input) => {
+      const req = input instanceof Request ? input : new Request(String(input));
+      authorization = req.headers.get("authorization");
+      return new Response(JSON.stringify({ status: "ok" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+    const client = createApiClient("https://api.fountainrank.com", {
+      fetch: fetchMock,
+      getAccessToken: async () => "token123",
+    });
+    await client.GET("/healthz");
+    expect(authorization).toBe("Bearer token123");
+  });
+
+  it("omits Authorization when the token provider returns no token", async () => {
+    let authorization: string | null = "unexpected";
+    const fetchMock: typeof fetch = async (input) => {
+      const req = input instanceof Request ? input : new Request(String(input));
+      authorization = req.headers.get("authorization");
+      return new Response(JSON.stringify({ status: "ok" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+    const client = createApiClient("https://api.fountainrank.com", {
+      fetch: fetchMock,
+      getAccessToken: async () => null,
+    });
+    await client.GET("/healthz");
+    expect(authorization).toBeNull();
+  });
+
+  it("rejects token-provider failures as auth/session errors, not ApiError/offline", async () => {
+    const client = createApiClient("https://api.fountainrank.com", {
+      getAccessToken: async () => {
+        throw new Error("expired");
+      },
+    });
+    await expect(client.GET("/healthz")).rejects.toBeInstanceOf(AuthSessionError);
+  });
+
+  it("keeps stripping X-Dev-* headers when auth is enabled", async () => {
+    let sentKeys: string[] = [];
+    let authorization: string | null = null;
+    const fetchMock: typeof fetch = async (input) => {
+      const req = input instanceof Request ? input : new Request(String(input));
+      sentKeys = [...req.headers.keys()].map((k) => k.toLowerCase());
+      authorization = req.headers.get("authorization");
+      return new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+    const client = createApiClient("https://api.fountainrank.com", {
+      fetch: fetchMock,
+      getAccessToken: async () => "token123",
+    });
+    await client.GET("/api/v1/me", {
+      params: { header: { "X-Dev-User": "evil" } },
+    });
+    expect(authorization).toBe("Bearer token123");
+    expect(sentKeys.some((k) => k.startsWith("x-dev"))).toBe(false);
   });
 
   it("rejects with a non-ApiError (no HTTP status) when the network fails - the offline path", async () => {

@@ -9,7 +9,7 @@ Release builds target the deployed production services
 
 ```
 app/
-  _layout.tsx          providers (SafeArea + QueryClient + ApiProvider) + config guard
+  _layout.tsx          providers (SafeArea + QueryClient + AuthProvider + ApiProvider) + config guard
   (tabs)/index.tsx     Map tab — MapLibre map + bbox pins + filters (slice 6e-3)
   (tabs)/              bottom tabs: Map · Add · Account
   fountains/[id].tsx   fountain detail (stack-pushed)
@@ -17,15 +17,15 @@ app/
 components/            ScreenContainer + loading/empty/error/offline states
 components/map/        FountainMap (MapLibre) + MapFilters
 hooks/                 useForegroundLocation (non-blocking when-in-use location)
-lib/                   pure, unit-tested helpers (config, api, view-state, build-info)
+lib/                   pure, unit-tested helpers (config, api, auth, view-state, build-info)
 lib/map/               pure, unit-tested map helpers (constants, bounds, pins, format, filters)
-providers/             ApiProvider (shared API client from validated config)
+providers/             AuthProvider + ApiProvider (shared auth-aware API client)
 theme.ts               design tokens
 ```
 
-The remaining screens are scaffolds for later slices (detail → 6e-4, auth →
-6e-5, add → 6e-7). **Slice 6e-3 ends Expo Go support:** the MapLibre native map
-requires a dev-client / EAS build (see _Map_ below).
+The remaining Add screen is scaffolded for slice 6e-7. **Slice 6e-3 ends Expo Go
+support:** the MapLibre native map requires a dev-client / EAS build (see _Map_
+below).
 
 ## Common commands (run from the repo root)
 
@@ -45,9 +45,15 @@ Non-secret client config lives in `app.config.ts` under `extra` and is validated
 at startup by `lib/config.ts`. Defaults point at production; override for an
 alternate HTTPS endpoint with `EXPO_PUBLIC_API_BASE_URL` /
 `EXPO_PUBLIC_LOGTO_ENDPOINT` / `EXPO_PUBLIC_LOGTO_AUDIENCE`. URLs must be
-`https://` (local cleartext is not supported in this slice). Sign-in stays
-disabled (public-read mode) until a Logto Native app id is configured
-(`isAuthConfigured`), which arrives with the owner-gated auth records (6e-9).
+`https://` (local cleartext is not supported in this slice).
+
+Native auth uses the public Logto Native app id from `EXPO_PUBLIC_LOGTO_APP_ID`,
+but a lone app-id env var is deliberately inert. `app.config.ts` only surfaces
+`extra.logtoAppId` when `EXPO_PUBLIC_LOGTO_NATIVE_AUTH_CONFIRMED=true` is also
+set, and that flag must only be set after `docs/setup/06-logto.md` records the
+owner-confirmed Native app type, public app id variable name, and exact
+`com.redducklabs.fountainrank://callback` redirect URI. Until then
+`isAuthConfigured` is false and the Account tab stays in public-read mode.
 
 The map basemap style URL is `EXPO_PUBLIC_BASEMAP_STYLE_URL` (public, non-secret;
 defaults to the same DigitalOcean-Spaces Protomaps "light" style the web client
