@@ -15,10 +15,12 @@
 >
 > **Owner decisions captured in brainstorming (2026-06-22):** (a) spec the **full flow**, split the
 > **implementation into two PRs** (minimal add, then optional fields); (b) **tap-to-drop + draggable**
-> pin placement; (c) a **client-side GPS bound** so honest users can't drop a pin far from where they
-> are, with a **soft-guard + fallback** policy (tight bound around a good GPS fix; fall back to the
-> current map viewport when there is no usable fix); (d) the flow is an **overlay on the existing home
-> map** (not a dedicated route).
+> pin placement (with a keyboard-accessible equivalent, §6); (c) a **client-side GPS bound** so honest
+> users can't accidentally drop a pin far from where they are, with a **soft-guard + fallback** policy:
+> a tight **proximity** bound around a good GPS fix, and — when there is no usable fix — a **precision
+> gate** (a deliberate, street-level placement) rather than a proximity bound, because the user's real
+> location is unknown by construction without GPS (§6, §11); (d) the flow is an **overlay on the
+> existing home map** (not a dedicated route).
 
 ## 1. Goal & scope
 
@@ -33,8 +35,8 @@ placement-note capture built dynamically from the live API.
 1. **Entry affordance** — a floating **"Add a fountain"** control on the home map; signed-out users
    are routed straight to sign-in and returned into the flow.
 2. **Placement mode** — the existing home map enters a placement state: **tap to drop** a pin, **drag
-   to fine-tune**, with a **client-side GPS bound** (soft-guard + viewport fallback, §6) and a live
-   coordinate readout.
+   to fine-tune** (plus a keyboard path: "Place at map center" + nudge), with a **client-side GPS
+   bound** (soft-guard + precision-gated fallback, §6) and a live coordinate readout.
 3. **Details step** — **working status** (the only required field; default *working*), and **(PR 2)**
    optional **rating**, **attribute observations** (built from `GET /attribute-types`), a free-text
    **comment**, and a short **placement note**.
@@ -125,10 +127,13 @@ container so it can drive map state), bottom area, above the in-view list, visib
   avoids losing placement state across the auth redirect.
 - **Signed in** → the FAB enters **placement mode** directly.
 
-Auth state comes from `getViewer()` on the home page (already dynamic). The home page reads `?add=1`
-on mount; when present **and** the viewer is `authed`, it auto-enters placement mode and then
-`router.replace("/")` to strip the param (so a refresh/back doesn't re-trigger). If `?add=1` is present
-but the viewer is **not** authed (e.g. sign-in abandoned), the param is stripped and nothing opens.
+**Server/client split (explicit).** `web/app/page.tsx` is a **server component**: it calls
+`getViewer()` and reads `searchParams.add`, then passes two props into the client map
+(`MapBrowserLoader` → `MapBrowser`): `isAuthenticated` (drives the FAB's signed-in vs sign-in path) and
+`autoEnterAdd = (searchParams.add === "1" && viewer.state === "authed")`. The **client** map, on mount,
+enters placement mode iff `autoEnterAdd`, then strips the query with `router.replace("/")` so a
+refresh/back doesn't re-trigger. If `?add=1` is present but the viewer is not `authed` (sign-in
+abandoned), `autoEnterAdd` is false and the client still strips the param — nothing opens.
 
 ## 5. Web — flow & state machine
 
@@ -162,25 +167,41 @@ On entering **placing**, request the device position **once**
 (`navigator.geolocation.getCurrentPosition`, `enableHighAccuracy:false`, reusing
 `GEOLOCATE_TIMEOUT_MS`), reading `coords.latitude/longitude/accuracy`:
 
-- **Usable fix** (a position returned **and** `accuracy ≤ ACCURACY_MAX_M`): set the bound to a circle
-  centered on the GPS position with radius `max(BOUND_RADIUS_MIN_M, accuracy)`; draw a **faint bound
-  ring**; recenter/zoom the map to fit the ring. New constants in `web/lib/map/constants.ts`:
-  `BOUND_RADIUS_MIN_M = 150`, `ACCURACY_MAX_M = 1000`.
-- **No usable fix** (denied, unavailable, timed out, or `accuracy > ACCURACY_MAX_M`): **fallback** —
-  no ring; the bound is the **current map viewport** (the user can only drop within what they can see).
-  This keeps add usable on desktop and with denied/poor location. **Be honest about its weakness:** a
-  viewport bound is **not** a location bound — a zoomed-out viewport constrains nothing. So in fallback
-  we additionally **require the map to be at/above the browse pin-load zoom** (`shouldLoadPins`, the
-  existing `web/lib/map/bounds.ts` threshold); below it the panel shows "Zoom in to place the fountain"
-  and disables the drop. This keeps even unbounded fallback drops at a neighborhood scale; true
-  location-quality for fallback adds then rests on the **10 m duplicate check** and later **moderation
-  (6g)**, not on the (absent) GPS bound. The GPS case naturally clears this gate because fitting a
-  ≥150 m ring zooms in past it.
+**Placement-precision gate (both modes).** Dropping a pin requires the map to be at/above a dedicated
+`PLACE_MIN_ZOOM` (new constant, **16** — street level, a viewport roughly a few hundred metres across);
+below it the panel shows "Zoom in to place the fountain" and the drop is disabled. This is deliberately
+**not** `shouldLoadPins`/`MIN_ZOOM` (which is **z10** — a z10 viewport can span miles and would not
+constrain a fallback drop at all, per the spec-review finding); it is a stricter, placement-specific
+gate that forces deliberate, precise placement at street scale.
+
+- **Usable fix** (a position returned **and** `accuracy ≤ ACCURACY_MAX_M`): the bound is a **circle**
+  centered on the GPS position, radius `max(BOUND_RADIUS_MIN_M, accuracy)`; draw a **faint bound ring**
+  and recenter to the GPS position at/above `PLACE_MIN_ZOOM` (showing the relevant part of the ring —
+  not necessarily the whole ring when accuracy is large). This is the **real proximity bound** — the
+  on-site mobile case the owner asked for.
+- **No usable fix** (denied, unavailable, timed out, or `accuracy > ACCURACY_MAX_M`): **fallback** — no
+  ring; the bound is the **current map viewport** (small, because of `PLACE_MIN_ZOOM`), and the panel
+  shows explicit copy: *"We couldn't confirm your location — make sure the pin is exactly where the
+  fountain is."* **Be explicit about what this does and does not do:** without a GPS fix the client
+  **cannot** bound to the user's real position — that is impossible by construction, not a gap to paper
+  over. The fallback enforces **precision** (a deliberate, zoomed-in placement), **not proximity to the
+  user** — a determined desktop user can still pan elsewhere and place there. The owner accepted
+  desktop/no-GPS adds when choosing soft-guard+fallback; data-quality for these rests on the **10 m
+  duplicate check** and later **moderation (6g)**, and the spec/UX/tests claim nothing stronger.
+
+New constants in `web/lib/map/constants.ts`: `BOUND_RADIUS_MIN_M = 150`, `ACCURACY_MAX_M = 1000`,
+`PLACE_MIN_ZOOM = 16`.
 
 Interaction:
 
 - **Tap/click** the map to drop the pin; **drag** the pin marker to fine-tune. A live **lat/lng
   readout** (and, in the GPS case, distance-from-you) shows in the panel.
+- **Keyboard / non-pointer path (PR 1, required for a11y):** a **"Place at map center"** button drops
+  the pin at the current map center; the map's built-in keyboard pan/zoom (focusable canvas) moves the
+  center, and the panel offers **nudge** controls (small N/S/E/W steps) for fine adjustment. Every step
+  is clamped to the bound. The full minimal add is completable with **no pointer canvas click/drag** —
+  matching the map-browse a11y precedent (the in-view DOM list exists precisely because GL-layer
+  interaction is not accessible on its own).
 - **Out-of-bound** placement (GPS case: outside the ring) → **clamp the pin to the boundary** and show
   a gentle inline note ("Place the fountain near where you are") rather than rejecting the gesture. In
   the viewport-fallback case the map click is already within view, so clamping is a no-op there.
@@ -205,15 +226,19 @@ default). Maps to `is_working`. This is the only field required to submit the mi
 
 ### 7.2 Rating (PR 2 — optional)
 
-Reuse the 6b-1 **`RatingForm`** per-dimension 5-star radio pattern (keyboard-accessible radio groups,
-not color-only). Dimensions come from **`GET /api/v1/rating-types`** (`RatingTypeOut[]`, public,
-fountain-scoped, ordered by `sort_order`) — fetched lazily when the details step opens, parallel to
-the attribute fetch (§7.3), and cached for the session; **not** from `FountainDetail.dimensions`
-(which requires an existing fountain). `RatingForm` is adapted to accept a `RatingTypeOut[]` list (it
-currently takes `DimensionSummary[]`; both expose `id`/`name`/`sort_order`, so a small prop-shape
-adaptation, not a rewrite). Untouched dimensions are omitted; the user may rate any subset or none;
-set dimensions become `ratings:[{rating_type_id, stars}]`. If the fetch fails, the rating section is
-skipped gracefully (like attributes) — it never blocks the add.
+Reuse the 6b-1 **5-star radio pattern** (keyboard-accessible radio groups, not color-only). Dimensions
+come from **`GET /api/v1/rating-types`** (`RatingTypeOut { id, name, description, sort_order }`, public,
+fountain-scoped, ordered by `sort_order`) — fetched lazily when the details step opens, parallel to the
+attribute fetch (§7.3), and cached for the session; **not** from `FountainDetail.dimensions` (which
+requires an existing fountain). **Do not force-fit the existing `RatingForm`:** it consumes
+`DimensionSummary` (whose id field is **`rating_type_id`**, with **no** `sort_order`) and is wired
+straight to `submitRating(fountainId, …)`. Instead **extract a shared, presentational star-group
+component** (label + 1–5 radio group emitting `(typeId, stars)`) that both the detail `RatingForm` and
+the add form render, **or** give `RatingForm` a form-level submit callback + an explicit
+`{ typeId, name, sortOrder }[]` prop. The add form maps **`RatingTypeOut.id → rating_type_id`**; a test
+asserts this mapping so an `id`-vs-`rating_type_id` mixup fails. Untouched dimensions are omitted; the
+user may rate any subset or none; set dimensions become `ratings:[{rating_type_id, stars}]`. If the
+fetch fails, the rating section is skipped gracefully (like attributes) — it never blocks the add.
 
 ### 7.3 Attribute observations (PR 2 — optional, built dynamically)
 
@@ -262,12 +287,17 @@ Steps (mirroring `contribute.ts`):
 2. **Auth** — `getAuthedApiClientForAction(requestId)`; a thrown token/session error →
    `{ ok:false, error:"unauthenticated" }` (split from network failure, per 6b-1).
 3. **`POST /api/v1/fountains`** with the assembled body (omit empty optional arrays/strings).
-4. **Result map:**
-   - **201** → `{ ok:true, fountainId }` (from the returned `FountainDetail.id`).
-   - **409** → `{ ok:false, error:"duplicate", fountainId }` (from `DuplicateFountainConflict.fountain_id`).
-   - **401** → `unauthenticated`; **422** → `validation`; otherwise → `server`.
-5. **Structured logging** (`requestId`, `outcome`/`status`) — **never** coordinates-as-PII beyond
-   what's needed, never the token, comment, or placement-note bodies.
+4. **Result map (read the typed bodies the `openapi-fetch` way — destructure `{ data, error, response }`):**
+   - **201** → `{ ok:true, fountainId: data.id }` (the returned `FountainDetail`).
+   - **409** → read the typed **`error`** side — `openapi-fetch` surfaces non-2xx bodies on `error`,
+     **not** `data` — `DuplicateFountainConflict.fountain_id`. If the 409 body is missing/malformed or
+     `fountain_id` is not a UUID → treat as **`server`** (never a `duplicate` with an undefined route).
+   - **401** → `unauthenticated`; **422** → `validation`; any other non-2xx / thrown → `server`.
+5. **Structured logging** — log **only** `requestId`, action, and `outcome`/`status`. **Never** log the
+   submitted coordinates, `comments`, `placement_note`, rating/observation values, or the token. (A
+   request id already ties to an authenticated write, and an exact fountain coordinate is sensitive; if
+   location diagnostics are ever needed, use a coarse/bucketed value behind an explicit debug path,
+   never routine logging.)
 
 **Client outcomes** (handled by `AddFountainPanel` via `useActionState`/`useTransition`):
 
@@ -286,9 +316,10 @@ revalidation on write remains out of scope).
 
 ## 9. Architecture & components
 
-- `web/components/map/MapBrowser.tsx` (client) — **thin seam**: add-mode enter/exit, browse-interaction
-  suppression while active, mount/unmount of the placement pin + bound-ring layers. Renders the FAB
-  and the `AddFountainPanel`. The existing browse logic is otherwise unchanged.
+- `web/components/map/MapBrowser.tsx` (client) — **thin seam**: receives `isAuthenticated` +
+  `autoEnterAdd` props (§4); add-mode enter/exit, browse-interaction suppression while active,
+  mount/unmount of the placement pin + bound-ring layers. Renders the FAB and the `AddFountainPanel`.
+  The existing browse logic is otherwise unchanged.
 - `web/components/map/useAddFountainMode.ts` (client hook) — owns the state machine (§5), GPS
   acquisition + bound derivation (§6), pin capture/drag/clamp, and the submit call; exposes state +
   handlers to the panel. Keeps map-event wiring out of the panel and out of `MapBrowser`'s browse path.
@@ -299,18 +330,20 @@ revalidation on write remains out of scope).
   `buildAttributeGroups(types)`; boolean Yes/No/Unknown + enum select; emits `observations[]`.
 - `web/app/actions/add-fountain.ts` (`"use server"`) — the action (§8). Shared constants/types in
   `web/lib/add-fountain.ts` (plain module).
-- `web/lib/map/constants.ts` — add `BOUND_RADIUS_MIN_M`, `ACCURACY_MAX_M`.
+- `web/lib/map/constants.ts` — add `BOUND_RADIUS_MIN_M`, `ACCURACY_MAX_M`, `PLACE_MIN_ZOOM`.
 - `web/lib/map/bounds.ts` (or a focused new `web/lib/map/placement.ts`) — `boundFromFix`,
   `clampToBound`, distance helper (pure, unit-tested).
-- `web/app/page.tsx` — read/strip `?add=1` and request auto-enter when `authed` (§4).
+- `web/app/page.tsx` (server) — `getViewer()` + `searchParams.add`; passes `isAuthenticated` +
+  `autoEnterAdd` into `MapBrowserLoader`/`MapBrowser` (§4). The client map strips the query.
 
 ## 10. Error handling & edge cases
 
 - **WebGL2 unsupported / map can't render** → FAB hidden; add is unavailable (consistent with browse).
 - **GPS denied / unavailable / timed out / `accuracy > ACCURACY_MAX_M`** → viewport-fallback bound, no
   ring; add still works.
-- **Fallback below the pin-load zoom** → "Zoom in to place the fountain"; the drop is disabled until
-  the map is zoomed in past `shouldLoadPins` (§6), so a continent-scale viewport can't be the bound.
+- **Below `PLACE_MIN_ZOOM` (either mode)** → "Zoom in to place the fountain"; the drop is disabled
+  until the map is at street level (§6), forcing deliberate placement (and preventing a wide
+  fallback viewport from being a meaningless "bound").
 - **Out-of-bound drop/drag** → clamp to boundary + gentle note (§6).
 - **Duplicate within 10 m (409)** → existing fountain surfaced; no duplicate created (§8).
 - **Session expired mid-flow (401 / token throw)** → `unauthenticated`; re-prompt sign-in to `/?add=1`.
@@ -324,9 +357,11 @@ revalidation on write remains out of scope).
 - **Concurrent adds at the same spot** → backend advisory lock + duplicate precheck serialize; the
   loser receives 409 and is routed to the winner.
 - **XSS** — all user text renders as escaped React children; the body is sent as JSON.
-- **Accessibility** — pin placement is pointer-based (map drag), consistent with the existing map; a
-  keyboard-only placement path is **not** in scope. The panel **controls** (working toggle, rating,
-  attributes, text) are fully keyboard-accessible and labeled; outcomes use `role="status"`/
+- **Accessibility** — placement has a **fully keyboard-accessible path** (PR 1, §6): a "Place at map
+  center" button + nudge controls + the map's built-in keyboard pan/zoom, result clamped to the same
+  bound — pointer tap/drag is an enhancement, not the only path. A test proves the **minimal add
+  completes with no pointer canvas interaction**. The panel controls (working toggle, rating,
+  attributes, text) are keyboard-accessible and labeled; outcomes use `role="status"`/
   `aria-live="polite"`; `Escape`/Cancel exits add-mode.
 
 ## 11. Security considerations
@@ -345,8 +380,9 @@ revalidation on write remains out of scope).
   fixed internal `/?add=1` (already hardened + re-validated on read in `/callback`).
 - **CSRF / origin** — writes are same-origin Next Server Actions; `experimental.serverActions.allowedOrigins`
   was pinned to the two public hosts in 6b-1 (no change).
-- **PII / logging** — do not log comment or placement-note bodies; log coordinates only as needed for
-  diagnostics, never tied to identity beyond the `requestId`.
+- **PII / logging** — log only `requestId`/action/outcome/status; **never** log submitted coordinates,
+  `comments`, `placement_note`, rating/observation values, or the token. Exact coordinates are treated
+  as sensitive (coarse/bucketed only, behind an explicit debug path, if ever needed).
 
 ## 12. Style guide (same-commit prerequisite, not an afterthought)
 
@@ -365,21 +401,26 @@ conventions.
 - `web/lib/map/placement.test.ts` (or `bounds.test.ts` extension): `boundFromFix` selects circle for a
   usable fix and viewport for denied/poor/over-`ACCURACY_MAX_M`; radius = `max(BOUND_RADIUS_MIN_M,
   accuracy)`; `clampToBound` leaves in-bound points unchanged and clamps out-of-bound points to a
-  circle edge / viewport rectangle; distance helper sanity.
+  circle edge / viewport rectangle; the `PLACE_MIN_ZOOM` gate (`canPlace(zoom)` false below, true
+  at/above); distance helper sanity.
 - `web/lib/add-fountain.test.ts`: shared validation/type helpers (range checks, `placement_note` ≤ 200,
   observation/rating shape, `buildAttributeGroups` grouping/sorting/control-kind from a fixture, enum
   vs boolean, **unknown excluded** from the payload).
-- `web/app/actions/add-fountain.test.ts`: mocked authed client + token — **201** → `{ok, fountainId}`;
-  **409** → `{ok:false, error:"duplicate", fountainId}`; **401** → `unauthenticated`; **422** →
-  `validation`; **5xx**/throw → `server`; hostile/malformed serialized payloads (bad lat/lng,
-  out-of-range stars, oversized placement note, bad observation) rejected as `validation` **before** any
-  API call; token/comment/placement-note never appear in logged fields.
+- `web/app/actions/add-fountain.test.ts`: mocked authed client + token — **201** → `{ok, fountainId:
+  data.id}`; **409** reads the typed **`error`** side → `{ok:false, error:"duplicate", fountainId:
+  error.fountain_id}`; a **409 with a missing/malformed body** (no/!UUID `fountain_id`) → `server`
+  (never `duplicate` with an undefined route); **401** → `unauthenticated`; **422** → `validation`;
+  **5xx**/throw → `server`; hostile/malformed serialized payloads (bad lat/lng, out-of-range stars,
+  oversized placement note, bad observation) rejected as `validation` **before** any API call;
+  coordinates, comment, placement-note, and token never appear in logged fields.
 - Component tests: the **FAB** (hidden when `!webglOk`; signed-out triggers `signInWithReturn("/?add=1")`;
   signed-in enters placing); `AddFountainPanel` step transitions (placing→details→done/duplicate/error;
   Next disabled until a valid pin; submit disabled while pending; **pin/fields preserved** on
   validation/server error; duplicate shows the View-it link; outcomes use `role="status"`); the
-  **working toggle** default Yes; (PR 2) attribute fields render from a fixture and exclude unknown;
-  rating reuse.
+  **working toggle** default Yes; the **keyboard-only minimal add** (Place-at-center + nudge completes
+  the flow with **no pointer canvas click/drag**); below `PLACE_MIN_ZOOM` the drop is gated; (PR 2)
+  attribute fields render from a fixture and exclude unknown; the rating form maps **`RatingTypeOut.id
+  → rating_type_id`** (an id-vs-`rating_type_id` mixup fails).
 - `web/app/page.test.tsx` (extend): `?add=1` + `authed` requests auto-enter and strips the param;
   `?add=1` while not `authed` strips without opening; existing assertions stay green.
 - **Build:** because this touches a `"use server"` module + a route, the **full `./run.ps1 check -Web`
@@ -409,13 +450,15 @@ orders discrete, independently-verifiable, TDD steps.
 **PR 1 — minimal add (placement + working + 409):**
 
 1. **Style guide** entries for PR-1 UI (FAB, placement panel, bound ring/pin/readout, working toggle,
-   duplicate result).
-2. **Pure placement helpers** + constants (`boundFromFix`, `clampToBound`, distance,
-   `BOUND_RADIUS_MIN_M`, `ACCURACY_MAX_M`) + tests (§6, §13).
-3. **`add-fountain` action** (location + is_working only) + shared module + tests (§8, §13).
-4. **`useAddFountainMode` hook + `AddFountainPanel`** (placing → details(working) → result) + tests.
-5. **`MapBrowser` seam + FAB** (enter/exit, suppress browse, pin/ring layers) + `?add=1` handling in
-   `app/page.tsx` + tests.
+   keyboard placement controls, fallback "couldn't confirm location" copy, duplicate result).
+2. **Pure placement helpers** + constants (`boundFromFix`, `clampToBound`, distance, `canPlace`,
+   `BOUND_RADIUS_MIN_M`, `ACCURACY_MAX_M`, `PLACE_MIN_ZOOM`) + tests (§6, §13).
+3. **`add-fountain` action** (location + is_working only) + shared module + tests, incl. the
+   `openapi-fetch` `error`-side 409 read + malformed-body guard (§8, §13).
+4. **`useAddFountainMode` hook + `AddFountainPanel`** (placing → details(working) → result), including
+   the **keyboard placement path** (Place-at-center + nudge, clamped) + tests (§6, §13).
+5. **`MapBrowser` seam + FAB** (enter/exit, suppress browse, pin/ring layers) + `app/page.tsx` (server)
+   passing `isAuthenticated` + `autoEnterAdd`, client strips `?add=1` (§4) + tests.
 
 **PR 2 — optional fields:**
 
