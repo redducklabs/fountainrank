@@ -693,3 +693,204 @@ Five transient overlays that reflect the map's data-loading status. All are
 Loading bar, zoom-in hint, empty hint, and cap hint are all `pointer-events-none` and
 purely informational. The error toast has `role="alert"` (live region) and its Retry
 button is interactive.
+
+---
+
+## Add-fountain flow (slice 6b-2)
+
+The components below are added in slice 6b-2. They appear as an overlay on the map and
+share the existing brand palette. All interactive elements follow the focus-visible /
+disabled-opacity-40 conventions already established in the map UI.
+
+### Add-fountain FAB (`web/components/map/AddFountainFab.tsx`)
+
+A floating action button anchored to the bottom-right of the map canvas. Appears when
+WebGL2 is available; hidden when the map cannot render (`webglOk === false`).
+
+**Placement:** `absolute bottom-24 right-4 z-40` — sits above the in-view list and below
+the site header.
+
+**Variants:**
+
+| State | Rendering |
+| ----- | --------- |
+| `!webglOk` | Returns `null` — not rendered at all. |
+| Signed out (`!isAuthenticated`) | Wrapped in a `<form action={signInWithReturn.bind(null, "/?add=1")}>` so clicking submits the server action (no client JS needed). |
+| Signed in (`isAuthenticated`) | Plain `<button type="button" onClick={onEnter}>`. |
+
+**Styles:**
+
+```tsx
+className="absolute bottom-24 right-4 z-40 inline-flex items-center gap-2 rounded-full bg-[#F2C200] px-4 py-3 text-sm font-bold text-[#0A357E] shadow-lg transition hover:bg-[#ffce1f]"
+```
+
+- Crown-gold fill (`bg-[#F2C200]`), navy text (`text-[#0A357E]`) — same as the primary
+  action button in the contribute section.
+- `aria-label="Add a fountain"` on the button (both signed-in and signed-out variants).
+- The `+` prefix glyph is `aria-hidden="true"`.
+
+**Accessibility:** Both variants produce an accessible button name via `aria-label`. The
+signed-out form wraps the button without altering its accessible role.
+
+---
+
+### Placement panel / bottom sheet (`web/components/map/AddFountainPanel.tsx`)
+
+A `role="dialog"` overlay that guides the user through the three-step add flow. Mounted
+alongside the FAB inside the map canvas container; replaces the FAB while open (the FAB is
+not hidden, but the panel draws on top via `z-40`).
+
+**Shell:**
+
+```tsx
+<div
+  role="dialog"
+  aria-label="Add a fountain"
+  tabIndex={-1}
+  className="absolute inset-x-0 bottom-0 z-40 mx-auto max-w-md rounded-t-2xl border border-slate-200 bg-white p-4 shadow-2xl outline-none sm:bottom-4 sm:left-auto sm:right-4 sm:mx-0 sm:rounded-2xl"
+>
+```
+
+- Mobile: full-width bottom sheet (`inset-x-0 bottom-0 rounded-t-2xl`).
+- Desktop (≥ `sm`): right-anchored card (`sm:left-auto sm:right-4 sm:rounded-2xl`), same
+  position as the detail overlay panel.
+- `tabIndex={-1}` + `ref.current.focus()` on mount so keyboard users land inside the panel
+  immediately.
+- `Escape` always calls `onCancel` (listener on `document`, removed on unmount).
+
+**Steps (controlled by `phase`):**
+
+| Phase | Panel content | Primary action |
+| ----- | ------------- | -------------- |
+| `placing` | Instruction text + optional GPS fallback note + coordinate readout + keyboard controls | "Next: details" (disabled until `pin && placeable`) |
+| `details` | Coordinate readout + working-status toggle | "Add fountain" (`onSubmit`) |
+| `submitting` | `role="status"` "Adding…" | — |
+| `done` | `role="status"` "Fountain added." | — |
+| `duplicate` | `role="status"` "A fountain already exists here." + "View it" link | — |
+| `error` | `role="status"` error copy + retry or sign-in affordance | "Try again" / "Sign in" |
+
+**Cancel button:** `aria-label="Cancel"`, top-right of the panel header, always visible
+while the panel is open.
+
+---
+
+### Bound ring + pin + coordinate readout (`PlacingStep`)
+
+Visual feedback for the user's allowed placement area during the `placing` step.
+
+**Ring:** A dashed `LineString` drawn on the MapLibre canvas by `createPlacementMap`.
+Rendered only when the bound is a circle (GPS fix available); not shown for the viewport
+fallback. Styled as a semi-transparent dashed blue stroke via a MapLibre `line` layer.
+
+**Pin:** A MapLibre `Marker` (draggable) placed when the user taps the map or uses the
+keyboard controls. Shows the snapped coordinate.
+
+**Coordinate readout (`Coord`):**
+
+```tsx
+// no pin:
+<p className="mt-2 text-xs text-slate-500">Drop a pin to set the location.</p>
+// pin set:
+<p className="mt-2 text-xs tabular-nums text-slate-500">
+  Lat {pin.lat.toFixed(5)} · Lng {pin.lng.toFixed(5)}
+</p>
+```
+
+- `tabular-nums` keeps the coordinate from reflowing as digits change during drag.
+
+**Out-of-bound note:** The bound ring's visual presence implies the constraint; no
+additional "out-of-bound" label is shown beyond the pin being clamped to the ring.
+
+---
+
+### Keyboard placement controls (`PlacingStep`)
+
+A row of accessible buttons that allow placing and nudging the pin without canvas
+interaction — required for keyboard-only and assistive-technology users.
+
+**Controls:**
+
+| Control | Button label | `aria-label` | Action |
+| ------- | ------------ | ------------ | ------ |
+| Place at center | "Place at map center" | same | Calls `onPlaceAtCenter`; drops/moves pin to the map's current center |
+| Nudge N | ↑ | "Nudge north" | Calls `onNudge("n")` |
+| Nudge S | ↓ | "Nudge south" | Calls `onNudge("s")` |
+| Nudge E | → | "Nudge east" | Calls `onNudge("e")` |
+| Nudge W | ← | "Nudge west" | Calls `onNudge("w")` |
+| Next | "Next: details" | same | Calls `onNext` |
+
+**Disabled state:** All keyboard controls (`Place at map center`, nudge buttons, Next)
+are `disabled` when `!placeable` (zoom < `PLACE_MIN_ZOOM` or viewport span >
+`FALLBACK_MAX_SPAN_M`). The nudge buttons additionally require `pin` to be non-null.
+`disabled:opacity-40` conveys the disabled state visually.
+
+When not yet placeable, a hint "Zoom in to place the fountain." is displayed below the
+coordinate readout in `text-xs text-slate-500`.
+
+---
+
+### "We couldn't confirm your location" fallback message
+
+Shown in the `placing` step when `gpsUnavailable === true` (no GPS fix, or accuracy
+exceeds `ACCURACY_MAX_M` so the bound falls back to the viewport).
+
+```tsx
+<p className="mt-2 rounded bg-amber-50 px-2 py-1 text-xs text-amber-800">
+  We couldn&rsquo;t confirm your location — make sure the pin is exactly where the fountain is.
+</p>
+```
+
+- Amber background (`bg-amber-50 text-amber-800`) — consistent with the advisory tone used
+  in `StatusBlock`.
+- Renders between the instruction paragraph and the coordinate readout.
+
+---
+
+### Working-status toggle (`DetailsStep`)
+
+A `<fieldset>` / `<legend>` radio group for capturing whether the fountain is currently
+working. Shown in the `details` step.
+
+```tsx
+<fieldset>
+  <legend className="text-sm font-semibold text-slate-700">Is it working?</legend>
+  <div className="mt-1 flex gap-4">
+    <label className="flex items-center gap-2 text-sm">
+      <input type="radio" name="working" checked={working} onChange={() => onSetWorking(true)} />
+      Yes
+    </label>
+    <label className="flex items-center gap-2 text-sm">
+      <input type="radio" name="working" checked={!working} onChange={() => onSetWorking(false)} />
+      No
+    </label>
+  </div>
+</fieldset>
+```
+
+- Default: **Yes** (`working === true`).
+- The `<legend>` is visually rendered (not `sr-only`) since the question is central to this
+  step.
+- Standard `type="radio"` inputs — no custom styling beyond the label wrapper.
+
+---
+
+### Duplicate-conflict result (`phase === "duplicate"`)
+
+Shown when the server returns a 409 conflict (a fountain already exists near this
+location).
+
+```tsx
+<div className="mt-3 space-y-2">
+  <p role="status" className="text-sm text-slate-700">A fountain already exists here.</p>
+  <Link href={`/fountains/${duplicateId}`} className="inline-block rounded-full bg-[#F2C200] px-4 py-2 text-sm font-bold text-[#0A357E]">
+    View it
+  </Link>
+</div>
+```
+
+- `role="status"` on the message so screen readers announce the outcome.
+- "View it" link: gold pill (`bg-[#F2C200] text-[#0A357E]`), same style as the primary
+  action button. Uses Next.js `<Link>` for soft navigation to the existing fountain's
+  detail page.
+- The duplicate fountain ID comes from the typed `DuplicateFountainConflict` error body
+  (`error.fountain_id`), validated as a UUID before display.
