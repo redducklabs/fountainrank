@@ -2,7 +2,7 @@
   "name": "mobile",
   "version": "0.0.0",
   "private": true,
-  "main": "index.ts",
+  "main": "expo-router/entry",
   "scripts": {
     "start": "expo start",
     "android": "expo start --android",
@@ -12,11 +12,19 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@expo/vector-icons": "^15.0.2",
     "@fountainrank/api-client": "workspace:*",
+    "@tanstack/react-query": "5.101.0",
     "expo": "56.0.12",
     "expo-constants": "~56.0.18",
+    "expo-font": "~56.0.7",
+    "expo-linking": "~56.0.14",
+    "expo-router": "~56.2.11",
+    "expo-status-bar": "~56.0.4",
     "react": "19.2.3",
-    "react-native": "0.85.3"
+    "react-native": "0.85.3",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-screens": "4.25.2"
   },
   "devDependencies": {
     "@types/node": "22.19.21",

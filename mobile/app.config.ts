@@ -6,6 +6,7 @@ const config: ExpoConfig = {
   version: "0.1.0",
   scheme: "com.redducklabs.fountainrank",
   platforms: ["ios", "android"],
+  plugins: ["expo-router"],
   runtimeVersion: { policy: "appVersion" },
   ios: {
     bundleIdentifier: "com.redducklabs.fountainrank",

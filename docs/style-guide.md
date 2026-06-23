@@ -1096,14 +1096,40 @@ Renders one `StarGroup` per `RatingTypeOut` in the add-fountain details step.
 
 ## Mobile (React Native)
 
-The mobile app (Expo / React Native) has its own component system, established in
-slice 6e-2 (app shell). It does **not** use the web Tailwind classes above.
+The mobile app (Expo / React Native) has its own component system (slice 6e-2).
+It does **not** use the web Tailwind classes above; styling is React Native
+`StyleSheet` with shared tokens in `mobile/theme.ts`.
 
-### Diagnostics surface (slice 6e-1, temporary)
+### Design tokens (`mobile/theme.ts`)
 
-A minimal startup screen used to verify release configuration before the real
-app shell lands. Shows: the app name, backend reachability (`loading` -> `ok` /
-`error` from `GET /healthz`), the version/build label (`vX.Y.Z (build N)`), and
-the resolved (public) API base URL. If the runtime config fails validation it
-renders an "invalid configuration" state naming the bad field (no secret values).
-No tokens or PII. Superseded by the 6e-2 app shell.
+- `colors` — brand `brandBlue` `#0A357E` / `brandYellow` `#F2C200`
+  (`brandYellowHover` `#FFCE1F`), `text` / `textMuted`, `background` / `surface`
+  / `border`, `danger`, `onBrand`. Matches the web brand palette.
+- `spacing` — `xs 4 · sm 8 · md 16 · lg 24 · xl 32`.
+- `typography` — `title` / `heading` / `body` / `meta`.
+
+### Layout
+
+- **`ScreenContainer`** — safe-area-aware screen frame (`react-native-safe-area-context`)
+  with standard padding. Wrap every screen's content in it. Headerless screens
+  (the root invalid-config branch) pass `includeTopInset`.
+
+### State components (`mobile/components/states/`)
+
+Reusable async states, usable on small screens:
+
+- **`LoadingState`** — spinner + label (default "Loading...").
+- **`EmptyState`** — muted centered label for an empty result set.
+- **`ErrorState`** — error label + optional "Try again" retry button.
+- **`OfflineState`** — offline message + optional "Retry" button.
+- **`QueryStateView`** — picks the right state component from a query result via
+  the pure `resolveViewState` helper (`lib/view-state.ts`), rendering its
+  children only in the `ready` state. "Offline" is a network failure with no HTTP
+  status; "error" is an HTTP error (`ApiError`).
+
+### Navigation
+
+Expo Router: a bottom-tab group (`(tabs)`: Map · Add · Account) with
+stack-pushed detail (`fountains/[id]`) and `diagnostics`. Sign-in affordances
+stay hidden/disabled until `isAuthConfigured` is true (auth-unavailable mode,
+spec §21).

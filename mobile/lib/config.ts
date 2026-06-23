@@ -3,6 +3,7 @@ export type MobileConfig = {
   logtoEndpoint: string;
   logtoAudience: string;
   authCallbackScheme: string;
+  logtoAppId?: string;
 };
 
 function requireNonEmpty(value: unknown, field: string): string {
@@ -34,10 +35,23 @@ export function parseMobileConfig(extra: unknown): MobileConfig {
     throw new Error("Mobile config: expoConfig.extra is missing");
   }
   const e = extra as Record<string, unknown>;
-  return {
+  const config: MobileConfig = {
     apiBaseUrl: requireHttpsUrl(e.apiBaseUrl, "apiBaseUrl"),
     logtoEndpoint: requireHttpsUrl(e.logtoEndpoint, "logtoEndpoint"),
     logtoAudience: requireHttpsUrl(e.logtoAudience, "logtoAudience"),
     authCallbackScheme: requireNonEmpty(e.authCallbackScheme, "authCallbackScheme"),
   };
+  // logtoAppId is optional in this beta: absent until the owner-gated Logto
+  // Native app exists (spec section 21, auth-unavailable mode). Present: a
+  // non-empty string; absent: omitted entirely (no placeholder/fake id).
+  if (e.logtoAppId !== undefined) {
+    config.logtoAppId = requireNonEmpty(e.logtoAppId, "logtoAppId");
+  }
+  return config;
+}
+
+/** True only when a real Logto Native app id is configured. False in this beta
+ * (auth-unavailable mode), so the app stays in a public-read state. */
+export function isAuthConfigured(config: MobileConfig): boolean {
+  return typeof config.logtoAppId === "string" && config.logtoAppId.length > 0;
 }
