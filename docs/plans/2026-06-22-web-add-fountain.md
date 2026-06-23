@@ -538,7 +538,7 @@ describe("addFountain", () => {
     expect(await addFountain(input)).toEqual({ ok: false, error: "server" });
   });
 
-  it("maps 401/422/5xx and logs each non-success outcome with status", async () => {
+  it("maps 401/422/5xx (each HTTP non-success status logs a warn with status)", async () => {
     POST.mockResolvedValue({ error: {}, response: { status: 401 } });
     expect(await addFountain(input)).toEqual({ ok: false, error: "unauthenticated" });
     POST.mockResolvedValue({ error: {}, response: { status: 422 } });
@@ -921,6 +921,9 @@ export function AddFountainFab({
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+
+vi.mock("../../app/actions/auth", () => ({ signInWithReturn: vi.fn() }));
+
 import { AddFountainPanel, type AddFountainPanelProps } from "./AddFountainPanel";
 
 const base: AddFountainPanelProps = {
@@ -999,10 +1002,16 @@ describe("AddFountainPanel", () => {
     expect(screen.getByRole("link", { name: /view it/i }).getAttribute("href")).toBe("/fountains/dup-1");
   });
 
-  it("error: shows a retry affordance and an aria-live message", () => {
+  it("error (server): shows a retry affordance and an aria-live message", () => {
     render(<AddFountainPanel {...base} phase="error" errorKind="server" pin={{ lng: -122.3, lat: 47.6 }} />);
     expect(screen.getByRole("status")).toBeTruthy();
     expect(screen.getByRole("button", { name: /try again/i })).toBeTruthy();
+  });
+
+  it("error (unauthenticated): offers sign-in instead of retry", () => {
+    render(<AddFountainPanel {...base} phase="error" errorKind="unauthenticated" pin={{ lng: -122.3, lat: 47.6 }} />);
+    expect(screen.getByRole("button", { name: /sign in/i })).toHaveProperty("type", "submit");
+    expect(screen.queryByRole("button", { name: /try again/i })).toBeNull();
   });
 });
 ```
@@ -1015,6 +1024,7 @@ describe("AddFountainPanel", () => {
 "use client";
 import { useEffect, useRef } from "react";
 import Link from "next/link";
+import { signInWithReturn } from "../../app/actions/auth";
 import type { AddFountainError } from "../../lib/add-fountain";
 import type { AddPhase } from "../../lib/add-fountain-machine";
 import type { LngLat } from "../../lib/map/placement";
@@ -1091,9 +1101,19 @@ export function AddFountainPanel(props: AddFountainPanelProps) {
       {phase === "error" && (
         <div className="mt-3 space-y-2">
           <p role="status" className="text-sm text-red-700">{props.errorKind ? ERROR_COPY[props.errorKind] : ERROR_COPY.server}</p>
-          <button type="button" onClick={props.onSubmit} className="rounded-full bg-[#0A357E] px-4 py-2 text-sm font-bold text-white">
-            Try again
-          </button>
+          {props.errorKind === "unauthenticated" ? (
+            // An expired session can't be retried — send the user back through sign-in (spec §8),
+            // returning to the add flow. A "use server" action must run from a form action, not onClick.
+            <form action={signInWithReturn.bind(null, "/?add=1")}>
+              <button type="submit" className="rounded-full bg-[#F2C200] px-4 py-2 text-sm font-bold text-[#0A357E]">
+                Sign in
+              </button>
+            </form>
+          ) : (
+            <button type="button" onClick={props.onSubmit} className="rounded-full bg-[#0A357E] px-4 py-2 text-sm font-bold text-white">
+              Try again
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -1473,6 +1493,29 @@ describe("useAddFountainMode", () => {
     });
     expect(screen.getByRole("link", { name: /view it/i }).getAttribute("href")).toBe("/fountains/dup-9");
   });
+
+  it("defers stripping ?add=1 until the map exists, then enters exactly once", () => {
+    geo.getCurrentPosition.mockImplementation((_ok, err) => err({ code: 1 }));
+    const { map } = makeFakeMap();
+    const opts = { isAuthenticated: true, webglOk: true, autoEnter: true, hadAddParam: true };
+    const { rerender } = render(<Harness map={null} opts={opts} />);
+    expect(replace).not.toHaveBeenCalled(); // no map yet -> keep the param
+    expect(screen.queryByRole("dialog", { name: /add a fountain/i })).toBeNull();
+    rerender(<Harness map={map} opts={opts} />);
+    expect(screen.getByRole("dialog", { name: /add a fountain/i })).toBeTruthy();
+    expect(replace).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats poor-accuracy GPS as no usable fix (fallback, no recenter)", () => {
+    geo.getCurrentPosition.mockImplementation((ok) =>
+      ok({ coords: { latitude: 47.6, longitude: -122.3, accuracy: 5000 } }),
+    );
+    const { map, calls } = makeFakeMap();
+    render(<Harness map={map} opts={{ isAuthenticated: true, webglOk: true, autoEnter: false, hadAddParam: false }} />);
+    fireEvent.click(screen.getByRole("button", { name: /add a fountain/i }));
+    expect(calls.flyTo).toHaveLength(0);
+    expect(screen.getByText(/couldn.t confirm your location/i)).toBeTruthy();
+  });
 });
 ```
 
@@ -1486,8 +1529,8 @@ import { useCallback, useEffect, useReducer, useRef, useState, type ReactNode } 
 import { useRouter } from "next/navigation";
 import { addFountain } from "../../app/actions/add-fountain";
 import { addReducer, initialAddState } from "../../lib/add-fountain-machine";
-import { GEOLOCATE_TIMEOUT_MS } from "../../lib/map/constants";
-import { boundFromFix, canPlace, type Bound, type GpsFix } from "../../lib/map/placement";
+import { ACCURACY_MAX_M, GEOLOCATE_TIMEOUT_MS } from "../../lib/map/constants";
+import { boundFromFix, canPlace, type GpsFix } from "../../lib/map/placement";
 import { AddFountainFab } from "./AddFountainFab";
 import { AddFountainPanel } from "./AddFountainPanel";
 import type { PlacementMap } from "./placement-map";
@@ -1521,6 +1564,11 @@ export function useAddFountainMode(
     dispatch({ type: "SET_BOUND", bound: boundFromFix({ ok: false }, placementMap.getViewport()) });
     navigator.geolocation?.getCurrentPosition(
       (pos) => {
+        // Poor accuracy is NOT a usable fix (spec §6): no recenter, fallback bound + copy.
+        if (pos.coords.accuracy > ACCURACY_MAX_M) {
+          setFix({ ok: false });
+          return;
+        }
         const f: GpsFix = { ok: true, lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy };
         setFix(f);
         placementMap.flyToFix({ lng: f.lng, lat: f.lat });
@@ -1530,13 +1578,22 @@ export function useAddFountainMode(
     );
   }, [placementMap]);
 
-  // Auto-enter (authed) + always strip ?add=1 when present (spec §4).
+  // Auto-enter (authed) + strip ?add=1 (spec §4). Anonymous/sign-in-abandoned strips immediately;
+  // the authed auto-enter case DEFERS the strip until the map adapter exists so we don't lose the
+  // signal before we can enter (a premature router.replace would drop hadAddParam).
+  const autoEnterDoneRef = useRef(false);
   useEffect(() => {
     if (!opts.hadAddParam) return;
-    if (opts.autoEnter && opts.isAuthenticated && placementMap) enter();
-    router.replace("/");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [opts.hadAddParam, opts.autoEnter, opts.isAuthenticated, placementMap]);
+    if (opts.autoEnter && opts.isAuthenticated) {
+      if (placementMap && !autoEnterDoneRef.current) {
+        autoEnterDoneRef.current = true;
+        enter();
+        router.replace("/");
+      }
+      return; // still waiting for the map: keep the param until we can enter
+    }
+    router.replace("/"); // anonymous / not auto-enter: strip without entering
+  }, [opts.hadAddParam, opts.autoEnter, opts.isAuthenticated, placementMap, enter, router]);
 
   // Subscribe map events while active; handlers read refs so they never go stale.
   useEffect(() => {
@@ -1589,7 +1646,8 @@ export function useAddFountainMode(
     }
   }, [state.pin, state.working, router]);
 
-  const fab: ReactNode = (
+  // Hide the FAB while add-mode is active so it can't re-enter and reset an in-progress flow.
+  const fab: ReactNode = active ? null : (
     <AddFountainFab isAuthenticated={opts.isAuthenticated} webglOk={opts.webglOk} onEnter={enter} />
   );
   const panel: ReactNode = (
@@ -1791,7 +1849,12 @@ git commit -m "feat(web): mount add-fountain mode on the home map (FAB, suppress
 - [ ] **Step 1: Write the failing test** — `web/lib/catalog.test.ts`:
 
 ```ts
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const { GET } = vi.hoisted(() => ({ GET: vi.fn() }));
+vi.mock("@fountainrank/api-client", () => ({ makeClient: () => ({ GET }) }));
+vi.mock("./api", () => ({ resolveApiBaseUrl: () => "http://api" }));
+
 import { buildAttributeGroups } from "./catalog";
 import type { components } from "@fountainrank/api-client";
 
@@ -1826,6 +1889,31 @@ describe("buildAttributeGroups", () => {
     ]);
     expect(g.controls[0]).toMatchObject({ kind: "boolean", options: ["yes", "no", "unknown"] });
     expect(g.controls[1]).toMatchObject({ kind: "enum", options: ["cold", "ambient", "unknown"] });
+  });
+});
+
+describe("fetch caching (module-level)", () => {
+  beforeEach(() => {
+    vi.resetModules(); // fresh module instance -> cleared cache per test
+    GET.mockReset();
+  });
+  afterEach(() => vi.clearAllMocks());
+
+  it("caches a successful rating-types fetch (network hit once)", async () => {
+    GET.mockResolvedValue({ data: [{ id: 1, name: "X", description: "", sort_order: 0 }], error: undefined });
+    const mod = await import("./catalog");
+    await mod.fetchRatingTypes();
+    await mod.fetchRatingTypes();
+    expect(GET).toHaveBeenCalledTimes(1);
+  });
+
+  it("does NOT cache a failure (a later call retries)", async () => {
+    GET.mockResolvedValueOnce({ data: undefined, error: { detail: "boom" } });
+    const mod = await import("./catalog");
+    await expect(mod.fetchAttributeTypes()).rejects.toThrow();
+    GET.mockResolvedValueOnce({ data: [], error: undefined });
+    await expect(mod.fetchAttributeTypes()).resolves.toEqual([]);
+    expect(GET).toHaveBeenCalledTimes(2);
   });
 });
 ```
@@ -2177,8 +2265,8 @@ Update `useAddFountainMode.test.tsx` with a case: set a rating + a boolean attri
 - [ ] **Step 7: Format + commit.**
 
 ```bash
-pnpm --filter web exec prettier --write web/components/map/RatingFields.tsx web/components/map/RatingFields.test.tsx web/components/map/AttributeObservationFields.tsx web/components/map/AttributeObservationFields.test.tsx web/components/map/AddFountainPanel.tsx web/components/map/AddFountainPanel.test.tsx web/components/map/useAddFountainMode.tsx web/components/map/useAddFountainMode.test.tsx
-git add web/components/map/RatingFields.tsx web/components/map/RatingFields.test.tsx web/components/map/AttributeObservationFields.tsx web/components/map/AttributeObservationFields.test.tsx web/components/map/AddFountainPanel.tsx web/components/map/AddFountainPanel.test.tsx web/components/map/useAddFountainMode.tsx web/components/map/useAddFountainMode.test.tsx
+pnpm --filter web exec prettier --write web/components/map/RatingFields.tsx web/components/map/RatingFields.test.tsx web/components/map/AttributeObservationFields.tsx web/components/map/AttributeObservationFields.test.tsx web/components/map/AddFountainPanel.tsx web/components/map/AddFountainPanel.test.tsx web/components/map/useAddFountainMode.tsx web/components/map/useAddFountainMode.test.tsx web/app/actions/add-fountain.ts web/app/actions/add-fountain.test.ts
+git add web/components/map/RatingFields.tsx web/components/map/RatingFields.test.tsx web/components/map/AttributeObservationFields.tsx web/components/map/AttributeObservationFields.test.tsx web/components/map/AddFountainPanel.tsx web/components/map/AddFountainPanel.test.tsx web/components/map/useAddFountainMode.tsx web/components/map/useAddFountainMode.test.tsx web/app/actions/add-fountain.ts web/app/actions/add-fountain.test.ts
 git commit -m "feat(web): optional rating/attributes/comment/placement-note on add-fountain (slice 6b-2 PR2)"
 ```
 
