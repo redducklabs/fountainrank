@@ -8,7 +8,7 @@
 2. **6e-4 is Claude-actionable to CI-green and is DONE there** (no auth, no native-only deps → topped out at **Local CI**, as planned). The detail screen's on-device _render_ is **not** claimed — like the 6e-3 map, the first owner-gated dev-client/EAS build is the visual proof. Do not claim the detail screen "renders/works on device" until observed.
 3. **The app still does not run in Expo Go** (6e-3's MapLibre native dep ended Expo Go). 6e-4 added **no** native deps, so the dev-client/EAS situation is unchanged. Generated `mobile/ios/` + `mobile/android/` remain git-ignored.
 
-**Latest `main`:** this handoff doc sits on top of `b474e02` — `feat(mobile): fountain detail + public reads (slice 6e-4) (#70)`. So `git log` shows the handoff commit first, then `b474e02`.
+**Latest `main`:** the slice-6e-4 merge is `b474e02` — `feat(mobile): fountain detail + public reads (slice 6e-4) (#70)`. This handoff doc plus a few doc-only corrections to it sit **on top** of `b474e02`; run `git log --oneline -8 origin/main` to see the handoff/doc commits above `b474e02`. (Resume from whatever the newest commit is — it will be the latest correction of _this_ handoff.)
 
 ---
 
@@ -18,7 +18,7 @@
 
 - **PR #70** (`b474e02`) — **slice 6e-4 fountain detail + public reads**. Plan: `docs/plans/2026-06-23-mobile-6e-4-fountain-detail-and-public-reads.md` (Codex-approved, Loop A round 2). **121 mobile unit tests across 11 `mobile/lib` test files** (was 67/7 in 6e-3; +54: `format.test.ts` 41, `detail/attributes.test.ts` 2, `detail/notes.test.ts` 3, `detail/id.test.ts` 6, `api.test.ts` +2). CI green; Codex PR review `VERDICT: APPROVED` (round 2, after fixing one [MAJOR]). Squash-merged.
 
-Local `main` == `origin/main`, tree clean (top commits: this handoff doc, then `b474e02` #70).
+Local `main` == `origin/main`, tree clean (top commits are this handoff doc + its doc-only corrections, then `b474e02` #70).
 
 **What 6e-4 shipped (build 6e-5 on top of this):**
 
@@ -76,8 +76,8 @@ Local `main` == `origin/main`, tree clean (top commits: this handoff doc, then `
 ## Resume commands
 
 ```bash
-# ground state — expect the top commits to be this handoff doc + `... (#70)` (b474e02); clean tree
-git -C /d/repos/fountainrank log --oneline -4 origin/main
+# ground state — expect this handoff doc (+ doc-only corrections) above `... (#70)` (b474e02); clean tree
+git -C /d/repos/fountainrank log --oneline -8 origin/main
 git -C /d/repos/fountainrank status --short
 
 # local CI mirror:
@@ -92,6 +92,5 @@ pnpm --filter mobile exec vitest run                                            
 - **Web auth to mirror for 6e-5:** `web/components/SignInButton.tsx`, `SignOutButton.tsx`, `AuthControl.tsx`, `web/app/account/page.tsx`, `web/app/callback/`, and the backend auth (`backend/app/auth*`, JWKS validation). Mobile uses the Logto **native** SDK (auth-code + PKCE + custom scheme), not the web server flow — adapt.
 - **Process:** `claude_help/development-process.md`, `testing-ci.md`, `codex-review-process.md`, `oauth-sso.md` (REQUIRED before 6e-5), `github-cli.md`. **Owner runbook:** `docs/setup/README.md` (Logto/OAuth records).
 - **Prior handoffs:** `handoffs/2026-06-23-slice-6e-3-map-merged-handoff.md`, `2026-06-23-slice-6e-2-app-shell-merged-handoff.md`.
-- **Memories (auto-load):** `fountainrank-bundle-id-confirmed`, `fountainrank-mobile-clean-reinstall-before-eas-prebuild`, `fountainrank-trivy-false-positive-large-mobile-prs`, `fountainrank-deploy-is-manual-dispatch`.
+- **Memories (auto-load):** `fountainrank-logto-native-app` (the Native App ID + 6e-5 auth facts), `fountainrank-bundle-id-confirmed`, `fountainrank-mobile-clean-reinstall-before-eas-prebuild`, `fountainrank-trivy-false-positive-large-mobile-prs`, `fountainrank-deploy-is-manual-dispatch`.
 - **Slice table (epic):** 6e-1 ✅(#66) · 6e-2 ✅(#67) · 6e-3 ✅(#69) · 6e-4 ✅(#70) · **6e-5 ◀ NEXT** (native auth) · 6e-6 contribs · 6e-7 add-fountain · 6e-8 store meta+icon/splash (EAS project ✅) · 6e-9 auth/OAuth records · 6e-10 device RC + store builds.
-  </content>
