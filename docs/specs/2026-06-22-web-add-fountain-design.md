@@ -128,7 +128,9 @@ container so it can drive map state), bottom area, above the in-view list, visib
 - **Signed in** → the FAB enters **placement mode** directly.
 
 **Server/client split (explicit).** `web/app/page.tsx` is a **server component**: it calls
-`getViewer()` and reads `searchParams.add`, then passes two props into the client map
+`getViewer()` and reads `searchParams.add` (Next 16 App Router — `searchParams` is an **async** prop,
+typed `Promise<{ add?: string }>` and **awaited** in the page; the plan pins the exact prop shape),
+then passes two props into the client map
 (`MapBrowserLoader` → `MapBrowser`): `isAuthenticated` (drives the FAB's signed-in vs sign-in path) and
 `autoEnterAdd = (searchParams.add === "1" && viewer.state === "authed")`. The **client** map, on mount,
 enters placement mode iff `autoEnterAdd`, then strips the query with `router.replace("/")` so a
@@ -168,11 +170,14 @@ On entering **placing**, request the device position **once**
 `GEOLOCATE_TIMEOUT_MS`), reading `coords.latitude/longitude/accuracy`:
 
 **Placement-precision gate (both modes).** Dropping a pin requires the map to be at/above a dedicated
-`PLACE_MIN_ZOOM` (new constant, **16** — street level, a viewport roughly a few hundred metres across);
-below it the panel shows "Zoom in to place the fountain" and the drop is disabled. This is deliberately
-**not** `shouldLoadPins`/`MIN_ZOOM` (which is **z10** — a z10 viewport can span miles and would not
-constrain a fallback drop at all, per the spec-review finding); it is a stricter, placement-specific
-gate that forces deliberate, precise placement at street scale.
+`PLACE_MIN_ZOOM` (new constant, **16** — a street-level floor, deliberately **not** `shouldLoadPins`/
+`MIN_ZOOM`, which is **z10** and can span miles). Because the on-screen metres a given zoom covers still
+vary with display width and latitude, the **fallback** case additionally caps the placement area by
+**computed metres, not zoom alone**: it requires the visible viewport's diagonal span (derived from the
+live map bounds) to be **≤ `FALLBACK_MAX_SPAN_M`** (new constant, indicative **4000 m**, tunable in the
+plan); otherwise the panel shows "Zoom in to place the fountain" and disables the drop. This makes the
+fallback gate **screen-size-independent** — a wide monitor can't silently widen it. The GPS case is
+governed by its circle bound (below) and clears `PLACE_MIN_ZOOM` naturally.
 
 - **Usable fix** (a position returned **and** `accuracy ≤ ACCURACY_MAX_M`): the bound is a **circle**
   centered on the GPS position, radius `max(BOUND_RADIUS_MIN_M, accuracy)`; draw a **faint bound ring**
@@ -180,9 +185,10 @@ gate that forces deliberate, precise placement at street scale.
   not necessarily the whole ring when accuracy is large). This is the **real proximity bound** — the
   on-site mobile case the owner asked for.
 - **No usable fix** (denied, unavailable, timed out, or `accuracy > ACCURACY_MAX_M`): **fallback** — no
-  ring; the bound is the **current map viewport** (small, because of `PLACE_MIN_ZOOM`), and the panel
-  shows explicit copy: *"We couldn't confirm your location — make sure the pin is exactly where the
-  fountain is."* **Be explicit about what this does and does not do:** without a GPS fix the client
+  ring; the bound is the **current map viewport**, gated to `FALLBACK_MAX_SPAN_M` of diagonal span
+  (screen-size-independent, above), and the panel shows explicit copy: *"We couldn't confirm your
+  location — make sure the pin is exactly where the fountain is."* **Be explicit about what this does
+  and does not do:** without a GPS fix the client
   **cannot** bound to the user's real position — that is impossible by construction, not a gap to paper
   over. The fallback enforces **precision** (a deliberate, zoomed-in placement), **not proximity to the
   user** — a determined desktop user can still pan elsewhere and place there. The owner accepted
@@ -190,7 +196,7 @@ gate that forces deliberate, precise placement at street scale.
   duplicate check** and later **moderation (6g)**, and the spec/UX/tests claim nothing stronger.
 
 New constants in `web/lib/map/constants.ts`: `BOUND_RADIUS_MIN_M = 150`, `ACCURACY_MAX_M = 1000`,
-`PLACE_MIN_ZOOM = 16`.
+`PLACE_MIN_ZOOM = 16`, `FALLBACK_MAX_SPAN_M = 4000` (tunable).
 
 Interaction:
 
@@ -330,7 +336,8 @@ revalidation on write remains out of scope).
   `buildAttributeGroups(types)`; boolean Yes/No/Unknown + enum select; emits `observations[]`.
 - `web/app/actions/add-fountain.ts` (`"use server"`) — the action (§8). Shared constants/types in
   `web/lib/add-fountain.ts` (plain module).
-- `web/lib/map/constants.ts` — add `BOUND_RADIUS_MIN_M`, `ACCURACY_MAX_M`, `PLACE_MIN_ZOOM`.
+- `web/lib/map/constants.ts` — add `BOUND_RADIUS_MIN_M`, `ACCURACY_MAX_M`, `PLACE_MIN_ZOOM`,
+  `FALLBACK_MAX_SPAN_M`.
 - `web/lib/map/bounds.ts` (or a focused new `web/lib/map/placement.ts`) — `boundFromFix`,
   `clampToBound`, distance helper (pure, unit-tested).
 - `web/app/page.tsx` (server) — `getViewer()` + `searchParams.add`; passes `isAuthenticated` +
@@ -341,9 +348,10 @@ revalidation on write remains out of scope).
 - **WebGL2 unsupported / map can't render** → FAB hidden; add is unavailable (consistent with browse).
 - **GPS denied / unavailable / timed out / `accuracy > ACCURACY_MAX_M`** → viewport-fallback bound, no
   ring; add still works.
-- **Below `PLACE_MIN_ZOOM` (either mode)** → "Zoom in to place the fountain"; the drop is disabled
-  until the map is at street level (§6), forcing deliberate placement (and preventing a wide
-  fallback viewport from being a meaningless "bound").
+- **Below `PLACE_MIN_ZOOM`, or (fallback) viewport diagonal > `FALLBACK_MAX_SPAN_M`** → "Zoom in to
+  place the fountain"; the drop is disabled until the map is at street level / within the metre cap
+  (§6), forcing deliberate placement (and preventing a wide fallback viewport from being a meaningless
+  "bound").
 - **Out-of-bound drop/drag** → clamp to boundary + gentle note (§6).
 - **Duplicate within 10 m (409)** → existing fountain surfaced; no duplicate created (§8).
 - **Session expired mid-flow (401 / token throw)** → `unauthenticated`; re-prompt sign-in to `/?add=1`.
@@ -389,10 +397,12 @@ revalidation on write remains out of scope).
 Per the house rule, the plan's UI tasks update `docs/style-guide.md` with each new element as it ships:
 the **Add-fountain FAB** (placement, sizing, signed-out vs signed-in behavior, hidden-when-no-WebGL2),
 the **placement panel / bottom sheet** (steps, primary action, Cancel/Escape), the **bound ring + pin
-+ coordinate readout + out-of-bound note**, the **working-status toggle**, the **attribute
-Yes/No/Unknown + enum controls** (PR 2), the **comment + placement-note inputs** (PR 2), and the
-**duplicate-conflict result** (message + "View it" link). Reconcile with the shipped 6b-1 form
-conventions.
++ coordinate readout + out-of-bound note**, the **keyboard placement controls** ("Place at map center"
+button + N/S/E/W nudge controls + their disabled state below `PLACE_MIN_ZOOM` / over
+`FALLBACK_MAX_SPAN_M`), the **"We couldn't confirm your location" fallback message**, the
+**working-status toggle**, the **attribute Yes/No/Unknown + enum controls** (PR 2), the **comment +
+placement-note inputs** (PR 2), and the **duplicate-conflict result** (message + "View it" link).
+Reconcile with the shipped 6b-1 form conventions.
 
 ## 13. Testing
 
@@ -401,8 +411,9 @@ conventions.
 - `web/lib/map/placement.test.ts` (or `bounds.test.ts` extension): `boundFromFix` selects circle for a
   usable fix and viewport for denied/poor/over-`ACCURACY_MAX_M`; radius = `max(BOUND_RADIUS_MIN_M,
   accuracy)`; `clampToBound` leaves in-bound points unchanged and clamps out-of-bound points to a
-  circle edge / viewport rectangle; the `PLACE_MIN_ZOOM` gate (`canPlace(zoom)` false below, true
-  at/above); distance helper sanity.
+  circle edge / viewport rectangle; the placement gate (`canPlace` false below `PLACE_MIN_ZOOM` and,
+  in fallback, when the viewport diagonal exceeds `FALLBACK_MAX_SPAN_M`; true otherwise); distance
+  helper sanity.
 - `web/lib/add-fountain.test.ts`: shared validation/type helpers (range checks, `placement_note` ≤ 200,
   observation/rating shape, `buildAttributeGroups` grouping/sorting/control-kind from a fixture, enum
   vs boolean, **unknown excluded** from the payload).
