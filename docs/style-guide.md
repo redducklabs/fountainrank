@@ -1169,3 +1169,48 @@ mapping, icon/pill selection, bounds, and filter→query logic are pure helpers 
   offline" / "Couldn't load fountains" (both tap-to-retry); "No fountains in this
   area"; or "Showing the first 500 — zoom in for more" when capped. Hidden when
   idle/ready.
+
+### Fountain detail (slice 6e-4)
+
+The fountain detail route (`mobile/app/fountains/[id].tsx`, stack-pushed from a
+map pin) is a **read-only** mirror of the web detail's informational content.
+Display/transform logic is pure and unit-tested (`lib/map/format.ts`,
+`lib/detail/attributes.ts`, `lib/detail/notes.ts`); the components below are the
+untested shell. Contribution affordances (rate / report condition / add note)
+are deferred to 6e-5/6e-6.
+
+- **Detail screen** — a `ScreenContainer` + `ScrollView` with **pull-to-refresh**
+  (`RefreshControl`, brand-blue tint) that refetches both reads. The **detail**
+  read gates the screen via `QueryStateView` (first-load spinner; offline/error
+  with retry that refetches both). An absent/invalid route id **or** a 404
+  renders a non-retryable "Fountain not found" state (no blank screen). The
+  **notes** read is best-effort: its data renders when present, and a failure
+  shows a small non-blocking error row rather than silently looking like "no
+  notes". Header title "Fountain"; the back button returns to the still-mounted
+  Map screen (map context preserved).
+- **`StatusBlock`** (`mobile/components/fountain/StatusBlock.tsx`) — a toned
+  status chip (`statusDisplay`): `ok` emerald `#D1FAE5`/`#065F46`, `warn` amber
+  `#FEF3C7`/`#92400E`, `bad` red `#FEE2E2`/`#991B1B`. Optional `⚠`-prefixed
+  advisory (e.g. `reported_issue`). A muted last-verified line shows relative
+  time ("Last verified 3 days ago") with the exact date preserved in an
+  `accessibilityLabel` (RN has no hover title); "Not yet verified by anyone"
+  when absent.
+- **`AttributeList`** (`mobile/components/fountain/AttributeList.tsx`) — access /
+  feature attributes grouped by category (pure `groupAttributes`, first-seen
+  order) under uppercase muted headers (`formatCategory`). Each row: muted name
+  on the left; the consensus value on the right, toned by `attributeDisplay`
+  (`normal` text, `muted` textMuted, `mixed` amber `#92400E`) with an optional
+  muted hint (e.g. "(2 reports)", "latest: Yes"). Renders nothing when empty.
+- **`NotesList`** (`mobile/components/fountain/NotesList.tsx`) — community-note
+  cards (`surface` fill, `border`, radius 12): note body, then a muted byline
+  "— {author} · {relative time}" with " · edited" when `isNoteEdited` (pure).
+  Renders nothing when empty.
+- **`FountainDetail`** (`mobile/components/fountain/FountainDetail.tsx`) — the
+  composed body: title "Public drinking fountain" + `StatusBlock`; optional
+  `📍` placement note; a large brand-blue rating average + muted vote count
+  (`formatAverage`/`formatVotes`); a per-dimension list (`formatDimension`,
+  shown only when dimensions exist); `AttributeList`; the adder's `comments`
+  card ("From the person who added this fountain"); the notes section (or its
+  error row); a muted "Added … · Last rated …" footer (`formatDate`); and a
+  brand-yellow **Directions** pill (`Linking.openURL` to a Google Maps
+  directions URL, with an `Alert` on the rare failure — never a silent swallow).
