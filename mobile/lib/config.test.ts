@@ -24,9 +24,9 @@ describe("parseMobileConfig", () => {
   });
 
   it("rejects a non-https apiBaseUrl (HTTPS-only)", () => {
-    expect(() => parseMobileConfig({ ...VALID, apiBaseUrl: "http://api.fountainrank.com" })).toThrow(
-      /https/,
-    );
+    expect(() =>
+      parseMobileConfig({ ...VALID, apiBaseUrl: "http://api.fountainrank.com" }),
+    ).toThrow(/https/);
   });
 
   it("rejects an https URL with an empty host", () => {
