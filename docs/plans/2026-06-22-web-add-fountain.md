@@ -1431,18 +1431,19 @@ describe("useAddFountainMode", () => {
     expect(screen.getByText(/couldn.t confirm your location/i)).toBeTruthy();
   });
 
-  it("a map click at street zoom drops a pin; below-zoom click is ignored", () => {
+  it("ignores a map click below PLACE_MIN_ZOOM (gated drop)", () => {
     geo.getCurrentPosition.mockImplementation((_ok, err) => err({ code: 1 }));
     const low = makeFakeMap(10);
-    const { rerender } = render(
-      <Harness map={low.map} opts={{ isAuthenticated: true, webglOk: true, autoEnter: false, hadAddParam: false }} />,
-    );
+    render(<Harness map={low.map} opts={{ isAuthenticated: true, webglOk: true, autoEnter: false, hadAddParam: false }} />);
     fireEvent.click(screen.getByRole("button", { name: /add a fountain/i }));
     act(() => low.click({ lng: -122.3, lat: 47.6 }));
-    expect(screen.getByText(/drop a pin to set the location/i)).toBeTruthy(); // still no pin (gated)
+    expect(screen.getByText(/drop a pin to set the location/i)).toBeTruthy(); // no pin (gated)
+  });
 
+  it("drops a pin on a map click at street zoom", () => {
+    geo.getCurrentPosition.mockImplementation((_ok, err) => err({ code: 1 }));
     const ok = makeFakeMap(17);
-    rerender(<Harness map={ok.map} opts={{ isAuthenticated: true, webglOk: true, autoEnter: false, hadAddParam: false }} />);
+    render(<Harness map={ok.map} opts={{ isAuthenticated: true, webglOk: true, autoEnter: false, hadAddParam: false }} />);
     fireEvent.click(screen.getByRole("button", { name: /add a fountain/i }));
     act(() => ok.click({ lng: -122.3, lat: 47.6 }));
     expect(screen.getByText(/lat 47\.6/i)).toBeTruthy(); // pin coord readout
