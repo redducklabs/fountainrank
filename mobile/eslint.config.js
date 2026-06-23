@@ -2,5 +2,5 @@ const expoConfig = require("eslint-config-expo/flat");
 
 module.exports = [
   ...expoConfig,
-  { ignores: ["dist/**", ".expo/**", "babel.config.js", "eslint.config.js"] },
+  { ignores: ["dist/**", ".expo/**", "babel.config.js", "eslint.config.js", "vitest.config.ts"] },
 ];
