@@ -106,8 +106,8 @@ export function useAddFountainMode(
   }, [opts.hadAddParam, opts.autoEnter, opts.isAuthenticated, placementMap, enter, router]);
 
   // Fetch catalog data (best-effort) on each entry to the details phase. The module-level fetchers
-  // cache a successful result and dedupe an in-flight call, but do NOT cache failures — so a failed
-  // catalog load retries on the next details entry. No hook-level failure caching.
+  // cache a successful result but do NOT cache failures — so a failed catalog load retries on the
+  // next details entry. No hook-level failure caching.
   useEffect(() => {
     if (state.phase !== "details") return;
     let cancelled = false;
