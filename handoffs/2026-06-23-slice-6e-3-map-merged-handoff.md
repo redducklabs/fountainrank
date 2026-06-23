@@ -8,7 +8,7 @@
 2. **6e-3's map render is still UNVERIFIED on a device (owner-gated).** Code + helpers are CI-green, but the actual MapLibre render has only been proven by `tsc`/lint/`expo-doctor`/unit tests + `expo config --type prebuild` — **never on a device** (no Mac → EAS dev-client). The first owner-gated dev-client/EAS build is the proof. Do not claim the map "renders/works" until observed on device.
 3. **The app no longer runs in Expo Go** (6e-3 added the MapLibre native dep + config plugin → CNG/prebuild). Generated `mobile/ios/` + `mobile/android/` are git-ignored.
 
-`main` HEAD = **`0975b6d`** — `feat(mobile): map + public discovery ... (#69)`.
+**Latest `main`:** this handoff doc sits on top of `0975b6d` — `feat(mobile): map + public discovery ... (#69)` (the 6e-3 merge). So `git log` shows the handoff commit first, then `0975b6d`.
 
 ---
 
@@ -16,9 +16,9 @@
 
 **Merged to `main` this session:**
 
-- **PR #69** (`0975b6d`) — **slice 6e-3 map + public discovery**. Plan: `docs/plans/2026-06-23-mobile-6e-3-map-and-public-discovery.md` (Codex-approved, Loop A round 2). 85 unit tests across the workspace; mobile = 67 (added bounds/pins/filters/config map cases). CI green; Codex PR review `VERDICT: APPROVED` (round 2). Squash-merged.
+- **PR #69** (`0975b6d`) — **slice 6e-3 map + public discovery**. Plan: `docs/plans/2026-06-23-mobile-6e-3-map-and-public-discovery.md` (Codex-approved, Loop A round 2). **67 mobile unit tests across 7 `mobile/lib` test files** (added bounds/pins/filters + config map cases). CI green; Codex PR review `VERDICT: APPROVED` (round 2). Squash-merged.
 
-Local `main` == `origin/main` (HEAD `0975b6d`), tree clean. Post-merge CI/CodeQL/security: green.
+Local `main` == `origin/main`, tree clean (top commits: this handoff doc, then `0975b6d` #69). Post-merge CI/CodeQL/security: green.
 
 **What 6e-3 shipped (build 6e-4 on top of this):**
 
@@ -79,7 +79,7 @@ The installed `@maplibre/maplibre-react-native@11.3.4` API differs sharply from 
 ## Resume commands
 
 ```bash
-# ground state — expect HEAD = 0975b6d, clean tree
+# ground state — expect the top commits to be this handoff doc + `... (#69)` (0975b6d); clean tree
 git -C /d/repos/fountainrank log --oneline -4 origin/main
 git -C /d/repos/fountainrank status --short
 
@@ -95,7 +95,7 @@ pnpm --filter mobile exec expo config --type prebuild                           
 ## Key artifacts & pointers
 
 - **6e-3 plan (APPROVED):** `docs/plans/2026-06-23-mobile-6e-3-map-and-public-discovery.md`. **Umbrella spec (APPROVED):** `docs/specs/2026-06-23-mobile-store-testing-distribution-design.md` (§15 Phase 4 = 6e-4 detail; §18 slice table; §21 proof levels). **Map stack architecture:** `docs/specs/2026-06-16-architecture-and-foundation-design.md` + `docs/design/architecture.md`.
-- **Web detail to mirror for 6e-4:** `web/components/fountain/*`, `web/lib/fountains.ts` (`fetchDetail`), `web/lib/map/format.ts` (detail formatters).
+- **Web detail to mirror for 6e-4:** `web/components/fountain/*`, `web/lib/fountains.ts` (`getFountainDetailServer(id, requestId)` + `getFountainNotesServer(id, requestId)` — note the mobile client uses `createApiClient().GET("/api/v1/fountains/{id}")` directly, not these server helpers), `web/lib/map/format.ts` (detail formatters).
 - **Process:** `claude_help/development-process.md`, `testing-ci.md`, `codex-review-process.md`, `github-cli.md`.
 - **Prior handoffs:** `handoffs/2026-06-23-mobile-store-readiness-and-6e-3-next-handoff.md`, `2026-06-23-slice-6e-2-app-shell-merged-handoff.md`.
 - **Memories (auto-load):** `fountainrank-bundle-id-confirmed`, `fountainrank-mobile-clean-reinstall-before-eas-prebuild`, `fountainrank-trivy-false-positive-large-mobile-prs`, `fountainrank-deploy-is-manual-dispatch`.
