@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ApiError, buildAuthHeaders, createApiClient, unwrap } from "./api";
+import { ApiError, apiErrorStatus, buildAuthHeaders, createApiClient, unwrap } from "./api";
 
 describe("buildAuthHeaders", () => {
   it("returns a Bearer Authorization header for a non-empty token", () => {
@@ -167,5 +167,17 @@ describe("createApiClient", () => {
       expect(e).toBeInstanceOf(ApiError);
       expect((e as ApiError).status).toBe(500);
     }
+  });
+});
+
+describe("apiErrorStatus", () => {
+  it("returns the numeric status of an ApiError", () => {
+    expect(apiErrorStatus(new ApiError(404))).toBe(404);
+    expect(apiErrorStatus(new ApiError(500))).toBe(500);
+  });
+  it("returns null for a non-ApiError (network error / arbitrary value)", () => {
+    expect(apiErrorStatus(new Error("boom"))).toBeNull();
+    expect(apiErrorStatus(null)).toBeNull();
+    expect(apiErrorStatus({ status: 404 })).toBeNull();
   });
 });
