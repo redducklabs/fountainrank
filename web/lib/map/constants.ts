@@ -10,3 +10,9 @@ export const DEFAULT_CENTER: [number, number] = [-98.5, 39.8]; // continental US
 export const DEFAULT_ZOOM = 3.5;
 export const CLUSTER_RADIUS = 60;
 export const CLUSTER_MAX_ZOOM = 14;
+
+// Add-fountain placement (slice 6b-2, spec §6).
+export const BOUND_RADIUS_MIN_M = 150;
+export const ACCURACY_MAX_M = 1000;
+export const PLACE_MIN_ZOOM = 16;
+export const FALLBACK_MAX_SPAN_M = 4000;
