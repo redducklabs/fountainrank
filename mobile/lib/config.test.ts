@@ -69,12 +69,24 @@ describe("parseMobileConfig", () => {
     expect(parseMobileConfig(withId).logtoAppId).toBe("abc123");
   });
 
+  it("parses a present native-auth confirmation flag", () => {
+    expect(parseMobileConfig({ ...VALID, logtoNativeAuthConfirmed: true })).toMatchObject({
+      logtoNativeAuthConfirmed: true,
+    });
+  });
+
   it("rejects a present-but-empty logtoAppId", () => {
     expect(() => parseMobileConfig({ ...VALID, logtoAppId: "" })).toThrow(/logtoAppId/);
   });
 
   it("rejects a non-string logtoAppId", () => {
     expect(() => parseMobileConfig({ ...VALID, logtoAppId: 5 })).toThrow(/logtoAppId/);
+  });
+
+  it("rejects a false native-auth confirmation flag", () => {
+    expect(() => parseMobileConfig({ ...VALID, logtoNativeAuthConfirmed: false })).toThrow(
+      /logtoNativeAuthConfirmed/,
+    );
   });
 });
 
@@ -83,8 +95,20 @@ describe("isAuthConfigured", () => {
     expect(isAuthConfigured(parseMobileConfig(VALID))).toBe(false);
   });
 
-  it("is true when a logtoAppId is present", () => {
-    expect(isAuthConfigured(parseMobileConfig({ ...VALID, logtoAppId: "abc123" }))).toBe(true);
+  it("is false when a logtoAppId is present without owner confirmation", () => {
+    expect(isAuthConfigured(parseMobileConfig({ ...VALID, logtoAppId: "abc123" }))).toBe(false);
+  });
+
+  it("is true only when a logtoAppId and owner confirmation are present", () => {
+    expect(
+      isAuthConfigured(
+        parseMobileConfig({
+          ...VALID,
+          logtoAppId: "abc123",
+          logtoNativeAuthConfirmed: true,
+        }),
+      ),
+    ).toBe(true);
   });
 });
 

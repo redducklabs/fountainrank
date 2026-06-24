@@ -1,5 +1,7 @@
 import { makeClient, type ApiClient } from "@fountainrank/api-client";
 
+import { AuthSessionError } from "./auth/state";
+
 /**
  * Build the auth headers for an authenticated mobile request.
  *
@@ -64,6 +66,24 @@ export function unwrap<T>(result: FetchResult<T>): T {
  */
 export type MobileApiClient = Pick<ApiClient, "GET" | "POST" | "PUT" | "PATCH" | "DELETE">;
 
+type MakeClientOptions = Parameters<typeof makeClient>[1];
+export type CreateApiClientOptions = MakeClientOptions & {
+  getAccessToken?: () => Promise<string | null | undefined>;
+  shouldAttachAuth?: (request: Request) => boolean;
+};
+
+function requestPath(input: Request): string {
+  const withoutOrigin = input.url.replace(/^[a-z][a-z\d+.-]*:\/\/[^/]+/i, "");
+  return withoutOrigin.split(/[?#]/, 1)[0] || "/";
+}
+
+export function isAuthenticatedApiRequest(input: Request): boolean {
+  if (input.method.toUpperCase() !== "GET") {
+    return true;
+  }
+  return requestPath(input) === "/api/v1/me";
+}
+
 /**
  * Build the mobile API client from validated config. Auth-unavailable mode
  * (slice 6e-2): no token provider, so requests carry no auth header at all.
@@ -88,10 +108,27 @@ export type MobileApiClient = Pick<ApiClient, "GET" | "POST" | "PUT" | "PATCH" |
  */
 export function createApiClient(
   baseUrl: string,
-  options?: Parameters<typeof makeClient>[1],
+  options?: CreateApiClientOptions,
 ): MobileApiClient {
-  const baseFetch = options?.fetch ?? ((input: Request) => globalThis.fetch(input));
+  const {
+    getAccessToken,
+    shouldAttachAuth = isAuthenticatedApiRequest,
+    ...clientOptions
+  } = options ?? {};
+  const baseFetch = clientOptions.fetch ?? ((input: Request) => globalThis.fetch(input));
   const sanitizingFetch = async (input: Request): Promise<Response> => {
+    if (getAccessToken && shouldAttachAuth(input)) {
+      let token: string | null | undefined;
+      try {
+        token = await getAccessToken();
+      } catch (error) {
+        throw new AuthSessionError("token_unavailable", { cause: error });
+      }
+      const authHeaders = buildAuthHeaders(token);
+      for (const [key, value] of Object.entries(authHeaders)) {
+        input.headers.set(key, value);
+      }
+    }
     for (const key of [...input.headers.keys()]) {
       if (key.toLowerCase().startsWith("x-dev")) {
         input.headers.delete(key);
@@ -100,7 +137,7 @@ export function createApiClient(
     return baseFetch(input);
   };
 
-  const client = makeClient(baseUrl, { ...options, fetch: sanitizingFetch });
+  const client = makeClient(baseUrl, { ...clientOptions, fetch: sanitizingFetch });
 
   const guard = <V extends "GET" | "POST" | "PUT" | "PATCH" | "DELETE">(verb: V): ApiClient[V] => {
     const method = client[verb] as unknown as (path: unknown, init?: unknown) => unknown;

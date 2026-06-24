@@ -4,6 +4,7 @@ export type MobileConfig = {
   logtoAudience: string;
   authCallbackScheme: string;
   logtoAppId?: string;
+  logtoNativeAuthConfirmed?: boolean;
   basemapStyleUrl?: string;
 };
 
@@ -48,6 +49,12 @@ export function parseMobileConfig(extra: unknown): MobileConfig {
   if (e.logtoAppId !== undefined) {
     config.logtoAppId = requireNonEmpty(e.logtoAppId, "logtoAppId");
   }
+  if (e.logtoNativeAuthConfirmed !== undefined) {
+    if (e.logtoNativeAuthConfirmed !== true) {
+      throw new Error('Mobile config: "logtoNativeAuthConfirmed" must be true when present');
+    }
+    config.logtoNativeAuthConfirmed = true;
+  }
   // basemapStyleUrl is optional: when absent/blank the map screen shows an
   // honest "map unavailable" state instead of crashing the app (spec section 21
   // honest-degradation). Present: a valid https URL (a cache-busting query
@@ -62,7 +69,11 @@ export function parseMobileConfig(extra: unknown): MobileConfig {
 /** True only when a real Logto Native app id is configured. False in this beta
  * (auth-unavailable mode), so the app stays in a public-read state. */
 export function isAuthConfigured(config: MobileConfig): boolean {
-  return typeof config.logtoAppId === "string" && config.logtoAppId.length > 0;
+  return (
+    config.logtoNativeAuthConfirmed === true &&
+    typeof config.logtoAppId === "string" &&
+    config.logtoAppId.length > 0
+  );
 }
 
 /** True only when a basemap style URL is configured. When false, the map screen

@@ -1,5 +1,8 @@
 import type { ExpoConfig } from "expo/config";
 
+const logtoNativeAuthConfirmed = process.env.EXPO_PUBLIC_LOGTO_NATIVE_AUTH_CONFIRMED === "true";
+const logtoAppId = logtoNativeAuthConfirmed ? process.env.EXPO_PUBLIC_LOGTO_APP_ID : undefined;
+
 const config: ExpoConfig = {
   name: "FountainRank",
   slug: "fountainrank",
@@ -27,6 +30,7 @@ const config: ExpoConfig = {
     logtoEndpoint: process.env.EXPO_PUBLIC_LOGTO_ENDPOINT ?? "https://auth.fountainrank.com",
     logtoAudience: process.env.EXPO_PUBLIC_LOGTO_AUDIENCE ?? "https://api.fountainrank.com",
     authCallbackScheme: "com.redducklabs.fountainrank",
+    ...(logtoAppId ? { logtoAppId, logtoNativeAuthConfirmed: true } : {}),
     // Public basemap style (Protomaps "light" on the DO Spaces CDN) — the same
     // style the web client uses (see deploy.yml NEXT_PUBLIC_BASEMAP_STYLE_URL).
     // Public, non-secret; overridable per build via EXPO_PUBLIC_BASEMAP_STYLE_URL.

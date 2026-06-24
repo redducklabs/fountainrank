@@ -8,6 +8,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { ScreenContainer } from "../components/ScreenContainer";
 import { parseMobileConfig, type MobileConfig } from "../lib/config";
 import { ApiProvider } from "../providers/api-provider";
+import { AuthProvider } from "../providers/auth-provider";
 import { colors, typography } from "../theme";
 
 const queryClient = new QueryClient({
@@ -42,10 +43,12 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <QueryClientProvider client={queryClient}>
-        <ApiProvider config={mobileConfig}>
-          <Stack screenOptions={{ headerShown: false }} />
-          <StatusBar style="dark" />
-        </ApiProvider>
+        <AuthProvider config={mobileConfig}>
+          <ApiProvider config={mobileConfig}>
+            <Stack screenOptions={{ headerShown: false }} />
+            <StatusBar style="dark" />
+          </ApiProvider>
+        </AuthProvider>
       </QueryClientProvider>
     </SafeAreaProvider>
   );
