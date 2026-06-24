@@ -16,6 +16,7 @@ app/
   diagnostics.tsx      backend reachability + version/build
 components/            ScreenContainer + loading/empty/error/offline states
 components/map/        FountainMap (MapLibre) + MapFilters
+components/add-fountain/ Add-fountain placement + details form (slice 6e-7)
 hooks/                 useForegroundLocation (non-blocking when-in-use location)
 lib/                   pure, unit-tested helpers (config, api, auth, view-state, build-info)
 lib/map/               pure, unit-tested map helpers (constants, bounds, pins, format, filters)
@@ -23,9 +24,8 @@ providers/             AuthProvider + ApiProvider (shared auth-aware API client)
 theme.ts               design tokens
 ```
 
-The remaining Add screen is scaffolded for slice 6e-7. **Slice 6e-3 ends Expo Go
-support:** the MapLibre native map requires a dev-client / EAS build (see _Map_
-below).
+**Slice 6e-3 ends Expo Go support:** the MapLibre native map requires a
+dev-client / EAS build (see _Map_ below).
 
 ## Common commands (run from the repo root)
 
@@ -103,6 +103,33 @@ round-trip are complete, contribution code is locally verified only (type-check,
 lint, helper tests, and Expo Doctor). Do not claim signed-in mobile
 contributions work on device until a real native auth callback and at least one
 authenticated write have actually been observed.
+
+## Add fountain (slice 6e-7)
+
+The Add tab is now an authenticated create flow for `POST /api/v1/fountains`.
+It uses the same auth-aware mobile API facade as existing-fountain
+contributions, so protected writes receive a Logto Bearer token only when native
+auth is configured and authenticated, and the mobile app still cannot emit
+`X-Dev-*` headers.
+
+The flow:
+
+- gates all writable controls behind `auth.status === "authenticated"`;
+- uses foreground location accuracy when available, otherwise a zoomed-in map
+  viewport fallback;
+- supports current location, map tap, place-at-center, and nudge placement;
+- collects working status, optional rating dimensions from `/api/v1/rating-types`,
+  optional attribute observations from `/api/v1/attribute-types`, an optional
+  comment, and an optional 200-character placement note;
+- handles duplicate-proximity `409` by showing a View existing fountain action
+  only when the duplicate body contains a valid fountain UUID;
+- invalidates map bbox queries after a successful create.
+
+Until the owner-gated Logto Native app/redirect setup and physical-device
+round-trip are complete, add-fountain code is locally verified only
+(type-check, lint, helper tests, and Expo Doctor). Do not claim signed-in mobile
+add-fountain writes work on device until native auth and an authenticated add
+have actually been observed.
 
 ## Store-testing builds (EAS)
 

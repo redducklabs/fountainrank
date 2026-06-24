@@ -1268,3 +1268,46 @@ control is shown as usable unless `auth.status === "authenticated"`.
   state in the UI. Mobile contribution payloads, note bodies, tokens, and raw
   profile data are not logged; mobile diagnosability for this slice is through
   user-visible states and local helper tests.
+
+### Add fountain (slice 6e-7)
+
+The Add tab is a task-first native create flow. It uses `ScreenContainer` +
+`ScrollView`, compact headings, 8px-radius controls, and the existing mobile
+theme tokens. No write controls are shown as usable unless
+`auth.status === "authenticated"`; unconfigured/signed-out/reauth states use the
+same honest gate pattern as existing-fountain contributions.
+
+- **Placement map** — a 320px-tall bordered MapLibre frame with the Protomaps
+  basemap, the existing standard pin asset for the candidate location, and a
+  brand-blue dashed ring when a usable GPS accuracy bound exists. The map keeps
+  attribution visible and hides the MapLibre logo, matching the browse map.
+- **Placement controls** — current-location and place-at-center buttons, plus
+  north/west/east/south nudge buttons. They are 44px-min-height Pressables with
+  `accessibilityRole="button"` and disabled state. The flow is completable
+  without relying solely on a map tap.
+- **Placement guidance** — muted body copy below the map communicates the active
+  gate: zoom in, place near confirmed location, or exact-placement fallback when
+  location cannot be confirmed. A compact coordinate readout appears only after
+  a pin is chosen.
+- **Working status** — two segmented choices, Yes and No. Selected state uses
+  brand-blue fill with `onBrand` text; unselected uses `surface` with a `border`
+  outline.
+- **Initial ratings** — add-time rating dimensions come from
+  `/api/v1/rating-types`, not detail dimensions. Star controls mirror the
+  existing contribution star style: 36px tap targets, crown-gold selected stars,
+  muted border-color unselected stars.
+- **Initial attributes** — add-time attribute options come from
+  `/api/v1/attribute-types`, grouped by category and sorted by `sort_order`.
+  Boolean rows render Yes / No / Unknown; enum rows render allowed values plus
+  Unknown. Unknown is the default and is omitted from the create payload.
+- **Text inputs** — Comment is multiline and trimmed before submission without a
+  mobile-only max cap. Placement note is a single-line 200-character input with
+  a live counter, matching the API cap.
+- **Duplicate result** — a compact state box shows that a fountain already
+  exists and offers a primary View existing fountain action plus a secondary Add
+  another location action. The route action is only available after a valid
+  duplicate fountain id is present.
+- **Feedback** — success/error text uses `accessibilityLiveRegion="polite"` and
+  the same non-Android explicit accessibility announcement pattern as
+  existing-fountain contributions. Form state is preserved on validation,
+  network, auth, and server errors.
