@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { ApiError } from "./api";
+import { AuthSessionError } from "./auth/state";
 import { resolveViewState } from "./view-state";
 
 describe("resolveViewState", () => {
@@ -17,6 +18,16 @@ describe("resolveViewState", () => {
     expect(resolveViewState({ isLoading: false, isError: true, error: new ApiError(500) })).toBe(
       "error",
     );
+  });
+
+  it("is error for an auth/session failure, not offline", () => {
+    expect(
+      resolveViewState({
+        isLoading: false,
+        isError: true,
+        error: new AuthSessionError("token_unavailable"),
+      }),
+    ).toBe("error");
   });
 
   it("is empty when the result set is empty", () => {

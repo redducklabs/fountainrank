@@ -53,10 +53,12 @@ In the Logto admin console → **Applications → Create**:
     `EXPO_PUBLIC_LOGTO_NATIVE_AUTH_CONFIRMED=true` for the build. A lone app id
     must not enable sign-in.
 
-  Current native app record (owner-confirmed 2026-06-23):
-  - Type: Native.
+  Current native app record:
+  - Type: Native (owner-confirmed 2026-06-23).
   - Public App ID: `oikth3qbmnrhqd9jmkbc8`.
-  - Redirect URI: **pending owner confirmation** —
+  - Redirect URI: **pending owner confirmation; do not set
+    `EXPO_PUBLIC_LOGTO_NATIVE_AUTH_CONFIRMED=true` until this exact URI is
+    confirmed in Logto** —
     `com.redducklabs.fountainrank://callback`.
 
 - **Machine-to-Machine** — for the backend / any server-to-server calls.

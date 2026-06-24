@@ -69,7 +69,20 @@ export type MobileApiClient = Pick<ApiClient, "GET" | "POST" | "PUT" | "PATCH" |
 type MakeClientOptions = Parameters<typeof makeClient>[1];
 export type CreateApiClientOptions = MakeClientOptions & {
   getAccessToken?: () => Promise<string | null | undefined>;
+  shouldAttachAuth?: (request: Request) => boolean;
 };
+
+function requestPath(input: Request): string {
+  const withoutOrigin = input.url.replace(/^[a-z][a-z\d+.-]*:\/\/[^/]+/i, "");
+  return withoutOrigin.split(/[?#]/, 1)[0] || "/";
+}
+
+export function isAuthenticatedApiRequest(input: Request): boolean {
+  if (input.method.toUpperCase() !== "GET") {
+    return true;
+  }
+  return requestPath(input) === "/api/v1/me";
+}
 
 /**
  * Build the mobile API client from validated config. Auth-unavailable mode
@@ -97,10 +110,14 @@ export function createApiClient(
   baseUrl: string,
   options?: CreateApiClientOptions,
 ): MobileApiClient {
-  const { getAccessToken, ...clientOptions } = options ?? {};
+  const {
+    getAccessToken,
+    shouldAttachAuth = isAuthenticatedApiRequest,
+    ...clientOptions
+  } = options ?? {};
   const baseFetch = clientOptions.fetch ?? ((input: Request) => globalThis.fetch(input));
   const sanitizingFetch = async (input: Request): Promise<Response> => {
-    if (getAccessToken) {
+    if (getAccessToken && shouldAttachAuth(input)) {
       let token: string | null | undefined;
       try {
         token = await getAccessToken();

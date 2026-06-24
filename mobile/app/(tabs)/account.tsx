@@ -1,6 +1,6 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "expo-router";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { ScreenContainer } from "../../components/ScreenContainer";
@@ -15,27 +15,45 @@ import { useApi } from "../../providers/api-provider";
 import { useAuth } from "../../providers/auth-provider";
 import { colors, spacing, typography } from "../../theme";
 
+const PROFILE_QUERY_KEY = ["me"] as const;
+
 export default function AccountScreen() {
   const { client } = useApi();
   const auth = useAuth();
+  const queryClient = useQueryClient();
   const [message, setMessage] = useState<string | null>(null);
   const profileQuery = useQuery({
-    queryKey: ["me"],
+    queryKey: PROFILE_QUERY_KEY,
     enabled: shouldEnableProfileQuery(auth.status),
     retry: (failureCount, error) => shouldRetryProfileQuery(error, failureCount),
     queryFn: async () => unwrap(await client.GET("/api/v1/me")),
   });
 
+  const clearProfile = useCallback(() => {
+    queryClient.removeQueries({ queryKey: PROFILE_QUERY_KEY });
+  }, [queryClient]);
+
   useEffect(() => {
     const error = profileQuery.error;
     if (apiErrorStatus(error) === 401 || isAuthSessionError(error)) {
+      clearProfile();
       auth.markReauthRequired();
     }
-  }, [auth, profileQuery.error]);
+  }, [auth, clearProfile, profileQuery.error]);
+
+  useEffect(() => {
+    if (auth.status !== "authenticated") {
+      clearProfile();
+    }
+  }, [auth.status, clearProfile]);
 
   const onSignIn = async () => {
     setMessage(null);
+    clearProfile();
     const result = await auth.signIn();
+    if (result.status === "success") {
+      clearProfile();
+    }
     if (result.status === "cancelled") {
       setMessage("Sign-in was cancelled.");
     } else if (result.status === "error") {
@@ -45,7 +63,9 @@ export default function AccountScreen() {
 
   const onSignOut = async () => {
     setMessage(null);
+    clearProfile();
     await auth.signOut();
+    clearProfile();
   };
 
   return (
