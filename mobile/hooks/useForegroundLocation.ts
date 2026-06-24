@@ -5,7 +5,7 @@ export type LocationStatus = "idle" | "locating" | "granted" | "denied" | "unava
 
 export type ForegroundLocation = {
   status: LocationStatus;
-  coords: { latitude: number; longitude: number } | null;
+  coords: { latitude: number; longitude: number; accuracy: number | null } | null;
 };
 
 /**
@@ -34,7 +34,11 @@ export function useForegroundLocation(): ForegroundLocation {
         if (cancelled) return;
         setState({
           status: "granted",
-          coords: { latitude: pos.coords.latitude, longitude: pos.coords.longitude },
+          coords: {
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude,
+            accuracy: pos.coords.accuracy,
+          },
         });
       } catch {
         if (!cancelled) setState({ status: "unavailable", coords: null });
