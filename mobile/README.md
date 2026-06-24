@@ -84,6 +84,26 @@ detail navigation.
   `rm -rf node_modules web/node_modules mobile/node_modules packages/*/node_modules && CI=true pnpm install`,
   then verify `pnpm --filter mobile exec expo config --type prebuild` (exit 0).
 
+## Contributions (slice 6e-6)
+
+The fountain detail screen includes authenticated contribution forms for rating
+an existing fountain, reporting operational status, recording attribute/access
+observations, and creating a note. Write calls go through the shared
+`createApiClient` facade so protected POSTs receive a Logto Bearer token when
+auth is configured, and the mobile app still cannot emit `X-Dev-*` headers.
+
+Attribute observations use the public `/api/v1/attribute-types` catalog for
+labels, boolean-vs-enum controls, and allowed values. The existing
+`detail.attributes` payload is read-only consensus data and is not used as the
+form source. Note creation is create-only; the API has no mobile edit/delete
+surface.
+
+Until the owner-gated Logto Native app/redirect setup and physical-device
+round-trip are complete, contribution code is locally verified only (type-check,
+lint, helper tests, and Expo Doctor). Do not claim signed-in mobile
+contributions work on device until a real native auth callback and at least one
+authenticated write have actually been observed.
+
 ## Store-testing builds (EAS)
 
 `eas.json` defines `development` / `preview` / `production` build profiles and a

@@ -1239,3 +1239,32 @@ are deferred to 6e-5/6e-6.
   error row); a muted "Added … · Last rated …" footer (`formatDate`); and a
   brand-yellow **Directions** pill (`Linking.openURL` to a Google Maps
   directions URL, with an `Alert` on the rare failure — never a silent swallow).
+
+### Existing-fountain contributions (slice 6e-6)
+
+Contribution UI is mounted inside the stack-pushed fountain detail route, below
+the read-only community content and above the footer/directions action. It stays
+compact and task-focused; no marketing copy, no nested cards, and no write
+control is shown as usable unless `auth.status === "authenticated"`.
+
+- **`ContributePanel`** — top-level auth gate. In `unconfigured` mode it shows a
+  muted public-read note with no fake disabled sign-in button. In signed-out or
+  reauth states it shows concise copy and a crown-gold sign-in button. Loading
+  and signing-in states are non-submittable. Authenticated state renders the
+  forms.
+- **Rating form** — per-dimension 1-5 star controls from
+  `detail.dimensions`. Unset dimensions submit nothing; at least one selected
+  dimension is required. Submit button is brand-blue with disabled opacity.
+- **Condition form** — direct "working" confirmation plus problem chips for the
+  deployed condition statuses. Reports use `is_proximate: false` until a later
+  device/proximity flow explicitly verifies the user is at the fountain.
+- **Attribute form** — uses the public `/api/v1/attribute-types` catalog, not
+  `detail.attributes` consensus rows. Boolean attributes render `Yes` / `No` /
+  `Unknown`; enum attributes render each allowed value plus `Unknown`. Catalog
+  loading/error/empty states are honest and non-submittable.
+- **Note form** — create-only note entry with `maxLength={1000}` and a character
+  count. There is no edit/delete UI because the API is list/create only.
+- **Feedback and diagnostics** — every mutation shows pending/success/error
+  state in the UI. Mobile contribution payloads, note bodies, tokens, and raw
+  profile data are not logged; mobile diagnosability for this slice is through
+  user-visible states and local helper tests.
