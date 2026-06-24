@@ -37,3 +37,9 @@ Read only the file relevant to the task at hand.
 Codex user config with `codex mcp add` / `codex mcp login`. See
 `docs/codex/setup.md` for the list and commands, and `scripts/launch-codex.sh`
 for the launcher.
+
+## SEO Agent
+
+For SEO analysis in this repository, use the `seo` skill and the seo-agent site
+name `fountainrank`. The configured providers are GSC and Bing; GA4 is not
+configured.
