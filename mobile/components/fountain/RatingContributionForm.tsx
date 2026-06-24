@@ -1,6 +1,6 @@
 import type { components } from "@fountainrank/api-client";
-import { useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useEffect, useState } from "react";
+import { AccessibilityInfo, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 
 import type { ContributionError } from "../../lib/contributions/state";
 import { buildRatingPayload } from "../../lib/contributions/payloads";
@@ -80,10 +80,17 @@ export function RatingContributionForm({
 }
 
 export function ContributionMessage({ message }: { message: Message }) {
+  useEffect(() => {
+    if (message && Platform.OS !== "android") {
+      AccessibilityInfo.announceForAccessibility(message.text);
+    }
+  }, [message]);
+
   if (!message) return null;
   return (
     <Text
       accessibilityRole="text"
+      accessibilityLiveRegion="polite"
       style={[styles.message, message.tone === "ok" ? styles.ok : styles.err]}
     >
       {message.text}

@@ -4,22 +4,16 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { buildConditionPayload } from "../../lib/contributions/payloads";
 import type { ContributionError } from "../../lib/contributions/state";
-import { conditionStatusLabel, contributionErrorText } from "../../lib/contributions/state";
+import {
+  conditionStatusLabel,
+  contributionErrorText,
+  PROBLEM_CONDITION_STATUSES,
+} from "../../lib/contributions/state";
 import { colors, spacing, typography } from "../../theme";
 import { ContributionMessage, SubmitButton } from "./RatingContributionForm";
 
 type ConditionStatus = components["schemas"]["ConditionReportRequest"]["status"];
 type ConditionReportRequest = components["schemas"]["ConditionReportRequest"];
-
-const PROBLEMS: ConditionStatus[] = [
-  "broken",
-  "low_pressure",
-  "dirty",
-  "bad_taste",
-  "blocked",
-  "seasonal_unavailable",
-  "hours_limited",
-];
 
 export function ConditionContributionForm({
   fountainId,
@@ -32,7 +26,7 @@ export function ConditionContributionForm({
     body: ConditionReportRequest,
   ) => Promise<{ ok: true } | { ok: false; error: ContributionError }>;
 }) {
-  const [problem, setProblem] = useState<ConditionStatus>(PROBLEMS[0]);
+  const [problem, setProblem] = useState<ConditionStatus>(PROBLEM_CONDITION_STATUSES[0]);
   const [message, setMessage] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
 
   async function submit(status: ConditionStatus) {
@@ -60,7 +54,7 @@ export function ConditionContributionForm({
       />
       <Text style={styles.label}>Report a problem</Text>
       <View style={styles.options}>
-        {PROBLEMS.map((status) => {
+        {PROBLEM_CONDITION_STATUSES.map((status) => {
           const selected = status === problem;
           return (
             <Pressable

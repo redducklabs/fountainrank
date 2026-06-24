@@ -3,14 +3,35 @@ import { describe, expect, it } from "vitest";
 import { ApiError } from "../api";
 import { AuthSessionError } from "../auth/state";
 import {
+  CONDITION_STATUSES,
   contributionErrorText,
   contributionGate,
   conditionStatusLabel,
   mapContributionError,
+  PROBLEM_CONDITION_STATUSES,
 } from "./state";
 
 describe("conditionStatusLabel", () => {
   it("labels every deployed condition status", () => {
+    expect(CONDITION_STATUSES).toEqual([
+      "working",
+      "broken",
+      "low_pressure",
+      "dirty",
+      "bad_taste",
+      "blocked",
+      "seasonal_unavailable",
+      "hours_limited",
+    ]);
+    expect(PROBLEM_CONDITION_STATUSES).toEqual([
+      "broken",
+      "low_pressure",
+      "dirty",
+      "bad_taste",
+      "blocked",
+      "seasonal_unavailable",
+      "hours_limited",
+    ]);
     expect(conditionStatusLabel("working")).toBe("It's working");
     expect(conditionStatusLabel("broken")).toBe("Broken / not working");
     expect(conditionStatusLabel("low_pressure")).toBe("Low water pressure");
@@ -36,6 +57,10 @@ describe("mapContributionError", () => {
 
   it("maps non-HTTP failures to network", () => {
     expect(mapContributionError(new TypeError("Network request failed"))).toBe("network");
+  });
+
+  it("does not label internal errors as connectivity problems", () => {
+    expect(mapContributionError(new Error("missing fountain id"))).toBe("server");
   });
 });
 

@@ -1,9 +1,11 @@
-import type { components } from "@fountainrank/api-client";
-
 import { ApiError } from "../api";
 import { isAuthSessionError, type AuthStatus } from "../auth/state";
-
-type ConditionStatus = components["schemas"]["ConditionReportRequest"]["status"];
+export {
+  CONDITION_STATUSES,
+  conditionStatusLabel,
+  isConditionStatus,
+  PROBLEM_CONDITION_STATUSES,
+} from "./conditions";
 
 export type ContributionError =
   | "unauthenticated"
@@ -19,21 +21,6 @@ export type ContributionGate =
   | { state: "sign_in"; message: string }
   | { state: "reauth"; message: string };
 
-const CONDITION_LABELS: Record<ConditionStatus, string> = {
-  working: "It's working",
-  broken: "Broken / not working",
-  low_pressure: "Low water pressure",
-  dirty: "Dirty",
-  bad_taste: "Bad taste",
-  blocked: "Blocked / clogged",
-  seasonal_unavailable: "Shut off for the season",
-  hours_limited: "Only available certain hours",
-};
-
-export function conditionStatusLabel(status: ConditionStatus): string {
-  return CONDITION_LABELS[status];
-}
-
 export function mapContributionError(error: unknown): ContributionError {
   if (isAuthSessionError(error)) {
     return "unauthenticated";
@@ -42,6 +29,12 @@ export function mapContributionError(error: unknown): ContributionError {
     if (error.status === 401) return "unauthenticated";
     if (error.status === 404) return "not_found";
     if (error.status === 422) return "validation";
+    return "server";
+  }
+  if (error instanceof TypeError) {
+    return "network";
+  }
+  if (error instanceof Error) {
     return "server";
   }
   return "network";

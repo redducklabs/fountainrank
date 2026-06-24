@@ -1,7 +1,8 @@
 import type { components } from "@fountainrank/api-client";
 
+import { isConditionStatus } from "./conditions";
+
 type AttributeTypeOut = components["schemas"]["AttributeTypeOut"];
-type ConditionStatus = components["schemas"]["ConditionReportRequest"]["status"];
 type ConditionReportRequest = components["schemas"]["ConditionReportRequest"];
 type ObserveAttributesRequest = components["schemas"]["ObserveAttributesRequest"];
 type RateRequest = components["schemas"]["RateRequest"];
@@ -11,16 +12,6 @@ type BuildResult<T> = { ok: true; value: T } | { ok: false };
 
 const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 const NOTE_MAX = 1000;
-const CONDITION_STATUSES: ReadonlySet<string> = new Set([
-  "working",
-  "broken",
-  "low_pressure",
-  "dirty",
-  "bad_taste",
-  "blocked",
-  "seasonal_unavailable",
-  "hours_limited",
-]);
 
 function validFountainId(fountainId: string): boolean {
   return UUID_RE.test(fountainId);
@@ -63,10 +54,10 @@ export function buildConditionPayload(
   fountainId: string,
   status: string,
 ): BuildResult<ConditionReportRequest> {
-  if (!validFountainId(fountainId) || !CONDITION_STATUSES.has(status)) {
+  if (!validFountainId(fountainId) || !isConditionStatus(status)) {
     return { ok: false };
   }
-  return { ok: true, value: { status: status as ConditionStatus, is_proximate: false } };
+  return { ok: true, value: { status, is_proximate: false } };
 }
 
 export function attributeOptions(type: AttributeTypeOut): string[] {
