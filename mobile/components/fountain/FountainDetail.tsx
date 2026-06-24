@@ -1,4 +1,5 @@
 import type { components } from "@fountainrank/api-client";
+import type React from "react";
 import { Alert, Linking, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { formatAverage, formatDate, formatDimension, formatVotes } from "../../lib/map/format";
@@ -15,12 +16,14 @@ export function FountainDetail({
   notes,
   notesError,
   onRetryNotes,
+  contribution,
   now,
 }: {
   detail: FountainDetailT;
   notes: NoteOut[];
   notesError?: boolean;
   onRetryNotes?: () => void;
+  contribution?: React.ReactNode;
   now: Date;
 }) {
   const { latitude, longitude } = detail.location;
@@ -90,6 +93,8 @@ export function FountainDetail({
       ) : (
         <NotesList notes={notes} now={now} />
       )}
+
+      {contribution}
 
       <Text style={styles.footer}>
         {`Added ${formatDate(detail.created_at)}`}
