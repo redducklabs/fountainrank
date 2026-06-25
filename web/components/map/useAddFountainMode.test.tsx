@@ -331,6 +331,7 @@ describe("useAddFountainMode", () => {
     fireEvent.click(screen.getByRole("button", { name: /next/i }));
     // catalog fetch resolves async -> wait for the rating control, then pick a star + one attribute
     fireEvent.click(await screen.findByRole("radio", { name: /coldness: 4 stars/i }));
+    fireEvent.click(screen.getByRole("button", { name: /more details/i }));
     fireEvent.click(screen.getByRole("radio", { name: /bottle filler: yes/i }));
     // "Dog bowl" stays at its default (unknown) -> must be excluded from the payload
     await act(async () => {

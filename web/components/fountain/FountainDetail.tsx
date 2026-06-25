@@ -19,6 +19,7 @@ export function FountainDetail({
 }) {
   const renderNow = now ?? new Date();
   const { latitude, longitude } = detail.location;
+  const contextComment = detail.comments || detail.placement_note;
   const dir = `https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}`;
   return (
     <div className="space-y-4">
@@ -31,12 +32,6 @@ export function FountainDetail({
           now={renderNow}
         />
       </div>
-      {detail.placement_note && (
-        <p className="text-sm break-words text-slate-600">
-          <span aria-hidden="true">📍 </span>
-          {detail.placement_note}
-        </p>
-      )}
       <div className="flex items-baseline gap-2">
         <span className="text-2xl font-extrabold text-[#0A357E]">
           {formatAverage(detail.average_rating ?? null)}
@@ -59,10 +54,10 @@ export function FountainDetail({
         ))}
       </dl>
       <AttributeList attributes={detail.attributes} />
-      {detail.comments && (
+      {contextComment && (
         <div>
           <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm break-words text-slate-700">
-            {detail.comments}
+            {contextComment}
           </p>
           <p className="mt-1 text-xs text-slate-400">From the person who added this fountain</p>
         </div>

@@ -123,24 +123,9 @@ describe("AddFountainPanel", () => {
     expect(screen.queryByRole("button", { name: /try again/i })).toBeNull();
   });
 
-  it("details: placement-note input enforces 200-char cap and shows counter", () => {
-    const onPlacementNote = vi.fn();
-    render(
-      <AddFountainPanel
-        {...base}
-        phase="details"
-        pin={{ lng: -122.3, lat: 47.6 }}
-        placementNote="near gate"
-        onPlacementNote={onPlacementNote}
-      />,
-    );
-    const input = screen.getByRole("textbox", { name: /placement note/i });
-    expect(input).toBeTruthy();
-    expect(input).toHaveProperty("maxLength", 200);
-    // counter shows current length / max
-    expect(screen.getByText(/9\/200/)).toBeTruthy();
-    fireEvent.change(input, { target: { value: "by the gate" } });
-    expect(onPlacementNote).toHaveBeenCalledWith("by the gate");
+  it("details: does not show a placement-note input", () => {
+    render(<AddFountainPanel {...base} phase="details" pin={{ lng: -122.3, lat: 47.6 }} />);
+    expect(screen.queryByRole("textbox", { name: /placement note/i })).toBeNull();
   });
 
   it("details: comment textarea calls onComments", () => {

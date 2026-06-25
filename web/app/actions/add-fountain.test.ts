@@ -84,21 +84,19 @@ describe("addFountain", () => {
     expect(await addFountain(input)).toEqual({ ok: false, error: "server" });
   });
 
-  it("never logs coordinates, comments, or placement notes", async () => {
+  it("never logs coordinates or comments", async () => {
     POST.mockResolvedValue({ data: { id: NEW_ID }, response: { status: 201 } });
-    await addFountain({ ...input, comments: "secret comment", placement_note: "by the gate" });
+    await addFountain({ ...input, comments: "secret comment" });
     const logged = JSON.stringify(log.mock.calls);
     expect(logged).not.toContain("secret comment");
-    expect(logged).not.toContain("by the gate");
     expect(logged).not.toContain("47.6");
   });
 
-  it("forwards a full payload (ratings + observations + comment + placement note) in the POST body", async () => {
+  it("forwards a full payload without placement_note in the POST body", async () => {
     POST.mockResolvedValue({ data: { id: NEW_ID }, error: undefined, response: { status: 201 } });
     const fullInput: AddFountainInput = {
       ...input,
       comments: " great fountain ",
-      placement_note: " near gate ",
       ratings: [{ rating_type_id: 1, stars: 4 }],
       observations: [{ attribute_type_id: 2, value: "yes" }],
     };
@@ -110,7 +108,6 @@ describe("addFountain", () => {
           location: input.location,
           is_working: true,
           comments: "great fountain",
-          placement_note: "near gate",
           ratings: [{ rating_type_id: 1, stars: 4 }],
           observations: [{ attribute_type_id: 2, value: "yes" }],
         },

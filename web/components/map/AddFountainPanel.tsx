@@ -1,9 +1,9 @@
 "use client";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { signInWithReturn } from "../../app/actions/auth";
 import type { AddFountainError } from "../../lib/add-fountain";
-import { COMMENTS_MAX, PLACEMENT_NOTE_MAX } from "../../lib/add-fountain";
+import { COMMENTS_MAX } from "../../lib/add-fountain";
 import type { AddPhase } from "../../lib/add-fountain-machine";
 import type { AttributeGroup } from "../../lib/catalog";
 import type { LngLat } from "../../lib/map/placement";
@@ -33,11 +33,9 @@ export type AddFountainPanelProps = {
   ratingValue?: Record<number, number>;
   obsValue?: Record<number, string>;
   comments?: string;
-  placementNote?: string;
   onRate?: (id: number, stars: number) => void;
   onObserve?: (id: number, v: string) => void;
   onComments?: (v: string) => void;
-  onPlacementNote?: (v: string) => void;
 };
 
 const ERROR_COPY: Record<AddFountainError, string> = {
@@ -200,8 +198,8 @@ function PlacingStep(props: AddFountainPanelProps) {
 }
 
 function DetailsStep(props: AddFountainPanelProps) {
+  const [showMoreDetails, setShowMoreDetails] = useState(false);
   const commentsLen = (props.comments ?? "").length;
-  const noteLen = (props.placementNote ?? "").length;
   return (
     <div className="mt-2">
       <Coord pin={props.pin} />
@@ -235,13 +233,6 @@ function DetailsStep(props: AddFountainPanelProps) {
           onChange={props.onRate}
         />
       )}
-      {props.attributeGroups && props.attributeGroups.length > 0 && props.onObserve && (
-        <AttributeObservationFields
-          groups={props.attributeGroups}
-          value={props.obsValue ?? {}}
-          onChange={props.onObserve}
-        />
-      )}
       {props.onComments !== undefined && (
         <div className="mt-3">
           <label className="block text-sm font-semibold text-slate-700" htmlFor="add-comments">
@@ -261,26 +252,22 @@ function DetailsStep(props: AddFountainPanelProps) {
           </p>
         </div>
       )}
-      {props.onPlacementNote !== undefined && (
+      {props.attributeGroups && props.attributeGroups.length > 0 && props.onObserve && (
         <div className="mt-3">
-          <label
-            className="block text-sm font-semibold text-slate-700"
-            htmlFor="add-placement-note"
+          <button
+            type="button"
+            onClick={() => setShowMoreDetails((current) => !current)}
+            className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-semibold text-[#0A357E]"
           >
-            Placement note (optional)
-          </label>
-          <input
-            id="add-placement-note"
-            type="text"
-            className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-sm"
-            maxLength={PLACEMENT_NOTE_MAX}
-            value={props.placementNote ?? ""}
-            onChange={(e) => props.onPlacementNote!(e.target.value)}
-            aria-label="Placement note"
-          />
-          <p className="mt-0.5 text-right text-xs text-slate-400">
-            {noteLen}/{PLACEMENT_NOTE_MAX}
-          </p>
+            {showMoreDetails ? "Hide More Details" : "More Details"}
+          </button>
+          {showMoreDetails && (
+            <AttributeObservationFields
+              groups={props.attributeGroups}
+              value={props.obsValue ?? {}}
+              onChange={props.onObserve}
+            />
+          )}
         </div>
       )}
       <div className="mt-4 flex justify-between">

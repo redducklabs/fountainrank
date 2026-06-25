@@ -4,7 +4,6 @@ export type AddFountainInput = {
   location: { latitude: number; longitude: number };
   is_working: boolean;
   comments?: string | null;
-  placement_note?: string | null;
   ratings?: { rating_type_id: number; stars: number }[];
   observations?: { attribute_type_id: number; value: string }[];
 };
@@ -16,7 +15,6 @@ export type AddFountainResult =
   | { ok: false; error: AddFountainError };
 
 export const COMMENTS_MAX = 1000;
-export const PLACEMENT_NOTE_MAX = 200;
 
 const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
@@ -37,10 +35,6 @@ export function isValidAddFountainInput(input: AddFountainInput): boolean {
   if (input.comments != null) {
     if (typeof input.comments !== "string") return false;
     if (input.comments.trim().length > COMMENTS_MAX) return false;
-  }
-  if (input.placement_note != null) {
-    if (typeof input.placement_note !== "string") return false;
-    if (input.placement_note.trim().length > PLACEMENT_NOTE_MAX) return false;
   }
   if (input.ratings != null) {
     if (!Array.isArray(input.ratings)) return false;
@@ -71,8 +65,6 @@ export function toAddFountainBody(
   };
   const comments = input.comments?.trim();
   if (comments) body.comments = comments;
-  const note = input.placement_note?.trim();
-  if (note) body.placement_note = note;
   if (input.ratings && input.ratings.length) body.ratings = input.ratings;
   if (input.observations && input.observations.length) body.observations = input.observations;
   return body;

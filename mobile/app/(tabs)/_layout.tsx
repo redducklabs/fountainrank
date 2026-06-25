@@ -17,6 +17,7 @@ export default function TabsLayout() {
         name="add"
         options={{
           title: "Add",
+          href: null,
           tabBarIcon: ({ color, size }) => <Ionicons name="add-circle" color={color} size={size} />,
         }}
       />

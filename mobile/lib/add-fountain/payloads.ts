@@ -8,14 +8,11 @@ export type AddFountainInput = {
   location: { latitude: number; longitude: number };
   is_working: boolean;
   comments?: string | null;
-  placement_note?: string | null;
   ratings?: { rating_type_id: number; stars: number }[];
   observations?: { attribute_type_id: number; value: string }[];
 };
 
 export type BuildResult<T> = { ok: true; value: T } | { ok: false };
-
-export const PLACEMENT_NOTE_MAX = 200;
 
 function positiveInteger(value: number): boolean {
   return Number.isInteger(value) && value > 0;
@@ -108,10 +105,6 @@ export function isValidAddFountainInput(input: AddFountainInput): boolean {
   if (!validLocation(input.location)) return false;
   if (typeof input.is_working !== "boolean") return false;
   if (input.comments != null && typeof input.comments !== "string") return false;
-  if (input.placement_note != null) {
-    if (typeof input.placement_note !== "string") return false;
-    if (input.placement_note.trim().length > PLACEMENT_NOTE_MAX) return false;
-  }
   if (input.ratings != null) {
     if (!Array.isArray(input.ratings)) return false;
     for (const rating of input.ratings) {
@@ -141,8 +134,6 @@ export function buildAddFountainPayload(input: AddFountainInput): BuildResult<Ad
   };
   const comments = input.comments?.trim();
   if (comments) body.comments = comments;
-  const placementNote = input.placement_note?.trim();
-  if (placementNote) body.placement_note = placementNote;
   if (input.ratings?.length) body.ratings = input.ratings;
   if (input.observations?.length) body.observations = input.observations;
   return { ok: true, value: body };

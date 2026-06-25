@@ -32,14 +32,12 @@ export function useAddFountainMode(
   const [ratingValue, setRatingValue] = useState<Record<number, number>>({});
   const [obsValue, setObsValue] = useState<Record<number, string>>({});
   const [comments, setComments] = useState("");
-  const [placementNote, setPlacementNote] = useState("");
   // Clear user-entered optional fields so a prior add's values can never be submitted for a
   // later fountain (the map stays mounted across adds). Catalogs persist (they're cached).
   const resetOptional = useCallback(() => {
     setRatingValue({});
     setObsValue({});
     setComments("");
-    setPlacementNote("");
   }, []);
 
   const placeable = state.bound ? canPlace(zoom, state.bound) : false;
@@ -140,7 +138,6 @@ export function useAddFountainMode(
 
   // Recompute the bound when the fix changes (after geolocation resolves).
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (active) recomputeBound();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fix]);
@@ -174,7 +171,6 @@ export function useAddFountainMode(
       location: { latitude: state.pin.lat, longitude: state.pin.lng },
       is_working: state.working,
       comments: comments.trim() || undefined,
-      placement_note: placementNote.trim() || undefined,
       ratings: ratings.length ? ratings : undefined,
       observations: observations.length ? observations : undefined,
     });
@@ -190,16 +186,7 @@ export function useAddFountainMode(
     } else {
       dispatch({ type: "SUBMIT_ERROR", errorKind: res.error });
     }
-  }, [
-    state.pin,
-    state.working,
-    ratingValue,
-    obsValue,
-    comments,
-    placementNote,
-    router,
-    resetOptional,
-  ]);
+  }, [state.pin, state.working, ratingValue, obsValue, comments, router, resetOptional]);
 
   // Hide the FAB while add-mode is active so it can't re-enter and reset an in-progress flow.
   const fab: ReactNode = active ? null : (
@@ -233,11 +220,9 @@ export function useAddFountainMode(
       ratingValue={ratingValue}
       obsValue={obsValue}
       comments={comments}
-      placementNote={placementNote}
       onRate={(id, stars) => setRatingValue((prev) => ({ ...prev, [id]: stars }))}
       onObserve={(id, v) => setObsValue((prev) => ({ ...prev, [id]: v }))}
       onComments={setComments}
-      onPlacementNote={setPlacementNote}
     />
   );
 

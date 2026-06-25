@@ -118,7 +118,7 @@ describe("FountainDetail", () => {
     expect(screen.getByText("Out of order")).toBeInTheDocument();
     expect(screen.getByText(/Issue reported recently/)).toBeInTheDocument();
   });
-  it("placement note shown only when present", () => {
+  it("uses legacy placement note as comment fallback", () => {
     const { rerender } = render(
       <FountainDetail detail={base} notes={[]} now={now} isAuthenticated={false} />,
     );

@@ -4,6 +4,11 @@ import { AccessibilityInfo, Platform, Pressable, StyleSheet, Text, View } from "
 
 import type { ContributionError } from "../../lib/contributions/state";
 import { buildRatingPayload } from "../../lib/contributions/payloads";
+import {
+  ratingPointsPreview,
+  totalPreviewPoints,
+  type PointsLine,
+} from "../../lib/contributions/points";
 import { contributionErrorText } from "../../lib/contributions/state";
 import { colors, spacing, typography } from "../../theme";
 
@@ -26,6 +31,7 @@ export function RatingContributionForm({
   const [stars, setStars] = useState<Record<number, number | undefined>>({});
   const [message, setMessage] = useState<Message>(null);
   const payload = buildRatingPayload(fountainId, stars);
+  const preview = ratingPointsPreview(payload.ok ? payload.value.ratings.length : 0);
 
   async function submit() {
     setMessage(null);
@@ -73,6 +79,7 @@ export function RatingContributionForm({
           </View>
         </View>
       ))}
+      <PointsPreview lines={preview} />
       <SubmitButton label="Submit rating" disabled={pending || !payload.ok} onPress={submit} />
       <ContributionMessage message={message} />
     </View>
@@ -95,6 +102,22 @@ export function ContributionMessage({ message }: { message: Message }) {
     >
       {message.text}
     </Text>
+  );
+}
+
+export function PointsPreview({ lines }: { lines: PointsLine[] }) {
+  if (lines.length === 0) return null;
+  return (
+    <View style={styles.pointsPreview}>
+      <Text
+        style={styles.pointsPreviewTitle}
+      >{`+${totalPreviewPoints(lines)} possible points`}</Text>
+      {lines.map((line) => (
+        <Text key={`${line.label}-${line.points}`} style={styles.pointsPreviewLine}>
+          {`+${line.points} ${line.label}${line.conditional ? " (conditional)" : ""}`}
+        </Text>
+      ))}
+    </View>
   );
 }
 
@@ -147,6 +170,16 @@ const styles = StyleSheet.create({
   disabled: { opacity: 0.5 },
   pressed: { opacity: 0.8 },
   submitText: { ...typography.body, color: colors.onBrand, fontWeight: "700" },
+  pointsPreview: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: spacing.sm,
+    gap: spacing.xs,
+  },
+  pointsPreviewTitle: { ...typography.body, color: colors.brandBlue, fontWeight: "700" },
+  pointsPreviewLine: { ...typography.meta, color: colors.textMuted },
   message: { ...typography.meta },
   ok: { color: "#047857" },
   err: { color: colors.danger },

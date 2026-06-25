@@ -3,11 +3,12 @@ import { useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { attributeOptions, buildAttributePayload } from "../../lib/contributions/payloads";
+import { attributePointsPreview } from "../../lib/contributions/points";
 import type { ContributionError } from "../../lib/contributions/state";
 import { contributionErrorText } from "../../lib/contributions/state";
 import { formatCategory, attributeValueLabel } from "../../lib/map/format";
 import { colors, spacing, typography } from "../../theme";
-import { ContributionMessage, SubmitButton } from "./RatingContributionForm";
+import { ContributionMessage, PointsPreview, SubmitButton } from "./RatingContributionForm";
 
 type AttributeTypeOut = components["schemas"]["AttributeTypeOut"];
 type ObserveAttributesRequest = components["schemas"]["ObserveAttributesRequest"];
@@ -105,6 +106,9 @@ export function AttributeContributionForm({
           ))}
         </View>
       ))}
+      <PointsPreview
+        lines={attributePointsPreview(payload.ok ? payload.value.observations.length : 0)}
+      />
       <SubmitButton label="Save observations" disabled={pending || !payload.ok} onPress={submit} />
       <ContributionMessage message={message} />
     </View>

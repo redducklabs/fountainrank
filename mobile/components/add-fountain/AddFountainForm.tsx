@@ -14,7 +14,6 @@ import {
   buildAddFountainPayload,
   buildObservationsFromValues,
   buildRatingsFromStars,
-  PLACEMENT_NOTE_MAX,
   type AddFountainInput,
 } from "../../lib/add-fountain/payloads";
 import {
@@ -76,7 +75,6 @@ export function AddFountainForm({
   const [ratings, setRatings] = useState<Record<number, number | undefined>>({});
   const [attributes, setAttributes] = useState<Record<number, string | undefined>>({});
   const [comments, setComments] = useState("");
-  const [placementNote, setPlacementNote] = useState("");
 
   useEffect(() => {
     if (!region) return;
@@ -135,7 +133,6 @@ export function AddFountainForm({
       location: { latitude: state.pin.lat, longitude: state.pin.lng },
       is_working: state.isWorking,
       comments,
-      placement_note: placementNote,
       ratings: buildRatingsFromStars(ratingCatalog.data, ratings),
       observations: buildObservationsFromValues(attributeCatalog.data, attributes),
     });
@@ -306,16 +303,6 @@ export function AddFountainForm({
             onChangeText={setComments}
             style={[styles.input, styles.textArea]}
           />
-          <Text style={styles.label}>Placement note</Text>
-          <TextInput
-            accessibilityLabel="Placement note"
-            editable={!submitting}
-            value={placementNote}
-            maxLength={PLACEMENT_NOTE_MAX}
-            onChangeText={setPlacementNote}
-            style={styles.input}
-          />
-          <Text style={styles.count}>{`${placementNote.length}/${PLACEMENT_NOTE_MAX}`}</Text>
           <View style={styles.actions}>
             <SecondaryButton
               label="Back"
@@ -526,7 +513,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
   },
   textArea: { minHeight: 96, textAlignVertical: "top" },
-  count: { ...typography.meta, color: colors.textMuted, alignSelf: "flex-end" },
   catalogRow: { gap: spacing.sm },
   message: { ...typography.meta },
   ok: { color: "#047857" },

@@ -11,13 +11,14 @@ import {
 import { useEffect, useRef } from "react";
 import { StyleSheet } from "react-native";
 
+import { pinFeatureCollection, type LngLat } from "../../lib/add-fountain/placement";
 import type { RawBounds } from "../../lib/map/bounds";
 import {
   CLUSTER_MAX_ZOOM,
   CLUSTER_RADIUS,
   DEFAULT_CENTER,
   DEFAULT_ZOOM,
-  NEIGHBORHOOD_ZOOM,
+  INITIAL_USER_ZOOM,
   PILL_MIN_ZOOM,
 } from "../../lib/map/constants";
 import { colors } from "../../theme";
@@ -37,6 +38,8 @@ type FountainMapProps = {
   showUserLocation: boolean;
   onRegionChange: (bounds: RawBounds, zoom: number) => void;
   onPinPress: (id: string) => void;
+  draftPin?: LngLat | null;
+  onMapPressForPlacement?: (point: LngLat) => void;
 };
 
 export function FountainMap({
@@ -47,6 +50,8 @@ export function FountainMap({
   showUserLocation,
   onRegionChange,
   onPinPress,
+  draftPin = null,
+  onMapPressForPlacement,
 }: FountainMapProps) {
   const cameraRef = useRef<CameraRef>(null);
   const sourceRef = useRef<GeoJSONSourceRef>(null);
@@ -58,7 +63,7 @@ export function FountainMap({
     if (!userCoords) return;
     cameraRef.current?.flyTo({
       center: [userCoords.longitude, userCoords.latitude],
-      zoom: NEIGHBORHOOD_ZOOM,
+      zoom: INITIAL_USER_ZOOM,
       duration: 600,
     });
   }, [userCoords, recenterKey]);
@@ -69,6 +74,11 @@ export function FountainMap({
       mapStyle={styleUrl}
       logo={false}
       attribution
+      onPress={(event) => {
+        if (!onMapPressForPlacement) return;
+        const [lng, lat] = event.nativeEvent.lngLat;
+        onMapPressForPlacement({ lng, lat });
+      }}
       onRegionDidChange={(e) => {
         const { bounds, zoom } = e.nativeEvent;
         const [west, south, east, north] = bounds;
@@ -86,6 +96,7 @@ export function FountainMap({
         clusterRadius={CLUSTER_RADIUS}
         clusterMaxZoom={CLUSTER_MAX_ZOOM}
         onPress={(e) => {
+          e.stopPropagation();
           const feature = e.nativeEvent.features?.[0];
           if (!feature) return;
           const props = feature.properties ?? {};
@@ -156,6 +167,20 @@ export function FountainMap({
             "text-color": colors.brandBlue,
             "text-halo-color": "#ffffff",
             "text-halo-width": 1.5,
+          }}
+        />
+      </GeoJSONSource>
+
+      <GeoJSONSource id="draft-fountain" data={pinFeatureCollection(draftPin)}>
+        <Layer
+          id="draft-fountain-pin"
+          source="draft-fountain"
+          type="symbol"
+          layout={{
+            "icon-image": "pin-standard",
+            "icon-anchor": "bottom",
+            "icon-size": 0.62,
+            "icon-allow-overlap": true,
           }}
         />
       </GeoJSONSource>

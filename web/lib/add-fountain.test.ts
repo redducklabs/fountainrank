@@ -50,9 +50,7 @@ describe("isValidAddFountainInput", () => {
       false,
     );
   });
-  it("rejects oversized comments / placement note", () => {
-    expect(isValidAddFountainInput({ ...base, placement_note: "x".repeat(201) })).toBe(false);
-    expect(isValidAddFountainInput({ ...base, placement_note: "x".repeat(200) })).toBe(true);
+  it("rejects oversized comments", () => {
     expect(isValidAddFountainInput({ ...base, comments: "x".repeat(1001) })).toBe(false);
     expect(isValidAddFountainInput({ ...base, comments: "x".repeat(1000) })).toBe(true);
   });
@@ -87,10 +85,15 @@ describe("isValidAddFountainInput", () => {
 
 describe("toAddFountainBody", () => {
   it("drops empty optionals and trims text", () => {
-    expect(toAddFountainBody({ ...base, comments: "  ", placement_note: "  near gate " })).toEqual({
+    expect(
+      toAddFountainBody({
+        ...base,
+        comments: "  ",
+        placement_note: "  near gate ",
+      } as AddFountainInput & { placement_note: string }),
+    ).toEqual({
       location: { latitude: 47.6, longitude: -122.3 },
       is_working: true,
-      placement_note: "near gate",
     });
   });
   it("includes non-empty rating/observation arrays and trimmed comments", () => {

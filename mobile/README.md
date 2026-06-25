@@ -119,8 +119,8 @@ The flow:
   viewport fallback;
 - supports current location, map tap, place-at-center, and nudge placement;
 - collects working status, optional rating dimensions from `/api/v1/rating-types`,
-  optional attribute observations from `/api/v1/attribute-types`, an optional
-  comment, and an optional 200-character placement note;
+  optional attribute observations from `/api/v1/attribute-types`, and one optional
+  comment field;
 - handles duplicate-proximity `409` by showing a View existing fountain action
   only when the duplicate body contains a valid fountain UUID;
 - invalidates map bbox queries after a successful create.

@@ -100,7 +100,6 @@ describe("buildAddFountainPayload", () => {
       buildAddFountainPayload({
         ...base,
         comments: "  near the gym  ",
-        placement_note: "  second floor  ",
         ratings: [{ rating_type_id: 1, stars: 4 }],
         observations: [{ attribute_type_id: 2, value: "public" }],
       }),
@@ -110,7 +109,6 @@ describe("buildAddFountainPayload", () => {
         location: base.location,
         is_working: true,
         comments: "near the gym",
-        placement_note: "second floor",
         ratings: [{ rating_type_id: 1, stars: 4 }],
         observations: [{ attribute_type_id: 2, value: "public" }],
       },
@@ -126,10 +124,13 @@ describe("buildAddFountainPayload", () => {
     });
   });
 
-  it("rejects oversized placement notes but does not invent a comment cap", () => {
-    expect(buildAddFountainPayload({ ...base, placement_note: "x".repeat(201) })).toEqual({
-      ok: false,
-    });
+  it("does not send placement_note and does not invent a comment cap", () => {
+    const legacyInput = { ...base, placement_note: "near gate" } as AddFountainInput & {
+      placement_note: string;
+    };
+    const result = buildAddFountainPayload(legacyInput);
+    expect(result.ok).toBe(true);
+    expect(result.ok ? result.value : null).not.toHaveProperty("placement_note");
     expect(buildAddFountainPayload({ ...base, comments: "x".repeat(2000) }).ok).toBe(true);
   });
 
