@@ -67,8 +67,9 @@ app record.
 4. Keep App Store Connect API keys and any Apple private keys outside the repo.
 5. Add a TestFlight group and tester list in App Store Connect after a build is
    uploaded.
-6. Capture iOS screenshots from a real native build or an owner-approved
-   App Store Connect-compliant mockup set.
+6. Upload the owner-reviewed iPhone screenshots from
+   `mobile/assets/store/screenshots/app-store/`, or replace them with real native
+   build captures before final submission if required.
 
 Apple references:
 
@@ -100,8 +101,9 @@ create the app record.
 5. Use the configured Android production submit track `internal` unless the owner
    chooses closed testing for the first broader group.
 6. Add tester email lists and opt-in links in Play Console.
-7. Capture Android screenshots from a real native build or an owner-approved
-   Play-compliant screenshot set.
+7. Upload the owner-reviewed phone screenshots from
+   `mobile/assets/store/screenshots/play-store/`, or replace them with real
+   native build captures before final submission if required.
 
 Google references:
 
@@ -135,7 +137,7 @@ submission.
 | Keywords                       | drinking fountain, water fountain, refill, hydration, map, public water                                                                                                                                                                                                                             | Review against store rules and byte limits.                                                             |
 | TestFlight tester instructions | Install the beta, allow or deny location permission, browse the map, open a fountain detail, sign in, submit one existing-fountain contribution, add a fountain or confirm the duplicate path, and report any crash or blocked state with app version/build.                                        | Review after store build exists.                                                                        |
 | Play tester instructions       | Same as TestFlight, installed through the Play testing opt-in link.                                                                                                                                                                                                                                 | Review after store build exists.                                                                        |
-| Screenshots                    | Required from real native builds or approved mockups. Suggested flows: map with pins, fountain detail, contribution panel, add-fountain placement, add-fountain details/result, account/diagnostics.                                                                                                | Capture after device build.                                                                             |
+| Screenshots                    | Generated owner-reviewable mockups are committed under `mobile/assets/store/screenshots/`: App Store files are `1242x2688` RGB PNGs; Play files are `1080x1920` RGB PNGs. They cover map discovery, fountain detail, contribution, add-fountain, and account/diagnostics.                           | Review in the consoles; replace with real native build captures before final submission if required.    |
 | App icon / splash              | Generated from `docs/logos/512-pin.png` and committed under `mobile/assets/`; wired in `mobile/app.config.ts`.                                                                                                                                                                                      | Review in native build; replace from source artwork if sharpness is not acceptable before store upload. |
 
 ## Factual data-flow inventory
@@ -165,13 +167,14 @@ when referenced asset paths do not exist.
 
 Committed paths:
 
-| Purpose                          | Path                                                   | Notes                                                                                                                                                                |
-| -------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| App icon                         | `mobile/assets/icon.png`                               | 1024x1024 RGB PNG generated from the committed 512px mark. Expo uses this for generated platform icon sizes; review sharpness in a native build before store upload. |
-| Android adaptive icon foreground | `mobile/assets/adaptive-icon.png`                      | Foreground image for `android.adaptiveIcon.foregroundImage`.                                                                                                         |
-| Splash image                     | `mobile/assets/splash-icon.png`                        | Configured through the SDK-56 `expo-splash-screen` config plugin.                                                                                                    |
-| Play feature graphic             | `mobile/assets/store/play-feature-graphic.png`         | 1024x500 RGB PNG generated from `docs/logos/feature-graphic.png`; review in Play Console before submission.                                                          |
-| Store screenshots                | `mobile/assets/store/` or external console upload only | Must come from a real native build or owner-approved mockups.                                                                                                        |
+| Purpose                          | Path                                               | Notes                                                                                                                                                                |
+| -------------------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| App icon                         | `mobile/assets/icon.png`                           | 1024x1024 RGB PNG generated from the committed 512px mark. Expo uses this for generated platform icon sizes; review sharpness in a native build before store upload. |
+| Android adaptive icon foreground | `mobile/assets/adaptive-icon.png`                  | Foreground image for `android.adaptiveIcon.foregroundImage`.                                                                                                         |
+| Splash image                     | `mobile/assets/splash-icon.png`                    | Configured through the SDK-56 `expo-splash-screen` config plugin.                                                                                                    |
+| Play feature graphic             | `mobile/assets/store/play-feature-graphic.png`     | 1024x500 RGB PNG generated from `docs/logos/feature-graphic.png`; review in Play Console before submission.                                                          |
+| App Store screenshots            | `mobile/assets/store/screenshots/app-store/*.png`  | 1242x2688 RGB PNGs for the iPhone 6.5" Display slot in App Store Connect.                                                                                            |
+| Play phone screenshots           | `mobile/assets/store/screenshots/play-store/*.png` | 1080x1920 RGB PNGs for Google Play phone screenshots.                                                                                                                |
 
 Expo references:
 
