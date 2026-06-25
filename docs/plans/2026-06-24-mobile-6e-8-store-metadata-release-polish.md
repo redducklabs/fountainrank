@@ -69,9 +69,10 @@ requires credentials. Do not create or edit `.env` files.
   - Android production build type is `app-bundle`;
   - Android production submit track is `internal`;
   - no iOS submit profile exists yet.
-- Current assets: only map pin PNGs exist under `mobile/assets/pins/`.
-  There is no app icon, adaptive icon, splash image, screenshot set, or store
-  media checked in yet.
+- Current assets at plan start: only map pin PNGs existed under
+  `mobile/assets/pins/`. Follow-up 6e-8 work later added the app icon, adaptive
+  icon, splash image, Play feature graphic, and owner-approved store screenshot
+  mockups.
 
 If any of these facts have changed by the time implementation begins, update
 this section before editing code or runbooks.
@@ -86,9 +87,10 @@ this section before editing code or runbooks.
 - Store metadata that is subjective, legal, policy-sensitive, or console-only
   must be marked owner-review-required. Do not invent data-safety, privacy
   nutrition, content rating, or legal answers.
-- Screenshots must come from a real native build when used for store submission.
-  Repo docs may specify the required capture checklist, but they must not claim
-  screenshots exist until files are present.
+- Store screenshots must accurately represent the shipped native build. Real
+  native captures remain preferred for final submission, but the owner may
+  explicitly approve generated, clearly labeled mockups as interim store-console
+  assets when the console is blocked on screenshots before builds are ready.
 - Privacy and terms URLs must point to real deployed pages before store
   submission. The repo currently has web privacy/terms pages, but 6e-8 may only
   document the URL requirement unless deployment is verified separately.
@@ -141,9 +143,10 @@ this section before editing code or runbooks.
      an asset checklist with exact file paths, dimensions, and validation
      commands. Do not reference missing files in Expo config.
 
-   Screenshots are always device-build artifacts for store submission and must
-   remain a capture checklist unless real screenshots are produced from a native
-   build.
+   Screenshots may be either real native captures or owner-approved generated
+   mockups, but mockups must be labeled as such in repo docs, dimension-checked
+   against the target store slots, and replaced before final submission if they
+   no longer match the shipped native build.
 
 4. **Mobile release-readiness docs.**
    Update `mobile/README.md` with the 6e-8 state:
@@ -190,7 +193,10 @@ claim functional native auth or store-channel installation:
 - Review and approve store descriptions, tester instructions, category,
   privacy/data-safety answers, content rating, support/contact details, and
   privacy/terms URLs.
-- Capture screenshots from real native builds after 6e-10 device smoke testing.
+- Review the committed store screenshot mockups in App Store Connect and Google
+  Play. Capture screenshots from real native builds after 6e-10 device smoke
+  testing if the native UI diverges, the store reviewer requires captures, or
+  owner policy requires literal captures.
 
 ## Task List
 
@@ -249,8 +255,10 @@ claim functional native auth or store-channel installation:
 - If approved assets are not available, do not wire placeholders. Instead,
   document the required files and validation path in the store metadata
   worksheet and mobile README.
-- In either path, do not add screenshots unless they come from an actual native
-  build.
+- In either path, add screenshots only when they come from an actual native build
+  or when the owner explicitly approves generated mockups as an interim
+  store-console deliverable. Generated mockups must be documented as mockups and
+  verified against current store dimensions.
 
 ### Task 5 - EAS Versioning Readiness
 
