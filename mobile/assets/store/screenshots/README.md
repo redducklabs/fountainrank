@@ -6,17 +6,31 @@ FountainRank logo/pin assets and current mobile app flows.
 
 ## App Store Connect
 
-Upload the PNGs in `app-store/` to the iPhone 6.5" Display screenshot slot:
+Upload the PNGs in `app-store-6-9/` to the iPhone 6.9" Display screenshot
+slot:
 
-| File                                   | Size              | Screen                  |
-| -------------------------------------- | ----------------- | ----------------------- |
-| `app-store/01-map-discovery.png`       | 1242x2688 RGB PNG | Map discovery           |
-| `app-store/02-fountain-detail.png`     | 1242x2688 RGB PNG | Fountain detail         |
-| `app-store/03-contribute.png`          | 1242x2688 RGB PNG | Contribution flow       |
-| `app-store/04-add-fountain.png`        | 1242x2688 RGB PNG | Add fountain            |
-| `app-store/05-account-diagnostics.png` | 1242x2688 RGB PNG | Account and diagnostics |
+| File                                       | Size              | Screen                  |
+| ------------------------------------------ | ----------------- | ----------------------- |
+| `app-store-6-9/01-map-discovery.png`       | 1290x2796 RGB PNG | Map discovery           |
+| `app-store-6-9/02-fountain-detail.png`     | 1290x2796 RGB PNG | Fountain detail         |
+| `app-store-6-9/03-contribute.png`          | 1290x2796 RGB PNG | Contribution flow       |
+| `app-store-6-9/04-add-fountain.png`        | 1290x2796 RGB PNG | Add fountain            |
+| `app-store-6-9/05-account-diagnostics.png` | 1290x2796 RGB PNG | Account and diagnostics |
 
-Apple accepts `1242x2688` for the iPhone 6.5" Display slot.
+If App Store Connect specifically prompts for the iPhone 6.5" Display slot, use
+the PNGs in `app-store-6-5/`:
+
+| File                                       | Size              | Screen                  |
+| ------------------------------------------ | ----------------- | ----------------------- |
+| `app-store-6-5/01-map-discovery.png`       | 1242x2688 RGB PNG | Map discovery           |
+| `app-store-6-5/02-fountain-detail.png`     | 1242x2688 RGB PNG | Fountain detail         |
+| `app-store-6-5/03-contribute.png`          | 1242x2688 RGB PNG | Contribution flow       |
+| `app-store-6-5/04-add-fountain.png`        | 1242x2688 RGB PNG | Add fountain            |
+| `app-store-6-5/05-account-diagnostics.png` | 1242x2688 RGB PNG | Account and diagnostics |
+
+Apple's current screenshot specification lists `1290x2796` as an accepted 6.9"
+portrait size and `1242x2688` as an accepted 6.5" portrait size:
+<https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications/>.
 
 ## Google Play Console
 
@@ -39,7 +53,20 @@ The committed store feature graphic is already cropped to Google's required
 
 ## Review note
 
-These are polished store screenshot mockups based on the current app flows. Before
-final public submission, review them against the native build and replace them
-with physical-device captures if the store reviewer or owner policy requires
-literal device screenshots.
+These are polished store screenshot mockups based on the current app flows. They
+must accurately match the shipped native build before final public submission.
+Replace them with physical-device captures if the native UI diverges, the store
+reviewer requires literal device screenshots, or owner policy requires captures.
+
+## Regeneration
+
+The source generator is `scripts/generate-store-screenshots.mjs`. To regenerate:
+
+```bash
+rm -rf temp/store-screenshot-build/svg mobile/assets/store/screenshots/app-store-6-9 mobile/assets/store/screenshots/app-store-6-5 mobile/assets/store/screenshots/play-store
+node scripts/generate-store-screenshots.mjs
+mkdir -p mobile/assets/store/screenshots/app-store-6-9 mobile/assets/store/screenshots/app-store-6-5 mobile/assets/store/screenshots/play-store
+pnpm dlx sharp-cli -i 'temp/store-screenshot-build/svg/app-store-6-9/*.svg' -o mobile/assets/store/screenshots/app-store-6-9 -f png --density 72 flatten '#ffffff' -- toColourspace srgb
+pnpm dlx sharp-cli -i 'temp/store-screenshot-build/svg/app-store-6-5/*.svg' -o mobile/assets/store/screenshots/app-store-6-5 -f png --density 72 flatten '#ffffff' -- toColourspace srgb
+pnpm dlx sharp-cli -i 'temp/store-screenshot-build/svg/play-store/*.svg' -o mobile/assets/store/screenshots/play-store -f png --density 72 flatten '#ffffff' -- toColourspace srgb
+```
