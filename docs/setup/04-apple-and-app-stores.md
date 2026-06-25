@@ -25,9 +25,8 @@ Two things live here:
 ### App ID
 
 1. **Certificates, IDs & Profiles → Identifiers → App IDs → +**.
-2. Create an **App ID** with your reverse-DNS bundle id (e.g.
-   `com.redducklabs.fountainrank` — confirm the final bundle id with me; it must
-   match the Expo app config).
+2. Create an **App ID** with the owner-confirmed reverse-DNS bundle id
+   `com.redducklabs.fountainrank`. It must match the Expo app config.
 3. Enable the **Sign In with Apple** capability on this App ID.
 
 ### Sign in with Apple (for Logto)
@@ -51,7 +50,9 @@ Logto's Apple connector needs a **Services ID** and a **key**:
 ### App Store Connect
 
 Create the app record in **App Store Connect** (App Store listing) when you're
-ready to submit builds. Not needed for auth.
+ready to submit builds. EAS may also create the App ID/app record during the
+first iOS build flow if the owner signs in and accepts that path. Not needed for
+auth.
 
 ---
 
@@ -64,27 +65,32 @@ ready to submit builds. Not needed for auth.
      on **Google Play Console** for your user or organizational unit under
      **Apps → Additional Google services**. Workspace can disable access to
      Play Console even when the Google account itself is valid.
-2. Create the **app** entry when ready; set up **Play App Signing** (Google
-   manages the signing key). The resulting **signing certificate SHA-1** is what
-   the Android OAuth client in `03-google-cloud.md` needs — capture it from Play
-   Console → App integrity once the app is created.
+2. Create the **app** entry with package name `com.redducklabs.fountainrank`
+   when ready; set up **Play App Signing** (Google manages the signing key). The
+   resulting **signing certificate SHA-1** is what the Android OAuth client in
+   `03-google-cloud.md` needs — capture it from Play Console → App integrity
+   once the app is created.
+
+See `07-mobile-store-readiness.md` for the slice 6e-8 store metadata,
+screenshots, EAS credential, and testing-track worksheet.
 
 ---
 
 ## Outputs to record
 
-| Value | Becomes | Destination |
-|---|---|---|
-| Bundle id (e.g. `com.redducklabs.fountainrank`) | Expo + Apple App ID + iOS OAuth | tell me |
-| Apple **Team ID** | Logto Apple connector | `06-logto.md` |
-| Apple **Services ID** | Logto Apple connector (`client_id`) | `06-logto.md` |
-| Apple **Key ID** | Logto Apple connector | `06-logto.md` |
-| Apple **`.p8` private key** | Logto Apple connector | **secret** — set in Logto |
-| Play app signing **SHA-1** | Android OAuth client (`03`) | feeds `03` |
+| Value                                    | Becomes                             | Destination               |
+| ---------------------------------------- | ----------------------------------- | ------------------------- |
+| Bundle id `com.redducklabs.fountainrank` | Expo + Apple App ID + iOS OAuth     | already owner-confirmed   |
+| Apple **Team ID**                        | Logto Apple connector               | `06-logto.md`             |
+| Apple **Services ID**                    | Logto Apple connector (`client_id`) | `06-logto.md`             |
+| Apple **Key ID**                         | Logto Apple connector               | `06-logto.md`             |
+| Apple **`.p8` private key**              | Logto Apple connector               | **secret** — set in Logto |
+| Play app signing **SHA-1**               | Android OAuth client (`03`)         | feeds `03`                |
 
-**Hand me:** the bundle id (not a secret) so it can be set consistently across
-Expo, Apple, and Google OAuth. **You keep / set yourself:** the `.p8` key
-(entered into Logto in Phase 2).
+**Hand me:** Play App Signing SHA-1 when it exists, plus any non-secret App
+Store Connect / Play identifiers that need to be reflected in repo docs. **You
+keep / set yourself:** the `.p8` key (entered into Logto in Phase 2), App Store
+Connect API keys, Play service-account JSON, and all signing material.
 
 ---
 
@@ -93,4 +99,5 @@ Expo, Apple, and Google OAuth. **You keep / set yourself:** the `.p8` key
 - The `.p8` Sign-in-with-Apple key is downloadable **once** — store it securely
   immediately; it never goes in the repo.
 - Keep the bundle id identical everywhere (Expo config, Apple App ID, Google
-  OAuth iOS client) or sign-in/build will fail.
+  OAuth iOS client) or sign-in/build will fail. The confirmed value is
+  `com.redducklabs.fountainrank`.

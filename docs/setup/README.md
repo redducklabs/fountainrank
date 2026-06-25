@@ -38,14 +38,15 @@ through it independently** while implementation continues in parallel.
 You do **not** have to do all of this at once. Order by what unblocks the next
 milestone:
 
-| Guide | Unblocks | Start now? |
-|---|---|---|
-| `01-digitalocean.md` | 0f CI/CD + first live deploy | ✅ Yes — account + API token are quick and gate everything cloud |
-| `02-dns.md` | TLS cert issuance + email deliverability + auth subdomain | ✅ Yes — DNS + DMARC propagation is slow |
-| `03-google-cloud.md` | Phase 2 auth (Google sign-in) **and** all auth email | ✅ Yes — OAuth consent verification + Workspace delegation are slow |
-| `04-apple-and-app-stores.md` | Phase 2 auth (Apple sign-in) + store submission | ⚠️ Start the **paid enrollments** now (slow approval); the rest later |
-| `05-github.md` | 0f CI/CD (every deploy job) | ✅ Repo security features now; secrets as each value lands |
-| `06-logto.md` | Phase 2 auth end-to-end | ⏳ Later — needs Logto deployed (0e) and OAuth clients (03/04) first |
+| Guide                          | Unblocks                                                                                       | Start now?                                                            |
+| ------------------------------ | ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `01-digitalocean.md`           | 0f CI/CD + first live deploy                                                                   | ✅ Yes — account + API token are quick and gate everything cloud      |
+| `02-dns.md`                    | TLS cert issuance + email deliverability + auth subdomain                                      | ✅ Yes — DNS + DMARC propagation is slow                              |
+| `03-google-cloud.md`           | Phase 2 auth (Google sign-in) **and** all auth email                                           | ✅ Yes — OAuth consent verification + Workspace delegation are slow   |
+| `04-apple-and-app-stores.md`   | Phase 2 auth (Apple sign-in) + store submission                                                | ⚠️ Start the **paid enrollments** now (slow approval); the rest later |
+| `05-github.md`                 | 0f CI/CD (every deploy job)                                                                    | ✅ Repo security features now; secrets as each value lands            |
+| `06-logto.md`                  | Phase 2 auth end-to-end                                                                        | ⏳ Later — needs Logto deployed (0e) and OAuth clients (03/04) first  |
+| `07-mobile-store-readiness.md` | Mobile beta store metadata, EAS credentials, screenshots, data safety, and tester instructions | ✅ Use for slice 6e-8 and later store-testing work                    |
 
 **Bottom line:** the highest-leverage things to start today are the **paid /
 slow-approval** items — Apple Developer Program enrollment, Google Play Console
@@ -61,26 +62,27 @@ Every credential the system consumes, what produces it, and its destination.
 Names match `claude_help/github-environments.md`; some are finalized in plan 0f
 (marked **TBD-0f**) and some only exist once Logto is deployed (**TBD-Logto**).
 
-| Secret / value name | Produced in | Destination | Status |
-|---|---|---|---|
-| `DIGITALOCEAN_ACCESS_TOKEN` | `01-digitalocean.md` | GitHub Env secret | ✅ set (`production`) — dedicated CI PAT (replaced bootstrap 2026-06-17) |
-| `SPACES_ACCESS_KEY` / `SPACES_SECRET_KEY` | `01-digitalocean.md` | GitHub Env secret | ✅ set (`production`), scoped readwrite to TF-state bucket |
-| `DO_REGISTRY` | `01-digitalocean.md` | GitHub Env **variable** | ✅ set (`fountainrank`) |
-| `DO_REGION` | `01-digitalocean.md` | GitHub Env **variable** | ✅ set (`sfo3`) |
-| `CLUSTER_NAME` | `01-digitalocean.md` / Terraform | GitHub Env **variable** | TBD-0f |
-| `DATABASE_URL` | DO Managed Postgres (Terraform) | GitHub Env secret | TBD (first deploy) |
-| `LOGTO_DB_URL` | DO Managed Postgres (Logto DB) | GitHub Env secret | TBD (first deploy) |
-| `DATABASE_CA_CERT` | DO Managed Postgres CA PEM (`doctl databases get`) | GitHub Env secret → mounted `database-ca.crt` | TBD (first deploy) — backend asyncpg verify-full TLS |
-| `GOOGLE_SERVICE_ACCOUNT_JSON` | `03-google-cloud.md` | GitHub Env secret | Ready to create |
-| `GOOGLE_WORKSPACE_DOMAIN` | `03-google-cloud.md` | GitHub Env **variable** | Ready to create |
-| `GOOGLE_DELEGATED_USER` | `03-google-cloud.md` | GitHub Env **variable** | Ready to create |
-| `FROM_EMAIL` | `02-dns.md` / `03-google-cloud.md` | GitHub Env **variable** | Ready to create |
-| `LOGTO_EMAIL_WEBHOOK_TOKEN` | self-generated random (≥32 chars) | GitHub Env **secret** + Logto HTTP email connector auth token | Ready to create |
-| `BASE_URL` | decided per environment | GitHub Env **variable** | TBD-0f |
-| Google OAuth client id/secret (web/iOS/Android) | `03-google-cloud.md` | **Logto** Google connector | Ready to create |
-| Apple Services ID / Team ID / Key ID / `.p8` key | `04-apple-and-app-stores.md` | **Logto** Apple connector | Ready to create |
-| `LOGTO_ENDPOINT` / `LOGTO_APP_ID` / `LOGTO_APP_SECRET` (web) | `06-logto.md` | GitHub Env secret + web config | TBD-Logto |
-| Logto native app id, M2M app id/secret | `06-logto.md` | mobile config / backend | TBD-Logto |
+| Secret / value name                                                 | Produced in                                        | Destination                                                   | Status                                                                   |
+| ------------------------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `DIGITALOCEAN_ACCESS_TOKEN`                                         | `01-digitalocean.md`                               | GitHub Env secret                                             | ✅ set (`production`) — dedicated CI PAT (replaced bootstrap 2026-06-17) |
+| `SPACES_ACCESS_KEY` / `SPACES_SECRET_KEY`                           | `01-digitalocean.md`                               | GitHub Env secret                                             | ✅ set (`production`), scoped readwrite to TF-state bucket               |
+| `DO_REGISTRY`                                                       | `01-digitalocean.md`                               | GitHub Env **variable**                                       | ✅ set (`fountainrank`)                                                  |
+| `DO_REGION`                                                         | `01-digitalocean.md`                               | GitHub Env **variable**                                       | ✅ set (`sfo3`)                                                          |
+| `CLUSTER_NAME`                                                      | `01-digitalocean.md` / Terraform                   | GitHub Env **variable**                                       | TBD-0f                                                                   |
+| `DATABASE_URL`                                                      | DO Managed Postgres (Terraform)                    | GitHub Env secret                                             | TBD (first deploy)                                                       |
+| `LOGTO_DB_URL`                                                      | DO Managed Postgres (Logto DB)                     | GitHub Env secret                                             | TBD (first deploy)                                                       |
+| `DATABASE_CA_CERT`                                                  | DO Managed Postgres CA PEM (`doctl databases get`) | GitHub Env secret → mounted `database-ca.crt`                 | TBD (first deploy) — backend asyncpg verify-full TLS                     |
+| `GOOGLE_SERVICE_ACCOUNT_JSON`                                       | `03-google-cloud.md`                               | GitHub Env secret                                             | Ready to create                                                          |
+| `GOOGLE_WORKSPACE_DOMAIN`                                           | `03-google-cloud.md`                               | GitHub Env **variable**                                       | Ready to create                                                          |
+| `GOOGLE_DELEGATED_USER`                                             | `03-google-cloud.md`                               | GitHub Env **variable**                                       | Ready to create                                                          |
+| `FROM_EMAIL`                                                        | `02-dns.md` / `03-google-cloud.md`                 | GitHub Env **variable**                                       | Ready to create                                                          |
+| `LOGTO_EMAIL_WEBHOOK_TOKEN`                                         | self-generated random (≥32 chars)                  | GitHub Env **secret** + Logto HTTP email connector auth token | Ready to create                                                          |
+| `BASE_URL`                                                          | decided per environment                            | GitHub Env **variable**                                       | TBD-0f                                                                   |
+| Google OAuth client id/secret (web/iOS/Android)                     | `03-google-cloud.md`                               | **Logto** Google connector                                    | Ready to create                                                          |
+| Apple Services ID / Team ID / Key ID / `.p8` key                    | `04-apple-and-app-stores.md`                       | **Logto** Apple connector                                     | Ready to create                                                          |
+| `LOGTO_ENDPOINT` / `LOGTO_APP_ID` / `LOGTO_APP_SECRET` (web)        | `06-logto.md`                                      | GitHub Env secret + web config                                | TBD-Logto                                                                |
+| Logto native app id, M2M app id/secret                              | `06-logto.md`                                      | mobile config / backend                                       | TBD-Logto                                                                |
+| EAS access token, Apple signing/API keys, Play service-account JSON | `07-mobile-store-readiness.md`                     | EAS / GitHub Env secrets only if needed                       | Owner-gated; never in repo                                               |
 
 > **Variable vs. secret:** non-sensitive identifiers (region, cluster name,
 > registry name, sending domain, base URL) are GitHub **variables**; anything
@@ -99,6 +101,7 @@ Tick these off as you go (edit this file, or just tell me and I'll update it):
 - [ ] **Google Workspace** — service account + domain-wide delegation for Gmail sending (`03`)
 - [ ] **Apple** — Developer Program enrolled; App ID; Sign in with Apple (Services ID + key) (`04`)
 - [ ] **Google Play** — Console account enrolled (`04`)
+- [ ] **Mobile store readiness** — EAS project linked; store metadata worksheet reviewed; icon/splash/screenshots approved; EAS credentials configured outside repo (`07`)
 - [x] **GitHub** — security features enabled (secret scanning + push protection, Dependabot alerts/updates, vulnerability alerts — confirmed 2026-06-18); CI/security workflows landed (0f). Remaining: set the first-deploy secret values `DATABASE_URL`/`LOGTO_DB_URL`/`DATABASE_CA_CERT` in the `production` env (`05`)
 - [ ] **Logto** — app registrations + connectors (after Logto is deployed) (`06`)
 
@@ -272,11 +275,13 @@ Manual fallback (from a machine with the create-capable Spaces key + aws-cli at
 
 **Smoke check** — confirm the tile server serves TileJSON + a tile, and that go-pmtiles can
 range-read the origin it depends on:
+
 ```bash
 curl -s  https://fountainrank.com/tiles/planet.json | head      # valid TileJSON; tiles[] under /tiles/planet/{z}/{x}/{y}.mvt
 curl -sI https://fountainrank.com/tiles/planet/0/0/0.mvt | head -1   # 200 (vector tile)
 curl -sI -r 0-99 'https://fountainrank-basemap.sfo3.digitaloceanspaces.com/planet.pmtiles' | head -1  # 206 (origin range go-pmtiles reads)
 ```
+
 Then load `https://fountainrank.com/` and confirm tiles render (pins appear once fountain
 data exists).
 

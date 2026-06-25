@@ -134,8 +134,46 @@ have actually been observed.
 ## Store-testing builds (EAS)
 
 `eas.json` defines `development` / `preview` / `production` build profiles and a
-credential-free `production` submit profile (Android `internal` track). Producing
-and submitting store binaries requires an Expo/EAS account and `eas init`
-(owner-gated — see the umbrella spec
-`docs/specs/2026-06-23-mobile-store-testing-distribution-design.md`, slice 6e-8).
-No build/submit runs as part of this slice.
+credential-free `production` submit profile for Android's `internal` track. The
+Expo org/project are linked in `app.config.ts` (`red-duck-labs/fountainrank`,
+project id `820564bf-5f29-44c7-8ec7-edde67b77360`), and the native identity is
+owner-confirmed as `com.redducklabs.fountainrank`.
+
+Build numbers are EAS-managed for store builds: `cli.appVersionSource` is
+`remote`, and the production profile keeps `autoIncrement: true`. Android
+production builds produce an `.aab`; preview Android builds produce an `.apk`.
+No iOS submit profile is committed yet, and App Store Connect credentials, Play
+service-account JSON, signing material, EAS tokens, and tester lists stay outside
+the repo.
+
+Before any `expo config --type prebuild`, `expo prebuild`, or EAS command after
+incremental dependency changes, recover the pnpm/Expo install from the repo
+root:
+
+```bash
+rm -rf node_modules web/node_modules mobile/node_modules packages/*/node_modules
+CI=true pnpm install
+```
+
+Non-mutating local validation:
+
+```bash
+pnpm --filter mobile exec expo config --type public
+pnpm --filter mobile exec expo config --type prebuild
+./run.ps1 check -Mobile
+```
+
+If PowerShell is unavailable in WSL, run the mobile mirror directly:
+
+```bash
+pnpm --filter mobile run lint
+pnpm --filter mobile run typecheck
+pnpm --filter mobile run test
+CI=true pnpm dlx expo-doctor
+```
+
+Producing and submitting store binaries remains owner-gated. Native auth and
+authenticated writes are not proven until the Logto callback, store/OAuth
+records, a release-equivalent native build, and physical-device verification are
+complete. See `docs/setup/07-mobile-store-readiness.md` for the 6e-8 owner
+worksheet and store metadata checklist.
