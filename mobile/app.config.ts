@@ -10,7 +10,20 @@ const config: ExpoConfig = {
   version: "0.1.0",
   scheme: "com.redducklabs.fountainrank",
   platforms: ["ios", "android"],
-  plugins: ["expo-router", "@maplibre/maplibre-react-native"],
+  icon: "./assets/icon.png",
+  plugins: [
+    "expo-router",
+    "@maplibre/maplibre-react-native",
+    [
+      "expo-splash-screen",
+      {
+        image: "./assets/splash-icon.png",
+        imageWidth: 200,
+        resizeMode: "contain",
+        backgroundColor: "#ffffff",
+      },
+    ],
+  ],
   runtimeVersion: { policy: "appVersion" },
   ios: {
     bundleIdentifier: "com.redducklabs.fountainrank",
@@ -24,6 +37,10 @@ const config: ExpoConfig = {
     package: "com.redducklabs.fountainrank",
     versionCode: 1,
     permissions: ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"],
+    adaptiveIcon: {
+      foregroundImage: "./assets/adaptive-icon.png",
+      backgroundColor: "#ffffff",
+    },
   },
   extra: {
     apiBaseUrl: process.env.EXPO_PUBLIC_API_BASE_URL ?? "https://api.fountainrank.com",

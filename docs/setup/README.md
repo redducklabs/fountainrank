@@ -101,7 +101,7 @@ Tick these off as you go (edit this file, or just tell me and I'll update it):
 - [ ] **Google Workspace** — service account + domain-wide delegation for Gmail sending (`03`)
 - [ ] **Apple** — Developer Program enrolled; App ID; Sign in with Apple (Services ID + key) (`04`)
 - [ ] **Google Play** — Console account enrolled (`04`)
-- [ ] **Mobile store readiness** — EAS project linked; store metadata worksheet reviewed; icon/splash/screenshots approved; EAS credentials configured outside repo (`07`)
+- [ ] **Mobile store readiness** — EAS project linked and owner access confirmed; icon/splash/Play feature graphic wired; screenshots and EAS credentials pending outside repo (`07`)
 - [x] **GitHub** — security features enabled (secret scanning + push protection, Dependabot alerts/updates, vulnerability alerts — confirmed 2026-06-18); CI/security workflows landed (0f). Remaining: set the first-deploy secret values `DATABASE_URL`/`LOGTO_DB_URL`/`DATABASE_CA_CERT` in the `production` env (`05`)
 - [ ] **Logto** — app registrations + connectors (after Logto is deployed) (`06`)
 
