@@ -10,18 +10,18 @@ device verification.
 
 ## Current confirmed values
 
-| Item               | Value                                                           | Status                                       |
-| ------------------ | --------------------------------------------------------------- | -------------------------------------------- |
-| App name           | `FountainRank`                                                  | confirmed in `mobile/app.config.ts`          |
-| iOS bundle id      | `com.redducklabs.fountainrank`                                  | owner-confirmed                              |
-| Android package    | `com.redducklabs.fountainrank`                                  | owner-confirmed                              |
-| Native scheme      | `com.redducklabs.fountainrank`                                  | owner-confirmed                              |
-| Logto redirect URI | `com.redducklabs.fountainrank://callback`                       | pending exact callback confirmation in Logto |
-| Expo org           | `red-duck-labs`                                                 | linked                                       |
-| EAS project id     | `820564bf-5f29-44c7-8ec7-edde67b77360`                          | linked via `eas init`                        |
-| EAS project URL    | `https://expo.dev/accounts/red-duck-labs/projects/fountainrank` | public, non-secret                           |
-| API URL            | `https://api.fountainrank.com`                                  | public config                                |
-| Auth URL           | `https://auth.fountainrank.com`                                 | public config                                |
+| Item               | Value                                                           | Status                              |
+| ------------------ | --------------------------------------------------------------- | ----------------------------------- |
+| App name           | `FountainRank`                                                  | confirmed in `mobile/app.config.ts` |
+| iOS bundle id      | `com.redducklabs.fountainrank`                                  | owner-confirmed                     |
+| Android package    | `com.redducklabs.fountainrank`                                  | owner-confirmed                     |
+| Native scheme      | `com.redducklabs.fountainrank`                                  | owner-confirmed                     |
+| Logto redirect URI | `com.redducklabs.fountainrank://callback`                       | owner-confirmed in Logto            |
+| Expo org           | `red-duck-labs`                                                 | linked; owner access confirmed      |
+| EAS project id     | `820564bf-5f29-44c7-8ec7-edde67b77360`                          | linked via `eas init`               |
+| EAS project URL    | `https://expo.dev/accounts/red-duck-labs/projects/fountainrank` | public, non-secret                  |
+| API URL            | `https://api.fountainrank.com`                                  | public config                       |
+| Auth URL           | `https://auth.fountainrank.com`                                 | public config                       |
 
 Do not change the bundle id, package name, scheme, or EAS project identity after
 external Apple, Google Play, Logto, or OAuth records exist.
@@ -31,13 +31,11 @@ external Apple, Google Play, Logto, or OAuth records exist.
 The Expo organization and project are already linked in `mobile/app.config.ts`.
 What remains is credential and build access:
 
-1. Confirm the owner account can access
-   `https://expo.dev/accounts/red-duck-labs/projects/fountainrank`.
-2. Keep EAS access tokens outside the repo. If CI later needs an EAS token, store
+1. Keep EAS access tokens outside the repo. If CI later needs an EAS token, store
    it as a GitHub Environment secret, not in a file.
-3. Let EAS manage Apple and Android build credentials unless the owner chooses a
+2. Let EAS manage Apple and Android build credentials unless the owner chooses a
    manual credential path. Any manual files remain outside git.
-4. Do not commit provisioning profiles, certificates, keystores, API keys,
+3. Do not commit provisioning profiles, certificates, keystores, API keys,
    service-account JSON, or credentials downloaded from EAS, Apple, or Google.
 
 The repo now uses EAS remote app versioning:
@@ -57,6 +55,9 @@ build-number increments.
 
 Use `docs/setup/04-apple-and-app-stores.md` for Apple Developer Program and
 Sign in with Apple setup. For store testing:
+
+The owner confirmed on 2026-06-24 that the Apple account is ready to create the
+app record.
 
 1. Create or let EAS create the App ID for `com.redducklabs.fountainrank`.
 2. Ensure Sign in with Apple capability is enabled if Apple social sign-in is
@@ -86,6 +87,9 @@ Apple references:
 
 Use `docs/setup/04-apple-and-app-stores.md` for Play Console enrollment. For
 store testing:
+
+The owner confirmed on 2026-06-24 that the Google Play account is ready to
+create the app record.
 
 1. Create the Google Play app record with package name
    `com.redducklabs.fountainrank`.
@@ -119,20 +123,20 @@ The owner must review the copy, category, contact information, privacy answers,
 content rating, screenshots, and tester instructions before any store
 submission.
 
-| Field                          | Draft / input                                                                                                                                                                                                                                                                                       | Owner action                                         |
-| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| App name                       | FountainRank                                                                                                                                                                                                                                                                                        | Confirm exact store display name.                    |
-| Subtitle / short description   | Find and improve drinking fountains nearby.                                                                                                                                                                                                                                                         | Review for store fit.                                |
-| Full description               | FountainRank helps people find drinking fountains, inspect details, sign in, contribute field reports, and add missing fountains from a native map. The beta focuses on production map discovery, fountain detail, native Logto sign-in, existing-fountain contributions, and add-fountain capture. | Review and adjust before submission.                 |
-| Category                       | Navigation, Travel, Lifestyle, or Utilities are plausible; no category is selected by the repo.                                                                                                                                                                                                     | Choose in each store console.                        |
-| Support URL                    | `https://fountainrank.com` unless the owner provides a dedicated support page.                                                                                                                                                                                                                      | Confirm.                                             |
-| Privacy URL                    | `https://fountainrank.com/privacy` after deployed page verification.                                                                                                                                                                                                                                | Confirm the page is deployed and current.            |
-| Terms URL                      | `https://fountainrank.com/terms` if requested by the store form.                                                                                                                                                                                                                                    | Confirm the page is deployed and current.            |
-| Keywords                       | drinking fountain, water fountain, refill, hydration, map, public water                                                                                                                                                                                                                             | Review against store rules and byte limits.          |
-| TestFlight tester instructions | Install the beta, allow or deny location permission, browse the map, open a fountain detail, sign in, submit one existing-fountain contribution, add a fountain or confirm the duplicate path, and report any crash or blocked state with app version/build.                                        | Review after store build exists.                     |
-| Play tester instructions       | Same as TestFlight, installed through the Play testing opt-in link.                                                                                                                                                                                                                                 | Review after store build exists.                     |
-| Screenshots                    | Required from real native builds or approved mockups. Suggested flows: map with pins, fountain detail, contribution panel, add-fountain placement, add-fountain details/result, account/diagnostics.                                                                                                | Capture after device build.                          |
-| App icon / splash              | No finalized files are currently committed.                                                                                                                                                                                                                                                         | Provide or approve assets before wiring Expo config. |
+| Field                          | Draft / input                                                                                                                                                                                                                                                                                       | Owner action                                                                                            |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| App name                       | FountainRank                                                                                                                                                                                                                                                                                        | Confirm exact store display name.                                                                       |
+| Subtitle / short description   | Find and improve drinking fountains nearby.                                                                                                                                                                                                                                                         | Review for store fit.                                                                                   |
+| Full description               | FountainRank helps people find drinking fountains, inspect details, sign in, contribute field reports, and add missing fountains from a native map. The beta focuses on production map discovery, fountain detail, native Logto sign-in, existing-fountain contributions, and add-fountain capture. | Review and adjust before submission.                                                                    |
+| Category                       | Navigation, Travel, Lifestyle, or Utilities are plausible; no category is selected by the repo.                                                                                                                                                                                                     | Choose in each store console.                                                                           |
+| Support URL                    | `https://fountainrank.com` unless the owner provides a dedicated support page.                                                                                                                                                                                                                      | Owner-confirmed present.                                                                                |
+| Privacy URL                    | `https://fountainrank.com/privacy` after deployed page verification.                                                                                                                                                                                                                                | Owner-confirmed present.                                                                                |
+| Terms URL                      | `https://fountainrank.com/terms` if requested by the store form.                                                                                                                                                                                                                                    | Owner-confirmed present.                                                                                |
+| Keywords                       | drinking fountain, water fountain, refill, hydration, map, public water                                                                                                                                                                                                                             | Review against store rules and byte limits.                                                             |
+| TestFlight tester instructions | Install the beta, allow or deny location permission, browse the map, open a fountain detail, sign in, submit one existing-fountain contribution, add a fountain or confirm the duplicate path, and report any crash or blocked state with app version/build.                                        | Review after store build exists.                                                                        |
+| Play tester instructions       | Same as TestFlight, installed through the Play testing opt-in link.                                                                                                                                                                                                                                 | Review after store build exists.                                                                        |
+| Screenshots                    | Required from real native builds or approved mockups. Suggested flows: map with pins, fountain detail, contribution panel, add-fountain placement, add-fountain details/result, account/diagnostics.                                                                                                | Capture after device build.                                                                             |
+| App icon / splash              | Generated from `docs/logos/512-pin.png` and committed under `mobile/assets/`; wired in `mobile/app.config.ts`.                                                                                                                                                                                      | Review in native build; replace from source artwork if sharpness is not acceptable before store upload. |
 
 ## Factual data-flow inventory
 
@@ -159,14 +163,15 @@ declared permissions, APIs, and third-party code when completing Data safety:
 Do not wire missing files in `mobile/app.config.ts`. Expo config validation fails
 when referenced asset paths do not exist.
 
-Planned paths once assets are approved:
+Committed paths:
 
-| Purpose                          | Planned path                                           | Notes                                                            |
-| -------------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------- |
-| App icon                         | `mobile/assets/icon.png`                               | 1024x1024 PNG. Expo uses this for generated platform icon sizes. |
-| Android adaptive icon foreground | `mobile/assets/adaptive-icon.png`                      | Foreground image for `android.adaptiveIcon.foregroundImage`.     |
-| Splash image                     | `mobile/assets/splash-icon.png`                        | Configure through the SDK-56 `expo-splash-screen` config plugin. |
-| Store screenshots                | `mobile/assets/store/` or external console upload only | Must come from a real native build or owner-approved mockups.    |
+| Purpose                          | Path                                                   | Notes                                                                                                                                                                |
+| -------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| App icon                         | `mobile/assets/icon.png`                               | 1024x1024 RGB PNG generated from the committed 512px mark. Expo uses this for generated platform icon sizes; review sharpness in a native build before store upload. |
+| Android adaptive icon foreground | `mobile/assets/adaptive-icon.png`                      | Foreground image for `android.adaptiveIcon.foregroundImage`.                                                                                                         |
+| Splash image                     | `mobile/assets/splash-icon.png`                        | Configured through the SDK-56 `expo-splash-screen` config plugin.                                                                                                    |
+| Play feature graphic             | `mobile/assets/store/play-feature-graphic.png`         | 1024x500 RGB PNG generated from `docs/logos/feature-graphic.png`; review in Play Console before submission.                                                          |
+| Store screenshots                | `mobile/assets/store/` or external console upload only | Must come from a real native build or owner-approved mockups.                                                                                                        |
 
 Expo references:
 
@@ -175,9 +180,9 @@ Expo references:
 - App config reference:
   <https://docs.expo.dev/versions/latest/config/app/>
 
-If splash assets are wired in this repo, add `expo-splash-screen` at the
-SDK-correct version, update `pnpm-lock.yaml`, and perform the clean reinstall
-before prebuild config validation:
+The splash assets are wired in this repo with `expo-splash-screen` at the
+SDK-correct version. Perform the clean reinstall before prebuild config
+validation if the Expo/pnpm install has been changed incrementally:
 
 ```bash
 rm -rf node_modules web/node_modules mobile/node_modules packages/*/node_modules
