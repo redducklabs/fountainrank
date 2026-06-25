@@ -6,7 +6,7 @@ installable iOS and Android test distribution through Apple TestFlight and
 Google Play testing tracks.
 
 > **This is an umbrella spec, not a single slice.** It spans the whole mobile
-> app *and* its store-distribution path. Implementation is broken into small,
+> app _and_ its store-distribution path. Implementation is broken into small,
 > independently shippable slices — each its own plan → Codex review → branch →
 > CI + Codex PR review → squash-merge → deploy/verify, per
 > `claude_help/development-process.md` and `claude_help/codex-review-process.md`.
@@ -94,18 +94,18 @@ exercise FountainRank in the field.
 
 Minimum functional scope:
 
-| Area | Required beta behavior |
-|---|---|
-| App shell | Native app launches to the FountainRank product experience, handles loading/error/offline states, and exposes app version/build info in a low-friction diagnostic surface. |
-| Production API | All release builds use `https://api.fountainrank.com`; no store-testing build depends on localhost, LAN IPs, or dev tunnels. |
-| Map discovery | User can view a native map, grant/deny location permission, center on current location, browse the deployed basemap, and see fountain pins from the production bbox/nearby APIs. |
-| Pin/detail navigation | Tapping a fountain opens a native detail view with rating summary, operational status, access attributes, notes, and enough context to decide whether to visit it. |
-| Search/filter basics | User can narrow visible fountains by the filters already supported by the production API where those filters have shipped, at minimum working status and rating threshold when available. |
-| Auth | User can sign in and sign out through Logto using the native app redirect flow; token storage uses native secure storage through the selected SDK path. |
+| Area                            | Required beta behavior                                                                                                                                                                                                                                                      |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| App shell                       | Native app launches to the FountainRank product experience, handles loading/error/offline states, and exposes app version/build info in a low-friction diagnostic surface.                                                                                                  |
+| Production API                  | All release builds use `https://api.fountainrank.com`; no store-testing build depends on localhost, LAN IPs, or dev tunnels.                                                                                                                                                |
+| Map discovery                   | User can view a native map, grant/deny location permission, center on current location, browse the deployed basemap, and see fountain pins from the production bbox/nearby APIs.                                                                                            |
+| Pin/detail navigation           | Tapping a fountain opens a native detail view with rating summary, operational status, access attributes, notes, and enough context to decide whether to visit it.                                                                                                          |
+| Search/filter basics            | User can narrow visible fountains by the filters already supported by the production API where those filters have shipped, at minimum working status and rating threshold when available.                                                                                   |
+| Auth                            | User can sign in and sign out through Logto using the native app redirect flow; token storage uses native secure storage through the selected SDK path.                                                                                                                     |
 | Existing-fountain contributions | Signed-in user can rate an existing fountain, verify/report operational status, **add** notes (create-only — the notes API is list/create; there is no update/delete operation), and set available access/attribute observations where the corresponding APIs have shipped. |
-| Add fountain | Signed-in user can add a fountain using current GPS location and a map-selected location, submit required fields/initial rating, handle 409 duplicate-proximity responses, and navigate to the resulting or existing fountain. |
-| User feedback | Mutations show clear pending/success/error states and never silently drop writes. |
-| Cross-platform parity | iOS and Android expose the same beta workflows unless a platform-specific store or OS restriction is explicitly documented. |
+| Add fountain                    | Signed-in user can add a fountain using current GPS location and a map-selected location, submit required fields/initial rating, handle 409 duplicate-proximity responses, and navigate to the resulting or existing fountain.                                              |
+| User feedback                   | Mutations show clear pending/success/error states and never silently drop writes.                                                                                                                                                                                           |
+| Cross-platform parity           | iOS and Android expose the same beta workflows unless a platform-specific store or OS restriction is explicitly documented.                                                                                                                                                 |
 
 Feature gating rule: if a backend/API slice is not yet deployed, the mobile UI
 must not present that action as working. It should either omit the action or show
@@ -127,7 +127,7 @@ fits this repo's WSL-based development environment.
 
 **Why EAS specifically (and what it costs).** The Expo SDK + CLI this repo
 already uses are free and open-source — there is no Expo "license." EAS is the
-*optional hosted cloud* for builds/submits, and it is the right tool **because
+_optional hosted cloud_ for builds/submits, and it is the right tool **because
 this is a Windows + WSL environment with no Mac**: an iOS App Store binary must
 be built and signed on macOS (Xcode), and EAS Build runs cloud macOS machines,
 so it produces a signed `.ipa` **without owning a Mac**. The decision is to use
@@ -168,12 +168,12 @@ References:
 
 Use one stable reverse-DNS identity everywhere:
 
-| Surface | Value |
-|---|---|
-| Expo slug | `fountainrank` |
-| iOS bundle identifier | `com.redducklabs.fountainrank` |
-| Android package name | `com.redducklabs.fountainrank` |
-| Native URL scheme | `com.redducklabs.fountainrank` |
+| Surface                   | Value                                     |
+| ------------------------- | ----------------------------------------- |
+| Expo slug                 | `fountainrank`                            |
+| iOS bundle identifier     | `com.redducklabs.fountainrank`            |
+| Android package name      | `com.redducklabs.fountainrank`            |
+| Native URL scheme         | `com.redducklabs.fountainrank`            |
 | Logto native redirect URI | `com.redducklabs.fountainrank://callback` |
 
 If the owner chooses a different bundle/package id, update this table before any
@@ -185,13 +185,13 @@ records and OAuth clients exist is avoidable churn and can break sign-in.
 The mobile app must stop hard-coding `http://localhost:3021` for release builds.
 Use Expo public configuration for non-secret client settings:
 
-| Setting | Release value | Secret? |
-|---|---|---|
-| API base URL | `https://api.fountainrank.com` | No |
-| Logto endpoint | `https://auth.fountainrank.com` | No |
-| Logto native app ID | From Logto Native application | No |
-| Logto backend resource / audience | `https://api.fountainrank.com` | No |
-| Native callback URL | `com.redducklabs.fountainrank://callback` | No |
+| Setting                           | Release value                             | Secret? |
+| --------------------------------- | ----------------------------------------- | ------- |
+| API base URL                      | `https://api.fountainrank.com`            | No      |
+| Logto endpoint                    | `https://auth.fountainrank.com`           | No      |
+| Logto native app ID               | From Logto Native application             | No      |
+| Logto backend resource / audience | `https://api.fountainrank.com`            | No      |
+| Native callback URL               | `com.redducklabs.fountainrank://callback` | No      |
 
 These values can live in Expo config as `extra` values or `EXPO_PUBLIC_*`
 variables. They are public client configuration, not secrets. Do not use a
@@ -202,15 +202,12 @@ testing profiles must use the deployed production services.
 
 ## 9. EAS project and build profiles
 
-> **Prerequisite — Expo / EAS account (owner-gated, NOT yet satisfied).** The
-> owner currently has an Apple Developer Program membership and a Google Play
-> Console account, but **no Expo / EAS account yet**. EAS Build and EAS Submit
-> require an Expo account (ideally a Red Duck Labs organization) and `eas init`
-> to link the project. **The Expo account is free to create and the EAS free
-> tier (15 iOS + 15 Android builds/month) is expected to cover the beta — no
-> paid EAS plan is assumed.** The `mobile/eas.json` and config below can be
-> **authored and committed without the account**, but no EAS build or submit can
-> run until the owner creates the (free) Expo account and EAS credentials. See §19.
+> **Update from slice 6e-8:** the original "no Expo / EAS account yet" prerequisite
+> is superseded. The Expo org `red-duck-labs` and EAS project `fountainrank`
+> now exist and are linked in `mobile/app.config.ts` with project id
+> `820564bf-5f29-44c7-8ec7-edde67b77360`. EAS build credentials, store records,
+> submissions, and device/store-channel verification remain owner-gated. See
+> `docs/setup/07-mobile-store-readiness.md`.
 
 Add EAS configuration under `mobile/`:
 
@@ -352,7 +349,7 @@ committed unless they become durable project documentation.
    auto-increment advances build numbers/versionCode) — see §20. The diagnostic
    surface (step in Phase 2) must display the same values App Store Connect / Play
    will show.
-2a. Add the **static native config** the app needs (no native module required):
+   2a. Add the **static native config** the app needs (no native module required):
    location-permission usage strings (iOS `NSLocationWhenInUseUsageDescription`,
    Android foreground location permission) and the deep-link scheme registration
    for the auth callback — see §20. (The `@maplibre/maplibre-react-native` config
@@ -550,9 +547,9 @@ The store-testing setup is complete when:
   subresource with both **list (GET)** and **create (POST)** — and there is **no**
   `PUT`/`PATCH`/`DELETE` for notes, so note editing/deletion is out of beta scope.
   No backend slice is pending for the beta scope (it is narrowed to note
-  *creation*, not because note update exists).
+  _creation_, not because note update exists).
 - **Bundle / package id** — `com.redducklabs.fountainrank` is the **proposed
-  working default**, consistent with the *example* in
+  working default**, consistent with the _example_ in
   `docs/setup/04-apple-and-app-stores.md` (which says "e.g.
   `com.redducklabs.fountainrank` — confirm the final bundle id with me") — i.e.
   it is **not yet confirmed**, not an "established convention." It requires an
@@ -564,17 +561,18 @@ The store-testing setup is complete when:
 
 ### Still open (owner decisions)
 
-- **Expo / EAS account ownership** — the owner has Apple Developer + Google Play
-  Console but **no Expo/EAS account yet**; this must be created (ideally a Red
-  Duck Labs org) before any EAS build/submit. Blocks §18 slices 6e-8/6e-10.
+- **Expo / EAS account ownership** — superseded by slice 6e-8. The Expo org
+  `red-duck-labs` and EAS project `fountainrank` now exist and are linked in
+  `mobile/app.config.ts`; EAS credentials and actual build/submit remain
+  owner-gated.
 - Decide whether first Android tester distribution uses internal testing only or
   goes directly to closed testing.
 - Decide whether the first TestFlight build is internal-only or includes external
   beta testers.
 - Decide whether photos are included in the first functional mobile beta or
-  explicitly deferred until after the first store-testing release. *(Default
+  explicitly deferred until after the first store-testing release. _(Default
   assumption per §3 non-goals: photos are deferred unless the backend/web photo
-  slice has already shipped.)*
+  slice has already shipped.)_
 - Finalize mobile app icon, splash screen, screenshots, privacy policy URL, and
   store tester instructions.
 
@@ -586,22 +584,22 @@ all PR comments addressed → squash-merge → (where applicable) deploy/verify.
 §15 phases map onto these slices; the phase numbers above are the detailed task
 lists, the slices below are the delivery units.
 
-| Slice | Content (maps to §15) | Kind |
-|---|---|---|
-| **6e-1** | Release config & app identity: kill the `localhost` API URL, add validated runtime config (§8), `app.json`→`app.config.ts` identity (bundle id, scheme), **store versioning** (`version`/`ios.buildNumber`/`android.versionCode`/`runtimeVersion` + increment policy — §20), **static native config** (location-permission usage strings, deep-link scheme — §20), a **mobile unit-test runner**, `mobile/eas.json` (development/preview/production + submit profiles), an app-version/build diagnostic surface, README (Phase 1). The **MapLibre config plugin + native dep land in 6e-3** (with the map that uses them); **finalized icon/splash assets land in 6e-8**. | Claude-actionable to CI-green (config authored with the proposed bundle-id default; the owner-confirmation gate per §17 precedes any external record) |
-| **6e-2** | App shell: navigation + state pattern, screen scaffolding (map, detail, add, sign-in/account, diagnostics), shared release-safe API config building `@fountainrank/api-client`, loading/empty/offline/error states, pure-helper tests (Phase 2). | Claude-actionable to CI-green |
-| **6e-3** | Map + public discovery: MapLibre RN map (via the config plugin + CNG/prebuild — **not** Expo Go), foreground-location permission (non-blocking when denied), Protomaps basemap tiles, nearby/bbox pins + pin states, pin→detail nav, filters backed by existing API params (Phase 3). | Code + pure-helper tests Claude-actionable to CI-green; **actual map render is verified only on a native build** (dev-client/EAS — owner-gated, since no Mac and no Expo Go) |
-| **6e-4** | Fountain detail + public reads: detail via the generated client — rating summary, dimensions, status, attributes, placement, notes, last-verified; unknowns shown honestly; refresh/retry; preserve map context (Phase 4). | Claude-actionable to CI-green |
-| **6e-5** | Native auth (Logto): native auth-code + PKCE with the custom-scheme callback, SDK secure-token storage, access tokens for the `https://api.fountainrank.com` audience, sign-in/callback/sign-out/account state, `GET /me` sync, no token logging (Phase 5). Ships behind the **auth-unavailable mode** (§21) until the Logto Native app exists — no placeholder app IDs, signed-in actions hidden/disabled, PR/handoff wording limited to "compiled + unit-tested only." | Code Claude-actionable; **end-to-end verify owner-gated** (needs the Logto Native app + redirect URI; Android social-login also needs the Play SHA-1) |
-| **6e-6** | Existing-fountain contributions: rating, status verify/report, attribute observations, note **creation** (create-only — no edit/delete in the API), clear pending/success/error states, refresh after write (Phase 6). Same auth-unavailable mode as 6e-5 until 6e-9. | Code Claude-actionable; signed-in verify owner-gated |
-| **6e-7** | Add-fountain capture: authenticated entry, GPS + tap/select-on-map placement, required fields + initial rating/attributes, 409 duplicate-proximity → existing fountain, return to map/detail (Phase 7). | Code Claude-actionable; signed-in verify owner-gated |
-| **6e-8** | Store metadata + Expo/EAS account & credentials: Apple App ID + ASC record, Play app record + Play App Signing, Expo account/`eas init` + EAS credentials, icon/splash/screenshots/descriptions/privacy + data-safety answers + tester instructions (Phase 8). | **Owner-gated** |
-| **6e-9** | Auth/OAuth store alignment: Logto Native app + callback URI, mobile public Logto values, Google iOS OAuth client (after bundle id final), Google Android OAuth client (after Play SHA-1), Apple Sign-in artifacts, callback smoke test (Phase 9). | **Owner-gated** (Claude sets the public mobile config values once the records exist) |
-| **6e-10** | Functional device RC + first store-testing builds + store-channel device verification: EAS production builds, EAS Submit to TestFlight + Play internal testing, add testers, physical-device verification on iOS + Android (Phases 10–12, §16). | **Owner-gated** |
+| Slice     | Content (maps to §15)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Kind                                                                                                                                                                         |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **6e-1**  | Release config & app identity: kill the `localhost` API URL, add validated runtime config (§8), `app.json`→`app.config.ts` identity (bundle id, scheme), **store versioning** (`version`/`ios.buildNumber`/`android.versionCode`/`runtimeVersion` + increment policy — §20), **static native config** (location-permission usage strings, deep-link scheme — §20), a **mobile unit-test runner**, `mobile/eas.json` (development/preview/production + submit profiles), an app-version/build diagnostic surface, README (Phase 1). The **MapLibre config plugin + native dep land in 6e-3** (with the map that uses them); **finalized icon/splash assets land in 6e-8**. | Claude-actionable to CI-green (config authored with the proposed bundle-id default; the owner-confirmation gate per §17 precedes any external record)                        |
+| **6e-2**  | App shell: navigation + state pattern, screen scaffolding (map, detail, add, sign-in/account, diagnostics), shared release-safe API config building `@fountainrank/api-client`, loading/empty/offline/error states, pure-helper tests (Phase 2).                                                                                                                                                                                                                                                                                                                                                                                                                          | Claude-actionable to CI-green                                                                                                                                                |
+| **6e-3**  | Map + public discovery: MapLibre RN map (via the config plugin + CNG/prebuild — **not** Expo Go), foreground-location permission (non-blocking when denied), Protomaps basemap tiles, nearby/bbox pins + pin states, pin→detail nav, filters backed by existing API params (Phase 3).                                                                                                                                                                                                                                                                                                                                                                                     | Code + pure-helper tests Claude-actionable to CI-green; **actual map render is verified only on a native build** (dev-client/EAS — owner-gated, since no Mac and no Expo Go) |
+| **6e-4**  | Fountain detail + public reads: detail via the generated client — rating summary, dimensions, status, attributes, placement, notes, last-verified; unknowns shown honestly; refresh/retry; preserve map context (Phase 4).                                                                                                                                                                                                                                                                                                                                                                                                                                                | Claude-actionable to CI-green                                                                                                                                                |
+| **6e-5**  | Native auth (Logto): native auth-code + PKCE with the custom-scheme callback, SDK secure-token storage, access tokens for the `https://api.fountainrank.com` audience, sign-in/callback/sign-out/account state, `GET /me` sync, no token logging (Phase 5). Ships behind the **auth-unavailable mode** (§21) until the Logto Native app exists — no placeholder app IDs, signed-in actions hidden/disabled, PR/handoff wording limited to "compiled + unit-tested only."                                                                                                                                                                                                  | Code Claude-actionable; **end-to-end verify owner-gated** (needs the Logto Native app + redirect URI; Android social-login also needs the Play SHA-1)                        |
+| **6e-6**  | Existing-fountain contributions: rating, status verify/report, attribute observations, note **creation** (create-only — no edit/delete in the API), clear pending/success/error states, refresh after write (Phase 6). Same auth-unavailable mode as 6e-5 until 6e-9.                                                                                                                                                                                                                                                                                                                                                                                                     | Code Claude-actionable; signed-in verify owner-gated                                                                                                                         |
+| **6e-7**  | Add-fountain capture: authenticated entry, GPS + tap/select-on-map placement, required fields + initial rating/attributes, 409 duplicate-proximity → existing fountain, return to map/detail (Phase 7).                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Code Claude-actionable; signed-in verify owner-gated                                                                                                                         |
+| **6e-8**  | Store metadata + Expo/EAS account & credentials: Apple App ID + ASC record, Play app record + Play App Signing, Expo account/`eas init` + EAS credentials, icon/splash/screenshots/descriptions/privacy + data-safety answers + tester instructions (Phase 8).                                                                                                                                                                                                                                                                                                                                                                                                            | **Owner-gated**                                                                                                                                                              |
+| **6e-9**  | Auth/OAuth store alignment: Logto Native app + callback URI, mobile public Logto values, Google iOS OAuth client (after bundle id final), Google Android OAuth client (after Play SHA-1), Apple Sign-in artifacts, callback smoke test (Phase 9).                                                                                                                                                                                                                                                                                                                                                                                                                         | **Owner-gated** (Claude sets the public mobile config values once the records exist)                                                                                         |
+| **6e-10** | Functional device RC + first store-testing builds + store-channel device verification: EAS production builds, EAS Submit to TestFlight + Play internal testing, add testers, physical-device verification on iOS + Android (Phases 10–12, §16).                                                                                                                                                                                                                                                                                                                                                                                                                           | **Owner-gated**                                                                                                                                                              |
 
 Slices 6e-1 … 6e-4 (public reads + config) have **no auth or store dependency**
 and can ship first. 6e-5 … 6e-7 add the authenticated code paths (mergeable on
-CI-green) but their *runtime* verification waits on the owner-gated auth records
+CI-green) but their _runtime_ verification waits on the owner-gated auth records
 in 6e-9. 6e-8 … 6e-10 are the owner runbook for accounts, credentials, builds,
 and device sign-off.
 
@@ -616,7 +614,7 @@ lint, `expo-doctor`, tests):**
 - All `mobile/` application code, screens, navigation, state, and the shared
   release-safe API config (slices 6e-1 … 6e-7 code).
 - `mobile/eas.json`, `app.json`/`app.config.ts`, runtime config, README — the
-  *authoring* of EAS/store config, even though the builds that consume it are
+  _authoring_ of EAS/store config, even though the builds that consume it are
   owner-gated.
 - The public mobile config **values** (API/auth URLs, scheme, callback) once the
   owner-side records they reference exist.
@@ -626,12 +624,11 @@ lint, `expo-doctor`, tests):**
 **Owner-gated — an automated agent cannot execute these (no account access, no
 physical devices); they are documented here and in `docs/setup/` as a runbook:**
 
-- **Expo / EAS account + `eas init` + EAS credentials** — ⚠️ **not yet set up**
-  (owner has Apple Developer + Google Play Console only). The account is **free**
-  and the **EAS free tier** (15 iOS + 15 Android builds/month) is expected to
-  cover the beta; no paid plan is assumed. Still blocks every EAS Build and EAS
-  Submit (i.e. every actual store binary) until created — and because there is no
-  Mac, the cloud iOS build is not optional.
+- **EAS credentials + store build access** — Expo org/project linkage is now set
+  up (`red-duck-labs/fountainrank`, project id
+  `820564bf-5f29-44c7-8ec7-edde67b77360`). EAS credentials, Apple/Google store
+  records, and every actual EAS Build/EAS Submit remain owner-gated — and because
+  there is no Mac, the cloud iOS build is not optional.
 - Apple App ID + App Store Connect app record; TestFlight tester groups + review.
 - Google Play app record + Play App Signing; internal-testing track + tester list.
 - Logto **Native** application + redirect URI `com.redducklabs.fountainrank://callback`.
@@ -668,6 +665,7 @@ below.
 
 **Location permission & privacy.** The app uses **foreground-only** location
 (no background location in this beta). Native config must declare:
+
 - iOS: `NSLocationWhenInUseUsageDescription` (a clear, honest usage string).
 - Android: `ACCESS_FINE_LOCATION` / `ACCESS_COARSE_LOCATION` foreground
   permissions only.
@@ -679,6 +677,7 @@ and crash data (per §21). Because the API is **HTTPS-only**, do **not** add an
 iOS ATS exception and do **not** enable Android cleartext traffic.
 
 **Store versioning.** Define and enforce, in slice 6e-1:
+
 - `expo.version` — marketing/semantic version.
 - `ios.buildNumber` and `android.versionCode` — **monotonically increasing**
   per-store build numbers (App Store Connect and Play both reject reused build
@@ -708,6 +707,7 @@ Record the chosen values in 6e-1.
 **Auth-unavailable mode (slices 6e-5 … 6e-7, before 6e-9).** The Logto Native
 app and mobile public auth config do **not** exist yet, so authenticated code
 must ship without faking availability:
+
 - **No placeholder/fake app IDs or callback values** are committed.
 - When the mobile Logto public config is absent, the app stays in a **public-read
   state**: signed-in actions (rate, status, attributes, add note, add fountain)
@@ -722,12 +722,12 @@ must ship without faking availability:
 strongest proof it can actually reach — a PR must not claim umbrella acceptance
 (§16) prematurely:
 
-| Proof level | What it means | Who |
-|---|---|---|
-| **Local CI** | type-check + lint + `expo-doctor` + unit tests (`./run.ps1 check`) | agent |
-| **Native build** | renders/runs on a dev-client or EAS build (e.g. MapLibre map) | owner-gated (no Mac → EAS) |
-| **Owner-gated records** | accounts, store records, Logto/OAuth records, credentials exist | owner |
-| **Store-channel** | installed from TestFlight / Play internal testing + on-device §16 checks | owner |
+| Proof level             | What it means                                                            | Who                        |
+| ----------------------- | ------------------------------------------------------------------------ | -------------------------- |
+| **Local CI**            | type-check + lint + `expo-doctor` + unit tests (`./run.ps1 check`)       | agent                      |
+| **Native build**        | renders/runs on a dev-client or EAS build (e.g. MapLibre map)            | owner-gated (no Mac → EAS) |
+| **Owner-gated records** | accounts, store records, Logto/OAuth records, credentials exist          | owner                      |
+| **Store-channel**       | installed from TestFlight / Play internal testing + on-device §16 checks | owner                      |
 
 6e-1, 6e-2, 6e-4 top out at **Local CI**. 6e-3 needs **Native build** to prove
 the map. 6e-5 … 6e-7 are **Local CI** as code, then **Owner-gated** + on-device

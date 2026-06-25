@@ -49,7 +49,7 @@ The **sign-in** half (Step 2) works regardless of Workspace.
    placeholders for now, required before going to production/verification).
 4. **Authorized domains:** add `fountainrank.com`.
 5. **Scopes:** add the non-sensitive sign-in scopes only — `openid`,
-   `.../auth/userinfo.email`, `.../auth/userinfo.profile`. (Gmail *sending* does
+   `.../auth/userinfo.email`, `.../auth/userinfo.profile`. (Gmail _sending_ does
    **not** use this consent screen — it uses service-account delegation in Part
    B.)
 6. While unverified, add yourself + testers under **Test users**. Submit for
@@ -69,18 +69,16 @@ ID**. Per spec §19 we register Web, iOS, and Android.
     redirect URI when Logto is up**.
   - Record the **Client ID** and **Client secret**.
 
-- **iOS** — requires the app's **bundle identifier** (from the Expo app config,
-  finalized in the mobile phase). Create it when the bundle ID is fixed; record
-  the **Client ID**.
+- **iOS** — use the owner-confirmed bundle identifier
+  `com.redducklabs.fountainrank`; record the **Client ID**.
 
-- **Android** — requires the **package name** and the signing certificate
-  **SHA-1 fingerprint** (from the Expo/EAS build credentials, finalized in the
-  mobile phase). Create it then; record the **Client ID**.
+- **Android** — use package name `com.redducklabs.fountainrank` and the signing
+  certificate **SHA-1 fingerprint** from Play App Signing / EAS build
+  credentials. Create it after the SHA-1 exists; record the **Client ID**.
 
-> With Logto brokering sign-in, the **Web** client is the critical one. We'll
-> confirm exactly how the native clients plug into the Expo + Logto flow when we
-> wire auth in Phase 2 — create them when their bundle/package/SHA-1 values
-> exist rather than guessing now.
+> With Logto brokering sign-in, the **Web** client is the critical one. The iOS
+> bundle id and Android package name are now fixed; the Android OAuth client
+> still waits on the Play App Signing SHA-1.
 
 ---
 
@@ -131,17 +129,17 @@ or a mailbox the admin controls). The connector impersonates this address.
 
 ## Outputs to record
 
-| Value | Becomes | Destination |
-|---|---|---|
-| Project ID | reference | tell me |
-| Web OAuth **Client ID** | Logto Google connector | `06-logto.md` |
-| Web OAuth **Client secret** | Logto Google connector | **secret** — set in Logto |
-| iOS / Android OAuth Client IDs | native sign-in | `06-logto.md` (when created) |
-| Service-account **JSON key** | `GOOGLE_SERVICE_ACCOUNT_JSON` | GitHub Env **secret** |
-| Service-account numeric Client ID | Workspace delegation | used in Step 5 only |
-| `GOOGLE_DELEGATED_USER` | impersonated mailbox | GitHub Env **variable** |
-| `GOOGLE_WORKSPACE_DOMAIN` | `fountainrank.com` | GitHub Env **variable** |
-| `FROM_EMAIL` | sender address | GitHub Env **variable** (shared with `02`) |
+| Value                             | Becomes                       | Destination                                |
+| --------------------------------- | ----------------------------- | ------------------------------------------ |
+| Project ID                        | reference                     | tell me                                    |
+| Web OAuth **Client ID**           | Logto Google connector        | `06-logto.md`                              |
+| Web OAuth **Client secret**       | Logto Google connector        | **secret** — set in Logto                  |
+| iOS / Android OAuth Client IDs    | native sign-in                | `06-logto.md` (when created)               |
+| Service-account **JSON key**      | `GOOGLE_SERVICE_ACCOUNT_JSON` | GitHub Env **secret**                      |
+| Service-account numeric Client ID | Workspace delegation          | used in Step 5 only                        |
+| `GOOGLE_DELEGATED_USER`           | impersonated mailbox          | GitHub Env **variable**                    |
+| `GOOGLE_WORKSPACE_DOMAIN`         | `fountainrank.com`            | GitHub Env **variable**                    |
+| `FROM_EMAIL`                      | sender address                | GitHub Env **variable** (shared with `02`) |
 
 **Hand me:** Project ID, the delegated user, the Workspace domain, and the
 `FROM_EMAIL` (not secrets). **You keep / set yourself:** the service-account
