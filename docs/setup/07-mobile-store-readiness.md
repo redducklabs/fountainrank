@@ -49,6 +49,9 @@ Expo documents remote version source as the recommended EAS behavior, with EAS
 servers managing `ios.buildNumber` and `android.versionCode` when
 `appVersionSource` is `remote` and production `autoIncrement` is enabled:
 <https://docs.expo.dev/build-reference/app-versions/>.
+The local `ios.buildNumber` and `android.versionCode` values in
+`mobile/app.config.ts` seed the first remote value; after that, EAS owns store
+build-number increments.
 
 ## Apple App Store Connect / TestFlight
 

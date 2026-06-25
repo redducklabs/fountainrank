@@ -142,6 +142,8 @@ owner-confirmed as `com.redducklabs.fountainrank`.
 Build numbers are EAS-managed for store builds: `cli.appVersionSource` is
 `remote`, and the production profile keeps `autoIncrement: true`. Android
 production builds produce an `.aab`; preview Android builds produce an `.apk`.
+The local `ios.buildNumber` and `android.versionCode` values in `app.config.ts`
+seed the first remote value; after that, EAS owns store build-number increments.
 No iOS submit profile is committed yet, and App Store Connect credentials, Play
 service-account JSON, signing material, EAS tokens, and tester lists stay outside
 the repo.
