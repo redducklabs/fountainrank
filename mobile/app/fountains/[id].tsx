@@ -234,9 +234,7 @@ export default function FountainDetailScreen() {
                     }}
                   />
                   <NoteContributionForm
-                    key={`${fountainId}:${detailQuery.data.comments ?? detailQuery.data.placement_note ?? ""}`}
                     fountainId={fountainId}
-                    initialBody={detailQuery.data.comments ?? detailQuery.data.placement_note ?? ""}
                     pending={noteMutation.isPending}
                     onSubmit={async (body) => {
                       try {

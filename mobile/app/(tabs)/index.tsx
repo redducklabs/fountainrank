@@ -142,7 +142,17 @@ export default function MapScreen() {
     },
   });
 
+  const resetAddDraft = () => {
+    addDispatch({ type: "reset" });
+    setRatings({});
+    setAttributes({});
+    setComments("");
+    setShowMoreDetails(false);
+    setAddMessage(null);
+  };
+
   useEffect(() => {
+    if (!addMode) return;
     if (!region) return;
     const bounds: ViewportBounds = region.bounds;
     const fix =
@@ -155,7 +165,7 @@ export default function MapScreen() {
           }
         : ({ ok: false } as const);
     addDispatch({ type: "setBound", bound: boundFromFix(fix, bounds) });
-  }, [location.coords, region]);
+  }, [addMode, location.coords, region]);
 
   // FountainPin[] is directly assignable to PinInput[] (ranking_score/current_status
   // are optional), so no per-pin normalization is needed at the call site.
@@ -240,10 +250,9 @@ export default function MapScreen() {
         accessibilityRole="button"
         accessibilityLabel="Add a fountain"
         onPress={() => {
-          setAddMessage(null);
           if (gate.state === "ready") {
+            resetAddDraft();
             setAddMode(true);
-            setShowMoreDetails(false);
           } else if (gate.state === "sign_in" || gate.state === "reauth") {
             void auth.signIn();
           }
@@ -293,12 +302,7 @@ export default function MapScreen() {
           onBack={() => addDispatch({ type: "back" })}
           onSetWorking={(isWorking) => addDispatch({ type: "setWorking", isWorking })}
           onCancel={() => {
-            addDispatch({ type: "reset" });
-            setRatings({});
-            setAttributes({});
-            setComments("");
-            setShowMoreDetails(false);
-            setAddMessage(null);
+            resetAddDraft();
             setAddMode(false);
           }}
           onSubmit={async () => {
