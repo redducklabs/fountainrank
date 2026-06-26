@@ -24,7 +24,7 @@ export function ContributionStatusOverlay({ initialTotalPoints }: { initialTotal
   }, []);
 
   return (
-    <div className="pointer-events-none fixed inset-0 z-50">
+    <div className="pointer-events-none fixed inset-x-0 top-16 bottom-0 z-40">
       <PointsBadge total={totalPoints} />
       <WaterCelebration triggerKey={celebrationKey} />
     </div>

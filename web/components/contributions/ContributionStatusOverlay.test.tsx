@@ -18,6 +18,7 @@ describe("ContributionStatusOverlay", () => {
     render(<ContributionStatusOverlay initialTotalPoints={7} />);
 
     expect(screen.getByLabelText("7 points")).toBeInTheDocument();
+    expect(screen.getByLabelText("7 points").parentElement).toHaveClass("top-16", "z-40");
     window.dispatchEvent(new Event("fountainrank:contribution"));
 
     await waitFor(() => expect(getMyContributionStats).toHaveBeenCalled());
