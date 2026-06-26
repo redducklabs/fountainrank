@@ -20,11 +20,13 @@ ENV NEXT_PUBLIC_BASEMAP_STYLE_URL=$NEXT_PUBLIC_BASEMAP_STYLE_URL
 # for pnpm to resolve the frozen lockfile graph.
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY packages/api-client/package.json packages/api-client/
+COPY packages/contributions/package.json packages/contributions/
 COPY web/package.json web/
 COPY mobile/package.json mobile/
 RUN pnpm install --frozen-lockfile --filter web...
 # Sources (codegen artifacts must be present in the context already).
 COPY packages/api-client packages/api-client
+COPY packages/contributions packages/contributions
 COPY web web
 RUN pnpm --filter web run build
 
