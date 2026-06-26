@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const getDetail = vi.fn();
 const getNotes = vi.fn();
 const getViewerFn = vi.fn();
+const getViewerTotalPointsFn = vi.fn();
 const logFn = vi.fn();
 const notFoundFn = vi.fn(() => {
   throw new Error("NEXT_NOT_FOUND");
@@ -17,6 +18,7 @@ vi.mock("../../../lib/fountains", () => ({
 }));
 vi.mock("../../../lib/server/viewer", () => ({
   getViewer: (...a: unknown[]) => getViewerFn(...a),
+  getViewerTotalPoints: (...a: unknown[]) => getViewerTotalPointsFn(...a),
 }));
 vi.mock("../../../lib/server/log", () => ({ log: (...a: unknown[]) => logFn(...a) }));
 vi.mock("next/navigation", () => ({ notFound: () => notFoundFn() }));
@@ -32,6 +34,11 @@ vi.mock("../../../components/fountain/FountainDetail", () => ({
     </div>
   ),
 }));
+vi.mock("../../../components/contributions/ContributionStatusOverlay", () => ({
+  ContributionStatusOverlay: ({ initialTotalPoints }: { initialTotalPoints: number }) => (
+    <div data-testid="contribution-status">points:{initialTotalPoints}</div>
+  ),
+}));
 vi.mock("../../../components/SiteHeader", () => ({
   SiteHeader: () => <div data-testid="site-header" />,
 }));
@@ -44,9 +51,11 @@ beforeEach(() => {
   getDetail.mockReset();
   getNotes.mockReset();
   getViewerFn.mockReset();
+  getViewerTotalPointsFn.mockReset();
   logFn.mockReset();
   notFoundFn.mockClear();
   getViewerFn.mockResolvedValue({ state: "anonymous" });
+  getViewerTotalPointsFn.mockResolvedValue(0);
 });
 
 describe("FountainPage route (standalone)", () => {
@@ -91,6 +100,19 @@ describe("FountainPage route (standalone)", () => {
     });
     render(await FountainPage({ params }));
     expect(screen.getByTestId("detail")).toHaveAttribute("data-authed", "true");
+  });
+  it("renders contribution status on authenticated standalone pages", async () => {
+    getDetail.mockResolvedValue({ data: { id: "f1" }, status: 200 });
+    getNotes.mockResolvedValue({ data: [], status: 200 });
+    getViewerFn.mockResolvedValue({
+      state: "authed",
+      displayName: "Sam",
+      avatarUrl: null,
+      isAdmin: false,
+    });
+    getViewerTotalPointsFn.mockResolvedValue(31);
+    render(await FountainPage({ params }));
+    expect(screen.getByTestId("contribution-status")).toHaveTextContent("points:31");
   });
   it("passes isAuthenticated=false when viewer.state is anonymous", async () => {
     getDetail.mockResolvedValue({ data: { id: "f1" }, status: 200 });

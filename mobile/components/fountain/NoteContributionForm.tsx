@@ -1,9 +1,9 @@
 import type { components } from "@fountainrank/api-client";
+import { notePointsPreview } from "@fountainrank/contributions";
 import { useState } from "react";
 import { StyleSheet, Text, TextInput, View } from "react-native";
 
 import { buildNotePayload } from "../../lib/contributions/payloads";
-import { notePointsPreview } from "../../lib/contributions/points";
 import type { ContributionError } from "../../lib/contributions/state";
 import { contributionErrorText } from "../../lib/contributions/state";
 import { colors, spacing, typography } from "../../theme";

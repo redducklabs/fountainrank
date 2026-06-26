@@ -68,3 +68,32 @@ export function ErrorToast({ onRetry }: { onRetry: () => void }) {
     </div>
   );
 }
+
+export function PointsBadge({ total }: { total: number }) {
+  return (
+    <div
+      aria-label={`${total} points`}
+      className="absolute right-3 top-3 z-30 min-w-24 rounded-lg border-2 border-[#F2C200] bg-[#0A357E] px-3 py-2 text-center text-white shadow-lg motion-safe:animate-[points-pop_420ms_ease-out]"
+    >
+      <div className="text-[11px] font-bold uppercase text-white">Points</div>
+      <div className="text-2xl font-black leading-none text-[#F2C200] tabular-nums">{total}</div>
+    </div>
+  );
+}
+
+export function WaterCelebration({ triggerKey }: { triggerKey: number }) {
+  if (triggerKey === 0) return null;
+  return (
+    <div
+      key={triggerKey}
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-x-0 bottom-16 z-50 flex justify-center motion-reduce:hidden"
+    >
+      <span className="water-drop water-drop-1" />
+      <span className="water-drop water-drop-2" />
+      <span className="water-drop water-drop-3" />
+      <span className="water-drop water-drop-4" />
+      <span className="water-drop water-drop-5" />
+    </div>
+  );
+}

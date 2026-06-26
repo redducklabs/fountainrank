@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { AttributeContributionForm } from "../../components/fountain/AttributeContributionForm";
+import { WaterCelebration } from "../../components/feedback/WaterCelebration";
 import { ConditionContributionForm } from "../../components/fountain/ConditionContributionForm";
 import { ContributePanel } from "../../components/fountain/ContributePanel";
 import { FountainDetail } from "../../components/fountain/FountainDetail";
@@ -46,6 +47,7 @@ export default function FountainDetailScreen() {
   const auth = useAuth();
   const queryClient = useQueryClient();
   const [showMoreDetails, setShowMoreDetails] = useState(false);
+  const [celebrationKey, setCelebrationKey] = useState(0);
   const { id } = useLocalSearchParams<{ id: string | string[] }>();
   // Reject absent/array/malformed (non-UUID) ids client-side — the backend route
   // param is a uuid.UUID, so a bad value would 422; show the honest not-found state.
@@ -94,6 +96,7 @@ export default function FountainDetailScreen() {
     }
     void queryClient.invalidateQueries({ queryKey: ["fountains", "bbox"] });
     void queryClient.invalidateQueries({ queryKey: ["me", "contributions"] });
+    setCelebrationKey((key) => key + 1);
   };
 
   const handleMutationError = (error: unknown): SubmitResult => {
@@ -157,6 +160,7 @@ export default function FountainDetailScreen() {
       void notesQuery.refetch();
       void detailQuery.refetch();
       void queryClient.invalidateQueries({ queryKey: ["me", "contributions"] });
+      setCelebrationKey((key) => key + 1);
     },
   });
 
@@ -278,6 +282,7 @@ export default function FountainDetailScreen() {
             />
           ) : null}
         </ScrollView>
+        <WaterCelebration triggerKey={celebrationKey} />
       </QueryStateView>
     </ScreenContainer>
   );

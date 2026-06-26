@@ -100,6 +100,13 @@ def test_cors_allows_prod_web_origins():
     assert {"https://fountainrank.com", "https://www.fountainrank.com"} <= origins
 
 
+def test_cors_exposes_response_headers():
+    from app.main import app
+
+    cors = next(m for m in app.user_middleware if m.cls.__name__ == "CORSMiddleware")
+    assert {"X-Request-ID", "X-FountainRank-Truncated"} <= set(cors.kwargs["expose_headers"])
+
+
 def test_admin_subjects_default_is_empty(monkeypatch):
     monkeypatch.delenv("ADMIN_SUBJECTS", raising=False)
     assert Settings().admin_subjects == []

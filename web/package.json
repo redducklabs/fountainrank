@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@fountainrank/api-client": "workspace:*",
+    "@fountainrank/contributions": "workspace:*",
     "@logto/next": "4.2.10",
     "maplibre-gl": "5.24.0",
     "next": "16.2.9",

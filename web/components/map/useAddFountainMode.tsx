@@ -179,6 +179,7 @@ export function useAddFountainMode(
       // intercepted detail modal, so leaving it active would strand it (suppressed browse, hidden
       // FAB, lingering pin) once the modal closes.
       router.push(`/fountains/${res.fountainId}`);
+      window.dispatchEvent(new Event("fountainrank:contribution"));
       dispatch({ type: "CANCEL" });
       resetOptional();
     } else if (res.error === "duplicate") {

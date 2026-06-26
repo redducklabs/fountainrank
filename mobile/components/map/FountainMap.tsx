@@ -35,6 +35,7 @@ type FountainMapProps = {
   userCoords?: { latitude: number; longitude: number } | null;
   /** Bump from the screen's locate button to re-center on the user on demand. */
   recenterKey?: number;
+  recenterZoom?: number;
   showUserLocation: boolean;
   onRegionChange: (bounds: RawBounds, zoom: number) => void;
   onPinPress: (id: string) => void;
@@ -47,6 +48,7 @@ export function FountainMap({
   featureCollection,
   userCoords,
   recenterKey = 0,
+  recenterZoom,
   showUserLocation,
   onRegionChange,
   onPinPress,
@@ -63,10 +65,10 @@ export function FountainMap({
     if (!userCoords) return;
     cameraRef.current?.flyTo({
       center: [userCoords.longitude, userCoords.latitude],
-      zoom: INITIAL_USER_ZOOM,
+      zoom: recenterZoom ?? INITIAL_USER_ZOOM,
       duration: 600,
     });
-  }, [userCoords, recenterKey]);
+  }, [userCoords, recenterKey, recenterZoom]);
 
   return (
     <Map

@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { addFountainPointsPreview } from "@fountainrank/contributions";
 import { signInWithReturn } from "../../app/actions/auth";
 import type { AddFountainError } from "../../lib/add-fountain";
 import { COMMENTS_MAX } from "../../lib/add-fountain";
@@ -9,6 +10,7 @@ import type { AttributeGroup } from "../../lib/catalog";
 import type { LngLat } from "../../lib/map/placement";
 import type { components } from "@fountainrank/api-client";
 import { AttributeObservationFields } from "./AttributeObservationFields";
+import { PointsPreview } from "../contributions/PointsPreview";
 import { RatingFields } from "./RatingFields";
 
 export type AddFountainPanelProps = {
@@ -200,6 +202,15 @@ function PlacingStep(props: AddFountainPanelProps) {
 function DetailsStep(props: AddFountainPanelProps) {
   const [showMoreDetails, setShowMoreDetails] = useState(false);
   const commentsLen = (props.comments ?? "").length;
+  const ratingsCount = Object.values(props.ratingValue ?? {}).filter((stars) => stars >= 1).length;
+  const observationsCount = Object.values(props.obsValue ?? {}).filter(
+    (v) => v && v !== "unknown",
+  ).length;
+  const preview = addFountainPointsPreview({
+    ratingsCount,
+    observationsCount,
+    hasComment: (props.comments ?? "").trim().length > 0,
+  });
   return (
     <div className="mt-2">
       <Coord pin={props.pin} />
@@ -252,6 +263,9 @@ function DetailsStep(props: AddFountainPanelProps) {
           </p>
         </div>
       )}
+      <div className="mt-3">
+        <PointsPreview lines={preview} />
+      </div>
       {props.attributeGroups && props.attributeGroups.length > 0 && props.onObserve && (
         <div className="mt-3">
           <button

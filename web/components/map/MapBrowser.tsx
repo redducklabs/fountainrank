@@ -8,6 +8,7 @@ import maplibregl, {
 } from "maplibre-gl";
 import { createPlacementMap, type PlacementMap } from "./placement-map";
 import { useAddFountainMode } from "./useAddFountainMode";
+import { getMyContributionStats } from "../../app/actions/contributions";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { BASEMAP, PIN_ASSETS, PILL_BG_ASSET } from "../../lib/map/style";
 import { fetchBbox, type FountainPin } from "../../lib/fountains";
@@ -38,7 +39,9 @@ import {
   EmptyHint,
   ErrorToast,
   LoadingBar,
+  PointsBadge,
   UnsupportedHint,
+  WaterCelebration,
   ZoomInHint,
 } from "./MapStates";
 
@@ -80,10 +83,12 @@ export default function MapBrowser({
   isAuthenticated = false,
   autoEnterAdd = false,
   hadAddParam = false,
+  initialTotalPoints = 0,
 }: {
   isAuthenticated?: boolean;
   autoEnterAdd?: boolean;
   hadAddParam?: boolean;
+  initialTotalPoints?: number;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -93,6 +98,8 @@ export default function MapBrowser({
   const pathname = usePathname();
   const [pins, setPins] = useState<FountainPin[]>([]);
   const [status, setStatus] = useState<Status>("idle");
+  const [totalPoints, setTotalPoints] = useState(initialTotalPoints);
+  const [celebrationKey, setCelebrationKey] = useState(0);
   const [webglOk] = useState(isWebglSupported);
   const activeId = activeIdFromPath(pathname);
   const add = useAddFountainMode(placementMap, {
@@ -292,14 +299,21 @@ export default function MapBrowser({
           typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
             ? crypto.randomUUID()
             : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        const data = await fetchBbox(norm.params, reqId);
+        const result = await fetchBbox(norm.params, reqId);
         if (seq !== loadSeqRef.current) return; // stale response — a newer load is in progress
+        const data = result.pins;
         setPins(data);
         // Normalise ranking_score: the API schema marks it optional (?), but PinInput requires
         // number | null. Map undefined → null so pinsToFeatureCollection is type-safe.
         const pinInputs = data.map((p) => ({ ...p, ranking_score: p.ranking_score ?? null }));
         src?.setData(pinsToFeatureCollection(pinInputs));
-        setStatus(isAtCap(data.length) ? "capped" : data.length === 0 ? "empty" : "idle");
+        setStatus(
+          result.truncated || isAtCap(data.length)
+            ? "capped"
+            : data.length === 0
+              ? "empty"
+              : "idle",
+        );
       } catch (e) {
         if (seq !== loadSeqRef.current) return; // stale error — don't clobber newer load's state
         const detail = `${(e as Error).name}: ${(e as Error).message}`;
@@ -316,6 +330,23 @@ export default function MapBrowser({
       setPlacementMap(null);
     };
   }, [router, webglOk, debug]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let cancelled = false;
+    async function refreshPoints() {
+      const result = await getMyContributionStats();
+      if (cancelled || !result.ok) return;
+      setTotalPoints(result.totalPoints);
+      setCelebrationKey((key) => key + 1);
+    }
+    const onContribution = () => void refreshPoints();
+    window.addEventListener("fountainrank:contribution", onContribution);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("fountainrank:contribution", onContribution);
+    };
+  }, [isAuthenticated]);
 
   // Reflect the active route id on the selected layers (additive: halo always; icon swap via expr).
   useEffect(() => {
@@ -341,6 +372,8 @@ export default function MapBrowser({
       {status === "capped" && <CapHint />}
       {status === "error" && <ErrorToast onRetry={retry} />}
       {!webglOk && <UnsupportedHint />}
+      {isAuthenticated && <PointsBadge total={totalPoints} />}
+      <WaterCelebration triggerKey={celebrationKey} />
       {webglOk && add.fab}
       {add.panel}
       {debug && (

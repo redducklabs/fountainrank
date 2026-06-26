@@ -1,7 +1,9 @@
 "use client";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { notePointsPreview } from "@fountainrank/contributions";
 import { submitNote } from "../../app/actions/contribute";
+import { PointsPreview } from "../contributions/PointsPreview";
 import { errorText } from "./contributeError";
 
 export function NoteForm({ fountainId }: { fountainId: string }) {
@@ -21,6 +23,7 @@ export function NoteForm({ fountainId }: { fountainId: string }) {
       if (res.ok) {
         setMsg({ tone: "ok", text: "Your note was saved." });
         setBody("");
+        window.dispatchEvent(new Event("fountainrank:contribution"));
         router.refresh();
       } else {
         setMsg({ tone: "err", text: errorText(res.error) });
@@ -51,6 +54,9 @@ export function NoteForm({ fountainId }: { fountainId: string }) {
         </button>
       </div>
       <p className="text-xs text-slate-400">Submitting replaces any note you left here before.</p>
+      <div className="mt-3">
+        <PointsPreview lines={notePointsPreview(trimmed.length > 0)} />
+      </div>
       {msg && (
         <p
           role="status"

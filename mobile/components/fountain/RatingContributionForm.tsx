@@ -1,14 +1,14 @@
 import type { components } from "@fountainrank/api-client";
+import {
+  ratingPointsPreview,
+  totalPreviewPoints,
+  type PointsLine,
+} from "@fountainrank/contributions";
 import { useEffect, useState } from "react";
 import { AccessibilityInfo, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 
 import type { ContributionError } from "../../lib/contributions/state";
 import { buildRatingPayload } from "../../lib/contributions/payloads";
-import {
-  ratingPointsPreview,
-  totalPreviewPoints,
-  type PointsLine,
-} from "../../lib/contributions/points";
 import { contributionErrorText } from "../../lib/contributions/state";
 import { colors, spacing, typography } from "../../theme";
 

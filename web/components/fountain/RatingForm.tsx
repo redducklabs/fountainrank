@@ -2,8 +2,10 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { components } from "@fountainrank/api-client";
+import { ratingPointsPreview } from "@fountainrank/contributions";
 import { submitRating } from "../../app/actions/contribute";
 import { errorText } from "./contributeError";
+import { PointsPreview } from "../contributions/PointsPreview";
 import { StarGroup } from "./StarGroup";
 
 type Dimension = components["schemas"]["DimensionSummary"];
@@ -27,6 +29,7 @@ export function RatingForm({
       const res = await submitRating(fountainId, ratings);
       if (res.ok) {
         setMsg({ tone: "ok", text: "Thanks — your rating was saved." });
+        window.dispatchEvent(new Event("fountainrank:contribution"));
         router.refresh();
       } else {
         setMsg({ tone: "err", text: errorText(res.error) });
@@ -46,6 +49,9 @@ export function RatingForm({
           onChange={(n) => setStars((s) => ({ ...s, [d.rating_type_id]: n }))}
         />
       ))}
+      <div className="mt-3">
+        <PointsPreview lines={ratingPointsPreview(chosen.length)} />
+      </div>
       <button
         type="button"
         disabled={pending || chosen.length === 0}

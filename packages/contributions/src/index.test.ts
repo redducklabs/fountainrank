@@ -7,7 +7,7 @@ import {
   notePointsPreview,
   ratingPointsPreview,
   totalPreviewPoints,
-} from "./points";
+} from "./index";
 
 describe("points previews", () => {
   it("previews add fountain base, conditional bonuses, ratings, details, and comment", () => {

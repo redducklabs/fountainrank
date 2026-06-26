@@ -11,7 +11,7 @@ vi.mock("next/cache", () => ({ revalidatePath }));
 vi.mock("../../lib/server/api", () => ({ getAuthedApiClientForAction: getClient }));
 vi.mock("../../lib/server/log", () => ({ log }));
 
-import { submitRating, submitCondition, submitNote } from "./contribute";
+import { submitAttributes, submitRating, submitCondition, submitNote } from "./contribute";
 
 const FID = "123e4567-e89b-12d3-a456-426614174000";
 beforeEach(() => {
@@ -115,6 +115,29 @@ describe("submitNote", () => {
     expect(POST).toHaveBeenCalledWith(
       "/api/v1/fountains/{fountain_id}/notes",
       expect.objectContaining({ body: { body: "hi" } }),
+    );
+  });
+});
+
+describe("submitAttributes", () => {
+  it("rejects empty observations and invalid ids", async () => {
+    expect(await submitAttributes(FID, [])).toEqual({ ok: false, error: "validation" });
+    expect(await submitAttributes(FID, [{ attribute_type_id: 0, value: "yes" }])).toEqual({
+      ok: false,
+      error: "validation",
+    });
+    expect(getClient).not.toHaveBeenCalled();
+  });
+
+  it("trims and posts observations", async () => {
+    POST.mockResolvedValue({ response: { status: 200 } });
+    await submitAttributes(FID, [{ attribute_type_id: 2, value: " yes " }]);
+    expect(POST).toHaveBeenCalledWith(
+      "/api/v1/fountains/{fountain_id}/attributes",
+      expect.objectContaining({
+        params: { path: { fountain_id: FID } },
+        body: { observations: [{ attribute_type_id: 2, value: "yes" }] },
+      }),
     );
   });
 });

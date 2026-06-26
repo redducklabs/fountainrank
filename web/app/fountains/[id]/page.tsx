@@ -2,7 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getFountainDetailServer, getFountainNotesServer } from "../../../lib/fountains";
 import { log } from "../../../lib/server/log";
-import { getViewer } from "../../../lib/server/viewer";
+import { getViewer, getViewerTotalPoints } from "../../../lib/server/viewer";
+import { ContributionStatusOverlay } from "../../../components/contributions/ContributionStatusOverlay";
 import { FountainDetail } from "../../../components/fountain/FountainDetail";
 import { SiteHeader } from "../../../components/SiteHeader";
 
@@ -45,9 +46,13 @@ export default async function FountainPage({ params }: { params: Promise<{ id: s
     log("warn", "failed to load fountain notes", { requestId, id, status: notesRes.status });
   }
   const notes = notesOk && notesRes.data ? notesRes.data : [];
+  const initialTotalPoints = isAuthenticated ? await getViewerTotalPoints(requestId) : 0;
   return (
     <>
       <SiteHeader variant="bar" />
+      {isAuthenticated ? (
+        <ContributionStatusOverlay initialTotalPoints={initialTotalPoints} />
+      ) : null}
       <main className={shell}>
         <Link href="/" className="text-sm text-[#0C44A0] underline">
           ← Back to the map

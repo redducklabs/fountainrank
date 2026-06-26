@@ -2,7 +2,7 @@ import logging
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import JSONResponse
 from geoalchemy2 import Geography
 from sqlalchemy import cast, func, select
@@ -61,6 +61,7 @@ from app.schemas import (
 
 router = APIRouter(prefix="/api/v1", tags=["fountains"])
 logger = logging.getLogger(__name__)
+TRUNCATED_HEADER = "X-FountainRank-Truncated"
 
 
 async def _validate_rating_types(session: AsyncSession, ratings: list[RatingInput]) -> None:
@@ -338,6 +339,7 @@ async def serialize_fountain_detail(session: AsyncSession, fountain: Fountain) -
 
 @router.get("/fountains", response_model=list[FountainPin])
 async def nearby_fountains(
+    response: Response,
     lat: float = Query(ge=-90.0, le=90.0),
     lng: float = Query(ge=-180.0, le=180.0),
     radius_m: float | None = Query(default=None, gt=0.0),
@@ -365,8 +367,11 @@ async def nearby_fountains(
         .where(func.ST_DWithin(Fountain.location, point, radius))
     )
     stmt = apply_discovery_filters(stmt, filters)  # all filters in WHERE...
-    stmt = stmt.order_by(distance).limit(settings.max_results)  # ...then order + cap
+    stmt = stmt.order_by(distance).limit(settings.max_results + 1)  # ...then order + cap probe
     rows = (await session.execute(stmt)).all()
+    truncated = len(rows) > settings.max_results
+    response.headers[TRUNCATED_HEADER] = "true" if truncated else "false"
+    rows = rows[: settings.max_results]
     return [
         FountainPin(
             id=rid,
@@ -385,6 +390,7 @@ async def nearby_fountains(
 
 @router.get("/fountains/bbox", response_model=list[FountainPin])
 async def fountains_in_bbox(
+    response: Response,
     min_lat: float = Query(ge=-90.0, le=90.0),
     min_lng: float = Query(ge=-180.0, le=180.0),
     max_lat: float = Query(ge=-90.0, le=90.0),
@@ -418,8 +424,11 @@ async def fountains_in_bbox(
         .where(func.ST_Intersects(Fountain.location, envelope))
     )
     stmt = apply_discovery_filters(stmt, filters)  # all filters in WHERE before the cap
-    stmt = stmt.limit(settings.max_results)
+    stmt = stmt.limit(settings.max_results + 1)
     rows = (await session.execute(stmt)).all()
+    truncated = len(rows) > settings.max_results
+    response.headers[TRUNCATED_HEADER] = "true" if truncated else "false"
+    rows = rows[: settings.max_results]
     return [
         FountainPin(
             id=rid,
