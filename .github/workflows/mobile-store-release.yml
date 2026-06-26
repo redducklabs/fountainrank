@@ -1,0 +1,103 @@
+name: Mobile Store Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: "Mobile platform to build and submit"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - android
+          - ios
+
+concurrency:
+  group: mobile-store-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    name: Android build + Play internal submit
+    if: ${{ github.event_name == 'push' || github.event.inputs.platform == 'all' || github.event.inputs.platform == 'android' }}
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 90
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      EAS_BUILD_NO_EXPO_GO_WARNING: "true"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - uses: pnpm/action-setup@v6.0.9
+      - name: Verify required secrets
+        run: |
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "::error::Missing production secret EXPO_TOKEN. Create an Expo access token for the red-duck-labs account/org and add it to the production GitHub environment."
+            exit 1
+          fi
+          # EAS manages the Google Play service-account key outside GitHub. If
+          # that credential is missing, the auto-submit step fails explicitly.
+          echo "This workflow also requires EAS-managed Google Play submit credentials for com.redducklabs.fountainrank."
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Verify Expo authentication
+        run: pnpm dlx eas-cli@20.3.0 whoami
+        working-directory: mobile
+      - name: Build and submit Android to Google Play internal testing
+        run: >
+          pnpm dlx eas-cli@20.3.0 build
+          --platform android
+          --profile production
+          --auto-submit-with-profile production
+          --non-interactive
+          --wait
+        working-directory: mobile
+
+  ios:
+    name: iOS build + App Store Connect submit
+    if: ${{ github.event_name == 'push' || github.event.inputs.platform == 'all' || github.event.inputs.platform == 'ios' }}
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 90
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      EAS_BUILD_NO_EXPO_GO_WARNING: "true"
+      # This bundle id previously failed EAS capability sync for APPLE_ID_AUTH;
+      # the app does not need EAS to modify entitlements during CI store builds.
+      EXPO_NO_CAPABILITY_SYNC: "1"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - uses: pnpm/action-setup@v6.0.9
+      - name: Verify required secrets
+        run: |
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "::error::Missing production secret EXPO_TOKEN. Create an Expo access token for the red-duck-labs account/org and add it to the production GitHub environment."
+            exit 1
+          fi
+          echo "This workflow also requires EAS-managed App Store Connect API credentials for App Store app 6782199873."
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Verify Expo authentication
+        run: pnpm dlx eas-cli@20.3.0 whoami
+        working-directory: mobile
+      - name: Build and submit iOS to App Store Connect
+        run: >
+          pnpm dlx eas-cli@20.3.0 build
+          --platform ios
+          --profile production
+          --auto-submit-with-profile production
+          --non-interactive
+          --wait
+        working-directory: mobile
