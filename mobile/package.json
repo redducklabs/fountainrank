@@ -14,6 +14,7 @@
   "dependencies": {
     "@expo/vector-icons": "^15.0.2",
     "@fountainrank/api-client": "workspace:*",
+    "@fountainrank/contributions": "workspace:*",
     "@logto/rn": "1.1.0",
     "@maplibre/maplibre-react-native": "11.3.4",
     "@react-native-async-storage/async-storage": "2.2.0",

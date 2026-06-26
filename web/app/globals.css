@@ -1,1 +1,62 @@
 @import "tailwindcss";
+
+@keyframes points-pop {
+  0% {
+    transform: scale(0.94);
+  }
+  55% {
+    transform: scale(1.08);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes water-squirt {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0) scale(0.5);
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--drop-x), var(--drop-y)) scale(0.85);
+  }
+}
+
+.water-drop {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border: 1px solid white;
+  border-radius: 9999px;
+  background: #5fc5f0;
+  animation: water-squirt 900ms ease-out both;
+}
+
+.water-drop-1 {
+  --drop-x: -42px;
+  --drop-y: -86px;
+}
+
+.water-drop-2 {
+  --drop-x: -20px;
+  --drop-y: -112px;
+}
+
+.water-drop-3 {
+  --drop-x: 0;
+  --drop-y: -124px;
+}
+
+.water-drop-4 {
+  --drop-x: 20px;
+  --drop-y: -112px;
+}
+
+.water-drop-5 {
+  --drop-x: 42px;
+  --drop-y: -86px;
+}

@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { POST, getClient, log } = vi.hoisted(() => ({
+const { POST, getClient, revalidatePath, log } = vi.hoisted(() => ({
   POST: vi.fn(),
   getClient: vi.fn(),
+  revalidatePath: vi.fn(),
   log: vi.fn(),
 }));
 vi.mock("server-only", () => ({}));
+vi.mock("next/cache", () => ({ revalidatePath }));
 vi.mock("../../lib/server/api", () => ({ getAuthedApiClientForAction: getClient }));
 vi.mock("../../lib/server/log", () => ({ log }));
 
@@ -49,6 +51,7 @@ describe("addFountain", () => {
       "/api/v1/fountains",
       expect.objectContaining({ body: { location: input.location, is_working: true } }),
     );
+    expect(revalidatePath).toHaveBeenCalledWith("/");
   });
 
   it("reads the duplicate id from the error side on 409", async () => {
@@ -113,5 +116,6 @@ describe("addFountain", () => {
         },
       }),
     );
+    expect(revalidatePath).toHaveBeenCalledWith("/");
   });
 });

@@ -48,3 +48,24 @@ export async function getViewer(requestId: string): Promise<Viewer> {
     return { state: "error" };
   }
 }
+
+export async function getViewerTotalPoints(requestId: string): Promise<number> {
+  let client: Awaited<ReturnType<typeof getAuthedApiClient>>;
+  try {
+    client = await getAuthedApiClient(requestId);
+  } catch {
+    return 0;
+  }
+  try {
+    const { data, response } = await client.GET("/api/v1/me/contributions");
+    if (data) return data.stats.total_points;
+    log("warn", "viewer /me/contributions failed", {
+      requestId,
+      status: response?.status ?? 0,
+    });
+    return 0;
+  } catch (err) {
+    log("warn", "viewer /me/contributions error", { requestId, reason: (err as Error).name });
+    return 0;
+  }
+}

@@ -1,4 +1,5 @@
 "use server";
+import { revalidatePath } from "next/cache";
 import type { components } from "@fountainrank/api-client";
 import { getAuthedApiClientForAction } from "../../lib/server/api";
 import { log } from "../../lib/server/log";
@@ -31,6 +32,7 @@ export async function addFountain(input: AddFountainInput): Promise<AddFountainR
     const status = response?.status ?? 0;
     if (status === 201 && data) {
       const fountainId = (data as components["schemas"]["FountainDetail"]).id;
+      revalidatePath("/");
       log("info", "add-fountain", { requestId, outcome: "created", status });
       return { ok: true, fountainId };
     }

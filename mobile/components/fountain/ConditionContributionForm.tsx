@@ -1,4 +1,5 @@
 import type { components } from "@fountainrank/api-client";
+import { conditionPointsPreview } from "@fountainrank/contributions";
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
@@ -9,7 +10,6 @@ import {
   contributionErrorText,
   PROBLEM_CONDITION_STATUSES,
 } from "../../lib/contributions/state";
-import { conditionPointsPreview } from "../../lib/contributions/points";
 import { colors, spacing, typography } from "../../theme";
 import { ContributionMessage, PointsPreview, SubmitButton } from "./RatingContributionForm";
 

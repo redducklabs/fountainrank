@@ -65,7 +65,10 @@ async function run(
       fountainId,
       status,
     });
-    if (result.ok) revalidatePath(`/fountains/${fountainId}`);
+    if (result.ok) {
+      revalidatePath(`/fountains/${fountainId}`);
+      revalidatePath("/");
+    }
     return result;
   } catch (err) {
     log("warn", "contribute action error", {
@@ -127,6 +130,32 @@ export async function submitNote(fountainId: string, body: string): Promise<Acti
     client.POST("/api/v1/fountains/{fountain_id}/notes", {
       params: { path: { fountain_id: fountainId } },
       body: { body: trimmed },
+    }),
+  );
+}
+
+export async function submitAttributes(
+  fountainId: string,
+  observations: { attribute_type_id: number; value: string }[],
+): Promise<ActionResult> {
+  if (!UUID_RE.test(fountainId)) return fail("validation");
+  if (
+    !Array.isArray(observations) ||
+    observations.length === 0 ||
+    !observations.every(
+      (o) =>
+        Number.isInteger(o?.attribute_type_id) &&
+        o.attribute_type_id > 0 &&
+        typeof o.value === "string" &&
+        o.value.trim().length > 0,
+    )
+  ) {
+    return fail("validation");
+  }
+  return run(fountainId, "attributes", (client) =>
+    client.POST("/api/v1/fountains/{fountain_id}/attributes", {
+      params: { path: { fountain_id: fountainId } },
+      body: { observations: observations.map((o) => ({ ...o, value: o.value.trim() })) },
     }),
   );
 }

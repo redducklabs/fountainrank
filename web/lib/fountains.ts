@@ -7,8 +7,9 @@ export type FountainPin = components["schemas"]["FountainPin"];
 export type FountainDetail = components["schemas"]["FountainDetail"];
 export type DimensionSummary = components["schemas"]["DimensionSummary"];
 export type NoteOut = components["schemas"]["NoteOut"];
+export type BboxResult = { pins: FountainPin[]; truncated: boolean };
 
-export async function fetchBbox(params: BboxParams, requestId?: string): Promise<FountainPin[]> {
+export async function fetchBbox(params: BboxParams, requestId?: string): Promise<BboxResult> {
   const client = requestId
     ? makeClient(resolveApiBaseUrl(), { headers: { "X-Request-ID": requestId } })
     : getApiClient();
@@ -19,7 +20,10 @@ export async function fetchBbox(params: BboxParams, requestId?: string): Promise
     const status = response?.status ?? 0;
     throw new Error(`bbox request failed (status ${status})`);
   }
-  return data ?? [];
+  return {
+    pins: data ?? [],
+    truncated: response?.headers.get("x-fountainrank-truncated") === "true",
+  };
 }
 
 export async function getFountainDetailServer(id: string, requestId: string) {

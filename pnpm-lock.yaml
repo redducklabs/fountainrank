@@ -23,6 +23,9 @@ importers:
       '@fountainrank/api-client':
         specifier: workspace:*
         version: link:../packages/api-client
+      '@fountainrank/contributions':
+        specifier: workspace:*
+        version: link:../packages/contributions
       '@logto/rn':
         specifier: 1.1.0
         version: 1.1.0(@react-native-async-storage/async-storage@2.2.0(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.0(@babel/core@7.29.7))(@types/react@19.2.17)(react@19.2.3)(supports-color@10.2.2)))(expo-crypto@56.0.4(expo@56.0.12))(expo-secure-store@56.0.4(expo@56.0.12))(expo-web-browser@56.0.5(expo@56.0.12)(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.0(@babel/core@7.29.7))(@types/react@19.2.17)(react@19.2.3)(supports-color@10.2.2)))(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.0(@babel/core@7.29.7))(@types/react@19.2.17)(react@19.2.3)(supports-color@10.2.2))
@@ -134,11 +137,32 @@ importers:
         specifier: 4.1.9
         version: 4.1.9(@types/node@22.19.21)(jsdom@29.1.1)(vite@8.0.16(@types/node@22.19.21)(jiti@2.7.0)(terser@5.48.0)(yaml@2.9.0))
 
+  packages/contributions:
+    devDependencies:
+      eslint:
+        specifier: 9.39.4
+        version: 9.39.4(jiti@2.7.0)
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      typescript-eslint:
+        specifier: 8.61.1
+        version: 8.61.1(eslint@9.39.4(jiti@2.7.0))(typescript@6.0.3)
+      vite:
+        specifier: 8.0.16
+        version: 8.0.16(@types/node@22.19.21)(jiti@2.7.0)(terser@5.48.0)(yaml@2.9.0)
+      vitest:
+        specifier: 4.1.9
+        version: 4.1.9(@types/node@22.19.21)(jsdom@29.1.1)(vite@8.0.16(@types/node@22.19.21)(jiti@2.7.0)(terser@5.48.0)(yaml@2.9.0))
+
   web:
     dependencies:
       '@fountainrank/api-client':
         specifier: workspace:*
         version: link:../packages/api-client
+      '@fountainrank/contributions':
+        specifier: workspace:*
+        version: link:../packages/contributions
       '@logto/next':
         specifier: 4.2.10
         version: 4.2.10(next@16.2.9(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))

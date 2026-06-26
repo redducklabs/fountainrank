@@ -2,8 +2,10 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { components } from "@fountainrank/api-client";
+import { conditionPointsPreview } from "@fountainrank/contributions";
 import { submitCondition } from "../../app/actions/contribute";
 import { conditionStatusLabel } from "../../lib/map/format";
+import { PointsPreview } from "../contributions/PointsPreview";
 import { errorText } from "./contributeError";
 
 type ConditionStatus = components["schemas"]["ConditionReportRequest"]["status"];
@@ -29,6 +31,7 @@ export function ConditionForm({ fountainId }: { fountainId: string }) {
       const res = await submitCondition(fountainId, status);
       if (res.ok) {
         setMsg({ tone: "ok", text: "Thanks — your report was saved." });
+        window.dispatchEvent(new Event("fountainrank:contribution"));
         router.refresh();
       } else {
         setMsg({ tone: "err", text: errorText(res.error) });
@@ -84,6 +87,9 @@ export function ConditionForm({ fountainId }: { fountainId: string }) {
           </button>
         </div>
       )}
+      <div className="mt-3">
+        <PointsPreview lines={conditionPointsPreview(showProblems ? "problem" : "working")} />
+      </div>
       {msg && (
         <p
           role="status"

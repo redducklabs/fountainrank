@@ -1,7 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "expo-router";
-import { useEffect, useMemo, useReducer, useState } from "react";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
+  AccessibilityInfo,
+  Animated,
   ActivityIndicator,
   Pressable,
   ScrollView,
@@ -12,6 +14,7 @@ import {
 } from "react-native";
 
 import type { components } from "@fountainrank/api-client";
+import { addFountainPointsPreview, totalPreviewPoints } from "@fountainrank/contributions";
 
 import { FountainMap } from "../../components/map/FountainMap";
 import { AttributeFields } from "../../components/add-fountain/AttributeFields";
@@ -30,6 +33,7 @@ import {
   boundFromFix,
   canPlace,
   inBound,
+  nudgePoint,
   type LngLat,
   type ViewportBounds,
 } from "../../lib/add-fountain/placement";
@@ -46,7 +50,6 @@ import {
 import { isMapConfigured } from "../../lib/config";
 import { isAtCap, normalizeBounds, type RawBounds, shouldLoadPins } from "../../lib/map/bounds";
 import { DEFAULT_ZOOM, PLACE_MIN_ZOOM } from "../../lib/map/constants";
-import { addFountainPointsPreview, totalPreviewPoints } from "../../lib/contributions/points";
 import {
   buildBboxQuery,
   DEFAULT_FILTERS,
@@ -62,6 +65,7 @@ import { colors, spacing, typography } from "../../theme";
 type FountainPin = components["schemas"]["FountainPin"];
 type AttributeTypeOut = components["schemas"]["AttributeTypeOut"];
 type RatingTypeOut = components["schemas"]["RatingTypeOut"];
+type BboxResult = { pins: FountainPin[]; truncated: boolean };
 
 export default function MapScreen() {
   const { client, config } = useApi();
@@ -73,6 +77,7 @@ export default function MapScreen() {
   const [filters, setFilters] = useState<FountainFilters>(DEFAULT_FILTERS);
   const [region, setRegion] = useState<{ bounds: RawBounds; zoom: number } | null>(null);
   const [recenterKey, setRecenterKey] = useState(0);
+  const [recenterZoom, setRecenterZoom] = useState<number | undefined>();
   const [addState, addDispatch] = useReducer(addFountainReducer, initialAddFountainState);
   const [ratings, setRatings] = useState<Record<number, number | undefined>>({});
   const [attributes, setAttributes] = useState<Record<number, string | undefined>>({});
@@ -80,6 +85,11 @@ export default function MapScreen() {
   const [showMoreDetails, setShowMoreDetails] = useState(false);
   const [addMessage, setAddMessage] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
   const [addMode, setAddMode] = useState(false);
+  const [toast, setToast] = useState<{ tone: "err" | "ok"; text: string; nonce: number } | null>(
+    null,
+  );
+  const [celebrationKey, setCelebrationKey] = useState(0);
+  const regionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const gate = addFountainGate(auth.status);
 
   const norm = region ? normalizeBounds(region.bounds) : null;
@@ -90,12 +100,16 @@ export default function MapScreen() {
   const pinsQuery = useQuery({
     queryKey: params ? fountainsQueryKey(params, filters) : ["fountains", "bbox", "idle"],
     enabled,
-    queryFn: async (): Promise<FountainPin[]> =>
-      unwrap(
-        await client.GET("/api/v1/fountains/bbox", {
-          params: { query: buildBboxQuery(params!, filters) },
-        }),
-      ),
+    placeholderData: keepPreviousData,
+    queryFn: async (): Promise<BboxResult> => {
+      const result = await client.GET("/api/v1/fountains/bbox", {
+        params: { query: buildBboxQuery(params!, filters) },
+      });
+      return {
+        pins: unwrap(result),
+        truncated: result.response?.headers.get("x-fountainrank-truncated") === "true",
+      };
+    },
   });
 
   const contributionsQuery = useQuery({
@@ -103,6 +117,15 @@ export default function MapScreen() {
     enabled: auth.status === "authenticated",
     queryFn: async () => unwrap(await client.GET("/api/v1/me/contributions")),
   });
+  const refetchContributions = contributionsQuery.refetch;
+
+  useFocusEffect(
+    useCallback(() => {
+      if (auth.status === "authenticated") {
+        void refetchContributions();
+      }
+    }, [auth.status, refetchContributions]),
+  );
 
   const ratingTypesQuery = useQuery({
     queryKey: ["rating-types"],
@@ -138,9 +161,14 @@ export default function MapScreen() {
       void queryClient.invalidateQueries({ queryKey: ["me", "contributions"] });
       if (result.ok) {
         void queryClient.invalidateQueries({ queryKey: ["fountain", result.fountainId] });
+        setCelebrationKey((key) => key + 1);
       }
     },
   });
+
+  const showToast = useCallback((tone: "err" | "ok", text: string) => {
+    setToast({ tone, text, nonce: Date.now() });
+  }, []);
 
   const resetAddDraft = () => {
     addDispatch({ type: "reset" });
@@ -167,12 +195,23 @@ export default function MapScreen() {
     addDispatch({ type: "setBound", bound: boundFromFix(fix, bounds) });
   }, [addMode, location.coords, region]);
 
+  useEffect(() => {
+    return () => {
+      if (regionTimerRef.current) clearTimeout(regionTimerRef.current);
+    };
+  }, []);
+
   // FountainPin[] is directly assignable to PinInput[] (ranking_score/current_status
   // are optional), so no per-pin normalization is needed at the call site.
   const featureCollection = useMemo(
-    () => pinsToFeatureCollection(pinsQuery.data ?? []),
+    () => pinsToFeatureCollection(pinsQuery.data?.pins ?? []),
     [pinsQuery.data],
   );
+
+  const setRegionDebounced = useCallback((bounds: RawBounds, z: number) => {
+    if (regionTimerRef.current) clearTimeout(regionTimerRef.current);
+    regionTimerRef.current = setTimeout(() => setRegion({ bounds, zoom: z }), 250);
+  }, []);
 
   // Honest "map unavailable" state when no basemap style URL is configured.
   if (!isMapConfigured(config)) {
@@ -187,7 +226,8 @@ export default function MapScreen() {
   }
 
   const belowZoom = region != null && !shouldLoadPins(zoom);
-  const capped = pinsQuery.data != null && isAtCap(pinsQuery.data.length);
+  const capped =
+    pinsQuery.data != null && (pinsQuery.data.truncated || isAtCap(pinsQuery.data.pins.length));
   // Reuse the shared resolver so offline-vs-error classification stays single-sourced.
   // isLoading (= isPending && isFetching) is true only on the FIRST load, so a
   // background refetch doesn't flash the spinner. `isEmpty` is gated on isSuccess so
@@ -198,8 +238,23 @@ export default function MapScreen() {
     isLoading: enabled && pinsQuery.isLoading,
     isError: pinsQuery.isError,
     error: pinsQuery.error,
-    isEmpty: pinsQuery.isSuccess && (pinsQuery.data?.length ?? 0) === 0,
+    isEmpty: pinsQuery.isSuccess && (pinsQuery.data?.pins.length ?? 0) === 0,
   });
+
+  const enterAddMode = () => {
+    resetAddDraft();
+    setAddMode(true);
+    if (location.coords) {
+      setRecenterZoom(PLACE_MIN_ZOOM);
+      setRecenterKey((key) => key + 1);
+    } else if (location.status === "denied" || location.status === "unavailable") {
+      showToast("err", "Location is unavailable, so placement is limited to this map area.");
+    }
+  };
+
+  const rejectOutOfArea = () => {
+    showToast("err", "You can only add fountains near your current location.");
+  };
 
   return (
     <View style={styles.fill}>
@@ -208,14 +263,22 @@ export default function MapScreen() {
         featureCollection={featureCollection}
         userCoords={location.coords}
         recenterKey={recenterKey}
+        recenterZoom={recenterZoom}
         showUserLocation={location.status === "granted"}
-        onRegionChange={(bounds, z) => setRegion({ bounds, zoom: z })}
+        onRegionChange={setRegionDebounced}
         onPinPress={(id) => router.push(`/fountains/${id}`)}
         draftPin={addState.pin}
         onMapPressForPlacement={
           gate.state === "ready" && addMode && addState.phase === "placing"
             ? (point) => {
-                if (!canPlace(region?.zoom ?? 0, addState.bound)) return;
+                if (!canPlace(region?.zoom ?? 0, addState.bound)) {
+                  rejectOutOfArea();
+                  return;
+                }
+                if (addState.bound && !inBound(point, addState.bound)) {
+                  rejectOutOfArea();
+                  return;
+                }
                 setAddMessage(null);
                 addDispatch({ type: "dropPin", point });
               }
@@ -228,11 +291,7 @@ export default function MapScreen() {
       </View>
 
       {auth.status === "authenticated" ? (
-        <View style={styles.pointsChip}>
-          <Text style={styles.pointsText}>
-            {contributionsQuery.data?.stats.total_points ?? 0} pts
-          </Text>
-        </View>
+        <PointsChip total={contributionsQuery.data?.stats.total_points ?? 0} />
       ) : null}
 
       {location.coords ? (
@@ -251,8 +310,7 @@ export default function MapScreen() {
         accessibilityLabel="Add a fountain"
         onPress={() => {
           if (gate.state === "ready") {
-            resetAddDraft();
-            setAddMode(true);
+            enterAddMode();
           } else if (gate.state === "sign_in" || gate.state === "reauth") {
             void auth.signIn();
           }
@@ -282,7 +340,13 @@ export default function MapScreen() {
           onSetComments={setComments}
           onToggleMore={() => setShowMoreDetails((current) => !current)}
           onUseCurrentLocation={() => {
-            if (!location.coords) return;
+            if (!location.coords) {
+              showToast(
+                "err",
+                "Location is unavailable, so placement is limited to this map area.",
+              );
+              return;
+            }
             setAddMessage(null);
             addDispatch({
               type: "dropPin",
@@ -291,13 +355,24 @@ export default function MapScreen() {
           }}
           onPlaceAtCenter={() => {
             if (!region) return;
+            const point = centerOfBounds(region.bounds);
+            if (addState.bound && !inBound(point, addState.bound)) {
+              rejectOutOfArea();
+              return;
+            }
             setAddMessage(null);
-            addDispatch({
-              type: "dropPin",
-              point: centerOfBounds(region.bounds),
-            });
+            addDispatch({ type: "dropPin", point });
           }}
-          onNudge={(direction) => addDispatch({ type: "nudge", direction })}
+          onNudge={(direction) => {
+            if (addState.pin && addState.bound) {
+              const next = nudgePoint(addState.pin, direction);
+              if (!inBound(next, addState.bound)) {
+                rejectOutOfArea();
+                return;
+              }
+            }
+            addDispatch({ type: "nudge", direction });
+          }}
           onNext={() => addDispatch({ type: "next" })}
           onBack={() => addDispatch({ type: "back" })}
           onSetWorking={(isWorking) => addDispatch({ type: "setWorking", isWorking })}
@@ -355,6 +430,134 @@ export default function MapScreen() {
         capped={capped}
         onRetry={() => void pinsQuery.refetch()}
       />
+      <MobileToast toast={toast} onDismiss={() => setToast(null)} />
+      <WaterCelebration triggerKey={celebrationKey} />
+    </View>
+  );
+}
+
+function PointsChip({ total }: { total: number }) {
+  const [scale] = useState(() => new Animated.Value(0.94));
+  const [display, setDisplay] = useState(total);
+
+  useEffect(() => {
+    let cancelled = false;
+    AccessibilityInfo.isReduceMotionEnabled()
+      .then((reduce) => {
+        if (cancelled) return;
+        if (reduce) {
+          setDisplay(total);
+          return;
+        }
+        setDisplay(0);
+        const steps = 12;
+        let frame = 0;
+        const timer = setInterval(() => {
+          frame += 1;
+          setDisplay(Math.round((total * frame) / steps));
+          if (frame >= steps) clearInterval(timer);
+        }, 30);
+        Animated.sequence([
+          Animated.spring(scale, { toValue: 1.08, useNativeDriver: true }),
+          Animated.spring(scale, { toValue: 1, useNativeDriver: true }),
+        ]).start();
+      })
+      .catch(() => setDisplay(total));
+    return () => {
+      cancelled = true;
+    };
+  }, [scale, total]);
+
+  return (
+    <Animated.View style={[styles.pointsChip, { transform: [{ scale }] }]}>
+      <Text style={styles.pointsLabel}>Points</Text>
+      <Text style={styles.pointsText}>{display}</Text>
+    </Animated.View>
+  );
+}
+
+function MobileToast({
+  toast,
+  onDismiss,
+}: {
+  toast: { tone: "err" | "ok"; text: string; nonce: number } | null;
+  onDismiss: () => void;
+}) {
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(onDismiss, 3200);
+    AccessibilityInfo.announceForAccessibility(toast.text);
+    return () => clearTimeout(timer);
+  }, [onDismiss, toast]);
+
+  if (!toast) return null;
+  return (
+    <View
+      accessibilityRole="alert"
+      style={[styles.toast, toast.tone === "err" ? styles.toastErr : styles.toastOk]}
+    >
+      <Text style={styles.toastText}>{toast.text}</Text>
+    </View>
+  );
+}
+
+function WaterCelebration({ triggerKey }: { triggerKey: number }) {
+  const [progress] = useState(() => new Animated.Value(0));
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    if (triggerKey === 0) return;
+    let cancelled = false;
+    AccessibilityInfo.isReduceMotionEnabled()
+      .then((reduce) => {
+        if (cancelled || reduce) return;
+        setVisible(true);
+        progress.setValue(0);
+        Animated.timing(progress, {
+          toValue: 1,
+          duration: 900,
+          useNativeDriver: true,
+        }).start(() => setVisible(false));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [progress, triggerKey]);
+
+  if (!visible) return null;
+  const droplets = [-36, -18, 0, 18, 36];
+  return (
+    <View pointerEvents="none" style={styles.celebration}>
+      {droplets.map((x, index) => (
+        <Animated.View
+          key={`${triggerKey}-${x}`}
+          style={[
+            styles.droplet,
+            {
+              opacity: progress.interpolate({
+                inputRange: [0, 0.2, 1],
+                outputRange: [0, 1, 0],
+              }),
+              transform: [
+                { translateX: progress.interpolate({ inputRange: [0, 1], outputRange: [0, x] }) },
+                {
+                  translateY: progress.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0, -72 - index * 8],
+                  }),
+                },
+                {
+                  scale: progress.interpolate({
+                    inputRange: [0, 0.4, 1],
+                    outputRange: [0.4, 1, 0.7],
+                  }),
+                },
+              ],
+            },
+          ]}
+        />
+      ))}
     </View>
   );
 }
@@ -716,14 +919,17 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: spacing.lg + 44,
     right: spacing.md,
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: 999,
+    backgroundColor: colors.brandBlue,
+    borderColor: colors.brandYellow,
+    borderWidth: 2,
+    borderRadius: 8,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    paddingVertical: spacing.xs,
+    minWidth: 86,
+    alignItems: "center",
   },
-  pointsText: { ...typography.meta, color: colors.brandBlue, fontWeight: "700" },
+  pointsLabel: { ...typography.meta, color: colors.onBrand, fontWeight: "700" },
+  pointsText: { fontSize: 22, lineHeight: 26, color: colors.brandYellow, fontWeight: "800" },
   locate: {
     position: "absolute",
     right: spacing.md,
@@ -820,15 +1026,15 @@ const styles = StyleSheet.create({
   },
   textArea: { minHeight: 88, textAlignVertical: "top" },
   pointsPreview: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderWidth: 1,
+    backgroundColor: "#EFF6FF",
+    borderColor: colors.brandBlue,
+    borderWidth: 2,
     borderRadius: 8,
     padding: spacing.sm,
     gap: spacing.xs,
   },
-  pointsPreviewTitle: { ...typography.body, color: colors.brandBlue, fontWeight: "700" },
-  pointsPreviewLine: { ...typography.meta, color: colors.textMuted },
+  pointsPreviewTitle: { ...typography.heading, color: colors.brandBlue, fontWeight: "800" },
+  pointsPreviewLine: { ...typography.meta, color: colors.text, fontWeight: "600" },
   disabled: { opacity: 0.5 },
   pressed: { opacity: 0.8 },
   message: { ...typography.meta },
@@ -849,6 +1055,35 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   bannerText: { ...typography.meta, color: colors.text },
+  toast: {
+    position: "absolute",
+    left: spacing.md,
+    right: spacing.md,
+    top: spacing.lg,
+    borderRadius: 8,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderWidth: 1,
+  },
+  toastErr: { backgroundColor: "#FEE2E2", borderColor: colors.danger },
+  toastOk: { backgroundColor: "#D1FAE5", borderColor: "#047857" },
+  toastText: { ...typography.body, color: colors.text, fontWeight: "700" },
+  celebration: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 82,
+    alignItems: "center",
+  },
+  droplet: {
+    position: "absolute",
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: "#5FC5F0",
+    borderColor: colors.onBrand,
+    borderWidth: 1,
+  },
   title: { ...typography.title, color: colors.brandBlue },
   note: { ...typography.body, color: colors.textMuted },
 });

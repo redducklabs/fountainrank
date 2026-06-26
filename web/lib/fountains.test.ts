@@ -24,9 +24,22 @@ describe("fetchBbox", () => {
     bboxGet.mockResolvedValueOnce({
       data: [{ id: "a" }],
       error: undefined,
-      response: { ok: true, status: 200 },
+      response: { ok: true, status: 200, headers: new Headers({}) },
     });
-    expect(await fetchBbox(PARAMS)).toEqual([{ id: "a" }]);
+    expect(await fetchBbox(PARAMS)).toEqual({ pins: [{ id: "a" }], truncated: false });
+  });
+
+  it("returns the authoritative truncation header", async () => {
+    bboxGet.mockResolvedValueOnce({
+      data: [{ id: "a" }],
+      error: undefined,
+      response: {
+        ok: true,
+        status: 200,
+        headers: new Headers({ "x-fountainrank-truncated": "true" }),
+      },
+    });
+    expect(await fetchBbox(PARAMS)).toEqual({ pins: [{ id: "a" }], truncated: true });
   });
 
   it("throws with status context when the API returns a non-2xx error", async () => {

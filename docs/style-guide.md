@@ -238,6 +238,46 @@ When multiple fountains are close together at low zoom, they collapse into a clu
 Replaces the tall hero band introduced in Phase 3a. A shared **server component** that renders a
 narrow brand bar on every full-page route and an optional one-line tagline on the map page.
 
+### Points badge
+
+Used on the authenticated web and mobile map/home surfaces.
+
+- High-emphasis score treatment: brand-blue background (`#0A357E`), gold border/text
+  (`#F2C200`), compact `8px` radius, tabular numeric points.
+- Label reads `Points`; the numeric total is the visual focus.
+- On entry/update, the badge may pulse or count up once. Respect reduced-motion preferences and
+  keep the numeric value visible without animation.
+
+### Possible-points preview
+
+Used in add/rate/condition/note/detail contribution flows.
+
+- Container: light blue fill (`blue-50` / `#EFF6FF`), brand-blue 2px border, `8px` radius.
+- Title format: `+N possible points`, bold brand-blue text.
+- Supporting lines list each award source in smaller semibold text. Conditional bonus lines append
+  `(conditional)`.
+- The preview is informational only; form validity still comes from the contribution fields.
+
+### Contribution celebration
+
+A short water-squirt/droplet animation shown after successful contribution writes on web and
+mobile.
+
+- Droplets use Water cyan (`#5FC5F0`) with a white edge and animate upward from the lower center of
+  the active surface.
+- The animation is decorative (`aria-hidden` on web) and must not be the only success signal.
+- Respect reduced-motion settings: suppress the droplet motion while still showing the normal
+  success message and refreshed points total.
+
+### Mobile placement toast
+
+Used for add-fountain placement errors, especially out-of-area taps.
+
+- Error toast: red-tinted surface (`#FEE2E2`) with danger border (`#B91C1C`), `8px` radius, bold
+  readable body text.
+- Appears near the top of the map, auto-dismisses, and announces through accessibility APIs.
+- Use for actionable placement feedback; keep inline panel messages for form submission errors.
+
 **Variants** — controlled by a `variant: "hero" | "bar"` prop:
 
 | Variant | Use                                                                    | Extra content                                                       |

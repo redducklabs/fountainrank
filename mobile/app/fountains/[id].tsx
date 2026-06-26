@@ -1,8 +1,17 @@
 import type { components } from "@fountainrank/api-client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Stack, useLocalSearchParams } from "expo-router";
-import { useState } from "react";
-import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useEffect, useState } from "react";
+import {
+  AccessibilityInfo,
+  Animated,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 
 import { AttributeContributionForm } from "../../components/fountain/AttributeContributionForm";
 import { ConditionContributionForm } from "../../components/fountain/ConditionContributionForm";
@@ -46,6 +55,7 @@ export default function FountainDetailScreen() {
   const auth = useAuth();
   const queryClient = useQueryClient();
   const [showMoreDetails, setShowMoreDetails] = useState(false);
+  const [celebrationKey, setCelebrationKey] = useState(0);
   const { id } = useLocalSearchParams<{ id: string | string[] }>();
   // Reject absent/array/malformed (non-UUID) ids client-side — the backend route
   // param is a uuid.UUID, so a bad value would 422; show the honest not-found state.
@@ -94,6 +104,7 @@ export default function FountainDetailScreen() {
     }
     void queryClient.invalidateQueries({ queryKey: ["fountains", "bbox"] });
     void queryClient.invalidateQueries({ queryKey: ["me", "contributions"] });
+    setCelebrationKey((key) => key + 1);
   };
 
   const handleMutationError = (error: unknown): SubmitResult => {
@@ -157,6 +168,7 @@ export default function FountainDetailScreen() {
       void notesQuery.refetch();
       void detailQuery.refetch();
       void queryClient.invalidateQueries({ queryKey: ["me", "contributions"] });
+      setCelebrationKey((key) => key + 1);
     },
   });
 
@@ -278,8 +290,69 @@ export default function FountainDetailScreen() {
             />
           ) : null}
         </ScrollView>
+        <WaterCelebration triggerKey={celebrationKey} />
       </QueryStateView>
     </ScreenContainer>
+  );
+}
+
+function WaterCelebration({ triggerKey }: { triggerKey: number }) {
+  const [progress] = useState(() => new Animated.Value(0));
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    if (triggerKey === 0) return;
+    let cancelled = false;
+    AccessibilityInfo.isReduceMotionEnabled()
+      .then((reduce) => {
+        if (cancelled || reduce) return;
+        setVisible(true);
+        progress.setValue(0);
+        Animated.timing(progress, {
+          toValue: 1,
+          duration: 900,
+          useNativeDriver: true,
+        }).start(() => setVisible(false));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [progress, triggerKey]);
+
+  if (!visible) return null;
+  return (
+    <View pointerEvents="none" style={styles.celebration}>
+      {[-36, -18, 0, 18, 36].map((x, index) => (
+        <Animated.View
+          key={`${triggerKey}-${x}`}
+          style={[
+            styles.droplet,
+            {
+              opacity: progress.interpolate({
+                inputRange: [0, 0.2, 1],
+                outputRange: [0, 1, 0],
+              }),
+              transform: [
+                { translateX: progress.interpolate({ inputRange: [0, 1], outputRange: [0, x] }) },
+                {
+                  translateY: progress.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0, -72 - index * 8],
+                  }),
+                },
+                {
+                  scale: progress.interpolate({
+                    inputRange: [0, 0.4, 1],
+                    outputRange: [0.4, 1, 0.7],
+                  }),
+                },
+              ],
+            },
+          ]}
+        />
+      ))}
+    </View>
   );
 }
 
@@ -300,4 +373,20 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   secondaryButtonText: { ...typography.body, color: colors.brandBlue, fontWeight: "700" },
+  celebration: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 64,
+    alignItems: "center",
+  },
+  droplet: {
+    position: "absolute",
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: "#5FC5F0",
+    borderColor: colors.onBrand,
+    borderWidth: 1,
+  },
 });

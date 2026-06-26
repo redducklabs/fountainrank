@@ -1,3 +1,18 @@
+import pytest
+
+from app.config import Settings, get_settings
+from app.main import app
+
+
+@pytest.fixture
+def settings_override():
+    def _apply(**kwargs):
+        app.dependency_overrides[get_settings] = lambda: Settings(**kwargs)
+
+    yield _apply
+    app.dependency_overrides.pop(get_settings, None)
+
+
 async def _add(client, lat, lng):
     resp = await client.post(
         "/api/v1/fountains", json={"location": {"latitude": lat, "longitude": lng}}
@@ -73,6 +88,31 @@ async def test_bbox_pin_includes_ranking_score(client):
     assert resp.status_code == 200
     pin = next(p for p in resp.json() if p["id"] == fid)
     assert "ranking_score" in pin and pin["ranking_score"] is not None
+
+
+async def test_bbox_returns_explicit_truncation_header(client, settings_override):
+    settings_override(max_results=2)
+    for i in range(3):
+        await _add(client, 37.70 + i * 0.001, -122.40)
+    resp = await client.get(
+        "/api/v1/fountains/bbox",
+        params={"min_lat": 37.0, "min_lng": -123.0, "max_lat": 38.0, "max_lng": -122.0},
+    )
+    assert resp.status_code == 200
+    assert len(resp.json()) == 2
+    assert resp.headers["x-fountainrank-truncated"] == "true"
+
+
+async def test_bbox_false_truncation_header_when_under_cap(client, settings_override):
+    settings_override(max_results=2)
+    await _add(client, 37.70, -122.40)
+    resp = await client.get(
+        "/api/v1/fountains/bbox",
+        params={"min_lat": 37.0, "min_lng": -123.0, "max_lat": 38.0, "max_lng": -122.0},
+    )
+    assert resp.status_code == 200
+    assert len(resp.json()) == 1
+    assert resp.headers["x-fountainrank-truncated"] == "false"
 
 
 async def test_nearby_pin_includes_ranking_score(client):

@@ -1,9 +1,9 @@
 import type { components } from "@fountainrank/api-client";
+import { attributePointsPreview } from "@fountainrank/contributions";
 import { useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { attributeOptions, buildAttributePayload } from "../../lib/contributions/payloads";
-import { attributePointsPreview } from "../../lib/contributions/points";
 import type { ContributionError } from "../../lib/contributions/state";
 import { contributionErrorText } from "../../lib/contributions/state";
 import { formatCategory, attributeValueLabel } from "../../lib/map/format";
