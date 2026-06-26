@@ -2,6 +2,7 @@ import "server-only";
 import { getLogtoContext } from "@logto/next/server-actions";
 import { getLogtoConfig } from "../logto";
 import { getAuthedApiClient } from "./api";
+import { getTotalPointsFromClient } from "./contributions";
 import { log } from "./log";
 
 export type Viewer =
@@ -56,16 +57,6 @@ export async function getViewerTotalPoints(requestId: string): Promise<number> {
   } catch {
     return 0;
   }
-  try {
-    const { data, response } = await client.GET("/api/v1/me/contributions");
-    if (data) return data.stats.total_points;
-    log("warn", "viewer /me/contributions failed", {
-      requestId,
-      status: response?.status ?? 0,
-    });
-    return 0;
-  } catch (err) {
-    log("warn", "viewer /me/contributions error", { requestId, reason: (err as Error).name });
-    return 0;
-  }
+  const result = await getTotalPointsFromClient(client, requestId);
+  return result.ok ? result.totalPoints : 0;
 }

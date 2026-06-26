@@ -334,14 +334,13 @@ export default function MapBrowser({
   useEffect(() => {
     if (!isAuthenticated) return;
     let cancelled = false;
-    async function refreshPoints(celebrate: boolean) {
+    async function refreshPoints() {
       const result = await getMyContributionStats();
       if (cancelled || !result.ok) return;
       setTotalPoints(result.totalPoints);
-      if (celebrate) setCelebrationKey((key) => key + 1);
+      setCelebrationKey((key) => key + 1);
     }
-    void refreshPoints(false);
-    const onContribution = () => void refreshPoints(true);
+    const onContribution = () => void refreshPoints();
     window.addEventListener("fountainrank:contribution", onContribution);
     return () => {
       cancelled = true;

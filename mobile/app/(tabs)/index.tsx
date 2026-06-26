@@ -16,8 +16,9 @@ import {
 import type { components } from "@fountainrank/api-client";
 import { addFountainPointsPreview, totalPreviewPoints } from "@fountainrank/contributions";
 
-import { FountainMap } from "../../components/map/FountainMap";
 import { AttributeFields } from "../../components/add-fountain/AttributeFields";
+import { WaterCelebration } from "../../components/feedback/WaterCelebration";
+import { FountainMap } from "../../components/map/FountainMap";
 import { MapFilters } from "../../components/map/MapFilters";
 import { RatingFields } from "../../components/add-fountain/RatingFields";
 import { ScreenContainer } from "../../components/ScreenContainer";
@@ -298,7 +299,10 @@ export default function MapScreen() {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Center on my location"
-          onPress={() => setRecenterKey((k) => k + 1)}
+          onPress={() => {
+            setRecenterZoom(undefined);
+            setRecenterKey((k) => k + 1);
+          }}
           style={styles.locate}
         >
           <Text style={styles.locateGlyph}>◎</Text>
@@ -379,6 +383,7 @@ export default function MapScreen() {
           onCancel={() => {
             resetAddDraft();
             setAddMode(false);
+            setRecenterZoom(undefined);
           }}
           onSubmit={async () => {
             setAddMessage(null);
@@ -403,6 +408,7 @@ export default function MapScreen() {
               if (result.ok) {
                 addDispatch({ type: "created", fountainId: result.fountainId });
                 setAddMode(false);
+                setRecenterZoom(undefined);
                 router.push(`/fountains/${result.fountainId}`);
                 return;
               }
@@ -431,7 +437,7 @@ export default function MapScreen() {
         onRetry={() => void pinsQuery.refetch()}
       />
       <MobileToast toast={toast} onDismiss={() => setToast(null)} />
-      <WaterCelebration triggerKey={celebrationKey} />
+      <WaterCelebration triggerKey={celebrationKey} bottom={82} />
     </View>
   );
 }
@@ -442,6 +448,7 @@ function PointsChip({ total }: { total: number }) {
 
   useEffect(() => {
     let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
     AccessibilityInfo.isReduceMotionEnabled()
       .then((reduce) => {
         if (cancelled) return;
@@ -452,19 +459,26 @@ function PointsChip({ total }: { total: number }) {
         setDisplay(0);
         const steps = 12;
         let frame = 0;
-        const timer = setInterval(() => {
+        timer = setInterval(() => {
+          if (cancelled) return;
           frame += 1;
           setDisplay(Math.round((total * frame) / steps));
-          if (frame >= steps) clearInterval(timer);
+          if (frame >= steps && timer) {
+            clearInterval(timer);
+            timer = null;
+          }
         }, 30);
         Animated.sequence([
           Animated.spring(scale, { toValue: 1.08, useNativeDriver: true }),
           Animated.spring(scale, { toValue: 1, useNativeDriver: true }),
         ]).start();
       })
-      .catch(() => setDisplay(total));
+      .catch(() => {
+        if (!cancelled) setDisplay(total);
+      });
     return () => {
       cancelled = true;
+      if (timer) clearInterval(timer);
     };
   }, [scale, total]);
 
@@ -497,67 +511,6 @@ function MobileToast({
       style={[styles.toast, toast.tone === "err" ? styles.toastErr : styles.toastOk]}
     >
       <Text style={styles.toastText}>{toast.text}</Text>
-    </View>
-  );
-}
-
-function WaterCelebration({ triggerKey }: { triggerKey: number }) {
-  const [progress] = useState(() => new Animated.Value(0));
-  const [visible, setVisible] = useState(false);
-
-  useEffect(() => {
-    if (triggerKey === 0) return;
-    let cancelled = false;
-    AccessibilityInfo.isReduceMotionEnabled()
-      .then((reduce) => {
-        if (cancelled || reduce) return;
-        setVisible(true);
-        progress.setValue(0);
-        Animated.timing(progress, {
-          toValue: 1,
-          duration: 900,
-          useNativeDriver: true,
-        }).start(() => setVisible(false));
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [progress, triggerKey]);
-
-  if (!visible) return null;
-  const droplets = [-36, -18, 0, 18, 36];
-  return (
-    <View pointerEvents="none" style={styles.celebration}>
-      {droplets.map((x, index) => (
-        <Animated.View
-          key={`${triggerKey}-${x}`}
-          style={[
-            styles.droplet,
-            {
-              opacity: progress.interpolate({
-                inputRange: [0, 0.2, 1],
-                outputRange: [0, 1, 0],
-              }),
-              transform: [
-                { translateX: progress.interpolate({ inputRange: [0, 1], outputRange: [0, x] }) },
-                {
-                  translateY: progress.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [0, -72 - index * 8],
-                  }),
-                },
-                {
-                  scale: progress.interpolate({
-                    inputRange: [0, 0.4, 1],
-                    outputRange: [0.4, 1, 0.7],
-                  }),
-                },
-              ],
-            },
-          ]}
-        />
-      ))}
     </View>
   );
 }
@@ -1068,22 +1021,6 @@ const styles = StyleSheet.create({
   toastErr: { backgroundColor: "#FEE2E2", borderColor: colors.danger },
   toastOk: { backgroundColor: "#D1FAE5", borderColor: "#047857" },
   toastText: { ...typography.body, color: colors.text, fontWeight: "700" },
-  celebration: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 82,
-    alignItems: "center",
-  },
-  droplet: {
-    position: "absolute",
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: "#5FC5F0",
-    borderColor: colors.onBrand,
-    borderWidth: 1,
-  },
   title: { ...typography.title, color: colors.brandBlue },
   note: { ...typography.body, color: colors.textMuted },
 });

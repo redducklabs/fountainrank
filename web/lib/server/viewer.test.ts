@@ -11,7 +11,7 @@ vi.mock("@logto/next/server-actions", () => ({ getLogtoContext, getAccessTokenRS
 vi.mock("./api", () => ({ getAuthedApiClient }));
 vi.mock("../logto", () => ({ getLogtoConfig: () => ({}), API_RESOURCE: "https://api" }));
 
-import { getViewer } from "./viewer";
+import { getViewer, getViewerTotalPoints } from "./viewer";
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -66,5 +66,31 @@ describe("getViewer", () => {
     getLogtoContext.mockResolvedValue({ isAuthenticated: true });
     GET.mockRejectedValue(new Error("network"));
     expect(await getViewer("r1")).toEqual({ state: "error" });
+  });
+});
+
+describe("getViewerTotalPoints", () => {
+  it("returns 0 when token/session acquisition fails", async () => {
+    getAuthedApiClient.mockRejectedValue(new Error("no token"));
+    expect(await getViewerTotalPoints("r1")).toBe(0);
+    expect(GET).not.toHaveBeenCalled();
+  });
+
+  it("returns total points from contribution stats", async () => {
+    GET.mockResolvedValue({
+      data: { stats: { total_points: 42 } },
+      response: { status: 200 },
+    });
+    expect(await getViewerTotalPoints("r1")).toBe(42);
+  });
+
+  it("returns 0 when contribution stats fail", async () => {
+    GET.mockResolvedValue({ data: undefined, response: { status: 503 } });
+    expect(await getViewerTotalPoints("r1")).toBe(0);
+  });
+
+  it("returns 0 when contribution stats throw", async () => {
+    GET.mockRejectedValue(new Error("network"));
+    expect(await getViewerTotalPoints("r1")).toBe(0);
   });
 });
