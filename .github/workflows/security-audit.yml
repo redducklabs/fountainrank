@@ -42,7 +42,9 @@ jobs:
       - name: Install workspace deps
         run: pnpm install --frozen-lockfile
       - name: pnpm audit (GATE — fail on high/critical)
-        run: pnpm audit --audit-level high
+        # pnpm 11.7.0's audit command can hang indefinitely against this lockfile.
+        # Keep the same high/critical gate, but run the bounded audit via pnpm 10.
+        run: timeout 120 pnpm dlx pnpm@10.23.0 audit --audit-level high
 
   trivy-fs:
     runs-on: redducklabs-runners
