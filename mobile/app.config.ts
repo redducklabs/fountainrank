@@ -29,6 +29,7 @@ const config: ExpoConfig = {
     bundleIdentifier: "com.redducklabs.fountainrank",
     buildNumber: "1",
     infoPlist: {
+      ITSAppUsesNonExemptEncryption: false,
       NSLocationWhenInUseUsageDescription:
         "FountainRank uses your location to show nearby drinking fountains and to place a fountain you add.",
     },
