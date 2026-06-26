@@ -439,10 +439,10 @@ in a full standalone page (`web/app/fountains/[id]/page.tsx`).
 **Content (`FountainDetail`):**
 
 The panel renders (in document order): the **status block** (chip + advisory + trust line, see
-below) in place of the old standalone status chip; a **placement note** (`📍` prefix, shown only
-when `placement_note` is present); the **attribute consensus** group; a "from who added it"
-caption under the creator comment; the **community notes** section; and the **Contribute section**
-at the bottom (auth-gated write controls).
+below) in place of the old standalone status chip; the **attribute consensus** group; a
+single creator comment/context block (legacy `placement_note` text is used only when
+`comments` is empty); the **community notes** section; and the **Contribute section** at the
+bottom (auth-gated write controls).
 
 | Element                | Styling                                                                                                                                                                                |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -493,7 +493,7 @@ A "Community notes" section (heading styled as the attribute group heading). Eac
 (`rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700`) with the body, then a
 `text-xs text-slate-400` byline "— {author_display_name} · {relative time}" plus "· edited" when the
 note was edited. The section is omitted entirely when there are no notes. The author is always the
-backend's safe public `author_display_name`. User-generated free text (note body, placement note,
+backend's safe public `author_display_name`. User-generated free text (note body and
 creator comment) carries `break-words` so a long unbroken string (URL/token) can't overflow the
 narrow panel.
 
@@ -1024,9 +1024,11 @@ small-caps `<legend>`.
 
 ---
 
-### Comment textarea and placement-note input (add-fountain details step)
+### Comment textarea and More Details (add-fountain details step)
 
-Two optional free-text fields in the `DetailsStep` of the add-fountain panel.
+The add-fountain details step exposes basic details first: working status, rating
+dimensions, one optional `Comment` field, live points preview, and submit/back actions.
+Secondary structured observations sit behind a `More Details` button.
 
 **Comment textarea** (cap: 1000 characters):
 
@@ -1045,27 +1047,12 @@ Two optional free-text fields in the `DetailsStep` of the add-fountain panel.
 </label>
 ```
 
-**Placement-note input** (cap: 200 characters):
-
-```tsx
-<label className="mt-2 block">
-  <span className="text-sm font-semibold text-slate-700">Placement note (optional)</span>
-  <input
-    type="text"
-    maxLength={200}
-    value={placementNote}
-    onChange={(e) => onPlacementNote(e.target.value)}
-    className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-sm"
-    placeholder="e.g. Near the park entrance"
-  />
-  <span className="text-xs text-slate-400">{placementNote.length}/200</span>
-</label>
-```
-
-- Character counters shown below each field (`text-xs text-slate-400`).
-- `maxLength` enforces the cap at the HTML level in addition to client-side validation.
+- Comment is the only user-facing free-text field in add/contribution flows.
 - Whitespace-only values are treated as empty and omitted from the API payload.
-- Both fields are optional — omitting them does not affect submission.
+- `More Details` is a bordered secondary action. It reveals access, indoor/outdoor,
+  venue, bottle-filler, wheelchair, and other structured attribute controls.
+- Points preview is a compact bordered surface showing the possible point total and
+  each selected contribution line; conditional bonuses are labelled as conditional.
 
 ---
 
@@ -1231,11 +1218,12 @@ are deferred to 6e-5/6e-6.
   "— {author} · {relative time}" with " · edited" when `isNoteEdited` (pure).
   Renders nothing when empty.
 - **`FountainDetail`** (`mobile/components/fountain/FountainDetail.tsx`) — the
-  composed body: title "Public drinking fountain" + `StatusBlock`; optional
-  `📍` placement note; a large brand-blue rating average + muted vote count
+  composed body: title "Public drinking fountain" + `StatusBlock`; a large
+  brand-blue rating average + muted vote count
   (`formatAverage`/`formatVotes`); a per-dimension list (`formatDimension`,
-  shown only when dimensions exist); `AttributeList`; the adder's `comments`
-  card ("From the person who added this fountain"); the notes section (or its
+  shown only when dimensions exist); `AttributeList`; the adder's comment/context
+  card ("From the person who added this fountain", using legacy placement text only
+  when comments are empty); the notes section (or its
   error row); a muted "Added … · Last rated …" footer (`formatDate`); and a
   brand-yellow **Directions** pill (`Linking.openURL` to a Google Maps
   directions URL, with an `Alert` on the rare failure — never a silent swallow).
@@ -1296,13 +1284,14 @@ same honest gate pattern as existing-fountain contributions.
   `/api/v1/rating-types`, not detail dimensions. Star controls mirror the
   existing contribution star style: 36px tap targets, crown-gold selected stars,
   muted border-color unselected stars.
-- **Initial attributes** — add-time attribute options come from
+- **More Details attributes** — add-time attribute options come from
   `/api/v1/attribute-types`, grouped by category and sorted by `sort_order`.
   Boolean rows render Yes / No / Unknown; enum rows render allowed values plus
   Unknown. Unknown is the default and is omitted from the create payload.
 - **Text inputs** — Comment is multiline and trimmed before submission without a
-  mobile-only max cap. Placement note is a single-line 200-character input with
-  a live counter, matching the API cap.
+  mobile-only max cap. Placement note is not shown or submitted by updated clients.
+- **Points preview** — add and contribution forms show a live possible-points card
+  before submit. Actual totals refresh from backend contribution stats after writes.
 - **Duplicate result** — a compact state box shows that a fountain already
   exists and offers a primary View existing fountain action plus a secondary Add
   another location action. The route action is only available after a valid

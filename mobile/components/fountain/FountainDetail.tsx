@@ -27,6 +27,7 @@ export function FountainDetail({
   now: Date;
 }) {
   const { latitude, longitude } = detail.location;
+  const contextComment = detail.comments || detail.placement_note;
   const directionsUrl = `https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}`;
   const openDirections = () => {
     Linking.openURL(directionsUrl).catch(() => {
@@ -45,10 +46,6 @@ export function FountainDetail({
           now={now}
         />
       </View>
-
-      {detail.placement_note ? (
-        <Text style={styles.placement}>{`📍 ${detail.placement_note}`}</Text>
-      ) : null}
 
       <View style={styles.ratingRow}>
         <Text style={styles.average}>{formatAverage(detail.average_rating ?? null)}</Text>
@@ -72,10 +69,10 @@ export function FountainDetail({
 
       <AttributeList attributes={detail.attributes} />
 
-      {detail.comments ? (
+      {contextComment ? (
         <View>
           <View style={styles.commentCard}>
-            <Text style={styles.commentText}>{detail.comments}</Text>
+            <Text style={styles.commentText}>{contextComment}</Text>
           </View>
           <Text style={styles.commentCaption}>From the person who added this fountain</Text>
         </View>
@@ -117,7 +114,6 @@ const styles = StyleSheet.create({
   wrap: { gap: spacing.md },
   headerBlock: { gap: spacing.xs },
   title: { ...typography.heading, color: colors.brandBlue },
-  placement: { ...typography.body, color: colors.textMuted },
   ratingRow: { flexDirection: "row", alignItems: "baseline" },
   average: { fontSize: 28, fontWeight: "800", color: colors.brandBlue },
   votes: { ...typography.body, color: colors.textMuted },

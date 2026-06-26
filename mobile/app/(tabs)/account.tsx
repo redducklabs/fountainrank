@@ -14,8 +14,10 @@ import {
 import { useApi } from "../../providers/api-provider";
 import { useAuth } from "../../providers/auth-provider";
 import { colors, spacing, typography } from "../../theme";
+import type { components } from "@fountainrank/api-client";
 
 const PROFILE_QUERY_KEY = ["me"] as const;
+type MeContributionsOut = components["schemas"]["MeContributionsOut"];
 
 export default function AccountScreen() {
   const { client } = useApi();
@@ -27,6 +29,13 @@ export default function AccountScreen() {
     enabled: shouldEnableProfileQuery(auth.status),
     retry: (failureCount, error) => shouldRetryProfileQuery(error, failureCount),
     queryFn: async () => unwrap(await client.GET("/api/v1/me")),
+  });
+  const contributionsQuery = useQuery({
+    queryKey: ["me", "contributions"],
+    enabled: shouldEnableProfileQuery(auth.status),
+    retry: (failureCount, error) => shouldRetryProfileQuery(error, failureCount),
+    queryFn: async (): Promise<MeContributionsOut> =>
+      unwrap(await client.GET("/api/v1/me/contributions")),
   });
 
   const clearProfile = useCallback(() => {
@@ -82,6 +91,7 @@ export default function AccountScreen() {
         ) : auth.status === "authenticated" ? (
           <SignedInProfile
             profile={(profileQuery.data as MeProfile | undefined) ?? null}
+            contributions={contributionsQuery.data ?? null}
             isLoading={profileQuery.isLoading}
             isError={profileQuery.isError}
             onRetry={() => profileQuery.refetch()}
@@ -135,12 +145,14 @@ function SignedOut({
 
 function SignedInProfile({
   profile,
+  contributions,
   isLoading,
   isError,
   onRetry,
   onSignOut,
 }: {
   profile: MeProfile | null;
+  contributions: MeContributionsOut | null;
   isLoading: boolean;
   isError: boolean;
   onRetry: () => void;
@@ -183,6 +195,14 @@ function SignedInProfile({
           {profile.is_admin ? <Text style={styles.meta}>Admin</Text> : null}
         </View>
       </View>
+      {contributions ? (
+        <View style={styles.pointsBox}>
+          <Text style={styles.pointsTotal}>{`${contributions.stats.total_points} points`}</Text>
+          <Text style={styles.meta}>
+            {`${contributions.stats.fountains_added} fountains · ${contributions.stats.ratings_count} ratings · ${contributions.stats.notes_count} comments`}
+          </Text>
+        </View>
+      ) : null}
       <SecondaryButton label="Sign out" onPress={onSignOut} />
     </View>
   );
@@ -286,4 +306,13 @@ const styles = StyleSheet.create({
   profileText: { flex: 1, minWidth: 0, gap: spacing.xs },
   name: { ...typography.heading, color: colors.text },
   meta: { ...typography.meta, color: colors.brandBlue, fontWeight: "700" },
+  pointsBox: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: spacing.md,
+    gap: spacing.xs,
+  },
+  pointsTotal: { ...typography.heading, color: colors.brandBlue },
 });

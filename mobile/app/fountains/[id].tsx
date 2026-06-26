@@ -1,7 +1,8 @@
 import type { components } from "@fountainrank/api-client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Stack, useLocalSearchParams } from "expo-router";
-import { RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useState } from "react";
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { AttributeContributionForm } from "../../components/fountain/AttributeContributionForm";
 import { ConditionContributionForm } from "../../components/fountain/ConditionContributionForm";
@@ -44,6 +45,7 @@ export default function FountainDetailScreen() {
   const { client } = useApi();
   const auth = useAuth();
   const queryClient = useQueryClient();
+  const [showMoreDetails, setShowMoreDetails] = useState(false);
   const { id } = useLocalSearchParams<{ id: string | string[] }>();
   // Reject absent/array/malformed (non-UUID) ids client-side — the backend route
   // param is a uuid.UUID, so a bad value would 422; show the honest not-found state.
@@ -78,7 +80,7 @@ export default function FountainDetailScreen() {
 
   const attributeTypesQuery = useQuery({
     queryKey: ["attribute-types"],
-    enabled: fountainId != null && auth.status === "authenticated",
+    enabled: fountainId != null && auth.status === "authenticated" && showMoreDetails,
     queryFn: async (): Promise<AttributeTypeOut[]> =>
       unwrap(await client.GET("/api/v1/attribute-types")),
   });
@@ -91,6 +93,7 @@ export default function FountainDetailScreen() {
       void detailQuery.refetch();
     }
     void queryClient.invalidateQueries({ queryKey: ["fountains", "bbox"] });
+    void queryClient.invalidateQueries({ queryKey: ["me", "contributions"] });
   };
 
   const handleMutationError = (error: unknown): SubmitResult => {
@@ -153,6 +156,7 @@ export default function FountainDetailScreen() {
     onSuccess: () => {
       void notesQuery.refetch();
       void detailQuery.refetch();
+      void queryClient.invalidateQueries({ queryKey: ["me", "contributions"] });
     },
   });
 
@@ -229,22 +233,6 @@ export default function FountainDetailScreen() {
                       }
                     }}
                   />
-                  <AttributeContributionForm
-                    fountainId={fountainId}
-                    attributeTypes={attributeTypesQuery.data ?? []}
-                    pending={attributeMutation.isPending}
-                    isLoading={attributeTypesQuery.isLoading}
-                    isError={attributeTypesQuery.isError}
-                    onRetry={() => void attributeTypesQuery.refetch()}
-                    onSubmit={async (body) => {
-                      try {
-                        await attributeMutation.mutateAsync(body);
-                        return { ok: true };
-                      } catch (error) {
-                        return handleMutationError(error);
-                      }
-                    }}
-                  />
                   <NoteContributionForm
                     fountainId={fountainId}
                     pending={noteMutation.isPending}
@@ -257,6 +245,33 @@ export default function FountainDetailScreen() {
                       }
                     }}
                   />
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => setShowMoreDetails((current) => !current)}
+                    style={styles.secondaryButton}
+                  >
+                    <Text style={styles.secondaryButtonText}>
+                      {showMoreDetails ? "Hide More Details" : "More Details"}
+                    </Text>
+                  </Pressable>
+                  {showMoreDetails ? (
+                    <AttributeContributionForm
+                      fountainId={fountainId}
+                      attributeTypes={attributeTypesQuery.data ?? []}
+                      pending={attributeMutation.isPending}
+                      isLoading={attributeTypesQuery.isLoading}
+                      isError={attributeTypesQuery.isError}
+                      onRetry={() => void attributeTypesQuery.refetch()}
+                      onSubmit={async (body) => {
+                        try {
+                          await attributeMutation.mutateAsync(body);
+                          return { ok: true };
+                        } catch (error) {
+                          return handleMutationError(error);
+                        }
+                      }}
+                    />
+                  ) : null}
                 </ContributePanel>
               }
               now={now}
@@ -273,4 +288,16 @@ const styles = StyleSheet.create({
   centered: { flex: 1, alignItems: "center", justifyContent: "center", gap: spacing.sm },
   notFoundTitle: { ...typography.title, color: colors.brandBlue },
   notFoundNote: { ...typography.body, color: colors.textMuted },
+  secondaryButton: {
+    alignSelf: "flex-start",
+    minHeight: 44,
+    justifyContent: "center",
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  secondaryButtonText: { ...typography.body, color: colors.brandBlue, fontWeight: "700" },
 });

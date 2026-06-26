@@ -3,25 +3,28 @@ import { useState } from "react";
 import { StyleSheet, Text, TextInput, View } from "react-native";
 
 import { buildNotePayload } from "../../lib/contributions/payloads";
+import { notePointsPreview } from "../../lib/contributions/points";
 import type { ContributionError } from "../../lib/contributions/state";
 import { contributionErrorText } from "../../lib/contributions/state";
 import { colors, spacing, typography } from "../../theme";
-import { ContributionMessage, SubmitButton } from "./RatingContributionForm";
+import { ContributionMessage, PointsPreview, SubmitButton } from "./RatingContributionForm";
 
 type AddNoteRequest = components["schemas"]["AddNoteRequest"];
 
 export function NoteContributionForm({
   fountainId,
+  initialBody = "",
   pending,
   onSubmit,
 }: {
   fountainId: string;
+  initialBody?: string;
   pending: boolean;
   onSubmit: (
     body: AddNoteRequest,
   ) => Promise<{ ok: true } | { ok: false; error: ContributionError }>;
 }) {
-  const [body, setBody] = useState("");
+  const [body, setBody] = useState(initialBody);
   const [message, setMessage] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
 
   async function submit() {
@@ -33,7 +36,6 @@ export function NoteContributionForm({
     }
     const result = await onSubmit(payload.value);
     if (result.ok) {
-      setBody("");
       setMessage({ tone: "ok", text: "Your note was saved." });
     } else {
       setMessage({ tone: "err", text: contributionErrorText(result.error) });
@@ -56,6 +58,7 @@ export function NoteContributionForm({
         <Text style={styles.count}>{`${body.length}/1000`}</Text>
         <SubmitButton label="Save note" disabled={pending} onPress={submit} />
       </View>
+      <PointsPreview lines={notePointsPreview(body.trim().length > 0)} />
       <ContributionMessage message={message} />
     </View>
   );

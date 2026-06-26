@@ -9,8 +9,9 @@ import {
   contributionErrorText,
   PROBLEM_CONDITION_STATUSES,
 } from "../../lib/contributions/state";
+import { conditionPointsPreview } from "../../lib/contributions/points";
 import { colors, spacing, typography } from "../../theme";
-import { ContributionMessage, SubmitButton } from "./RatingContributionForm";
+import { ContributionMessage, PointsPreview, SubmitButton } from "./RatingContributionForm";
 
 type ConditionStatus = components["schemas"]["ConditionReportRequest"]["status"];
 type ConditionReportRequest = components["schemas"]["ConditionReportRequest"];
@@ -52,6 +53,7 @@ export function ConditionContributionForm({
         disabled={pending}
         onPress={() => submit("working")}
       />
+      <PointsPreview lines={conditionPointsPreview("working")} />
       <Text style={styles.label}>Report a problem</Text>
       <View style={styles.options}>
         {PROBLEM_CONDITION_STATUSES.map((status) => {
@@ -72,6 +74,7 @@ export function ConditionContributionForm({
           );
         })}
       </View>
+      <PointsPreview lines={conditionPointsPreview("problem")} />
       <SubmitButton label="Submit problem" disabled={pending} onPress={() => submit(problem)} />
       <ContributionMessage message={message} />
     </View>

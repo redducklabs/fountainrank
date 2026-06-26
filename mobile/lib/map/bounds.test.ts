@@ -34,9 +34,10 @@ describe("normalizeBounds", () => {
 });
 
 describe("shouldLoadPins", () => {
-  it("is false below MIN_ZOOM and true at/above it", () => {
-    expect(shouldLoadPins(9.99)).toBe(false);
-    expect(shouldLoadPins(10)).toBe(true);
+  it("loads at neighborhood and city zooms while still avoiding continental queries", () => {
+    expect(shouldLoadPins(3.5)).toBe(false);
+    expect(shouldLoadPins(7.99)).toBe(false);
+    expect(shouldLoadPins(8)).toBe(true);
     expect(shouldLoadPins(15)).toBe(true);
   });
 });
