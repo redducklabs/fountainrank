@@ -46,6 +46,21 @@ deploy workflow is tag-triggered:
 - Behavior: builds and pushes backend + web images, applies Kubernetes
   manifests, runs migrations, and waits for DOKS rollouts.
 
+The release tag is the all-surface production release switch. Pushing one
+`vX.Y.Z` tag starts both production workflows:
+
+- `Deploy` — web/backend image build and DOKS deploy.
+- `Mobile Store Release` — Android/iOS EAS builds and store submission.
+
+Only push a `vX.Y.Z` tag when the release is intended to go everywhere: web,
+Android internal testing, and App Store Connect/TestFlight. Do not use release
+tags for web/backend-only changes. For a web/backend-only redeploy, run the
+`Deploy` workflow manually with `workflow_dispatch` instead.
+
+Do not create ad hoc mobile store builds for a normal all-surface release. If a
+mobile store build fails, rerun `Mobile Store Release` from GitHub Actions or use
+its manual dispatch for the affected platform.
+
 ### Create the next version tag
 
 List existing tags:
@@ -98,6 +113,70 @@ The deploy is complete only when both jobs are `success`:
 - `Build + push images`
 - `Deploy to DOKS`
 
+## Mobile store automation
+
+Mobile store builds and submissions run through GitHub Actions:
+
+- Workflow: `.github/workflows/mobile-store-release.yml`
+- Primary trigger: pushing a tag matching `v*.*.*`
+- Manual trigger: `workflow_dispatch`, with `platform` set to `all`,
+  `android`, or `ios`
+- Behavior: EAS builds the selected platform(s) with the `production` profile and
+  auto-submits the finished build using the `production` submit profile.
+
+This workflow is the preferred release path. Do not manually upload downloaded
+`.aab` or `.ipa` files when the workflow can submit through EAS.
+
+Each mobile store job has a 90-minute timeout. The workflow waits for EAS cloud
+builds and submissions so a failed store submit is visible in GitHub Actions
+instead of becoming another manual follow-up.
+
+Required production GitHub secret:
+
+- `EXPO_TOKEN` — Expo access token for the `red-duck-labs` account/org.
+
+Required EAS-managed store credentials:
+
+- Android: Google Play service-account key configured in EAS Submit.
+- iOS: App Store Connect credentials/API key configured in EAS Submit for ASC
+  app id `6782199873`.
+
+GitHub Actions can only preflight `EXPO_TOKEN`. Google Play and App Store
+Connect submit credentials are managed by EAS; if they are missing or invalid,
+the relevant EAS auto-submit step fails the job.
+
+The intended steady-state release path is:
+
+1. Merge to `main`.
+2. Let `CI` and `Security audit` pass on `main`.
+3. Confirm the mobile app marketing version in `mobile/app.config.ts` is the
+   intended store-facing version before tagging. The workflow does not derive the
+   Expo marketing version from the git tag. EAS remote build numbers
+   (`appBuildVersion`) increment independently from both values.
+4. Push one `vX.Y.Z` tag from `origin/main`.
+5. Let `Deploy` publish web/backend.
+6. Let `Mobile Store Release` build and submit Android + iOS through EAS.
+7. Do not download or manually upload store binaries.
+
+Monitor a mobile store release:
+
+```bash
+gh run list --repo redducklabs/fountainrank --workflow "Mobile Store Release" --limit 5 \
+  --json databaseId,status,conclusion,headBranch,headSha,displayTitle,event,createdAt,url \
+  --jq '.[] | {databaseId,status,conclusion,headBranch,headSha,displayTitle,event,createdAt,url}'
+```
+
+Watch it:
+
+```bash
+gh run watch <run-id> --repo redducklabs/fountainrank --exit-status
+```
+
+The workflow is complete only when the selected jobs are `success`:
+
+- `Android build + Play internal submit`
+- `iOS build + App Store Connect submit`
+
 ## Android AAB build
 
 Production Android builds use EAS and produce an app bundle (`.aab`) because
@@ -132,6 +211,71 @@ Observed behavior:
 - Production builds use the remote Android keystore on Expo.
 - The build URL looks like:
   `https://expo.dev/accounts/red-duck-labs/projects/fountainrank/builds/<build-id>`.
+
+### Android version-code guardrail
+
+Google Play permanently consumes an Android `versionCode` as soon as an AAB is
+accepted into any release, including a draft internal-testing release. If Play
+says a version code has already been used, do not upload that same AAB again.
+Find the existing draft/release that contains that version code and finish or
+discard that Play Console release. A new upload requires a new EAS build with a
+higher version code.
+
+Before starting an Android store build, record the current remote EAS version:
+
+```bash
+cd /mnt/d/repos/fountainrank/mobile
+pnpm dlx eas-cli@20.3.0 build:version:get --platform android
+```
+
+After the build finishes, verify the build metadata and record the assigned
+`appBuildVersion`:
+
+```bash
+pnpm dlx eas-cli@20.3.0 build:view <android-build-id> --json
+```
+
+The `appBuildVersion` is the Google Play `versionCode`. Treat the downloaded
+`.aab` as a single-use artifact:
+
+- Upload it only once.
+- If Google Play reports `version code <n> has already been used`, stop
+  uploading and look for the existing draft/release that already contains
+  version code `<n>`.
+- If Play Console shows the app bundle under `Latest app bundles` with release
+  status `Inactive`, that version code is still consumed. It may not appear as an
+  active release, but it still cannot be uploaded again.
+- Discarding a draft release does not free the version code from an already
+  uploaded AAB. If the only available Play Console action is to discard the
+  draft, discard it, then create a new EAS Android build with a higher
+  `appBuildVersion`.
+- Do not create a second Play Console release with the same `.aab`.
+- Do not hand the same `.aab` back to the owner as a "new" build after Play has
+  accepted it.
+
+Preferred Android submission flow, once the Play service-account key is
+configured in EAS, is to submit by EAS build ID instead of manually downloading
+and uploading an AAB:
+
+```bash
+pnpm dlx eas-cli@20.3.0 submit --platform android --profile production --id <android-build-id> --wait
+```
+
+For fully automated builds, use EAS auto-submit with the production submit
+profile:
+
+```bash
+pnpm dlx eas-cli@20.3.0 build --platform android --profile production --auto-submit-with-profile production
+```
+
+If EAS Submit fails with:
+
+```text
+Google Service Account Keys cannot be set up in --non-interactive mode.
+```
+
+then Google Play submission is not yet automated. Configure the Play service
+account outside the repo before relying on automated Android submit.
 
 ## iOS build
 
