@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AccessibilityInfo, Animated, StyleSheet, View } from "react-native";
 
 import { colors } from "../../theme";
@@ -12,6 +12,7 @@ export function WaterCelebration({
 }) {
   const [progress] = useState(() => new Animated.Value(0));
   const [visible, setVisible] = useState(false);
+  const animationRef = useRef<Animated.CompositeAnimation | null>(null);
 
   useEffect(() => {
     if (triggerKey === 0) return;
@@ -21,15 +22,22 @@ export function WaterCelebration({
         if (cancelled || reduce) return;
         setVisible(true);
         progress.setValue(0);
-        Animated.timing(progress, {
+        const animation = Animated.timing(progress, {
           toValue: 1,
           duration: 900,
           useNativeDriver: true,
-        }).start(() => setVisible(false));
+        });
+        animationRef.current = animation;
+        animation.start(({ finished }) => {
+          animationRef.current = null;
+          if (!cancelled && finished) setVisible(false);
+        });
       })
       .catch(() => undefined);
     return () => {
       cancelled = true;
+      animationRef.current?.stop();
+      animationRef.current = null;
     };
   }, [progress, triggerKey]);
 
