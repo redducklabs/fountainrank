@@ -44,6 +44,7 @@ jobs:
       - name: pnpm audit (GATE — fail on high/critical)
         # pnpm 11.7.0's audit command can hang indefinitely against this lockfile.
         # Keep the same high/critical gate, but run the bounded audit via pnpm 10.
+        # Revisit in #95 once the repo-pinned pnpm version can audit reliably.
         run: timeout 120 corepack pnpm@10.23.0 audit --audit-level high
 
   trivy-fs:
