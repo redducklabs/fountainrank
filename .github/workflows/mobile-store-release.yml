@@ -68,7 +68,8 @@ jobs:
                 {
                   if (match($0, /\(#[0-9]+\)$/)) {
                     ref = substr($0, RSTART + 1, RLENGTH - 2)
-                    subj = substr($0, 1, RSTART - 2)
+                    subj = substr($0, 1, RSTART - 1)
+                    sub(/[[:space:]]+$/, "", subj)
                     line = "- " ref " " subj
                   } else if ($0 ~ /^(feat|fix)(\(|!|:)/) {
                     line = "- " $0
