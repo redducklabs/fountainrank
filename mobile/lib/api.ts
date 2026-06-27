@@ -81,7 +81,13 @@ export function isAuthenticatedApiRequest(input: Request): boolean {
   if (input.method.toUpperCase() !== "GET") {
     return true;
   }
-  return requestPath(input) === "/api/v1/me";
+  // The authenticated user's own resources are exactly `/api/v1/me` and its
+  // subtree (`/api/v1/me/contributions`, `/api/v1/me/badges`, ...). The previous
+  // exact match left those subtree reads tokenless -> backend 401 -> points
+  // showed 0 (issue #88). Match the subtree, but boundary-safely: a sibling like
+  // `/api/v1/members` shares the `me` prefix yet is NOT the current-user subtree.
+  const path = requestPath(input);
+  return path === "/api/v1/me" || path.startsWith("/api/v1/me/");
 }
 
 /**

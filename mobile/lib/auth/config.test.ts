@@ -43,6 +43,9 @@ describe("nativeAuthConfig", () => {
       logtoConfig: {
         endpoint: "https://auth.fountainrank.com",
         appId: "abc123",
+        // profile + email so Logto userinfo returns the real name/email/avatar for
+        // POST /api/v1/me/sync; without them the Account name is a raw opaque id (#103).
+        scopes: ["email", "profile"],
         resources: ["https://api.fountainrank.com"],
       },
     });

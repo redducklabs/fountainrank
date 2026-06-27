@@ -167,6 +167,37 @@ describe("createApiClient", () => {
     ).toBe(true);
   });
 
+  it("authenticates the GET /api/v1/me/* subtree (issue #88: contributions, badges)", () => {
+    // These carried no bearer token under the old exact `=== "/api/v1/me"` gate,
+    // so the backend 401'd and the map chip + Account points fell back to 0.
+    expect(
+      isAuthenticatedApiRequest(
+        new Request("https://api.fountainrank.com/api/v1/me/contributions"),
+      ),
+    ).toBe(true);
+    expect(
+      isAuthenticatedApiRequest(new Request("https://api.fountainrank.com/api/v1/me/badges")),
+    ).toBe(true);
+    // A query string must not defeat the gate.
+    expect(
+      isAuthenticatedApiRequest(
+        new Request("https://api.fountainrank.com/api/v1/me/contributions?limit=20"),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not over-match sibling paths that merely share the /me prefix", () => {
+    // Boundary safety: only the exact /api/v1/me path or its /api/v1/me/ subtree
+    // are the authenticated user's resources. A path like /api/v1/members must
+    // NOT be force-authenticated by a naive prefix match.
+    expect(
+      isAuthenticatedApiRequest(new Request("https://api.fountainrank.com/api/v1/members")),
+    ).toBe(false);
+    expect(
+      isAuthenticatedApiRequest(new Request("https://api.fountainrank.com/api/v1/me-extra")),
+    ).toBe(false);
+  });
+
   it("attaches a Bearer token from the token provider on authenticated requests", async () => {
     let authorization: string | null = null;
     const fetchMock: typeof fetch = async (input) => {
@@ -182,6 +213,24 @@ describe("createApiClient", () => {
       getAccessToken: async () => "token123",
     });
     await client.GET("/api/v1/me");
+    expect(authorization).toBe("Bearer token123");
+  });
+
+  it("attaches the Bearer token on GET /api/v1/me/contributions (issue #88)", async () => {
+    let authorization: string | null = null;
+    const fetchMock: typeof fetch = async (input) => {
+      const req = input instanceof Request ? input : new Request(String(input));
+      authorization = req.headers.get("authorization");
+      return new Response(JSON.stringify({ items: [], total_points: 0 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+    const client = createApiClient("https://api.fountainrank.com", {
+      fetch: fetchMock,
+      getAccessToken: async () => "token123",
+    });
+    await client.GET("/api/v1/me/contributions");
     expect(authorization).toBe("Bearer token123");
   });
 

@@ -1,7 +1,9 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { LogtoProvider, useLogto } from "@logto/rn";
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 
 import { nativeAuthConfig } from "../lib/auth/config";
+import { syncProfileOnSignIn, type ProfileSyncResult } from "../lib/auth/sync";
 import {
   AuthSessionError,
   resolveAuthStatus,
@@ -42,7 +44,11 @@ export function AuthProvider({ config, children }: { config: MobileConfig; child
   }
   return (
     <LogtoProvider config={authConfig.logtoConfig}>
-      <ConfiguredAuthProvider redirectUri={authConfig.redirectUri} audience={config.logtoAudience}>
+      <ConfiguredAuthProvider
+        redirectUri={authConfig.redirectUri}
+        audience={config.logtoAudience}
+        apiBaseUrl={config.apiBaseUrl}
+      >
         {children}
       </ConfiguredAuthProvider>
     </LogtoProvider>
@@ -52,13 +58,16 @@ export function AuthProvider({ config, children }: { config: MobileConfig; child
 function ConfiguredAuthProvider({
   redirectUri,
   audience,
+  apiBaseUrl,
   children,
 }: {
   redirectUri: string;
   audience: string;
+  apiBaseUrl: string;
   children: ReactNode;
 }) {
   const logto = useLogto();
+  const queryClient = useQueryClient();
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [reauthRequired, setReauthRequired] = useState(false);
 
@@ -70,15 +79,43 @@ function ConfiguredAuthProvider({
     reauthRequired,
   });
 
+  const syncAfterSignIn = useCallback(async (): Promise<ProfileSyncResult> => {
+    // Best-effort profile sync (#103). Fetch the resource JWT and the opaque
+    // userinfo token, then POST /me/sync so the backend writes the real
+    // display_name/email/avatar. A token-fetch failure is swallowed (skip the sync)
+    // — it must never disrupt an otherwise successful sign-in.
+    let resourceToken: string | null = null;
+    let userinfoToken: string | null = null;
+    try {
+      resourceToken = await logto.getAccessToken(audience);
+      userinfoToken = await logto.getAccessToken();
+    } catch {
+      return "skipped";
+    }
+    return syncProfileOnSignIn({ apiBaseUrl, resourceToken, userinfoToken });
+  }, [apiBaseUrl, audience, logto]);
+
   const signIn = useCallback(async (): Promise<SignInOutcome> => {
     setReauthRequired(false);
     setIsSigningIn(true);
     try {
-      return await runSignIn(true, redirectUri, logto.signIn);
+      const outcome = await runSignIn(true, redirectUri, logto.signIn);
+      if (outcome.status === "success") {
+        // Fire-and-forget so the sync NEVER blocks sign-in completion (#103). The
+        // /me query enables as soon as status flips to "authenticated" (it may first
+        // read the backend first-seen `sub`); once the sync writes the real profile
+        // we invalidate ["me"] so the profile + points refetch with the real values.
+        void syncAfterSignIn().then((result) => {
+          if (result === "synced") {
+            void queryClient.invalidateQueries({ queryKey: ["me"] });
+          }
+        });
+      }
+      return outcome;
     } finally {
       setIsSigningIn(false);
     }
-  }, [logto.signIn, redirectUri]);
+  }, [logto.signIn, queryClient, redirectUri, syncAfterSignIn]);
 
   const signOut = useCallback(async () => {
     setReauthRequired(false);

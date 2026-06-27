@@ -214,6 +214,21 @@ Clicking a pin or selected-pin layer navigates to `/fountains/:id` (soft Next.js
 
 **Cursor:** canvas cursor is set to `"pointer"` on `mouseenter` for `clusters`, `pins`, and `selected-pin`.
 
+### Draft pin (mobile add-fountain)
+
+While the mobile app is in add mode, the pin the user is placing is drawn by a separate
+`draft-fountain` source/layer in `mobile/components/map/FountainMap.tsx`, distinct from the
+saved-fountain pins so the in-progress placement reads as provisional:
+
+- **Asset:** reuses `pin-standard` (raster icons can't be tinted via `icon-color`).
+- **Distinction:** larger and translucent — `icon-size: 0.72` (vs `0.5` for saved pins) and
+  `paint: { "icon-opacity": 0.6 }`. The size + transparency together signal "not yet saved."
+- **Visibility:** rendered **only** in add mode (the screen passes `draftPin` only while
+  `addMode`), so the no-`onPress` draft layer never sits over a real pin and swallows taps
+  after a successful add.
+- **Future option:** a dedicated grayscale `pin-draft.png` could replace the opacity treatment
+  if a stronger visual distinction is wanted.
+
 ### Rating pill
 
 A small label that appears above each pin at zoom ≥ 13 (`PILL_MIN_ZOOM`) when the fountain has at least one rating.

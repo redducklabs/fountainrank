@@ -135,8 +135,11 @@ have actually been observed.
 
 `eas.json` defines `development` / `preview` / `production` build profiles and a
 credential-free `production` submit profile for Android's `internal` track. The
-Expo org/project are linked in `app.config.ts` (`red-duck-labs/fountainrank`,
-project id `820564bf-5f29-44c7-8ec7-edde67b77360`), and the native identity is
+Android submit profile uploads internal-testing releases as Play drafts so the
+generated PR-only release notes can be added in Play Console before the release
+is completed. The Expo org/project are linked in `app.config.ts`
+(`red-duck-labs/fountainrank`, project id
+`820564bf-5f29-44c7-8ec7-edde67b77360`), and the native identity is
 owner-confirmed as `com.redducklabs.fountainrank`.
 
 Build numbers are EAS-managed for store builds: `cli.appVersionSource` is
@@ -147,6 +150,13 @@ seed the first remote value; after that, EAS owns store build-number increments.
 No iOS submit profile is committed yet, and App Store Connect credentials, Play
 service-account JSON, signing material, EAS tokens, and tester lists stay outside
 the repo.
+
+The GitHub `mobile-store-release.yml` workflow generates store release notes
+from the PRs included since the previous `v*.*.*` tag. iOS passes that PR list to
+TestFlight's "What to Test" field through EAS. Google Play release notes are not
+supported by the EAS Android submit options in use here, so the workflow prints
+the same PR list in the run summary and leaves the Play release as a draft until
+those notes are pasted into the Play release notes field.
 
 Before any `expo config --type prebuild`, `expo prebuild`, or EAS command after
 incremental dependency changes, recover the pnpm/Expo install from the repo
