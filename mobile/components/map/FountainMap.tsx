@@ -108,9 +108,10 @@ export function FountainMap({
       attributionPosition={attributionPosition}
       compassPosition={compassPosition}
       onDidFailLoadingMap={() => {
-        // #85: a basemap style / glyph / tile load failure surfaces here. This is
-        // the signal to watch in Logcat/Metro when the map renders blank.
-        console.warn("[map] basemap failed to load (#85)");
+        // #85: a basemap style / glyph / tile load failure surfaces here. Dev-only
+        // (the rest of the app ships no console): reproduce on a development build —
+        // same new architecture — and watch Logcat/Metro when the map renders blank.
+        if (__DEV__) console.warn("[map] basemap failed to load (#85)");
       }}
       onPress={(event) => {
         if (!onMapPressForPlacement) return;
@@ -128,8 +129,8 @@ export function FountainMap({
         images={PIN_IMAGES}
         onImageMissing={(e) => {
           // #85: a layer asked for an icon id that was never registered, so those
-          // pins silently do not draw.
-          console.warn(`[map] missing image: ${e.nativeEvent.image} (#85)`);
+          // pins silently do not draw. Dev-only (see onDidFailLoadingMap).
+          if (__DEV__) console.warn(`[map] missing image: ${e.nativeEvent.image} (#85)`);
         }}
       />
 
