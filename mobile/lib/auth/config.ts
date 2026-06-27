@@ -25,6 +25,12 @@ export function nativeAuthConfig(config: MobileConfig): NativeAuthConfig {
     logtoConfig: {
       endpoint: config.logtoEndpoint,
       appId,
+      // Request profile + email (mirror of the web getLogtoConfig) so Logto userinfo
+      // returns the real name/email/avatar for POST /api/v1/me/sync. Without these the
+      // backend first-seen fallback `display_name = sub` shows a raw opaque id (#103).
+      // String literals (not the UserScope enum) keep this module free of an @logto/rn
+      // runtime import so it stays loadable under the node-based vitest.
+      scopes: ["email", "profile"],
       resources: [config.logtoAudience],
     },
   };
