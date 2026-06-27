@@ -70,12 +70,28 @@ export function FountainMap({
     });
   }, [userCoords, recenterKey, recenterZoom]);
 
+  // #85 instrumentation: how many features the JS side handed to the native
+  // GeoJSONSource. If pins are missing on a device while this logs a non-zero
+  // count, the data is not reaching the native source (the leading Android-empty
+  // theory under the new architecture). Dev-only so production stays quiet; read
+  // it from Metro/Logcat on a development build.
+  useEffect(() => {
+    if (__DEV__) {
+      console.log(`[map] featureCollection features=${featureCollection.features.length} (#85)`);
+    }
+  }, [featureCollection]);
+
   return (
     <Map
       style={styles.map}
       mapStyle={styleUrl}
       logo={false}
       attribution
+      onDidFailLoadingMap={() => {
+        // #85: a basemap style / glyph / tile load failure surfaces here. This is
+        // the signal to watch in Logcat/Metro when the map renders blank.
+        console.warn("[map] basemap failed to load (#85)");
+      }}
       onPress={(event) => {
         if (!onMapPressForPlacement) return;
         const [lng, lat] = event.nativeEvent.lngLat;
@@ -88,7 +104,14 @@ export function FountainMap({
       }}
     >
       <Camera ref={cameraRef} initialViewState={{ center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM }} />
-      <Images images={PIN_IMAGES} />
+      <Images
+        images={PIN_IMAGES}
+        onImageMissing={(e) => {
+          // #85: a layer asked for an icon id that was never registered, so those
+          // pins silently do not draw.
+          console.warn(`[map] missing image: ${e.nativeEvent.image} (#85)`);
+        }}
+      />
 
       <GeoJSONSource
         ref={sourceRef}
@@ -134,6 +157,10 @@ export function FountainMap({
           layout={{
             "text-field": ["get", "point_count_abbreviated"],
             "text-size": 13,
+            // Without an explicit text-font MapLibre requests Open Sans / Arial
+            // Unicode, which the basemap glyph CDN 404s, so cluster counts never
+            // drew (#85). Mirror the web layer's proven font (it renders today).
+            "text-font": ["Noto Sans Bold"],
           }}
           paint={{ "text-color": "#ffffff" }}
         />
@@ -161,6 +188,9 @@ export function FountainMap({
           layout={{
             "text-field": ["get", "pill"],
             "text-size": 12,
+            // See cluster-count: an explicit served font is required or the pill
+            // labels 404 their glyphs and never render (#85).
+            "text-font": ["Noto Sans Bold"],
             "text-anchor": "top",
             "text-offset": [0, 1.2],
             "text-allow-overlap": true,
