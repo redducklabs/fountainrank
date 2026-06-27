@@ -103,3 +103,28 @@ one PR.
 Each issue body has the full root-cause analysis with verified file:line, fix direction, and acceptance
 criteria. Pull them with `gh issue view <N> --repo redducklabs/fountainrank`. Reopened context for #85/#88
 is in their latest comments.
+
+---
+
+## Implementation status — branch `fix/mobile-device-test-bugfixes`
+
+Implemented in this branch; all local CI-mirror checks green (mobile `tsc` + `eslint` + `vitest` (203) +
+`expo-doctor` 21/21; repo `prettier`). **On-device verification is still the gate for every item — none are
+confirmed against a physical build yet.** Each fix commit references its issue and lists what to verify.
+
+| # | Status | What changed | Verify on device |
+|---|--------|--------------|------------------|
+| #88 | Code-complete | Auth gate broadened to the `GET /api/v1/me/*` subtree (boundary-safe) + `api.test.ts`. | Signed-in user sees real points on the map chip + Account. |
+| #103 | Code-complete | `email`+`profile` Logto scopes; best-effort `POST /me/sync` after sign-in (new `lib/auth/sync`). | Apple sign-in shows the real name + initial, not an opaque id. |
+| #85 | **Partial + instrumented** | Glyph `text-font: ["Noto Sans Bold"]` on cluster-count + pins-pill; `onDidFailLoadingMap` / `Images onImageMissing` warns + `__DEV__` feature-count log. | **Android-empty core NOT fixed.** Run a dev build + Logcat: does the JS feature count log non-zero while the native map is blank? Candidates to try: native data-prop under the new arch, `androidView: "texture"`. Zoom gate + last-non-empty hedge intentionally left. |
+| #97 | Code-complete | Add-entry always flies to placement zoom and seeds a pin at user/viewport-center; below-zoom taps now say "zoom in". | Location-denied user can enter add mode, place, and Next enables. |
+| #98 | Code-complete | Draft pin seeded on add-entry. | A pin appears immediately on entry. |
+| #100 | Code-complete | "Use current location" recenters; flyTo bottom padding frames above the sheet (`ADD_SHEET_CAMERA_PADDING`). | Target frames above the sheet; **tune the padding constant** to the panel height. |
+| #101 | Code-complete | Empty/capped/below-zoom banner suppressed while adding. | No banner over the Add button / panel while adding. |
+| #102 | Code-complete | Draft layer renders only in add mode. | New pin is tappable right after adding. |
+| #99 | Code-complete | Draft pin distinct (larger + translucent `icon-opacity`); documented in `docs/style-guide.md`. | Draft reads as distinct; owner may still prefer a dedicated grayscale `pin-draft.png`. |
+| #104 | Code-complete | Attribution → bottom-left; FAB + locate lifted by the bottom safe-area inset. | "i" no longer under the +, controls clear the home indicator. |
+| #105 | **Open (code set)** | `compassPosition` placed below the filter chips. | First confirm the compass is even enabled under the new arch; if so, confirm it's clear of the chips. |
+
+Release-notes CI (`mobile-store-release.yml` PR-list notes + Play draft) is bundled on this branch as its
+first commit per the owner's request.
