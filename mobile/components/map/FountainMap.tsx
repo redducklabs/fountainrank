@@ -14,11 +14,11 @@ import { StyleSheet } from "react-native";
 import { pinFeatureCollection, type LngLat } from "../../lib/add-fountain/placement";
 import type { RawBounds } from "../../lib/map/bounds";
 import {
+  ADD_SHEET_CAMERA_PADDING,
   CLUSTER_MAX_ZOOM,
   CLUSTER_RADIUS,
   DEFAULT_CENTER,
   DEFAULT_ZOOM,
-  INITIAL_USER_ZOOM,
   PILL_MIN_ZOOM,
 } from "../../lib/map/constants";
 import { colors } from "../../theme";
@@ -29,13 +29,22 @@ const PIN_IMAGES = {
   "pin-broken": require("../../assets/pins/pin-broken.png"),
 };
 
+/**
+ * A camera fly command. The screen owns ALL camera intent (initial center on the
+ * user, the locate button, add-mode placement) and issues it by passing a NEW
+ * object — a fresh reference re-fires the fly even to the same target.
+ */
+export type MapFlyTo = {
+  center: LngLat;
+  zoom: number;
+  /** Reserve bottom space so the target frames above the open add sheet (#100). */
+  framedAboveSheet?: boolean;
+};
+
 type FountainMapProps = {
   styleUrl: string;
   featureCollection: GeoJSON.FeatureCollection;
-  userCoords?: { latitude: number; longitude: number } | null;
-  /** Bump from the screen's locate button to re-center on the user on demand. */
-  recenterKey?: number;
-  recenterZoom?: number;
+  flyTo?: MapFlyTo | null;
   showUserLocation: boolean;
   onRegionChange: (bounds: RawBounds, zoom: number) => void;
   onPinPress: (id: string) => void;
@@ -46,9 +55,7 @@ type FountainMapProps = {
 export function FountainMap({
   styleUrl,
   featureCollection,
-  userCoords,
-  recenterKey = 0,
-  recenterZoom,
+  flyTo,
   showUserLocation,
   onRegionChange,
   onPinPress,
@@ -58,17 +65,18 @@ export function FountainMap({
   const cameraRef = useRef<CameraRef>(null);
   const sourceRef = useRef<GeoJSONSourceRef>(null);
 
-  // Center on the user when coords FIRST arrive (they resolve after first render,
-  // so initialViewState cannot) and again whenever the locate button bumps
-  // recenterKey. No coords -> no-op (denial is non-blocking).
+  // Execute a camera fly command. A new `flyTo` object reference (re)issues a fly,
+  // so the screen drives the initial user-center, the locate button, and add-mode
+  // placement through one path. Null -> no-op (e.g. location denied at startup).
   useEffect(() => {
-    if (!userCoords) return;
+    if (!flyTo) return;
     cameraRef.current?.flyTo({
-      center: [userCoords.longitude, userCoords.latitude],
-      zoom: recenterZoom ?? INITIAL_USER_ZOOM,
+      center: [flyTo.center.lng, flyTo.center.lat],
+      zoom: flyTo.zoom,
       duration: 600,
+      padding: flyTo.framedAboveSheet ? { bottom: ADD_SHEET_CAMERA_PADDING } : undefined,
     });
-  }, [userCoords, recenterKey, recenterZoom]);
+  }, [flyTo]);
 
   // #85 instrumentation: how many features the JS side handed to the native
   // GeoJSONSource. If pins are missing on a device while this logs a non-zero
@@ -211,9 +219,13 @@ export function FountainMap({
           layout={{
             "icon-image": "pin-standard",
             "icon-anchor": "bottom",
-            "icon-size": 0.62,
+            // Larger + translucent so the in-progress draft reads as distinct from
+            // the solid, full-size saved pins (#99). Raster icons can't be tinted via
+            // icon-color, so opacity carries the distinction (no extra asset needed).
+            "icon-size": 0.72,
             "icon-allow-overlap": true,
           }}
+          paint={{ "icon-opacity": 0.6 }}
         />
       </GeoJSONSource>
 

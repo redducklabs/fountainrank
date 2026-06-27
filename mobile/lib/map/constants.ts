@@ -15,3 +15,7 @@ export const ACCURACY_MAX_M = 1000;
 export const PLACE_MIN_ZOOM = 16;
 export const FALLBACK_MAX_SPAN_M = 4000;
 export const NUDGE_STEP_M = 5;
+// Bottom camera padding (points) applied when flying to the placement target while
+// the add sheet is open, so the pin frames above the sheet instead of hiding under
+// it (#100). Approximate; tune on-device against the placing-phase panel height.
+export const ADD_SHEET_CAMERA_PADDING = 260;

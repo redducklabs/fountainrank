@@ -78,6 +78,20 @@ export function canPlace(zoom: number, bound: Bound | null): boolean {
   return true;
 }
 
+export function centerOfViewport(bounds: ViewportBounds): LngLat {
+  return { lng: (bounds.west + bounds.east) / 2, lat: (bounds.south + bounds.north) / 2 };
+}
+
+/**
+ * Where to seed the draft pin and aim the camera when add mode is entered (#97/#98):
+ * the user's location when any fix exists (the bound separately downgrades to the
+ * viewport for poor accuracy), otherwise the current viewport center so placement is
+ * still possible with location denied/unavailable.
+ */
+export function placementEntryTarget(fix: GpsFix, viewport: ViewportBounds): LngLat {
+  return fix.ok ? { lng: fix.longitude, lat: fix.latitude } : centerOfViewport(viewport);
+}
+
 export function nudgePoint(point: LngLat, direction: "n" | "s" | "e" | "w"): LngLat {
   const dLat = NUDGE_STEP_M / 111320;
   const dLng = NUDGE_STEP_M / (111320 * Math.cos((point.lat * Math.PI) / 180));

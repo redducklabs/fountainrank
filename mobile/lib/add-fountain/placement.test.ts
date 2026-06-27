@@ -3,10 +3,12 @@ import { describe, expect, it } from "vitest";
 import {
   boundFromFix,
   canPlace,
+  centerOfViewport,
   clampToBound,
   haversineMeters,
   inBound,
   pinFeatureCollection,
+  placementEntryTarget,
   ringFeatureCollection,
   type Bound,
 } from "./placement";
@@ -95,6 +97,35 @@ describe("canPlace", () => {
   it("rejects a too-wide fallback viewport", () => {
     expect(canPlace(17, wideViewport)).toBe(false);
     expect(canPlace(17, tightViewport)).toBe(true);
+  });
+});
+
+describe("centerOfViewport", () => {
+  it("returns the midpoint of the bounds", () => {
+    const center = centerOfViewport({ west: -122.4, south: 47.5, east: -122.2, north: 47.7 });
+    expect(center.lng).toBeCloseTo(-122.3, 10);
+    expect(center.lat).toBeCloseTo(47.6, 10);
+  });
+});
+
+describe("placementEntryTarget", () => {
+  const viewport = { west: -122.4, south: 47.5, east: -122.2, north: 47.7 };
+
+  it("centers on the user whenever a fix exists, even when accuracy is poor (#97)", () => {
+    // The bound (boundFromFix) still falls back to the viewport for poor accuracy;
+    // the entry TARGET only needs a sensible place to seed the pin + camera.
+    expect(
+      placementEntryTarget(
+        { ok: true, latitude: 47.61, longitude: -122.33, accuracy: 5000 },
+        viewport,
+      ),
+    ).toEqual({ lng: -122.33, lat: 47.61 });
+  });
+
+  it("falls back to the viewport center when there is no fix (#97/#98)", () => {
+    const target = placementEntryTarget({ ok: false }, viewport);
+    expect(target.lng).toBeCloseTo(-122.3, 10);
+    expect(target.lat).toBeCloseTo(47.6, 10);
   });
 });
 

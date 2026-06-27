@@ -18,7 +18,7 @@ import { addFountainPointsPreview, totalPreviewPoints } from "@fountainrank/cont
 
 import { AttributeFields } from "../../components/add-fountain/AttributeFields";
 import { WaterCelebration } from "../../components/feedback/WaterCelebration";
-import { FountainMap } from "../../components/map/FountainMap";
+import { FountainMap, type MapFlyTo } from "../../components/map/FountainMap";
 import { MapFilters } from "../../components/map/MapFilters";
 import { RatingFields } from "../../components/add-fountain/RatingFields";
 import { ScreenContainer } from "../../components/ScreenContainer";
@@ -33,8 +33,11 @@ import {
 import {
   boundFromFix,
   canPlace,
+  centerOfViewport,
   inBound,
   nudgePoint,
+  placementEntryTarget,
+  type GpsFix,
   type LngLat,
   type ViewportBounds,
 } from "../../lib/add-fountain/placement";
@@ -50,7 +53,7 @@ import {
 } from "../../lib/add-fountain/state";
 import { isMapConfigured } from "../../lib/config";
 import { isAtCap, normalizeBounds, type RawBounds, shouldLoadPins } from "../../lib/map/bounds";
-import { DEFAULT_ZOOM, PLACE_MIN_ZOOM } from "../../lib/map/constants";
+import { DEFAULT_ZOOM, INITIAL_USER_ZOOM, PLACE_MIN_ZOOM } from "../../lib/map/constants";
 import {
   buildBboxQuery,
   DEFAULT_FILTERS,
@@ -77,8 +80,10 @@ export default function MapScreen() {
 
   const [filters, setFilters] = useState<FountainFilters>(DEFAULT_FILTERS);
   const [region, setRegion] = useState<{ bounds: RawBounds; zoom: number } | null>(null);
-  const [recenterKey, setRecenterKey] = useState(0);
-  const [recenterZoom, setRecenterZoom] = useState<number | undefined>();
+  // The screen owns all camera intent; FountainMap just executes the latest fly
+  // command (see MapFlyTo). A fresh object re-issues the fly even to the same spot.
+  const [flyTo, setFlyTo] = useState<MapFlyTo | null>(null);
+  const didInitialCenterRef = useRef(false);
   const [addState, addDispatch] = useReducer(addFountainReducer, initialAddFountainState);
   const [ratings, setRatings] = useState<Record<number, number | undefined>>({});
   const [attributes, setAttributes] = useState<Record<number, string | undefined>>({});
@@ -202,6 +207,18 @@ export default function MapScreen() {
     };
   }, []);
 
+  // Center on the user the first time coords resolve (they arrive after first
+  // render, so initialViewState can't). Once only; location is fetched a single
+  // time and denial leaves the camera at the default world view.
+  useEffect(() => {
+    if (didInitialCenterRef.current || !location.coords) return;
+    didInitialCenterRef.current = true;
+    setFlyTo({
+      center: { lng: location.coords.longitude, lat: location.coords.latitude },
+      zoom: INITIAL_USER_ZOOM,
+    });
+  }, [location.coords]);
+
   // FountainPin[] is directly assignable to PinInput[] (ranking_score/current_status
   // are optional), so no per-pin normalization is needed at the call site.
   const featureCollection = useMemo(
@@ -245,11 +262,28 @@ export default function MapScreen() {
   const enterAddMode = () => {
     resetAddDraft();
     setAddMode(true);
-    if (location.coords) {
-      setRecenterZoom(PLACE_MIN_ZOOM);
-      setRecenterKey((key) => key + 1);
-    } else if (location.status === "denied" || location.status === "unavailable") {
-      showToast("err", "Location is unavailable, so placement is limited to this map area.");
+    // #97/#98: always zoom to placement zoom AND seed a draft pin, using the user's
+    // location when available and the viewport center otherwise — so a user with
+    // location denied/approximate can still place (previously they were stuck below
+    // PLACE_MIN_ZOOM and every tap was silently rejected).
+    if (region) {
+      const fix: GpsFix = location.coords
+        ? {
+            ok: true,
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude,
+            accuracy: location.coords.accuracy,
+          }
+        : { ok: false };
+      const target = placementEntryTarget(fix, region.bounds);
+      setFlyTo({ center: target, zoom: PLACE_MIN_ZOOM, framedAboveSheet: true });
+      addDispatch({ type: "dropPin", point: target });
+    }
+    if (!location.coords && (location.status === "denied" || location.status === "unavailable")) {
+      showToast(
+        "err",
+        "Location is unavailable — drop the pin on the map and adjust with the nudge buttons.",
+      );
     }
   };
 
@@ -262,18 +296,20 @@ export default function MapScreen() {
       <FountainMap
         styleUrl={config.basemapStyleUrl!}
         featureCollection={featureCollection}
-        userCoords={location.coords}
-        recenterKey={recenterKey}
-        recenterZoom={recenterZoom}
+        flyTo={flyTo}
         showUserLocation={location.status === "granted"}
         onRegionChange={setRegionDebounced}
         onPinPress={(id) => router.push(`/fountains/${id}`)}
-        draftPin={addState.pin}
+        // #102: only render the draft layer in add mode, so after a successful add
+        // its no-onPress layer can't sit over the new real pin and swallow taps.
+        draftPin={addMode ? addState.pin : null}
         onMapPressForPlacement={
           gate.state === "ready" && addMode && addState.phase === "placing"
             ? (point) => {
                 if (!canPlace(region?.zoom ?? 0, addState.bound)) {
-                  rejectOutOfArea();
+                  // #97: the usual cause is being below placement zoom — say that
+                  // instead of the misleading "near your current location" message.
+                  showToast("err", "Zoom in a little more to drop the pin here.");
                   return;
                 }
                 if (addState.bound && !inBound(point, addState.bound)) {
@@ -300,8 +336,11 @@ export default function MapScreen() {
           accessibilityRole="button"
           accessibilityLabel="Center on my location"
           onPress={() => {
-            setRecenterZoom(undefined);
-            setRecenterKey((k) => k + 1);
+            if (!location.coords) return;
+            setFlyTo({
+              center: { lng: location.coords.longitude, lat: location.coords.latitude },
+              zoom: INITIAL_USER_ZOOM,
+            });
           }}
           style={styles.locate}
         >
@@ -352,14 +391,15 @@ export default function MapScreen() {
               return;
             }
             setAddMessage(null);
-            addDispatch({
-              type: "dropPin",
-              point: { lng: location.coords.longitude, lat: location.coords.latitude },
-            });
+            const point = { lng: location.coords.longitude, lat: location.coords.latitude };
+            addDispatch({ type: "dropPin", point });
+            // #100: recenter the camera on the user (previously it didn't move) and
+            // frame the target above the add sheet.
+            setFlyTo({ center: point, zoom: PLACE_MIN_ZOOM, framedAboveSheet: true });
           }}
           onPlaceAtCenter={() => {
             if (!region) return;
-            const point = centerOfBounds(region.bounds);
+            const point = centerOfViewport(region.bounds);
             if (addState.bound && !inBound(point, addState.bound)) {
               rejectOutOfArea();
               return;
@@ -383,7 +423,6 @@ export default function MapScreen() {
           onCancel={() => {
             resetAddDraft();
             setAddMode(false);
-            setRecenterZoom(undefined);
           }}
           onSubmit={async () => {
             setAddMessage(null);
@@ -408,7 +447,6 @@ export default function MapScreen() {
               if (result.ok) {
                 addDispatch({ type: "created", fountainId: result.fountainId });
                 setAddMode(false);
-                setRecenterZoom(undefined);
                 router.push(`/fountains/${result.fountainId}`);
                 return;
               }
@@ -430,12 +468,16 @@ export default function MapScreen() {
         />
       ) : null}
 
-      <MapOverlay
-        belowZoom={belowZoom}
-        viewState={viewState}
-        capped={capped}
-        onRetry={() => void pinsQuery.refetch()}
-      />
+      {/* #101: hide the empty/capped/below-zoom banner while adding, so it can't
+          cover the add panel / Add button. */}
+      {addMode ? null : (
+        <MapOverlay
+          belowZoom={belowZoom}
+          viewState={viewState}
+          capped={capped}
+          onRetry={() => void pinsQuery.refetch()}
+        />
+      )}
       <MobileToast toast={toast} onDismiss={() => setToast(null)} />
       <WaterCelebration triggerKey={celebrationKey} bottom={82} />
     </View>
@@ -823,13 +865,6 @@ function placementInstruction(placeable: boolean, zoom: number | undefined, pin:
   if (!pin) return "Tap the map, use current location, or place at map center.";
   if (!placeable) return "Move the pin inside the allowed placement area.";
   return "Location selected. You can nudge the pin before continuing.";
-}
-
-function centerOfBounds(bounds: RawBounds): LngLat {
-  return {
-    lng: (bounds.west + bounds.east) / 2,
-    lat: (bounds.south + bounds.north) / 2,
-  };
 }
 
 function MapOverlay(props: {
