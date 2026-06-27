@@ -58,13 +58,30 @@ jobs:
             range_label="${first_commit}..${current_label}"
           fi
 
+          # Prefer squash-merged PR subjects ("<title> (#NN)" -> "- #NN <title>"). Also
+          # include un-suffixed feat:/fix: commits so a user-facing change still appears
+          # when it landed without a PR ref (a pre-PR-era or mis-suffixed commit), and so
+          # a range that happens to contain no (#NN) refs does not fail the release.
           notes_file="$RUNNER_TEMP/mobile-store-release-notes.txt"
           git log --reverse --pretty=format:'%s' "$range" \
-            | sed -nE 's/^(.*) \((#[0-9]+)\)$/- \2 \1/p' \
-            | awk '!seen[$0]++' > "$notes_file"
+            | awk '
+                {
+                  if (match($0, /\(#[0-9]+\)$/)) {
+                    ref = substr($0, RSTART + 1, RLENGTH - 2)
+                    subj = substr($0, 1, RSTART - 1)
+                    sub(/[[:space:]]+$/, "", subj)
+                    line = "- " ref " " subj
+                  } else if ($0 ~ /^(feat|fix)(\(|!|:)/) {
+                    line = "- " $0
+                  } else {
+                    next
+                  }
+                  if (!seen[line]++) print line
+                }
+              ' > "$notes_file"
 
           if [ ! -s "$notes_file" ]; then
-            echo "::error::No PRs found in $range_label. Store release notes must list the PRs included in the app-store release."
+            echo "::error::No PR or feat/fix commits found in $range_label. Store release notes must list the user-facing changes included in the app-store release."
             exit 1
           fi
 
