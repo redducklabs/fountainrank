@@ -65,11 +65,16 @@ import { resolveViewState, type ViewState } from "../../lib/view-state";
 import { useApi } from "../../providers/api-provider";
 import { useAuth } from "../../providers/auth-provider";
 import { colors, spacing, typography } from "../../theme";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 type FountainPin = components["schemas"]["FountainPin"];
 type AttributeTypeOut = components["schemas"]["AttributeTypeOut"];
 type RatingTypeOut = components["schemas"]["RatingTypeOut"];
 type BboxResult = { pins: FountainPin[]; truncated: boolean };
+
+// Approx height of the top filter-chip bar; used to drop the native compass below
+// it so it isn't hidden behind the chips (#105).
+const FILTER_BAR_HEIGHT = 44;
 
 export default function MapScreen() {
   const { client, config } = useApi();
@@ -77,6 +82,12 @@ export default function MapScreen() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const location = useForegroundLocation();
+  const insets = useSafeAreaInsets();
+
+  // The map View is full-bleed (not a SafeAreaView), so position the native map
+  // ornaments to avoid our overlays and the device safe areas (#104, #105).
+  const attributionPosition = { bottom: insets.bottom + spacing.sm, left: spacing.sm };
+  const compassPosition = { top: spacing.sm + FILTER_BAR_HEIGHT + spacing.md, left: spacing.sm };
 
   const [filters, setFilters] = useState<FountainFilters>(DEFAULT_FILTERS);
   const [region, setRegion] = useState<{ bounds: RawBounds; zoom: number } | null>(null);
@@ -297,6 +308,8 @@ export default function MapScreen() {
         styleUrl={config.basemapStyleUrl!}
         featureCollection={featureCollection}
         flyTo={flyTo}
+        attributionPosition={attributionPosition}
+        compassPosition={compassPosition}
         showUserLocation={location.status === "granted"}
         onRegionChange={setRegionDebounced}
         onPinPress={(id) => router.push(`/fountains/${id}`)}
@@ -342,7 +355,7 @@ export default function MapScreen() {
               zoom: INITIAL_USER_ZOOM,
             });
           }}
-          style={styles.locate}
+          style={[styles.locate, { bottom: insets.bottom + spacing.lg + 56 }]}
         >
           <Text style={styles.locateGlyph}>◎</Text>
         </Pressable>
@@ -358,7 +371,7 @@ export default function MapScreen() {
             void auth.signIn();
           }
         }}
-        style={styles.addButton}
+        style={[styles.addButton, { bottom: insets.bottom + spacing.lg }]}
       >
         <Text style={styles.addButtonText}>＋</Text>
       </Pressable>

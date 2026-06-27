@@ -6,6 +6,7 @@ import {
   Images,
   Layer,
   Map,
+  type MapProps,
   UserLocation,
 } from "@maplibre/maplibre-react-native";
 import { useEffect, useRef } from "react";
@@ -41,6 +42,9 @@ export type MapFlyTo = {
   framedAboveSheet?: boolean;
 };
 
+/** Screen position for a map ornament (exactly one of top/bottom and one of left/right). */
+export type OrnamentPosition = NonNullable<MapProps["attributionPosition"]>;
+
 type FountainMapProps = {
   styleUrl: string;
   featureCollection: GeoJSON.FeatureCollection;
@@ -50,6 +54,10 @@ type FountainMapProps = {
   onPinPress: (id: string) => void;
   draftPin?: LngLat | null;
   onMapPressForPlacement?: (point: LngLat) => void;
+  // The screen owns overlay layout + safe-area insets, so it positions the native
+  // ornaments to keep them clear of our chips/FAB (#104 attribution, #105 compass).
+  attributionPosition?: OrnamentPosition;
+  compassPosition?: OrnamentPosition;
 };
 
 export function FountainMap({
@@ -61,6 +69,8 @@ export function FountainMap({
   onPinPress,
   draftPin = null,
   onMapPressForPlacement,
+  attributionPosition,
+  compassPosition,
 }: FountainMapProps) {
   const cameraRef = useRef<CameraRef>(null);
   const sourceRef = useRef<GeoJSONSourceRef>(null);
@@ -95,6 +105,8 @@ export function FountainMap({
       mapStyle={styleUrl}
       logo={false}
       attribution
+      attributionPosition={attributionPosition}
+      compassPosition={compassPosition}
       onDidFailLoadingMap={() => {
         // #85: a basemap style / glyph / tile load failure surfaces here. This is
         // the signal to watch in Logcat/Metro when the map renders blank.
