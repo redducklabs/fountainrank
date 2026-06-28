@@ -17,9 +17,11 @@ issue. This doc summarizes and **sequences** them.
 
 ## 🟢 RESUME HERE — current state (updated 2026-06-28, clustering session)
 
-> **The mobile map is fixed AND clustering is implemented. Everything is green, and a test build is on
-> TestFlight + Play internal awaiting the owner's real-hardware device-test before merge + release.**
-> This section is the newest; everything below it is background/history.
+> **✅ RELEASED as `v0.9.0` (2026-06-28).** The mobile map is fixed AND clustering is implemented; PR #111 is
+> squash-merged to `main` (commit `1fdc61e`) and tag `v0.9.0` shipped to Play internal + TestFlight. The owner
+> chose to release **before** the real-hardware device-test, so the device-test checklist below is now a
+> **POST-release verification** to run before promoting to production. This section is the newest; everything
+> below it is background/history.
 
 ### What shipped to the branch — PR #111 `fix/85-map-render-clustering`
 
@@ -43,25 +45,26 @@ issue. This doc summarizes and **sequences** them.
 - **Codex:** `VERDICT: APPROVED` (artifact `temp/codex-reviews/pr-111-review-1.md`, gitignored; verdict also
   posted as a PR comment). No open PR comments.
 
-### Test build — DONE and installable
+### Release — `v0.9.0` shipped (2026-06-28)
 
-- `gh workflow run mobile-store-release.yml --ref fix/85-map-render-clustering -f platform=all` → run
-  **28331761609** → **SUCCEEDED** (release-notes + Android Play-internal submit + iOS App Store Connect submit
-  all green). Builds are in **TestFlight** and **Play internal testing**.
-- TestFlight "What to Test" is NOT auto-set on non-Enterprise EAS (#109) — paste it from the run's job summary.
-  Android auto-publishes to the internal track (#110).
+- **PR #111 squash-merged** → `main` `1fdc61e fix(mobile): render map pins and cluster them in JS (#85)`.
+- **Tag `v0.9.0` pushed** → `mobile-store-release.yml` run **28335243636** → **SUCCEEDED** (release-notes +
+  Android Play-internal submit + iOS App Store Connect submit all green).
+  - **Android:** auto-published to the Play **internal** testing track (`releaseStatus: completed`, #110).
+  - **iOS:** submitted to **TestFlight**; "What to Test" is NOT auto-set on non-Enterprise EAS (#109) — paste
+    from the run's job summary in App Store Connect.
+- (An earlier test build from the branch — run 28331761609 — also succeeded; superseded by v0.9.0.)
+- `appVersionSource: remote` + `autoIncrement` ⇒ EAS owns the build version/number; the git tag is the marker.
 
-### ➡️ Next steps (pick up here)
+### ➡️ Next steps (post-release)
 
-1. `git fetch && git checkout fix/85-map-render-clustering` for the code (you already have this handoff from `main`).
-2. **Install the build** (run 28331761609) from TestFlight + Play internal on **both iOS + Android real hardware**.
-3. **Device-test the checklist below** — every fix is code-complete but hardware-unverified (the map was blank).
-4. **If all pass:** `gh pr merge 111 --squash`, then cut the release — tag `vX.Y.Z` (a `v*.*.*` push triggers
-   `mobile-store-release.yml`) **or** `gh workflow run mobile-store-release.yml --ref main -f platform=all`.
-   ⚠️ **If this handoff conflicts at squash-merge, keep `main`'s version** — the copy on `main` is newer than the
-   branch's (handoff updates were committed straight to `main` per the owner so they'd be available on a fresh clone).
-5. **If anything fails:** fix on the branch → re-run the local mobile checks → Codex re-review loop to
-   `VERDICT: APPROVED` → re-cut a test build → re-verify.
+1. **Install the `v0.9.0` build** from TestFlight + Play internal on **both iOS + Android real hardware**.
+2. **Run the device-test checklist below** — every fix is hardware-unverified (released on emulator + CI +
+   Codex confidence only). This is the verification that was deferred from before-merge to after-release.
+3. **If all pass:** promote to production when ready — the Play **production** track and an App Store release
+   are **manual console steps** (CI stops at the internal / TestFlight tracks).
+4. **If anything fails:** fix-forward on a new branch → local mobile checks → Codex review loop to
+   `VERDICT: APPROVED` → CI green → squash-merge → bump the tag (`v0.9.1`) to re-release.
 
 ### Device-test checklist (both iOS + Android)
 
