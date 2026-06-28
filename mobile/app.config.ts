@@ -10,11 +10,6 @@ const config: ExpoConfig = {
   version: "0.1.0",
   scheme: "com.redducklabs.fountainrank",
   platforms: ["ios", "android"],
-  // #85: maplibre-react-native's GeoJSONSource does not get data into the native map
-  // under React Native's new architecture on this stack (proven on-device: fc:N but
-  // nat:0 with the simplest possible config). The library ships mature old-architecture
-  // (Paper) view managers, so pin this app to the old architecture.
-  newArchEnabled: false,
   icon: "./assets/icon.png",
   plugins: [
     "expo-router",

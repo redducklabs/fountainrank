@@ -58,9 +58,6 @@ type FountainMapProps = {
   // ornaments to keep them clear of our chips/FAB (#104 attribution, #105 compass).
   attributionPosition?: OrnamentPosition;
   compassPosition?: OrnamentPosition;
-  // #85 diagnostics: report how many features the NATIVE source actually holds
-  // (queried back via getData), to compare against what JS handed it.
-  onNativeFeatureCount?: (count: number) => void;
 };
 
 export function FountainMap({
@@ -74,7 +71,6 @@ export function FountainMap({
   onMapPressForPlacement,
   attributionPosition,
   compassPosition,
-  onNativeFeatureCount,
 }: FountainMapProps) {
   const cameraRef = useRef<CameraRef>(null);
   const sourceRef = useRef<GeoJSONSourceRef>(null);
@@ -102,34 +98,6 @@ export function FountainMap({
       console.log(`[map] featureCollection features=${featureCollection.features.length} (#85)`);
     }
   }, [featureCollection]);
-
-  // #85 diagnostics: shortly after the data prop changes, ask the NATIVE source how
-  // many features it actually holds. JS count high but native count ~0 => the data
-  // prop is not reaching the native GeoJSONSource (the propagation theory). Reports
-  // -1 if getData rejects/returns nothing. Only runs when a reporter is provided.
-  useEffect(() => {
-    if (!onNativeFeatureCount) return;
-    let cancelled = false;
-    const timer = setTimeout(() => {
-      const ref = sourceRef.current;
-      if (!ref) {
-        if (!cancelled) onNativeFeatureCount(-1);
-        return;
-      }
-      ref
-        .getData()
-        .then((data) => {
-          if (!cancelled) onNativeFeatureCount(data?.features?.length ?? -1);
-        })
-        .catch(() => {
-          if (!cancelled) onNativeFeatureCount(-1);
-        });
-    }, 900);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [featureCollection, onNativeFeatureCount]);
 
   return (
     <Map
@@ -170,7 +138,14 @@ export function FountainMap({
         ref={sourceRef}
         id="fountains"
         data={featureCollection}
-        cluster
+        // #85: native clustering is broken on this stack (Expo 56 / RN 0.85 /
+        // maplibre-react-native 11.3.6, new architecture). Verified on-device: a
+        // CLUSTERED GeoJSONSource renders nothing below clusterMaxZoom AND never
+        // repaints on a setGeoJson() data update; a NON-clustered source renders and
+        // updates correctly. Disable native clustering so pins always show; the
+        // cluster/cluster-count layers below stay inert until clustering is
+        // reintroduced in JS (supercluster) as a follow-up.
+        cluster={false}
         clusterRadius={CLUSTER_RADIUS}
         clusterMaxZoom={CLUSTER_MAX_ZOOM}
         onPress={(e) => {
@@ -210,10 +185,11 @@ export function FountainMap({
           layout={{
             "text-field": ["get", "point_count_abbreviated"],
             "text-size": 13,
-            // Without an explicit text-font MapLibre requests Open Sans / Arial
-            // Unicode, which the basemap glyph CDN 404s, so cluster counts never
-            // drew (#85). Mirror the web layer's proven font (it renders today).
-            "text-font": ["Noto Sans Bold"],
+            // #85: the basemap glyph CDN only serves the "Noto Sans Regular" font
+            // stack (Bold/Open Sans/Arial Unicode all 404 → labels never draw, as
+            // confirmed on-device in Logcat). web/lib/map/layers.ts still requests
+            // "Noto Sans Bold" and has the same latent gap; fix there separately.
+            "text-font": ["Noto Sans Regular"],
           }}
           paint={{ "text-color": "#ffffff" }}
         />
@@ -243,7 +219,7 @@ export function FountainMap({
             "text-size": 12,
             // See cluster-count: an explicit served font is required or the pill
             // labels 404 their glyphs and never render (#85).
-            "text-font": ["Noto Sans Bold"],
+            "text-font": ["Noto Sans Regular"],
             "text-anchor": "top",
             "text-offset": [0, 1.2],
             "text-allow-overlap": true,
