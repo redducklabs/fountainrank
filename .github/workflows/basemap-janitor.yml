@@ -18,11 +18,22 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 10
+    env:
+      DOCTL_VERSION: "1.163.0"
     steps:
       - name: Install doctl
-        uses: digitalocean/action-doctl@v2.5.2
-        with:
-          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+        run: |
+          set -euo pipefail
+          archive="doctl-${DOCTL_VERSION}-linux-amd64.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$archive" \
+            "https://github.com/digitalocean/doctl/releases/download/v${DOCTL_VERSION}/${archive}"
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" doctl
+          sudo install -m 0755 "$RUNNER_TEMP/doctl" /usr/local/bin/doctl
+          doctl version
+      - name: Authenticate doctl
+        env:
+          DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+        run: doctl auth init -t "$DIGITALOCEAN_ACCESS_TOKEN"
       - name: Reap stale basemap-refresh droplets + orphaned keys
         env:
           STALE_SECONDS: "21600" # 6h — well beyond a normal run
