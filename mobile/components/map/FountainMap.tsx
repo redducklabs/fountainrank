@@ -9,7 +9,7 @@ import {
   type MapProps,
   UserLocation,
 } from "@maplibre/maplibre-react-native";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { StyleSheet } from "react-native";
 
 import { pinFeatureCollection, type LngLat } from "../../lib/add-fountain/placement";
@@ -78,6 +78,20 @@ export function FountainMap({
 }: FountainMapProps) {
   const cameraRef = useRef<CameraRef>(null);
   const sourceRef = useRef<GeoJSONSourceRef>(null);
+  // The native GeoJSONSource applies its `data` on MOUNT but does not reliably apply
+  // `data` UPDATES under the new architecture, so feature changes were dropped and the
+  // source held 0 features even though JS handed it the pins (#85: fc>0 but native 0).
+  // Remount the source (and its layers, via fresh ids) whenever the data changes so the
+  // working mount path re-runs and the pins actually draw. This uses React's documented
+  // "adjust state during render" pattern (a conditional setState in render, NOT an
+  // effect) so the remount key is updated before paint.
+  const [sourceKey, setSourceKey] = useState(0);
+  const [renderedFc, setRenderedFc] = useState(featureCollection);
+  if (renderedFc !== featureCollection) {
+    setRenderedFc(featureCollection);
+    setSourceKey((k) => k + 1);
+  }
+  const fountainsSrc = `fountains-${sourceKey}`;
 
   // Execute a camera fly command. A new `flyTo` object reference (re)issues a fly,
   // so the screen drives the initial user-center, the locate button, and add-mode
@@ -167,8 +181,9 @@ export function FountainMap({
       />
 
       <GeoJSONSource
+        key={fountainsSrc}
         ref={sourceRef}
-        id="fountains"
+        id={fountainsSrc}
         data={featureCollection}
         cluster
         clusterRadius={CLUSTER_RADIUS}
@@ -191,8 +206,8 @@ export function FountainMap({
         }}
       >
         <Layer
-          id="clusters"
-          source="fountains"
+          id={`clusters-${sourceKey}`}
+          source={fountainsSrc}
           type="circle"
           filter={["has", "point_count"]}
           paint={{
@@ -203,8 +218,8 @@ export function FountainMap({
           }}
         />
         <Layer
-          id="cluster-count"
-          source="fountains"
+          id={`cluster-count-${sourceKey}`}
+          source={fountainsSrc}
           type="symbol"
           filter={["has", "point_count"]}
           layout={{
@@ -218,8 +233,8 @@ export function FountainMap({
           paint={{ "text-color": "#ffffff" }}
         />
         <Layer
-          id="pins"
-          source="fountains"
+          id={`pins-${sourceKey}`}
+          source={fountainsSrc}
           type="symbol"
           filter={["!", ["has", "point_count"]]}
           layout={{
@@ -230,8 +245,8 @@ export function FountainMap({
           }}
         />
         <Layer
-          id="pins-pill"
-          source="fountains"
+          id={`pins-pill-${sourceKey}`}
+          source={fountainsSrc}
           type="symbol"
           minzoom={PILL_MIN_ZOOM}
           // `has` only checks existence and EVERY feature has a `pill` key (null for
