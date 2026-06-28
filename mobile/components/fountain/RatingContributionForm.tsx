@@ -28,19 +28,19 @@ export function RatingContributionForm({
   pending: boolean;
   onSubmit: (body: RateRequest) => Promise<{ ok: true } | { ok: false; error: ContributionError }>;
 }) {
-  // Pre-fill with the caller's existing stars so an already-rated fountain shows their
-  // current rating instead of looking unrated (#65). Lazy init: dimensions are present at
-  // mount (the form only renders once the detail has loaded), and the user's edits persist
-  // across the post-submit refetch.
-  const [stars, setStars] = useState<Record<number, number | undefined>>(() =>
-    Object.fromEntries(
-      dimensions
-        .filter((dimension) => dimension.your_rating != null)
-        .map((dimension) => [dimension.rating_type_id, dimension.your_rating as number]),
-    ),
-  );
+  // Track only the user's explicit taps; the effective stars fall back to the caller's
+  // saved rating (`your_rating`). Deriving this each render instead of syncing via an
+  // effect means a previously-rated fountain pre-fills correctly even when `your_rating`
+  // loads after mount or changes on sign-in, and the user's edits always win (#65).
+  const [edits, setEdits] = useState<Record<number, number>>({});
   const [message, setMessage] = useState<Message>(null);
   const hasExistingRating = dimensions.some((dimension) => dimension.your_rating != null);
+  const stars: Record<number, number | undefined> = Object.fromEntries(
+    dimensions.map((dimension) => [
+      dimension.rating_type_id,
+      edits[dimension.rating_type_id] ?? dimension.your_rating ?? undefined,
+    ]),
+  );
   const payload = buildRatingPayload(fountainId, stars);
   const preview = ratingPointsPreview(payload.ok ? payload.value.ratings.length : 0);
 
@@ -81,7 +81,7 @@ export function RatingContributionForm({
                   accessibilityState={{ selected }}
                   disabled={pending}
                   onPress={() =>
-                    setStars((current) => ({
+                    setEdits((current) => ({
                       ...current,
                       [dimension.rating_type_id]: value,
                     }))
