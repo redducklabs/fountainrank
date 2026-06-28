@@ -16,7 +16,7 @@
     "@fountainrank/api-client": "workspace:*",
     "@fountainrank/contributions": "workspace:*",
     "@logto/rn": "1.1.0",
-    "@maplibre/maplibre-react-native": "11.3.4",
+    "@maplibre/maplibre-react-native": "11.3.6",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@tanstack/react-query": "5.101.0",
     "expo": "56.0.12",
