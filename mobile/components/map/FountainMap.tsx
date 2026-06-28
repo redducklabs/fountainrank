@@ -170,7 +170,7 @@ export function FountainMap({
         ref={sourceRef}
         id="fountains"
         data={featureCollection}
-        cluster
+        cluster={false}
         clusterRadius={CLUSTER_RADIUS}
         clusterMaxZoom={CLUSTER_MAX_ZOOM}
         onPress={(e) => {
@@ -220,13 +220,17 @@ export function FountainMap({
         <Layer
           id="pins"
           source="fountains"
-          type="symbol"
+          type="circle"
           filter={["!", ["has", "point_count"]]}
-          layout={{
-            "icon-image": ["get", "icon"],
-            "icon-anchor": "bottom",
-            "icon-size": 0.5,
-            "icon-allow-overlap": true,
+          paint={{
+            // #85 GROUND-TRUTH TEST: render individual fountains as plain dots with NO
+            // icon image / data-driven lookup. If every fountain shows now, the source
+            // has the data and the bug was the icons; if a subset is still missing, the
+            // data is not reaching the native source. Restore the icon pins after.
+            "circle-color": "#0A357E",
+            "circle-radius": 7,
+            "circle-stroke-color": "#ffffff",
+            "circle-stroke-width": 2,
           }}
         />
         <Layer
