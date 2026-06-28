@@ -9,7 +9,12 @@ export const INITIAL_USER_ZOOM = NEIGHBORHOOD_ZOOM;
 export const DEFAULT_CENTER: [number, number] = [-98.5, 39.8]; // continental US [lng, lat]
 export const DEFAULT_ZOOM = 3.5;
 export const CLUSTER_RADIUS = 60;
-export const CLUSTER_MAX_ZOOM = 14;
+// Diverges from web (14) on purpose: the native maplibre clustered source renders
+// NOTHING at zoom >= clusterMaxZoom on this stack (confirmed on-device — pins:N fc:N
+// but nat:0 at exactly z14, which is also the user's landing zoom; below 14 it works).
+// Keep the cluster boundary above the normal browse/add zoom range (PLACE_MIN_ZOOM=16)
+// so clustering stays active and pins render; the bug then only hits at z>=20 (rare).
+export const CLUSTER_MAX_ZOOM = 20;
 export const BOUND_RADIUS_MIN_M = 150;
 export const ACCURACY_MAX_M = 1000;
 export const PLACE_MIN_ZOOM = 16;
