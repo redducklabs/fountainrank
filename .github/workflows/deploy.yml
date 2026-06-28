@@ -34,7 +34,7 @@ jobs:
     outputs:
       image_tag: ${{ steps.tag.outputs.image_tag }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Resolve image tag
         id: tag
         env:
@@ -139,7 +139,7 @@ jobs:
       IMAGE_TAG: ${{ needs.build-push.outputs.image_tag }}
       REGISTRY: registry.digitalocean.com/${{ vars.DO_REGISTRY }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: digitalocean/action-doctl@v2.5.2
         with:
           token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}

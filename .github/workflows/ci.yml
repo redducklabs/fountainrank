@@ -35,7 +35,7 @@ jobs:
           --health-timeout 5s
           --health-retries 12
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v8.2.0
       - name: Sync backend deps (installs Python 3.13 via uv)
         working-directory: backend
@@ -61,7 +61,7 @@ jobs:
   workspace-js:
     runs-on: redducklabs-runners
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version: "22"
@@ -82,7 +82,7 @@ jobs:
   mobile-doctor:
     runs-on: redducklabs-runners
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version: "22"

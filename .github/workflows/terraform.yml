@@ -35,7 +35,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: redducklabs-runners
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: 1.15.6
@@ -58,7 +58,7 @@ jobs:
       # bucket-create-capable Spaces key above — to create the basemap bucket/CDN/CORS.
       TF_VAR_manage_basemap_spaces: ${{ github.event.inputs.manage_basemap_spaces }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: 1.15.6
