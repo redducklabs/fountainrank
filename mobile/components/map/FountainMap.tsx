@@ -9,7 +9,7 @@ import {
   type MapProps,
   UserLocation,
 } from "@maplibre/maplibre-react-native";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { StyleSheet } from "react-native";
 
 import { pinFeatureCollection, type LngLat } from "../../lib/add-fountain/placement";
@@ -78,6 +78,15 @@ export function FountainMap({
 }: FountainMapProps) {
   const cameraRef = useRef<CameraRef>(null);
   const sourceRef = useRef<GeoJSONSourceRef>(null);
+  // Self-heal for the racy native source update (#85): the declarative `data` prop
+  // intermittently fails to reach the native GeoJSONSource on this stack, so the
+  // features silently never render. A bump to `remountKey` remounts the source to
+  // re-run its mount path; `healRef` bounds the retries per data set so it can't loop.
+  const [remountKey, setRemountKey] = useState(0);
+  const healRef = useRef<{ fc: GeoJSON.FeatureCollection | null; tries: number }>({
+    fc: null,
+    tries: 0,
+  });
 
   // Execute a camera fly command. A new `flyTo` object reference (re)issues a fly,
   // so the screen drives the initial user-center, the locate button, and add-mode
@@ -103,33 +112,45 @@ export function FountainMap({
     }
   }, [featureCollection]);
 
-  // #85 diagnostics: shortly after the data prop changes, ask the NATIVE source how
-  // many features it actually holds. JS count high but native count ~0 => the data
-  // prop is not reaching the native GeoJSONSource (the propagation theory). Reports
-  // -1 if getData rejects/returns nothing. Only runs when a reporter is provided.
+  // #85 self-heal + diagnostics: shortly after the data changes (and after each heal
+  // remount), read the NATIVE source's real feature count. If JS has features but the
+  // native source is empty, the racy declarative update was dropped — remount the
+  // source to re-run its mount path, bounded to a few tries per data set so it cannot
+  // loop. Also reports the count to the optional diagnostics overlay.
   useEffect(() => {
-    if (!onNativeFeatureCount) return;
     let cancelled = false;
     const timer = setTimeout(() => {
       const ref = sourceRef.current;
       if (!ref) {
-        if (!cancelled) onNativeFeatureCount(-1);
+        if (!cancelled) onNativeFeatureCount?.(-1);
         return;
       }
       ref
         .getData()
         .then((data) => {
-          if (!cancelled) onNativeFeatureCount(data?.features?.length ?? -1);
+          if (cancelled) return;
+          const nat = data?.features?.length ?? 0;
+          onNativeFeatureCount?.(nat);
+          const jsCount = featureCollection.features.length;
+          if (nat === 0 && jsCount > 0) {
+            if (healRef.current.fc !== featureCollection) {
+              healRef.current = { fc: featureCollection, tries: 0 };
+            }
+            if (healRef.current.tries < 4) {
+              healRef.current.tries += 1;
+              setRemountKey((k) => k + 1);
+            }
+          }
         })
         .catch(() => {
-          if (!cancelled) onNativeFeatureCount(-1);
+          if (!cancelled) onNativeFeatureCount?.(-1);
         });
-    }, 900);
+    }, 600);
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [featureCollection, onNativeFeatureCount]);
+  }, [featureCollection, remountKey, onNativeFeatureCount]);
 
   return (
     <Map
@@ -167,6 +188,7 @@ export function FountainMap({
       />
 
       <GeoJSONSource
+        key={remountKey}
         ref={sourceRef}
         id="fountains"
         data={featureCollection}
