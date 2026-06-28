@@ -87,7 +87,18 @@ export function isAuthenticatedApiRequest(input: Request): boolean {
   // showed 0 (issue #88). Match the subtree, but boundary-safely: a sibling like
   // `/api/v1/members` shares the `me` prefix yet is NOT the current-user subtree.
   const path = requestPath(input);
-  return path === "/api/v1/me" || path.startsWith("/api/v1/me/");
+  if (path === "/api/v1/me" || path.startsWith("/api/v1/me/")) {
+    return true;
+  }
+  // The public fountain DETAIL GET (/api/v1/fountains/{id}) is enrichable with the
+  // caller's own rating (#65): attach the token when signed in so `your_rating` comes
+  // back. Signed-out users send no token (getBackendAccessToken -> null -> buildAuthHeaders
+  // emits no header) and still get the anonymous response. Exclude the sibling collection
+  // read /fountains/bbox and sub-resources like /fountains/{id}/notes (single segment only).
+  if (path !== "/api/v1/fountains/bbox" && /^\/api\/v1\/fountains\/[^/]+$/.test(path)) {
+    return true;
+  }
+  return false;
 }
 
 /**

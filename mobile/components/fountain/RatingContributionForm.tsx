@@ -28,8 +28,19 @@ export function RatingContributionForm({
   pending: boolean;
   onSubmit: (body: RateRequest) => Promise<{ ok: true } | { ok: false; error: ContributionError }>;
 }) {
-  const [stars, setStars] = useState<Record<number, number | undefined>>({});
+  // Pre-fill with the caller's existing stars so an already-rated fountain shows their
+  // current rating instead of looking unrated (#65). Lazy init: dimensions are present at
+  // mount (the form only renders once the detail has loaded), and the user's edits persist
+  // across the post-submit refetch.
+  const [stars, setStars] = useState<Record<number, number | undefined>>(() =>
+    Object.fromEntries(
+      dimensions
+        .filter((dimension) => dimension.your_rating != null)
+        .map((dimension) => [dimension.rating_type_id, dimension.your_rating as number]),
+    ),
+  );
   const [message, setMessage] = useState<Message>(null);
+  const hasExistingRating = dimensions.some((dimension) => dimension.your_rating != null);
   const payload = buildRatingPayload(fountainId, stars);
   const preview = ratingPointsPreview(payload.ok ? payload.value.ratings.length : 0);
 
@@ -51,6 +62,11 @@ export function RatingContributionForm({
   return (
     <View style={styles.section}>
       <Text style={styles.title}>Rate it</Text>
+      {hasExistingRating ? (
+        <Text style={styles.alreadyRated}>
+          You’ve rated this fountain. Update your stars and submit to change it.
+        </Text>
+      ) : null}
       {dimensions.map((dimension) => (
         <View key={dimension.rating_type_id} style={styles.row}>
           <Text style={styles.label}>{dimension.name}</Text>
@@ -80,7 +96,11 @@ export function RatingContributionForm({
         </View>
       ))}
       <PointsPreview lines={preview} />
-      <SubmitButton label="Submit rating" disabled={pending || !payload.ok} onPress={submit} />
+      <SubmitButton
+        label={hasExistingRating ? "Update rating" : "Submit rating"}
+        disabled={pending || !payload.ok}
+        onPress={submit}
+      />
       <ContributionMessage message={message} />
     </View>
   );
@@ -152,6 +172,7 @@ export function SubmitButton({
 const styles = StyleSheet.create({
   section: { gap: spacing.sm },
   title: { ...typography.body, fontWeight: "700", color: colors.text },
+  alreadyRated: { ...typography.meta, color: colors.brandBlue, fontWeight: "600" },
   row: { gap: spacing.xs },
   label: { ...typography.body, color: colors.textMuted },
   stars: { flexDirection: "row", gap: spacing.xs },

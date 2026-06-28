@@ -167,6 +167,27 @@ describe("createApiClient", () => {
     ).toBe(true);
   });
 
+  it("authenticates the GET fountain detail so the caller's own rating loads (#65)", () => {
+    // /api/v1/fountains/{id} is public but enriches with `your_rating` when a token is
+    // present, so a previously-rated fountain pre-fills the stars.
+    expect(
+      isAuthenticatedApiRequest(
+        new Request(
+          "https://api.fountainrank.com/api/v1/fountains/123e4567-e89b-12d3-a456-426614174000",
+        ),
+      ),
+    ).toBe(true);
+    // ...but not the sibling collection read (bbox), nor public sub-resources (notes).
+    expect(
+      isAuthenticatedApiRequest(new Request("https://api.fountainrank.com/api/v1/fountains/bbox")),
+    ).toBe(false);
+    expect(
+      isAuthenticatedApiRequest(
+        new Request("https://api.fountainrank.com/api/v1/fountains/abc/notes"),
+      ),
+    ).toBe(false);
+  });
+
   it("authenticates the GET /api/v1/me/* subtree (issue #88: contributions, badges)", () => {
     // These carried no bearer token under the old exact `=== "/api/v1/me"` gate,
     // so the backend 401'd and the map chip + Account points fell back to 0.
