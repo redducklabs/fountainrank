@@ -42,6 +42,9 @@ class DimensionSummary(BaseModel):
     name: str
     average_rating: float | None
     vote_count: int
+    # The requesting user's own stars for this dimension, when authenticated (#65);
+    # None for anonymous callers and dimensions the user hasn't rated.
+    your_rating: int | None = None
 
 
 class AttributeTypeOut(BaseModel):

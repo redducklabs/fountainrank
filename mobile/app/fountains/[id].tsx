@@ -54,8 +54,12 @@ export default function FountainDetailScreen() {
   const fountainId = normalizeFountainId(id);
   const now = new Date();
 
+  // Key on auth: the detail GET is enriched with the caller's own rating only when the
+  // request carries a token (#65), so anonymous and authenticated reads are distinct cache
+  // entries — signing in (or auth settling after the first fetch) re-fetches the enriched
+  // detail instead of serving the cached anonymous one.
   const detailQuery = useQuery({
-    queryKey: ["fountain", fountainId],
+    queryKey: ["fountain", fountainId, auth.status === "authenticated"],
     enabled: fountainId != null,
     queryFn: async (): Promise<FountainDetailT> => {
       if (fountainId == null) throw new Error("missing fountain id");
@@ -90,7 +94,7 @@ export default function FountainDetailScreen() {
   const refreshDetailAfterWrite = (detail?: FountainDetailT) => {
     if (fountainId == null) return;
     if (detail) {
-      queryClient.setQueryData(["fountain", fountainId], detail);
+      queryClient.setQueryData(["fountain", fountainId, auth.status === "authenticated"], detail);
     } else {
       void detailQuery.refetch();
     }

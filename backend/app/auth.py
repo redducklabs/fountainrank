@@ -130,3 +130,32 @@ async def get_current_user(
         return await _reconcile_admin(session, user, x_dev_user, settings)
 
     raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="authentication required")
+
+
+async def get_optional_user(
+    authorization: str | None = Header(default=None),
+    x_dev_user: str | None = Header(default=None, alias="X-Dev-User"),
+    x_dev_email: str | None = Header(default=None, alias="X-Dev-Email"),
+    x_dev_name: str | None = Header(default=None, alias="X-Dev-Name"),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+    jwks_cache: JwksCache = Depends(get_jwks_cache),
+) -> User | None:
+    """Resolve the user when credentials are present, else None.
+
+    For public endpoints that enrich the response for a signed-in user (e.g. the
+    caller's own rating on a fountain). When NO credentials are present we return
+    None instead of 401 so anonymous browsing still works; a present-but-INVALID
+    bearer is still a hard 401 (delegated to get_current_user) — never silently
+    downgraded to anonymous, so an auth failure can't be masked."""
+    if authorization is None and not (settings.dev_auth_enabled and x_dev_user):
+        return None
+    return await get_current_user(
+        authorization=authorization,
+        x_dev_user=x_dev_user,
+        x_dev_email=x_dev_email,
+        x_dev_name=x_dev_name,
+        session=session,
+        settings=settings,
+        jwks_cache=jwks_cache,
+    )

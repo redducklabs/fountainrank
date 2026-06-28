@@ -28,8 +28,19 @@ export function RatingContributionForm({
   pending: boolean;
   onSubmit: (body: RateRequest) => Promise<{ ok: true } | { ok: false; error: ContributionError }>;
 }) {
-  const [stars, setStars] = useState<Record<number, number | undefined>>({});
+  // Track only the user's explicit taps; the effective stars fall back to the caller's
+  // saved rating (`your_rating`). Deriving this each render instead of syncing via an
+  // effect means a previously-rated fountain pre-fills correctly even when `your_rating`
+  // loads after mount or changes on sign-in, and the user's edits always win (#65).
+  const [edits, setEdits] = useState<Record<number, number>>({});
   const [message, setMessage] = useState<Message>(null);
+  const hasExistingRating = dimensions.some((dimension) => dimension.your_rating != null);
+  const stars: Record<number, number | undefined> = Object.fromEntries(
+    dimensions.map((dimension) => [
+      dimension.rating_type_id,
+      edits[dimension.rating_type_id] ?? dimension.your_rating ?? undefined,
+    ]),
+  );
   const payload = buildRatingPayload(fountainId, stars);
   const preview = ratingPointsPreview(payload.ok ? payload.value.ratings.length : 0);
 
@@ -51,6 +62,11 @@ export function RatingContributionForm({
   return (
     <View style={styles.section}>
       <Text style={styles.title}>Rate it</Text>
+      {hasExistingRating ? (
+        <Text style={styles.alreadyRated}>
+          You’ve rated this fountain. Update your stars and submit to change it.
+        </Text>
+      ) : null}
       {dimensions.map((dimension) => (
         <View key={dimension.rating_type_id} style={styles.row}>
           <Text style={styles.label}>{dimension.name}</Text>
@@ -65,7 +81,7 @@ export function RatingContributionForm({
                   accessibilityState={{ selected }}
                   disabled={pending}
                   onPress={() =>
-                    setStars((current) => ({
+                    setEdits((current) => ({
                       ...current,
                       [dimension.rating_type_id]: value,
                     }))
@@ -80,7 +96,11 @@ export function RatingContributionForm({
         </View>
       ))}
       <PointsPreview lines={preview} />
-      <SubmitButton label="Submit rating" disabled={pending || !payload.ok} onPress={submit} />
+      <SubmitButton
+        label={hasExistingRating ? "Update rating" : "Submit rating"}
+        disabled={pending || !payload.ok}
+        onPress={submit}
+      />
       <ContributionMessage message={message} />
     </View>
   );
@@ -152,6 +172,7 @@ export function SubmitButton({
 const styles = StyleSheet.create({
   section: { gap: spacing.sm },
   title: { ...typography.body, fontWeight: "700", color: colors.text },
+  alreadyRated: { ...typography.meta, color: colors.brandBlue, fontWeight: "600" },
   row: { gap: spacing.xs },
   label: { ...typography.body, color: colors.textMuted },
   stars: { flexDirection: "row", gap: spacing.xs },
