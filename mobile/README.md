@@ -148,18 +148,19 @@ production builds produce an `.aab`; preview Android builds produce an `.apk`.
 The local `ios.buildNumber` and `android.versionCode` values in `app.config.ts`
 seed the first remote value; after that, EAS owns store build-number increments.
 The iOS `production` submit profile carries only non-secret identifiers — the App
-Store Connect app id (`ascAppId`) and the Apple Team id (`appleTeamId`). The Team id
-is required so the auto-submit can set TestFlight "What to Test" non-interactively;
-without it EAS prompts for the Apple Team ID and the submit fails in CI. The App
+Store Connect app id (`ascAppId`) and the Apple Team id (`appleTeamId`). The App
 Store Connect API key, Play service-account JSON, signing material, EAS tokens, and
 tester lists stay outside the repo (EAS credentials service / GitHub secrets).
 
-The GitHub `mobile-store-release.yml` workflow generates store release notes
-from the PRs included since the previous `v*.*.*` tag. iOS passes that PR list to
-TestFlight's "What to Test" field through EAS. Google Play release notes are not
-supported by the EAS Android submit options in use here, so the workflow prints
-the same PR list in the run summary and leaves the Play release as a draft until
-those notes are pasted into the Play release notes field.
+The GitHub `mobile-store-release.yml` workflow generates store release notes from
+the PRs included since the previous `v*.*.*` tag and prints them in the run summary
+for both platforms. Neither store is set automatically: EAS hosted submission only
+sets the TestFlight changelog on the Enterprise plan (otherwise the submit fails
+with "Changelog submission is currently available for Enterprise plan only"), so iOS
+is submitted without it and the owner pastes the notes into TestFlight's "What to
+Test" field; Google Play release notes are likewise unsupported by the EAS Android
+submit options here, so the Play release stays a draft until the same notes are
+pasted into the Play release-notes field.
 
 Before any `expo config --type prebuild`, `expo prebuild`, or EAS command after
 incremental dependency changes, recover the pnpm/Expo install from the repo
