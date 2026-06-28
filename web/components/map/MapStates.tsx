@@ -19,7 +19,9 @@ export function ZoomInHint() {
 export function EmptyHint() {
   return (
     <div className="pointer-events-none absolute bottom-6 left-1/2 -translate-x-1/2">
-      <span className="rounded-full border border-black/10 bg-white px-4 py-2 text-sm text-slate-700 shadow">
+      {/* inline-block keeps the rounded pill a single box (an inline span paints its
+          background per line-box, so a wrap on narrow screens splits it — #53). */}
+      <span className="inline-block max-w-[90vw] rounded-full border border-black/10 bg-white px-4 py-2 text-center text-sm text-slate-700 shadow">
         No fountains mapped here yet.
       </span>
     </div>
@@ -28,7 +30,8 @@ export function EmptyHint() {
 export function CapHint() {
   return (
     <div className="pointer-events-none absolute bottom-6 left-1/2 -translate-x-1/2">
-      <span className="rounded-full border border-black/10 bg-white px-4 py-2 text-sm text-slate-700 shadow">
+      {/* See EmptyHint (#53): this longer string wraps even sooner. */}
+      <span className="inline-block max-w-[90vw] rounded-full border border-black/10 bg-white px-4 py-2 text-center text-sm text-slate-700 shadow">
         Lots of fountains here — zoom in to see them all.
       </span>
     </div>

@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import JSONResponse
-from geoalchemy2 import Geography
+from geoalchemy2 import Geography, Geometry
 from sqlalchemy import cast, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -388,6 +388,12 @@ async def nearby_fountains(
     ]
 
 
+# Latitude span (degrees) at/above which an envelope cast to geography risks an antipodal
+# pole-to-pole edge (PostGIS errors at exactly 180°; the 1° margin avoids float-boundary
+# surprises). At/above this, the bbox uses a planar geometry intersection instead (#20).
+_GEOGRAPHY_SAFE_LAT_SPAN_DEG = 179.0
+
+
 @router.get("/fountains/bbox", response_model=list[FountainPin])
 async def fountains_in_bbox(
     response: Response,
@@ -407,7 +413,18 @@ async def fountains_in_bbox(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="min_lat/min_lng must be <= max_lat/max_lng",
         )
-    envelope = cast(func.ST_MakeEnvelope(min_lng, min_lat, max_lng, max_lat, 4326), Geography)
+    # A geography polygon whose vertical edges run pole-to-pole (the envelope spans the
+    # full latitude range) has antipodal endpoints, which PostGIS rejects with
+    # "Antipodal (180 degrees long) edge detected!" -> 500 (#20). Empirically only the
+    # LATITUDE span triggers this (a 200°-wide mid-latitude box is fine); the whole-world
+    # viewport is the real-world case. For such near-global envelopes, intersect in planar
+    # GEOMETRY space — no antipodal restriction, and exact for an axis-aligned box. Normal
+    # viewports keep the geodesic GEOGRAPHY path so the GiST index on location is used.
+    envelope = func.ST_MakeEnvelope(min_lng, min_lat, max_lng, max_lat, 4326)
+    if max_lat - min_lat < _GEOGRAPHY_SAFE_LAT_SPAN_DEG:
+        spatial_predicate = func.ST_Intersects(Fountain.location, cast(envelope, Geography))
+    else:
+        spatial_predicate = func.ST_Intersects(cast(Fountain.location, Geometry), envelope)
     stmt = (
         select(
             Fountain.id,
@@ -421,7 +438,7 @@ async def fountains_in_bbox(
             Fountain.last_verified_at,
         )
         .where(Fountain.is_hidden.is_(False))
-        .where(func.ST_Intersects(Fountain.location, envelope))
+        .where(spatial_predicate)
     )
     stmt = apply_discovery_filters(stmt, filters)  # all filters in WHERE before the cap
     stmt = stmt.limit(settings.max_results + 1)
