@@ -53,6 +53,7 @@ import {
 } from "../../lib/add-fountain/state";
 import { isMapConfigured } from "../../lib/config";
 import { isAtCap, normalizeBounds, type RawBounds, shouldLoadPins } from "../../lib/map/bounds";
+import { buildClusterIndex, clustersForViewport } from "../../lib/map/cluster";
 import { DEFAULT_ZOOM, INITIAL_USER_ZOOM, PLACE_MIN_ZOOM } from "../../lib/map/constants";
 import {
   buildBboxQuery,
@@ -230,11 +231,24 @@ export default function MapScreen() {
     });
   }, [location.coords]);
 
-  // FountainPin[] is directly assignable to PinInput[] (ranking_score/current_status
-  // are optional), so no per-pin normalization is needed at the call site.
-  const featureCollection = useMemo(
-    () => pinsToFeatureCollection(pinsQuery.data?.pins ?? []),
+  // Clustering runs in JS (native clustering is broken on this stack — see
+  // lib/map/cluster.ts). The index is rebuilt only when the bbox query returns new
+  // data; `keepPreviousData` holds the data stable between fetches so the index — and
+  // therefore the rendered clusters — don't flicker while panning. FountainPin[] is
+  // directly assignable to PinInput[] (ranking_score/current_status are optional), so
+  // no per-pin normalization is needed at the call site.
+  const clusterIndex = useMemo(
+    () => buildClusterIndex(pinsQuery.data?.pins ?? []),
     [pinsQuery.data],
+  );
+  // Recompute the visible clusters/points whenever the index OR the viewport changes
+  // (pan/zoom). Before the first region is known there is nothing to cluster.
+  const featureCollection = useMemo(
+    () =>
+      region
+        ? clustersForViewport(clusterIndex, region.bounds, region.zoom)
+        : pinsToFeatureCollection([]),
+    [clusterIndex, region],
   );
 
   const setRegionDebounced = useCallback((bounds: RawBounds, z: number) => {
@@ -313,6 +327,12 @@ export default function MapScreen() {
         showUserLocation={location.status === "granted"}
         onRegionChange={setRegionDebounced}
         onPinPress={(id) => router.push(`/fountains/${id}`)}
+        // Tapping a cluster flies to the zoom that breaks it apart. supercluster's
+        // getClusterExpansionZoom is synchronous (unlike the native Promise) and
+        // operates on the same JS index that produced the cluster.
+        onClusterPress={(clusterId, center) =>
+          setFlyTo({ center, zoom: clusterIndex.getClusterExpansionZoom(clusterId) })
+        }
         // #102: only render the draft layer in add mode, so after a successful add
         // its no-onPress layer can't sit over the new real pin and swallow taps.
         draftPin={addMode ? addState.pin : null}

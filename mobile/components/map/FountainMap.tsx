@@ -2,7 +2,6 @@ import {
   Camera,
   type CameraRef,
   GeoJSONSource,
-  type GeoJSONSourceRef,
   Images,
   Layer,
   Map,
@@ -16,8 +15,6 @@ import { pinFeatureCollection, type LngLat } from "../../lib/add-fountain/placem
 import type { RawBounds } from "../../lib/map/bounds";
 import {
   ADD_SHEET_CAMERA_PADDING,
-  CLUSTER_MAX_ZOOM,
-  CLUSTER_RADIUS,
   DEFAULT_CENTER,
   DEFAULT_ZOOM,
   PILL_MIN_ZOOM,
@@ -52,6 +49,9 @@ type FountainMapProps = {
   showUserLocation: boolean;
   onRegionChange: (bounds: RawBounds, zoom: number) => void;
   onPinPress: (id: string) => void;
+  /** Cluster tapped: the screen owns the JS cluster index, so it resolves the
+   *  expansion zoom and flies the camera (see index.tsx). */
+  onClusterPress?: (clusterId: number, center: LngLat) => void;
   draftPin?: LngLat | null;
   onMapPressForPlacement?: (point: LngLat) => void;
   // The screen owns overlay layout + safe-area insets, so it positions the native
@@ -67,13 +67,13 @@ export function FountainMap({
   showUserLocation,
   onRegionChange,
   onPinPress,
+  onClusterPress,
   draftPin = null,
   onMapPressForPlacement,
   attributionPosition,
   compassPosition,
 }: FountainMapProps) {
   const cameraRef = useRef<CameraRef>(null);
-  const sourceRef = useRef<GeoJSONSourceRef>(null);
 
   // Execute a camera fly command. A new `flyTo` object reference (re)issues a fly,
   // so the screen drives the initial user-center, the locate button, and add-mode
@@ -88,17 +88,6 @@ export function FountainMap({
     });
   }, [flyTo]);
 
-  // #85 instrumentation: how many features the JS side handed to the native
-  // GeoJSONSource. If pins are missing on a device while this logs a non-zero
-  // count, the data is not reaching the native source (the leading Android-empty
-  // theory under the new architecture). Dev-only so production stays quiet; read
-  // it from Metro/Logcat on a development build.
-  useEffect(() => {
-    if (__DEV__) {
-      console.log(`[map] featureCollection features=${featureCollection.features.length} (#85)`);
-    }
-  }, [featureCollection]);
-
   return (
     <Map
       style={styles.map}
@@ -108,10 +97,9 @@ export function FountainMap({
       attributionPosition={attributionPosition}
       compassPosition={compassPosition}
       onDidFailLoadingMap={() => {
-        // #85: a basemap style / glyph / tile load failure surfaces here. Dev-only
-        // (the rest of the app ships no console): reproduce on a development build —
-        // same new architecture — and watch Logcat/Metro when the map renders blank.
-        if (__DEV__) console.warn("[map] basemap failed to load (#85)");
+        // Surface a basemap style / glyph / tile load failure in development; the
+        // rest of the app ships no console output.
+        if (__DEV__) console.warn("[map] basemap failed to load");
       }}
       onPress={(event) => {
         if (!onMapPressForPlacement) return;
@@ -128,38 +116,38 @@ export function FountainMap({
       <Images
         images={PIN_IMAGES}
         onImageMissing={(e) => {
-          // #85: a layer asked for an icon id that was never registered, so those
-          // pins silently do not draw. Dev-only (see onDidFailLoadingMap).
-          if (__DEV__) console.warn(`[map] missing image: ${e.nativeEvent.image} (#85)`);
+          // A layer asked for an icon id that was never registered, so those pins
+          // would silently not draw — warn in development (see onDidFailLoadingMap).
+          // Cluster features carry no `icon` prop, so the symbol layer resolves an
+          // empty id for them (they draw as circles, not symbols); that's expected,
+          // so only warn for a real, named id.
+          if (__DEV__ && e.nativeEvent.image) {
+            console.warn(`[map] missing image: ${e.nativeEvent.image}`);
+          }
         }}
       />
 
       <GeoJSONSource
-        ref={sourceRef}
         id="fountains"
         data={featureCollection}
-        // #85: native clustering is broken on this stack (Expo 56 / RN 0.85 /
-        // maplibre-react-native 11.3.6, new architecture). Verified on-device: a
-        // CLUSTERED GeoJSONSource renders nothing below clusterMaxZoom AND never
-        // repaints on a setGeoJson() data update; a NON-clustered source renders and
-        // updates correctly. Disable native clustering so pins always show; the
-        // cluster/cluster-count layers below stay inert until clustering is
-        // reintroduced in JS (supercluster) as a follow-up.
+        // Clustering is computed in JS (supercluster, see lib/map/cluster.ts) and fed
+        // to this NON-clustered source. Native clustering is broken on this stack
+        // (Expo 56 / RN 0.85 / maplibre-react-native 11.3.6, New Architecture):
+        // verified on-device, a CLUSTERED GeoJSONSource renders nothing below
+        // clusterMaxZoom AND never repaints on a data update, while a non-clustered
+        // source renders and updates correctly. The cluster/cluster-count layers
+        // below read the supercluster-shaped output (point_count / cluster_id).
         cluster={false}
-        clusterRadius={CLUSTER_RADIUS}
-        clusterMaxZoom={CLUSTER_MAX_ZOOM}
         onPress={(e) => {
           e.stopPropagation();
           const feature = e.nativeEvent.features?.[0];
           if (!feature) return;
           const props = feature.properties ?? {};
           if (props.cluster) {
-            // Cluster: expand to the zoom that breaks it apart, centered on it.
+            // Cluster tap: hand the id + center to the screen, which owns the JS
+            // cluster index and flies to the expansion zoom (see index.tsx).
             const [lng, lat] = (feature.geometry as GeoJSON.Point).coordinates;
-            void sourceRef.current
-              ?.getClusterExpansionZoom(props.cluster_id as number)
-              .then((zoom) => cameraRef.current?.flyTo({ center: [lng, lat], zoom, duration: 400 }))
-              .catch(() => undefined);
+            onClusterPress?.(props.cluster_id as number, { lng, lat });
             return;
           }
           if (typeof props.id === "string") onPinPress(props.id);
