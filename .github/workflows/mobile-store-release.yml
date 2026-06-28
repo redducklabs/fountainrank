@@ -184,13 +184,27 @@ jobs:
       - name: Verify Expo authentication
         run: pnpm dlx eas-cli@20.3.0 whoami
         working-directory: mobile
+      - name: Show TestFlight release notes
+        run: |
+          {
+            echo "TestFlight \"What to Test\" notes for ${RELEASE_RANGE}:"
+            echo
+            printf '%s\n' "$TESTFLIGHT_RELEASE_NOTES"
+            echo
+            echo "EAS hosted submission only sets the TestFlight changelog on the Enterprise plan, so the build is submitted without it. Paste these notes into the TestFlight \"What to Test\" field in App Store Connect after the build finishes processing."
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          RELEASE_RANGE: ${{ needs.release-notes.outputs.range }}
       - name: Build and submit iOS to App Store Connect
+        # NOTE: do NOT pass --what-to-test here. EAS hosted submission rejects the
+        # `changelog` parameter on non-Enterprise plans ("Changelog submission is
+        # currently available for Enterprise plan only"), which fails the whole
+        # submit. The notes are printed above for manual paste instead.
         run: >
           pnpm dlx eas-cli@20.3.0 build
           --platform ios
           --profile production
           --auto-submit-with-profile production
-          --what-to-test "$TESTFLIGHT_RELEASE_NOTES"
           --non-interactive
           --wait
         working-directory: mobile
