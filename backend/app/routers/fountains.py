@@ -9,7 +9,7 @@ from sqlalchemy import cast, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import get_current_user
+from app.auth import get_current_user, get_optional_user
 from app.conditions import recompute_fountain_status
 from app.config import Settings, get_settings
 from app.consensus import recompute_attribute_consensus
@@ -244,7 +244,23 @@ async def _upsert_attribute_observations(
     return obs_ids
 
 
-async def serialize_fountain_detail(session: AsyncSession, fountain: Fountain) -> FountainDetail:
+async def serialize_fountain_detail(
+    session: AsyncSession, fountain: Fountain, user_id: uuid.UUID | None = None
+) -> FountainDetail:
+    # The caller's own stars per dimension, so the rating UI can pre-fill and show
+    # "already rated" (#65). Only fetched when authenticated; anonymous -> all None.
+    your_stars: dict[int, int] = {}
+    if user_id is not None:
+        your_stars = {
+            rid: stars
+            for rid, stars in (
+                await session.execute(
+                    select(Rating.rating_type_id, Rating.stars).where(
+                        Rating.fountain_id == fountain.id, Rating.user_id == user_id
+                    )
+                )
+            ).all()
+        }
     lat, lng = (
         await session.execute(
             select(latitude_of(Fountain.location), longitude_of(Fountain.location)).where(
@@ -276,6 +292,7 @@ async def serialize_fountain_detail(session: AsyncSession, fountain: Fountain) -
             name=name,
             average_rating=float(avg) if avg is not None else None,
             vote_count=int(votes or 0),
+            your_rating=your_stars.get(rid),
         )
         for (rid, name, avg, votes) in dim_rows
     ]
@@ -466,6 +483,7 @@ async def fountains_in_bbox(
 async def fountain_detail(
     fountain_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
+    user: User | None = Depends(get_optional_user),
 ) -> FountainDetail:
     fountain = (
         await session.execute(
@@ -474,7 +492,7 @@ async def fountain_detail(
     ).scalar_one_or_none()
     if fountain is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="fountain not found")
-    return await serialize_fountain_detail(session, fountain)
+    return await serialize_fountain_detail(session, fountain, user_id=user.id if user else None)
 
 
 @router.post(
@@ -600,7 +618,7 @@ async def add_fountain(
 
     await session.commit()
     await session.refresh(fountain)
-    return await serialize_fountain_detail(session, fountain)
+    return await serialize_fountain_detail(session, fountain, user_id=user.id)
 
 
 @router.post("/fountains/{fountain_id}/ratings", response_model=FountainDetail)
@@ -651,7 +669,7 @@ async def submit_ratings(
     )
     await session.commit()
     await session.refresh(fountain)
-    return await serialize_fountain_detail(session, fountain)
+    return await serialize_fountain_detail(session, fountain, user_id=user.id)
 
 
 @router.post("/fountains/{fountain_id}/attributes", response_model=FountainDetail)
@@ -704,7 +722,7 @@ async def submit_attributes(
     await record_contributions(session, specs)
     await session.commit()
     await session.refresh(fountain)
-    return await serialize_fountain_detail(session, fountain)
+    return await serialize_fountain_detail(session, fountain, user_id=user.id)
 
 
 @router.post("/fountains/{fountain_id}/conditions", response_model=FountainDetail)
@@ -775,7 +793,7 @@ async def submit_condition(
         fountain.current_status,
         "inserted" if inserted else "deduped",
     )
-    return await serialize_fountain_detail(session, fountain)
+    return await serialize_fountain_detail(session, fountain, user_id=user.id)
 
 
 @router.post("/fountains/{fountain_id}/notes", response_model=NoteOut)
