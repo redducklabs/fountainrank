@@ -15,6 +15,80 @@ issue. This doc summarizes and **sequences** them.
 
 ---
 
+## 🟢 RESUME HERE — current state (updated 2026-06-28, clustering session)
+
+> **The mobile map is fixed AND clustering is implemented. Everything is green, and a test build is on
+> TestFlight + Play internal awaiting the owner's real-hardware device-test before merge + release.**
+> This section is the newest; everything below it is background/history.
+
+### What shipped to the branch — PR #111 `fix/85-map-render-clustering`
+
+- **#85 map render fix** (`cluster={false}` + `Noto Sans Regular` glyph) + **maplibre-react-native 11.3.6** bump.
+- **JS clustering via `supercluster`** (the "NEXT TASK" section below — now DONE):
+  - new pure `mobile/lib/map/cluster.ts` (`buildClusterIndex` / `clustersForViewport`) + `cluster.test.ts` (5 tests).
+  - wired into `mobile/app/(tabs)/index.tsx` (build the index from the bbox query; recompute visible
+    clusters/points on data + viewport change; `keepPreviousData` ⇒ no flicker) and
+    `mobile/components/map/FountainMap.tsx` (`onClusterPress` → JS `getClusterExpansionZoom`; the dead native
+    cluster path + the obsolete #85 instrumentation removed; the missing-image dev warning ignores empty ids).
+  - `radius` / `maxZoom` = `CLUSTER_RADIUS` / `CLUSTER_MAX_ZOOM` (web parity).
+- The branch also carries a small unrelated CI fix (`.github/workflows/basemap-janitor.yml`) and this handoff doc.
+
+### Gate status — all green
+
+- **Local:** `tsc` 0, `eslint` 0, **208 vitest** (5 new), Prettier clean, expo-doctor (on CI) green.
+- **Emulator:** cluster bubbles with counts at low zoom; tapping a cluster flies in + breaks it apart and
+  re-clusters on pan; individual pins with icons/pills at high zoom. Owner eyeballed it: "looks great."
+- **CI on PR #111:** all checks pass (backend, workspace-js, mobile-doctor, CodeQL, pip/pnpm-audit, trivy-fs;
+  Trivy + image-scan skip as normal for PRs).
+- **Codex:** `VERDICT: APPROVED` (artifact `temp/codex-reviews/pr-111-review-1.md`, gitignored; verdict also
+  posted as a PR comment). No open PR comments.
+
+### Test build — DONE and installable
+
+- `gh workflow run mobile-store-release.yml --ref fix/85-map-render-clustering -f platform=all` → run
+  **28331761609** → **SUCCEEDED** (release-notes + Android Play-internal submit + iOS App Store Connect submit
+  all green). Builds are in **TestFlight** and **Play internal testing**.
+- TestFlight "What to Test" is NOT auto-set on non-Enterprise EAS (#109) — paste it from the run's job summary.
+  Android auto-publishes to the internal track (#110).
+
+### ➡️ Next steps (pick up here)
+
+1. `git fetch && git checkout fix/85-map-render-clustering` for the code (you already have this handoff from `main`).
+2. **Install the build** (run 28331761609) from TestFlight + Play internal on **both iOS + Android real hardware**.
+3. **Device-test the checklist below** — every fix is code-complete but hardware-unverified (the map was blank).
+4. **If all pass:** `gh pr merge 111 --squash`, then cut the release — tag `vX.Y.Z` (a `v*.*.*` push triggers
+   `mobile-store-release.yml`) **or** `gh workflow run mobile-store-release.yml --ref main -f platform=all`.
+   ⚠️ **If this handoff conflicts at squash-merge, keep `main`'s version** — the copy on `main` is newer than the
+   branch's (handoff updates were committed straight to `main` per the owner so they'd be available on a fresh clone).
+5. **If anything fails:** fix on the branch → re-run the local mobile checks → Codex re-review loop to
+   `VERDICT: APPROVED` → re-cut a test build → re-verify.
+
+### Device-test checklist (both iOS + Android)
+
+- **#85 + clustering (headline):** pins/clusters render on BOTH platforms; cluster bubbles with counts at city
+  zoom; tap a cluster → flies in + breaks apart; individual pins + rating pills at street zoom.
+- **#88:** signed-in, the Points chip + Account show real points, not 0.
+- **#103:** Apple sign-in shows the real name + initial, not an opaque id.
+- **#97:** (iOS, location denied/approximate) can enter Add, place a pin, **Next** enables.
+- **#98:** a draft pin appears immediately on entering Add.
+- **#99:** the draft pin reads as distinct (larger + translucent).
+- **#100:** "Use current location" recenters; target frames above the sheet (tune `ADD_SHEET_CAMERA_PADDING=260` if needed).
+- **#101:** no empty/capped banner over the Add panel while adding.
+- **#102:** the new pin is tappable right after adding.
+- **#104:** (iOS) the **+** FAB doesn't overlap the attribution "ⓘ"; controls clear the home indicator.
+- **#105:** the compass is clear of the top filter chips (first confirm a compass even shows under the new arch).
+
+### New-machine local-env caveats
+
+- The pnpm `nodeLinker: hoisted` workaround is **local-only** (`git update-index --skip-worktree pnpm-workspace.yaml`);
+  the committed `pnpm-workspace.yaml` has no hoisted, so CI is fine, but a fresh Windows box doing LOCAL Android
+  builds must re-apply it (see the dev-loop notes in the "#85 RESOLVED" section below). For just merging + releasing
+  (all via CI / `gh`) nothing local is needed.
+- `expo-doctor`'s "duplicate react" failure occurs only under the local hoisted linker; CI (isolated linker) passes — ignore it locally.
+- Out of scope / tracked: web has the same latent `Noto Sans Bold` glyph-404 in `web/lib/map/layers.ts` — a separate web fix.
+
+---
+
 ## ✅ #85 RESOLVED — READ THIS FIRST (updated 2026-06-28, overnight session)
 
 > **The map blocker is root-caused and a fix is verified on-device (emulator) and green on all local
@@ -102,7 +176,10 @@ fix **with** clustering, do the supercluster work below first and ship them toge
 
 ---
 
-## 🔜 NEXT TASK (owner wants this) — reintroduce clustering in JS via `supercluster`
+## ✅ DONE — clustering reintroduced in JS via `supercluster` (PR #111, 2026-06-28)
+
+> **Implemented, verified on the emulator, CI-green, Codex-approved.** See "RESUME HERE" at the top for
+> live status. The plan below was followed as written; it is kept as the implementation reference.
 
 **Goal:** restore the low-zoom clustering UX that `cluster={false}` removed, **without** native clustering
 (broken on this stack — see the resolved section). Compute clusters in JS with `supercluster` and feed them
