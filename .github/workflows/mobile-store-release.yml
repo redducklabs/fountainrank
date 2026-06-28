@@ -138,7 +138,7 @@ jobs:
             echo
             printf '%s\n' "$PLAY_RELEASE_NOTES"
             echo
-            echo "Android is submitted as a Play draft. Paste these notes into the Play release notes field before completing the internal-testing release."
+            echo "Android auto-publishes to internal testing (releaseStatus: completed) without release notes. Optionally paste these into the Play release's \"What's new\" field afterward; it is not required."
           } >> "$GITHUB_STEP_SUMMARY"
         env:
           RELEASE_RANGE: ${{ needs.release-notes.outputs.range }}

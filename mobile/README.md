@@ -135,9 +135,9 @@ have actually been observed.
 
 `eas.json` defines `development` / `preview` / `production` build profiles and a
 credential-free `production` submit profile for Android's `internal` track. The
-Android submit profile uploads internal-testing releases as Play drafts so the
-generated PR-only release notes can be added in Play Console before the release
-is completed. The Expo org/project are linked in `app.config.ts`
+Android submit profile uses `releaseStatus: completed`, so a store-release run
+auto-publishes the internal-testing release on upload — no Play Console step. The
+Expo org/project are linked in `app.config.ts`
 (`red-duck-labs/fountainrank`, project id
 `820564bf-5f29-44c7-8ec7-edde67b77360`), and the native identity is
 owner-confirmed as `com.redducklabs.fountainrank`.
@@ -154,13 +154,13 @@ tester lists stay outside the repo (EAS credentials service / GitHub secrets).
 
 The GitHub `mobile-store-release.yml` workflow generates store release notes from
 the PRs included since the previous `v*.*.*` tag and prints them in the run summary
-for both platforms. Neither store is set automatically: EAS hosted submission only
-sets the TestFlight changelog on the Enterprise plan (otherwise the submit fails
-with "Changelog submission is currently available for Enterprise plan only"), so iOS
-is submitted without it and the owner pastes the notes into TestFlight's "What to
-Test" field; Google Play release notes are likewise unsupported by the EAS Android
-submit options here, so the Play release stays a draft until the same notes are
-pasted into the Play release-notes field.
+for both platforms. Neither store's release-notes text is set automatically by EAS:
+the TestFlight changelog requires the Enterprise plan (otherwise the submit fails with
+"Changelog submission is currently available for Enterprise plan only"), and the EAS
+Android submit options here don't carry release-note text. iOS is submitted without it
+(paste the notes into TestFlight's "What to Test" if wanted); Android auto-publishes to
+internal testing (`releaseStatus: completed`) without notes — add them in Play Console
+afterward only if desired. The printed notes are there for that optional paste.
 
 Before any `expo config --type prebuild`, `expo prebuild`, or EAS command after
 incremental dependency changes, recover the pnpm/Expo install from the repo
