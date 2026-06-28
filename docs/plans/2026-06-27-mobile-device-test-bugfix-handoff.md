@@ -15,6 +15,104 @@ issue. This doc summarizes and **sequences** them.
 
 ---
 
+## ⚠️ CURRENT STATE — READ THIS FIRST (updated 2026-06-27, late session)
+
+The batches below were implemented and **merged to `main`**, then store builds went to TestFlight / Play
+internal for owner device-testing. Device testing surfaced **one blocker that supersedes everything: the
+map renders only a random subset of fountains (often none), on BOTH platforms, while web renders all of
+them.** Most other fixes can't be meaningfully verified until the map renders. The active investigation and
+the candidate fix are below.
+
+### Merged to `main` (all via branch → PR → CI green + Codex `VERDICT: APPROVED` → squash-merge)
+
+- **PR #106** — the device-test bugfixes (Batches 1–4: #88, #103, #85-partial, #97/#98/#100/#101/#102/#99,
+  #104/#105) **+** the bundled store release-notes CI job. The squash used `Refs` (not `Fixes`), so the
+  **GitHub issues remain OPEN** on purpose (device-verification rule).
+- **PR #107** — hardened `mobile-store-release.yml` release-notes (lists `feat:`/`fix:` + `(#NN)` commits;
+  no longer fails on a range with no PR refs).
+- **PR #108** — added `appleTeamId: "VPQ79Y3WQ7"` to `submit.production.ios` in `eas.json`. (Was a *wrong*
+  hypothesis for the iOS submit failure but is correct, non-secret config; kept.)
+- **PR #109** — removed `--what-to-test` from the iOS `eas build --auto-submit`. EAS hosted submission's
+  TestFlight changelog is **Enterprise-plan only** ("Changelog submission is currently available for
+  Enterprise plan only") and was failing every iOS submit. iOS now submits **without** auto-notes.
+- **PR #110** — Android `submit.production.android.releaseStatus` `draft` → **`completed`** so internal-test
+  releases **auto-publish** on upload (no Play Console step). EAS doesn't carry Android release-note text.
+
+Released `v0.8.1` early in the session; iOS/Android build numbers have since incremented via several
+`workflow_dispatch` test builds. **Those store builds contain the bugfixes but the broken map (below).**
+
+### Device-verification status (original device-test issues)
+
+- **#88 points** — ✅ **verified** on device (Points chip showed 128).
+- **#85 map render** — ❌ **broken** (the blocker — see below). The glyph fix is in but is moot until pins render.
+- **#103, #97, #98, #99, #100, #101, #102, #104, #105** — **not verified**; the add-flow + ornament issues
+  can't be exercised while the map shows no pins. Re-verify all of these once the map renders.
+
+### 🔴 THE BLOCKER — #85 map shows only a random subset of fountains (works on web)
+
+A multi-build on-device debugging session. A `MAP_DEBUG` overlay (on branch `debug/map-pin-diagnostics`)
+shows per-frame: `z<zoom> en:<Y/N> <queryStatus>/<fetchStatus> pins:<N> fc:<N> nat:<N>` + the queried bbox,
+where `pins` = bbox-query count, `fc` = JS featureCollection count, **`nat` = the NATIVE source's real count**
+(`sourceRef.current.getData().features.length`, polled ~600–900 ms after each data change).
+
+**RULED OUT (with on-device evidence):**
+1. **Data** — pulled the broken (home) area *and* a working area from the public bbox API; byte-identical
+   structure, valid coordinates, identical to what web renders. Not the data/backend.
+2. **bbox query / JS transform** — `pins:N` always equals `fc:N`. Query + `pinsToFeatureCollection` are fine.
+3. **Zoom / clusterMaxZoom boundary** — first theory (`nat:0` at z14 == clusterMaxZoom == landing zoom), but
+   owner proved `nat:0` at **any** zoom over the same spot. Not zoom. (Tried clusterMaxZoom 14→20; reverted.)
+4. **Clustering** — `cluster={false}` → still `nat:0`. Not clustering.
+5. **Icons** — plain circle pins (no icon image, no data-driven lookups) → still `nat:0`, nothing renders.
+   Not the pin PNGs / `<Images>` registration.
+6. **maplibre version** — bumped 11.3.4 → **11.3.6** (fixes a Fabric "stale map child indexes" bug #1596 +
+   an iOS image-loading crash). **No change to the map.** (Lockfile bumped on the debug branch; harmless, kept.)
+7. **Remount / self-heal** — remount-the-source-on-data-change and self-heal-on-`nat:0` (bounded retries)
+   did NOT fix it; on 11.3.4 the remount churn caused a **Points→0** regression (fixed by reverting). All reverted.
+
+**DEFINITIVE FINDING:** with the simplest possible config (`cluster={false}` + plain circle pins) the overlay
+reads e.g. `pins:16 fc:16 nat:0` and nothing draws. The `data` prop on maplibre-react-native's
+`<GeoJSONSource>` **is not reaching the native map source under React Native's NEW ARCHITECTURE (Fabric)** on
+this stack (Expo 56 / RN 0.85.3 / @maplibre/maplibre-react-native 11.3.6). Web (maplibre-gl) has no such issue.
+
+**CANDIDATE FIX — IN FLIGHT at handoff time:** `newArchEnabled: false` in `mobile/app.config.ts` (pin the app
+to the **old architecture / "Paper"** renderer). maplibre-react-native ships mature old-arch ViewManagers
+(`MLRNMapViewManager.kt`, etc.) alongside its Fabric components, so it supports old arch, where its GeoJSON
+rendering has been stable for years.
+- Build **run `28313869077`** (branch `debug/map-pin-diagnostics`): the **iOS build + TestFlight submit
+  SUCCEEDED** with newArch off — so **RN 0.85 *does* support the old architecture** (the build does not fail);
+  Android was still building at handoff. **NEXT: install that build and check whether the map renders** (the
+  overlay `nat` should now match `fc`).
+- If old arch renders the map → SOLVED. If not → fall back to rendering fountains as individual native markers
+  (`<MarkerView>`/`<PointAnnotation>`, which bypass the GeoJSON source) with clustering done in JS.
+
+### The debug branch `debug/map-pin-diagnostics` — DO NOT merge as-is
+
+Off `main` (after #107). Contains: the `MAP_DEBUG` overlay (`index.tsx`), the `onNativeFeatureCount` `getData`
+poll + `onDidFailLoadingMap`/`Images onImageMissing` warns (`FountainMap.tsx`), maplibre **11.3.6** (lockfile),
+**`newArchEnabled: false`**, and the real map config restored (cluster + icon pins, clusterMaxZoom 14). The
+`MAP_DEBUG` overlay and all `console.*` instrumentation **must be stripped before landing the fix on `main`.**
+
+### How to resume (fresh session)
+
+1. Read this file + `claude_help/codex-review-process.md` + `claude_help/testing-ci.md` + `CLAUDE.md`.
+2. `gh run view 28313869077` for the old-arch build result; have the owner install it and **test if the map
+   renders under the old architecture** (the decisive question).
+3. **If it renders:** new branch off `main` → `newArchEnabled: false` (+ keep maplibre 11.3.6) → **strip all
+   diagnostics** → PR → CI + Codex → squash-merge → re-release (tag `v0.8.x` or `workflow_dispatch`). Then
+   re-verify the add-flow + ornament issues (#97–#105) now that the map works.
+4. **If it does NOT render:** pivot to native-marker rendering (above).
+
+### Local env gotchas
+
+- Local pnpm/node_modules is **inconsistent on the debug branch** (lockfile 11.3.6 via `--lockfile-only`,
+  node_modules still 11.3.4) — `pnpm exec` may fail its deps check there; `main` is consistent at 11.3.4. A
+  clean reinstall fixes local tooling; EAS builds do a fresh `--frozen-lockfile` install so they're unaffected.
+  Use `CI=true npm_config_verify_deps_before_run=false pnpm exec <cmd>` for local checks.
+- ASC API keys (`temp/AuthKey_*.p8`) + Play service-account JSON (`temp/keys/*.json`) are already in the EAS
+  credentials service (not in git).
+
+---
+
 ## Working rules for this pass (do not skip)
 
 - **Process gate (per `CLAUDE.md`):** branch → PR → **CI green AND Codex `VERDICT: APPROVED` AND every PR
@@ -106,17 +204,17 @@ is in their latest comments.
 
 ---
 
-## Implementation status — branch `fix/mobile-device-test-bugfixes`
+## Implementation status — per-issue reference (all merged via PR #106)
 
-Implemented in this branch; all local CI-mirror checks green (mobile `tsc` + `eslint` + `vitest` (203) +
-`expo-doctor` 21/21; repo `prettier`). **On-device verification is still the gate for every item — none are
-confirmed against a physical build yet.** Each fix commit references its issue and lists what to verify.
+> ⚠️ This table is the per-issue *what-changed* reference. For the **live state** (what's merged, what's
+> device-verified, and the #85 map blocker that supersedes the rest) see **CURRENT STATE — READ THIS FIRST**
+> at the top of this file. Everything below shipped to `main` via PR #106 (squash, `Refs` — issues stay open).
 
 | # | Status | What changed | Verify on device |
 |---|--------|--------------|------------------|
 | #88 | Code-complete | Auth gate broadened to the `GET /api/v1/me/*` subtree (boundary-safe) + `api.test.ts`. | Signed-in user sees real points on the map chip + Account. |
 | #103 | Code-complete | `email`+`profile` Logto scopes; best-effort `POST /me/sync` after sign-in (new `lib/auth/sync`). | Apple sign-in shows the real name + initial, not an opaque id. |
-| #85 | **Partial + instrumented** | Glyph `text-font: ["Noto Sans Bold"]` on cluster-count + pins-pill; `onDidFailLoadingMap` / `Images onImageMissing` warns + `__DEV__` feature-count log. | **Android-empty core NOT fixed.** Run a dev build + Logcat: does the JS feature count log non-zero while the native map is blank? Candidates to try: native data-prop under the new arch, `androidView: "texture"`. Zoom gate + last-non-empty hedge intentionally left. |
+| #85 | **BLOCKER — superseded** | Glyph `text-font: ["Noto Sans Bold"]` shipped, but the real cause is deeper: the native `GeoJSONSource` gets no data under the new architecture. | **See "🔴 THE BLOCKER" in CURRENT STATE at the top.** Candidate fix in flight: `newArchEnabled: false` (old-arch renderer). |
 | #97 | Code-complete | Add-entry always flies to placement zoom and seeds a pin at user/viewport-center; below-zoom taps now say "zoom in". | Location-denied user can enter add mode, place, and Next enables. |
 | #98 | Code-complete | Draft pin seeded on add-entry. | A pin appears immediately on entry. |
 | #100 | Code-complete | "Use current location" recenters; flyTo bottom padding frames above the sheet (`ADD_SHEET_CAMERA_PADDING`). | Target frames above the sheet; **tune the padding constant** to the panel height. |
