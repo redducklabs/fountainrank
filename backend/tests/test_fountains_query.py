@@ -79,6 +79,34 @@ async def test_bbox_rejects_inverted_bounds(client):
     assert resp.status_code == 422
 
 
+async def test_bbox_near_global_envelope_returns_inside_rows_not_500(client):
+    # #20: a near-global envelope (full latitude range) cast to geography raises
+    # PostGIS "Antipodal (180 degrees long) edge detected!" -> 500. It must instead
+    # return the rows inside the box (via the planar geometry fallback).
+    inside = await _add(client, 0.0, 0.0)
+    await _add(client, 0.0, 120.0)  # lng 120 is OUTSIDE the box's [-180, 90] longitude span
+    resp = await client.get(
+        "/api/v1/fountains/bbox",
+        params={"min_lat": -90, "min_lng": -180, "max_lat": 90, "max_lng": 90},
+    )
+    assert resp.status_code == 200
+    ids = [p["id"] for p in resp.json()]
+    assert ids == [inside]  # the lng-120 fountain is correctly excluded
+
+
+async def test_bbox_whole_world_envelope_returns_all(client):
+    # The true whole-world viewport (-180,-90,180,90) also has antipodal pole-to-pole
+    # vertical edges; it must return every fountain, never 500.
+    a = await _add(client, 0.0, 0.0)
+    b = await _add(client, 10.0, 120.0)
+    resp = await client.get(
+        "/api/v1/fountains/bbox",
+        params={"min_lat": -90, "min_lng": -180, "max_lat": 90, "max_lng": 180},
+    )
+    assert resp.status_code == 200
+    assert {p["id"] for p in resp.json()} == {a, b}
+
+
 async def test_bbox_pin_includes_ranking_score(client):
     fid = await _add_rated(client, 37.7749, -122.4194)
     resp = await client.get(
