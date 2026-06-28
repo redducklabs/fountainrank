@@ -58,6 +58,9 @@ type FountainMapProps = {
   // ornaments to keep them clear of our chips/FAB (#104 attribution, #105 compass).
   attributionPosition?: OrnamentPosition;
   compassPosition?: OrnamentPosition;
+  // #85 diagnostics: report how many features the NATIVE source actually holds
+  // (queried back via getData), to compare against what JS handed it.
+  onNativeFeatureCount?: (count: number) => void;
 };
 
 export function FountainMap({
@@ -71,6 +74,7 @@ export function FountainMap({
   onMapPressForPlacement,
   attributionPosition,
   compassPosition,
+  onNativeFeatureCount,
 }: FountainMapProps) {
   const cameraRef = useRef<CameraRef>(null);
   const sourceRef = useRef<GeoJSONSourceRef>(null);
@@ -98,6 +102,34 @@ export function FountainMap({
       console.log(`[map] featureCollection features=${featureCollection.features.length} (#85)`);
     }
   }, [featureCollection]);
+
+  // #85 diagnostics: shortly after the data prop changes, ask the NATIVE source how
+  // many features it actually holds. JS count high but native count ~0 => the data
+  // prop is not reaching the native GeoJSONSource (the propagation theory). Reports
+  // -1 if getData rejects/returns nothing. Only runs when a reporter is provided.
+  useEffect(() => {
+    if (!onNativeFeatureCount) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      const ref = sourceRef.current;
+      if (!ref) {
+        if (!cancelled) onNativeFeatureCount(-1);
+        return;
+      }
+      ref
+        .getData()
+        .then((data) => {
+          if (!cancelled) onNativeFeatureCount(data?.features?.length ?? -1);
+        })
+        .catch(() => {
+          if (!cancelled) onNativeFeatureCount(-1);
+        });
+    }, 900);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [featureCollection, onNativeFeatureCount]);
 
   return (
     <Map

@@ -76,6 +76,10 @@ type BboxResult = { pins: FountainPin[]; truncated: boolean };
 // it so it isn't hidden behind the chips (#105).
 const FILTER_BAR_HEIGHT = 44;
 
+// #85 TEMPORARY on-device diagnostics overlay. Flip to false / remove once the
+// missing-pins root cause is identified.
+const MAP_DEBUG = true;
+
 export default function MapScreen() {
   const { client, config } = useApi();
   const auth = useAuth();
@@ -95,6 +99,7 @@ export default function MapScreen() {
   // command (see MapFlyTo). A fresh object re-issues the fly even to the same spot.
   const [flyTo, setFlyTo] = useState<MapFlyTo | null>(null);
   const didInitialCenterRef = useRef(false);
+  const [nativeCount, setNativeCount] = useState<number | null>(null);
   const [addState, addDispatch] = useReducer(addFountainReducer, initialAddFountainState);
   const [ratings, setRatings] = useState<Record<number, number | undefined>>({});
   const [attributes, setAttributes] = useState<Record<number, string | undefined>>({});
@@ -310,6 +315,7 @@ export default function MapScreen() {
         flyTo={flyTo}
         attributionPosition={attributionPosition}
         compassPosition={compassPosition}
+        onNativeFeatureCount={MAP_DEBUG ? setNativeCount : undefined}
         showUserLocation={location.status === "granted"}
         onRegionChange={setRegionDebounced}
         onPinPress={(id) => router.push(`/fountains/${id}`)}
@@ -491,6 +497,23 @@ export default function MapScreen() {
           onRetry={() => void pinsQuery.refetch()}
         />
       )}
+      {MAP_DEBUG ? (
+        <View style={[styles.debug, { top: insets.top + 110 }]} pointerEvents="none">
+          <Text style={styles.debugText}>
+            {`z${zoom.toFixed(1)} en:${enabled ? "Y" : "N"} ${pinsQuery.status}/${pinsQuery.fetchStatus} pins:${pinsQuery.data?.pins.length ?? "-"} fc:${featureCollection.features.length} nat:${nativeCount ?? "-"}`}
+          </Text>
+          <Text style={styles.debugText}>
+            {region
+              ? `W${region.bounds.west.toFixed(3)} S${region.bounds.south.toFixed(3)} E${region.bounds.east.toFixed(3)} N${region.bounds.north.toFixed(3)}`
+              : "region: none"}
+          </Text>
+          {pinsQuery.error ? (
+            <Text style={styles.debugText}>
+              {`err: ${String((pinsQuery.error as Error)?.message ?? pinsQuery.error).slice(0, 70)}`}
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
       <MobileToast toast={toast} onDismiss={() => setToast(null)} />
       <WaterCelebration triggerKey={celebrationKey} bottom={82} />
     </View>
@@ -1056,6 +1079,17 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   bannerText: { ...typography.meta, color: colors.text },
+  debug: {
+    position: "absolute",
+    left: spacing.sm,
+    right: spacing.sm,
+    backgroundColor: "rgba(0,0,0,0.78)",
+    borderRadius: 6,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    gap: 2,
+  },
+  debugText: { color: "#fff", fontSize: 11, fontFamily: "monospace" },
   toast: {
     position: "absolute",
     left: spacing.md,
