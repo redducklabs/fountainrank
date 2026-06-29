@@ -32,6 +32,13 @@ def include_object(obj, name, type_, reflected, compare_to) -> bool:
     # Drop PostGIS's own managed table from comparison...
     if type_ == "table" and name in _POSTGIS_MANAGED_TABLES:
         return False
+    # The functional GiST index on (location::geometry) for the near-global bbox
+    # fallback (#113, migration 0011) is hand-managed, not declared in the ORM
+    # metadata. Alembic cannot reliably compare expression indexes (it would
+    # report a false "removed index" drift), so exclude it here. Its presence is
+    # asserted by name in pg_indexes by test_fountains_geometry_gist_migration.
+    if type_ == "index" and name == "ix_fountains_location_geometry":
+        return False
     # ...then defer to GeoAlchemy2 (filters spatial system views + the auto gist
     # index so `alembic check` does not see them as drift).
     return alembic_helpers.include_object(obj, name, type_, reflected, compare_to)
