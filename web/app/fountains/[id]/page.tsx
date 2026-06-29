@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getFountainDetailServer, getFountainNotesServer } from "../../../lib/fountains";
+import { getAdminFountainDetailServer } from "../../../lib/server/admin";
 import { getViewerAccessToken } from "../../../lib/server/api";
 import { log } from "../../../lib/server/log";
 import { getViewer, getViewerTotalPoints } from "../../../lib/server/viewer";
+import { FountainAdminControls } from "../../../components/admin/FountainAdminControls";
 import { ContributionStatusOverlay } from "../../../components/contributions/ContributionStatusOverlay";
 import { FountainDetail } from "../../../components/fountain/FountainDetail";
 import { SiteHeader } from "../../../components/SiteHeader";
@@ -14,15 +16,22 @@ const shell = "mx-auto min-h-dvh max-w-2xl bg-white px-6 py-10";
 export default async function FountainPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const requestId = crypto.randomUUID();
-  // Authenticate the detail fetch when signed in so `your_rating` comes back (#65 web
-  // parity, #114). The token fetch is chained into the detail call so notes + viewer
-  // still run in parallel; anonymous → null token → unchanged anonymous response.
-  const [{ data, status }, notesRes, viewer] = await Promise.all([
-    getViewerAccessToken().then((token) => getFountainDetailServer(id, requestId, token)),
-    getFountainNotesServer(id, requestId),
-    getViewer(requestId),
-  ]);
+  const viewer = await getViewer(requestId);
   const isAuthenticated = viewer.state === "authed";
+  const isAdmin = viewer.state === "authed" && viewer.isAdmin;
+  const adminRes = isAdmin ? await getAdminFountainDetailServer(id, requestId) : null;
+  // Authenticate the public detail fetch when signed in so `your_rating` comes back (#65
+  // web parity, #114). Admins use the admin detail endpoint instead so hidden notes and
+  // hidden fountains are reachable.
+  const [{ data, status }, notesRes] = adminRes
+    ? [
+        { data: adminRes.data, status: adminRes.status },
+        { data: adminRes.data?.notes, status: adminRes.status },
+      ]
+    : await Promise.all([
+        getViewerAccessToken().then((token) => getFountainDetailServer(id, requestId, token)),
+        getFountainNotesServer(id, requestId),
+      ]);
 
   if (status === 404) {
     log("info", "fountain not found", { requestId, id, status });
@@ -62,7 +71,12 @@ export default async function FountainPage({ params }: { params: Promise<{ id: s
           ← Back to the map
         </Link>
         <div className="mt-6">
-          <FountainDetail detail={data} notes={notes} isAuthenticated={isAuthenticated} />
+          <FountainDetail
+            detail={data}
+            notes={notes}
+            isAuthenticated={isAuthenticated}
+            adminControls={adminRes?.data ? <FountainAdminControls detail={adminRes.data} /> : null}
+          />
         </div>
       </main>
     </>

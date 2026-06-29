@@ -1,3 +1,4 @@
+import type React from "react";
 import type { FountainDetail as Detail, NoteOut } from "../../lib/fountains";
 import { formatAverage, formatDate, formatDimension, formatVotes } from "../../lib/map/format";
 import { ShareButton } from "./ShareButton";
@@ -11,11 +12,13 @@ export function FountainDetail({
   notes,
   now,
   isAuthenticated,
+  adminControls,
 }: {
   detail: Detail;
   notes: NoteOut[];
   now?: Date;
   isAuthenticated: boolean;
+  adminControls?: React.ReactNode;
 }) {
   const renderNow = now ?? new Date();
   const { latitude, longitude } = detail.location;
@@ -63,6 +66,7 @@ export function FountainDetail({
         </div>
       )}
       <NotesList notes={notes} now={renderNow} />
+      {adminControls}
       <ContributeSection
         fountainId={detail.id}
         dimensions={detail.dimensions}

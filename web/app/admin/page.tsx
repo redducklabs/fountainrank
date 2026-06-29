@@ -46,11 +46,13 @@ export default async function AdminPage() {
       <SiteHeader variant="bar" />
       <main className="mx-auto max-w-2xl px-6 py-10">
         <h1 className="text-lg font-bold text-[#0A357E]">Admin</h1>
-        <p className="mt-2 text-slate-600">Moderation tools are coming soon.</p>
-        <ul className="mt-4 list-disc pl-5 text-sm text-slate-500">
-          <li>Hide / unhide fountains and notes</li>
-          <li>Review reported content</li>
-        </ul>
+        <p className="mt-2 text-slate-600">
+          Moderation controls live inline on each fountain detail page.
+        </p>
+        <p className="mt-4 text-sm text-slate-500">
+          Open a fountain from the map to edit location, status, placement text, visibility,
+          deletion, and community-note visibility.
+        </p>
       </main>
     </>
   );
