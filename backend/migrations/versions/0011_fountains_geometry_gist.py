@@ -27,7 +27,9 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Raw SQL because op.create_index cannot express a functional (cast) index.
+    # Raw SQL for the functional (cast) index expression. Alembic cannot reliably
+    # autogenerate/compare expression indexes (see the include_object exclusion in
+    # migrations/env.py), so this index is hand-managed and verified via pg_indexes.
     # Plain CREATE INDEX (not CONCURRENTLY) — Alembic runs migrations in a
     # transaction, and CONCURRENTLY cannot run inside one.
     op.execute(

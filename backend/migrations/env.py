@@ -34,10 +34,12 @@ def include_object(obj, name, type_, reflected, compare_to) -> bool:
         return False
     # The functional GiST index on (location::geometry) for the near-global bbox
     # fallback (#113, migration 0011) is hand-managed, not declared in the ORM
-    # metadata. Alembic cannot reliably compare expression indexes (it would
-    # report a false "removed index" drift), so exclude it here. Its presence is
-    # asserted by name in pg_indexes by test_fountains_geometry_gist_migration.
-    if type_ == "index" and name == "ix_fountains_location_geometry":
+    # metadata. Alembic cannot reliably compare expression indexes, so it reports
+    # the reflected DB index as a false "removed index" drift. Suppress ONLY the
+    # reflected side (reflected=True) — a future ORM-metadata index of the same
+    # name (reflected=False) must still be compared. Its presence is asserted by
+    # name in pg_indexes by test_fountains_geometry_gist_migration.
+    if type_ == "index" and name == "ix_fountains_location_geometry" and reflected:
         return False
     # ...then defer to GeoAlchemy2 (filters spatial system views + the auto gist
     # index so `alembic check` does not see them as drift).

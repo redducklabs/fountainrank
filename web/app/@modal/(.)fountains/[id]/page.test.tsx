@@ -117,6 +117,12 @@ describe("FountainModal route (overlay)", () => {
   it("forwards the viewer token to the detail fetch when authenticated (#114)", async () => {
     getDetail.mockResolvedValue({ data: { id: "f1" }, status: 200 });
     getNotes.mockResolvedValue({ data: [], status: 200 });
+    getViewerFn.mockResolvedValue({
+      state: "authed",
+      displayName: "Sam",
+      avatarUrl: null,
+      isAdmin: false,
+    });
     getTokenFn.mockResolvedValue("tok-xyz");
     render(await FountainModal({ params }));
     expect(getDetail).toHaveBeenCalledWith("f1", expect.any(String), "tok-xyz");
