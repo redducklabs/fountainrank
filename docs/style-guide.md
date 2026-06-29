@@ -577,16 +577,19 @@ access→"Access"; unknown categories title-cased). Each attribute renders as a 
 (`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium`, wrapped in a
 `flex flex-wrap gap-1.5` row) carrying a `data-variant` from `attributeChipVariant()`:
 
-| Variant    | When                                     | Glyph | Style                                                  |
-| ---------- | ---------------------------------------- | ----- | ------------------------------------------------------ |
-| `positive` | value "Yes" (feature present)            | ✓     | `bg-[#E7F0FF] text-[#0A357E] ring-1 ring-[#0E4DA4]/20` |
-| `neutral`  | a specific value; label is `name: value` | •     | same blue-tint as `positive`                           |
-| `negative` | value "No"                               | ✕     | `bg-slate-100 text-slate-500 ring-1 ring-slate-200`    |
-| `unknown`  | no consensus ("Unknown")                 | ?     | `bg-slate-100 text-slate-400 ring-1 ring-slate-200`    |
-| `mixed`    | contested consensus                      | ~     | `bg-amber-50 text-amber-700 ring-1 ring-amber-200`     |
+| Variant    | When                                                | Glyph | Style                                                  |
+| ---------- | --------------------------------------------------- | ----- | ------------------------------------------------------ |
+| `positive` | high-confidence "Yes" (feature present)             | ✓     | `bg-[#E7F0FF] text-[#0A357E] ring-1 ring-[#0E4DA4]/20` |
+| `negative` | high-confidence "No"                                | ✕     | `bg-slate-100 text-slate-500 ring-1 ring-slate-200`    |
+| `neutral`  | high-confidence specific value; label `name: value` | •     | same blue-tint as `positive`                           |
+| `mixed`    | contested consensus                                 | ~     | `bg-amber-50 text-amber-700 ring-1 ring-amber-200`     |
+| `muted`    | low-confidence consensus or all-unknown             | •     | `bg-slate-50 text-slate-400 ring-1 ring-slate-200`     |
 
-The chip label is the attribute **name** (the glyph + tone convey yes/no/unknown/mixed); only
-`neutral` value-attributes append `: value`. The confidence **hint** from `attributeDisplay()`
+**Confidence wins:** `attributeChipVariant()` returns `muted` for any low-confidence consensus or
+all-unknown attribute (tone `muted`) so it is never promoted to a confident `positive`/`negative`
+chip — only high/medium-confidence values map by polarity. The chip label is the attribute **name**
+for confident booleans (the glyph conveys yes/no); `neutral` and `muted` chips append `: value` so
+the de-emphasized value stays legible. The confidence **hint** from `attributeDisplay()`
 (low-confidence `(N reports)`, mixed `latest: …`) is preserved as trailing `text-[10px] opacity-70`
 text. No raw vote tallies. Mobile mirrors this with RN `View` chips (`CHIP_BG`/`CHIP_FG`/`GLYPH`
 maps keyed by the same variant). The `attributeChipVariant` + `starFills` helpers live in

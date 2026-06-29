@@ -16,22 +16,22 @@ const CHIP_BG: Record<ChipVariant, string> = {
   positive: "#E7F0FF",
   neutral: "#E7F0FF",
   negative: "#F1F5F9",
-  unknown: "#F1F5F9",
   mixed: "#FEF3C7",
+  muted: "#F8FAFC",
 };
 const CHIP_FG: Record<ChipVariant, string> = {
   positive: colors.brandBlue,
   neutral: colors.brandBlue,
   negative: colors.textMuted,
-  unknown: colors.textMuted,
   mixed: "#92400E",
+  muted: "#94A3B8",
 };
 const GLYPH: Record<ChipVariant, string> = {
   positive: "✓",
   neutral: "•",
   negative: "✕",
-  unknown: "?",
   mixed: "~",
+  muted: "•",
 };
 
 export function AttributeList({ attributes }: { attributes: Attr[] }) {
@@ -46,7 +46,10 @@ export function AttributeList({ attributes }: { attributes: Attr[] }) {
             {g.items.map((a) => {
               const d = attributeDisplay(a);
               const variant = attributeChipVariant(d);
-              const label = variant === "neutral" ? `${a.name}: ${d.text}` : a.name;
+              // Show the explicit value for neutral (a specific value) and muted
+              // (low-confidence / unknown) chips; confident booleans use the glyph.
+              const showValue = variant === "neutral" || variant === "muted";
+              const label = showValue ? `${a.name}: ${d.text}` : a.name;
               return (
                 <View
                   key={a.attribute_type_id}

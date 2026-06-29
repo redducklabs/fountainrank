@@ -31,18 +31,20 @@ describe("starFills", () => {
 });
 
 describe("attributeChipVariant", () => {
-  it("Yes -> positive", () =>
+  it("high-confidence Yes -> positive", () =>
     expect(attributeChipVariant({ text: "Yes", tone: "normal" })).toBe("positive"));
-  it("low-confidence Yes is still positive", () =>
-    expect(attributeChipVariant({ text: "Yes", tone: "muted" })).toBe("positive"));
-  it("No -> negative", () =>
+  it("high-confidence No -> negative", () =>
     expect(attributeChipVariant({ text: "No", tone: "normal" })).toBe("negative"));
-  it("Unknown -> unknown", () =>
-    expect(attributeChipVariant({ text: "Unknown", tone: "muted" })).toBe("unknown"));
-  it("Mixed tone -> mixed", () =>
-    expect(attributeChipVariant({ text: "Mixed", tone: "mixed" })).toBe("mixed"));
-  it("specific value -> neutral", () =>
+  it("high-confidence specific value -> neutral", () =>
     expect(attributeChipVariant({ text: "Park", tone: "normal" })).toBe("neutral"));
+  it("mixed tone -> mixed", () =>
+    expect(attributeChipVariant({ text: "Mixed", tone: "mixed" })).toBe("mixed"));
+  it("low-confidence Yes stays muted (not promoted to positive)", () =>
+    expect(attributeChipVariant({ text: "Yes", tone: "muted" })).toBe("muted"));
+  it("low-confidence No stays muted", () =>
+    expect(attributeChipVariant({ text: "No", tone: "muted" })).toBe("muted"));
+  it("all-unknown -> muted", () =>
+    expect(attributeChipVariant({ text: "Unknown", tone: "muted" })).toBe("muted"));
 });
 describe("formatPill", () => {
   it("rounds 1dp", () => expect(formatPill(4.26)).toBe("★ 4.3"));

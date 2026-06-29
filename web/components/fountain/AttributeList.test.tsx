@@ -62,6 +62,14 @@ describe("AttributeList", () => {
     expect(screen.getByText("Venue type: Park")).toBeInTheDocument();
     expect(container.querySelector("[data-variant]")?.getAttribute("data-variant")).toBe("neutral");
   });
+  it("low-confidence consensus renders as a muted chip with the value + report count", () => {
+    const { container } = render(
+      <AttributeList attributes={[attr({ confidence: "low", observation_count: 2 })]} />,
+    );
+    expect(container.querySelector("[data-variant]")?.getAttribute("data-variant")).toBe("muted");
+    expect(screen.getByText("Bottle filler: Yes")).toBeInTheDocument();
+    expect(screen.getByText("(2 reports)")).toBeInTheDocument();
+  });
   it("mixed shows the latest hint as a mixed chip", () => {
     const { container } = render(
       <AttributeList

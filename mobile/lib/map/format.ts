@@ -125,13 +125,16 @@ export function starFills(value: number): StarFill[] {
   });
 }
 
-export type ChipVariant = "positive" | "negative" | "unknown" | "mixed" | "neutral";
-/** Maps an attributeDisplay result to a chip style/icon variant (tone-aware). */
+export type ChipVariant = "positive" | "negative" | "neutral" | "mixed" | "muted";
+/** Maps an attributeDisplay result to a chip style/icon variant. Confidence wins: a
+ *  low-confidence consensus or all-unknown (tone "muted") stays visually muted so it is
+ *  never promoted to a confident present/absent chip — the value text + report-count hint
+ *  are still shown. Only high/medium-confidence values map by polarity. */
 export function attributeChipVariant(d: { text: string; tone: AttrTone }): ChipVariant {
   if (d.tone === "mixed") return "mixed";
+  if (d.tone === "muted") return "muted";
   if (d.text === "Yes") return "positive";
   if (d.text === "No") return "negative";
-  if (d.text === "Unknown") return "unknown";
   return "neutral";
 }
 
