@@ -513,17 +513,39 @@ single creator comment/context block (legacy `placement_note` text is used only 
 `comments` is empty); the **community notes** section; and the **Contribute section** at the
 bottom (auth-gated write controls).
 
-| Element                | Styling                                                                                                                                                                                |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Heading                | `text-lg font-bold text-[#0A357E]`                                                                                                                                                     |
-| Status chip            | Pill badge: working → `bg-emerald-100 text-emerald-800`; out of order → `bg-red-100 text-red-800`. `rounded-full px-2.5 py-0.5 text-xs font-bold`.                                     |
-| Overall rating         | `text-2xl font-extrabold text-[#0A357E]` (formatted by `formatAverage()`); vote count in `text-sm text-slate-500`.                                                                     |
-| Per-dimension list     | `<dl>` with `divide-y divide-slate-100 border-t border-slate-100`; dimension name `text-sm font-medium`, value `text-sm text-slate-600`.                                               |
-| Notes / comments       | `rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700`.                                                                                                           |
-| Meta line              | Added / last-rated dates, `text-xs text-slate-400`.                                                                                                                                    |
-| Directions button      | Gold pill: `rounded-full bg-[#F2C200] px-4 py-2 text-sm font-bold text-[#0A357E]`. Links to Google Maps directions.                                                                    |
-| Share button           | Outlined pill: `rounded-full border border-[#cdd6e6] bg-white px-4 py-2 text-sm font-bold text-[#0A357E]`. Uses `navigator.share` when available; falls back to `navigator.clipboard`. |
-| **Contribute section** | Bottom of panel; heading `text-base font-semibold text-[#0A357E]`; signed-out prompt or three grouped forms (see below).                                                               |
+| Element                | Styling                                                                                                                                                                                                                                                                                                             |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Heading                | `text-lg font-bold text-[#0A357E]`                                                                                                                                                                                                                                                                                  |
+| Status chip            | Pill badge: working → `bg-emerald-100 text-emerald-800`; out of order → `bg-red-100 text-red-800`. `rounded-full px-2.5 py-0.5 text-xs font-bold`.                                                                                                                                                                  |
+| Overall rating         | Large score `text-3xl font-extrabold text-[#0A357E]` (`formatAverage()`) beside a read-only **`Stars`** row (size 18) + vote count `text-xs text-slate-500`. Unrated → empty `Stars` row + "Not yet rated". See _Read-only stars_ below.                                                                            |
+| Per-dimension list     | `<dl>` (`space-y-2 border-t border-slate-100 pt-3`); each row: dimension name `text-sm font-medium text-slate-700`, a read-only **`Stars`** row (size 14) + numeric value `font-semibold tabular-nums text-[#0A357E]` + `(votes)`, and a full-width **meter** below. Unrated dimension → "Not yet rated", no meter. |
+| Notes / comments       | `rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700`.                                                                                                                                                                                                                                        |
+| Meta line              | Added / last-rated dates, `text-xs text-slate-400`.                                                                                                                                                                                                                                                                 |
+| Directions button      | Gold pill: `rounded-full bg-[#F2C200] px-4 py-2 text-sm font-bold text-[#0A357E]`. Links to Google Maps directions.                                                                                                                                                                                                 |
+| Share button           | Outlined pill: `rounded-full border border-[#cdd6e6] bg-white px-4 py-2 text-sm font-bold text-[#0A357E]`. Uses `navigator.share` when available; falls back to `navigator.clipboard`.                                                                                                                              |
+| **Contribute section** | Bottom of panel; heading `text-base font-semibold text-[#0A357E]`; signed-out prompt or three grouped forms (see below).                                                                                                                                                                                            |
+
+#### Read-only stars, dimension meter & hero (`Stars.tsx`)
+
+The read-only **`Stars`** component (web `web/components/fountain/Stars.tsx`, mobile
+`mobile/components/fountain/Stars.tsx`) renders a 0–5 rating as five stars — **gold `#F2C200`**
+filled, **slate `#CBD5E1`** empty — rounded to the nearest half star.
+
+- **Web:** five inline SVG stars; a half star is a 50/50 `linearGradient` (gold→slate), driven by
+  `starFills(value)` (each star `full`/`half`/`empty`, exposed via `data-fill` for tests).
+- **Mobile:** a slate base `★★★★★` row with a gold `★★★★★` overlay clipped to `width: (roundHalf/5)%`
+  (fractional fill, same nearest-half rounding as web). No SVG, no extra dependency.
+- **A11y:** the row is decorative — web `role="img"` + numeric `aria-label` (e.g. "Rated 3.5 out of
+  5", or a custom `label` like "Clarity rated 4.0 out of 5"); RN `accessibilityRole="image"` +
+  `accessibilityLabel`. The numeric value is always shown alongside the stars.
+
+**Hero block:** big overall score (web `text-3xl font-extrabold text-[#0A357E]`, RN `fontSize: 34`)
+beside a size-18/20 `Stars` row and the vote count; unrated shows an empty `Stars` row + "Not yet
+rated" (`text-sm/typography.body font-semibold` muted).
+
+**Dimension meter:** a full-width track (`h-1.5 rounded-full bg-slate-100`; RN `height: 6`,
+`backgroundColor: colors.border`) with a **royal-blue `#0E4DA4`** fill of `width = score/5`.
+Decorative (`aria-hidden`); the numeric value carries the meaning. Omitted for unrated dimensions.
 
 #### Status block (`StatusBlock.tsx`)
 
@@ -547,14 +569,28 @@ A small stack under the detail heading: a status **chip**, an optional **advisor
   precise day-resolution date in the `title`) when `last_verified_at` is set, else "Not yet
   verified by anyone".
 
-#### Attribute consensus (`AttributeList.tsx`)
+#### Attribute consensus (`AttributeList.tsx` + `AttributeChips.tsx`)
 
-Observed attributes grouped by category. Group heading: `text-xs font-semibold uppercase
-tracking-wide text-slate-500` (category labels: physical→"Features", accessibility→"Accessibility",
-access→"Access"; unknown categories title-cased). Each row: attribute name (`text-slate-600`) left,
-value right with emphasis by confidence — high/medium `text-slate-700`; low `text-slate-400` + a
-muted `(N reports)` hint; `mixed` `text-amber-700` "Mixed" + a muted `latest: …` hint; all-unknown
-`text-slate-400` "Unknown". No raw vote tallies.
+Observed attributes grouped by category (group heading: `text-xs font-semibold uppercase
+tracking-wide text-slate-500`; category labels physical→"Features", accessibility→"Accessibility",
+access→"Access"; unknown categories title-cased). Each attribute renders as a **chip**
+(`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium`, wrapped in a
+`flex flex-wrap gap-1.5` row) carrying a `data-variant` from `attributeChipVariant()`:
+
+| Variant    | When                                     | Glyph | Style                                                  |
+| ---------- | ---------------------------------------- | ----- | ------------------------------------------------------ |
+| `positive` | value "Yes" (feature present)            | ✓     | `bg-[#E7F0FF] text-[#0A357E] ring-1 ring-[#0E4DA4]/20` |
+| `neutral`  | a specific value; label is `name: value` | •     | same blue-tint as `positive`                           |
+| `negative` | value "No"                               | ✕     | `bg-slate-100 text-slate-500 ring-1 ring-slate-200`    |
+| `unknown`  | no consensus ("Unknown")                 | ?     | `bg-slate-100 text-slate-400 ring-1 ring-slate-200`    |
+| `mixed`    | contested consensus                      | ~     | `bg-amber-50 text-amber-700 ring-1 ring-amber-200`     |
+
+The chip label is the attribute **name** (the glyph + tone convey yes/no/unknown/mixed); only
+`neutral` value-attributes append `: value`. The confidence **hint** from `attributeDisplay()`
+(low-confidence `(N reports)`, mixed `latest: …`) is preserved as trailing `text-[10px] opacity-70`
+text. No raw vote tallies. Mobile mirrors this with RN `View` chips (`CHIP_BG`/`CHIP_FG`/`GLYPH`
+maps keyed by the same variant). The `attributeChipVariant` + `starFills` helpers live in
+`lib/map/format.ts` (duplicated web/mobile) and are unit-tested.
 
 #### Community notes (`NotesList.tsx`)
 
