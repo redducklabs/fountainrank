@@ -47,3 +47,31 @@ it("shows error message on failure", async () => {
   fireEvent.click(screen.getByRole("button", { name: /submit rating/i }));
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/couldn't save/i));
 });
+
+const ratedDims = [
+  { rating_type_id: 1, name: "Clarity", average_rating: 4, vote_count: 3, your_rating: 4 },
+  { rating_type_id: 2, name: "Taste", average_rating: null, vote_count: 0, your_rating: null },
+];
+
+it("pre-fills from your_rating, shows the update affordance, and submits the saved value", async () => {
+  submitRating.mockResolvedValue({ ok: true });
+  render(<RatingForm fountainId="fid" dimensions={ratedDims} />);
+  expect(screen.getByRole("radio", { name: /clarity: 4 stars/i })).toBeChecked();
+  expect(screen.getByText(/you.ve rated this fountain/i)).toBeInTheDocument();
+  const submit = screen.getByRole("button", { name: /update rating/i });
+  expect(submit).not.toBeDisabled();
+  fireEvent.click(submit);
+  await waitFor(() =>
+    expect(submitRating).toHaveBeenCalledWith("fid", [{ rating_type_id: 1, stars: 4 }]),
+  );
+});
+
+it("lets an explicit edit override the pre-filled rating", async () => {
+  submitRating.mockResolvedValue({ ok: true });
+  render(<RatingForm fountainId="fid" dimensions={ratedDims} />);
+  fireEvent.click(screen.getByRole("radio", { name: /clarity: 2 stars/i }));
+  fireEvent.click(screen.getByRole("button", { name: /update rating/i }));
+  await waitFor(() =>
+    expect(submitRating).toHaveBeenCalledWith("fid", [{ rating_type_id: 1, stars: 2 }]),
+  );
+});

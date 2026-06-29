@@ -7,6 +7,7 @@ const getDetail = vi.fn();
 const getNotes = vi.fn();
 const getViewerFn = vi.fn();
 const getViewerTotalPointsFn = vi.fn();
+const getTokenFn = vi.fn();
 const logFn = vi.fn();
 const notFoundFn = vi.fn(() => {
   throw new Error("NEXT_NOT_FOUND");
@@ -19,6 +20,9 @@ vi.mock("../../../lib/fountains", () => ({
 vi.mock("../../../lib/server/viewer", () => ({
   getViewer: (...a: unknown[]) => getViewerFn(...a),
   getViewerTotalPoints: (...a: unknown[]) => getViewerTotalPointsFn(...a),
+}));
+vi.mock("../../../lib/server/api", () => ({
+  getViewerAccessToken: (...a: unknown[]) => getTokenFn(...a),
 }));
 vi.mock("../../../lib/server/log", () => ({ log: (...a: unknown[]) => logFn(...a) }));
 vi.mock("next/navigation", () => ({ notFound: () => notFoundFn() }));
@@ -52,10 +56,12 @@ beforeEach(() => {
   getNotes.mockReset();
   getViewerFn.mockReset();
   getViewerTotalPointsFn.mockReset();
+  getTokenFn.mockReset();
   logFn.mockReset();
   notFoundFn.mockClear();
   getViewerFn.mockResolvedValue({ state: "anonymous" });
   getViewerTotalPointsFn.mockResolvedValue(0);
+  getTokenFn.mockResolvedValue(null);
 });
 
 describe("FountainPage route (standalone)", () => {
@@ -120,5 +126,19 @@ describe("FountainPage route (standalone)", () => {
     getViewerFn.mockResolvedValue({ state: "anonymous" });
     render(await FountainPage({ params }));
     expect(screen.getByTestId("detail")).toHaveAttribute("data-authed", "false");
+  });
+  it("forwards the viewer token to the detail fetch when authenticated (#114)", async () => {
+    getDetail.mockResolvedValue({ data: { id: "f1" }, status: 200 });
+    getNotes.mockResolvedValue({ data: [], status: 200 });
+    getTokenFn.mockResolvedValue("tok-123");
+    render(await FountainPage({ params }));
+    expect(getDetail).toHaveBeenCalledWith("f1", expect.any(String), "tok-123");
+  });
+  it("fetches the detail anonymously (null token) when signed out (#114)", async () => {
+    getDetail.mockResolvedValue({ data: { id: "f1" }, status: 200 });
+    getNotes.mockResolvedValue({ data: [], status: 200 });
+    getTokenFn.mockResolvedValue(null);
+    render(await FountainPage({ params }));
+    expect(getDetail).toHaveBeenCalledWith("f1", expect.any(String), null);
   });
 });

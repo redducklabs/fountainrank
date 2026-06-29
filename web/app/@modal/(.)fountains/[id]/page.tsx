@@ -1,4 +1,5 @@
 import { getFountainDetailServer, getFountainNotesServer } from "../../../../lib/fountains";
+import { getViewerAccessToken } from "../../../../lib/server/api";
 import { log } from "../../../../lib/server/log";
 import { getViewer } from "../../../../lib/server/viewer";
 import { FountainDetail } from "../../../../components/fountain/FountainDetail";
@@ -9,8 +10,10 @@ export const dynamic = "force-dynamic";
 export default async function FountainModal({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const requestId = crypto.randomUUID();
+  // Authenticate the detail fetch when signed in so `your_rating` comes back (#65 web
+  // parity, #114); chained so notes + viewer still run in parallel. Anonymous → null.
   const [{ data, status }, notesRes, viewer] = await Promise.all([
-    getFountainDetailServer(id, requestId),
+    getViewerAccessToken().then((token) => getFountainDetailServer(id, requestId, token)),
     getFountainNotesServer(id, requestId),
     getViewer(requestId),
   ]);

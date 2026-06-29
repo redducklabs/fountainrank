@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getFountainDetailServer, getFountainNotesServer } from "../../../lib/fountains";
+import { getViewerAccessToken } from "../../../lib/server/api";
 import { log } from "../../../lib/server/log";
 import { getViewer, getViewerTotalPoints } from "../../../lib/server/viewer";
 import { ContributionStatusOverlay } from "../../../components/contributions/ContributionStatusOverlay";
@@ -13,8 +14,11 @@ const shell = "mx-auto min-h-dvh max-w-2xl bg-white px-6 py-10";
 export default async function FountainPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const requestId = crypto.randomUUID();
+  // Authenticate the detail fetch when signed in so `your_rating` comes back (#65 web
+  // parity, #114). The token fetch is chained into the detail call so notes + viewer
+  // still run in parallel; anonymous → null token → unchanged anonymous response.
   const [{ data, status }, notesRes, viewer] = await Promise.all([
-    getFountainDetailServer(id, requestId),
+    getViewerAccessToken().then((token) => getFountainDetailServer(id, requestId, token)),
     getFountainNotesServer(id, requestId),
     getViewer(requestId),
   ]);

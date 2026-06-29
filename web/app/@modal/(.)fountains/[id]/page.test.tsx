@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const getDetail = vi.fn();
 const getNotes = vi.fn();
 const getViewerFn = vi.fn();
+const getTokenFn = vi.fn();
 const logFn = vi.fn();
 
 vi.mock("../../../../lib/fountains", () => ({
@@ -14,6 +15,9 @@ vi.mock("../../../../lib/fountains", () => ({
 }));
 vi.mock("../../../../lib/server/viewer", () => ({
   getViewer: (...a: unknown[]) => getViewerFn(...a),
+}));
+vi.mock("../../../../lib/server/api", () => ({
+  getViewerAccessToken: (...a: unknown[]) => getTokenFn(...a),
 }));
 vi.mock("../../../../lib/server/log", () => ({ log: (...a: unknown[]) => logFn(...a) }));
 vi.mock("../../../../components/fountain/DetailOverlay", () => ({
@@ -37,8 +41,10 @@ beforeEach(() => {
   getDetail.mockReset();
   getNotes.mockReset();
   getViewerFn.mockReset();
+  getTokenFn.mockReset();
   logFn.mockReset();
   getViewerFn.mockResolvedValue({ state: "anonymous" });
+  getTokenFn.mockResolvedValue(null);
 });
 
 describe("FountainModal route (overlay)", () => {
@@ -90,5 +96,19 @@ describe("FountainModal route (overlay)", () => {
     getViewerFn.mockResolvedValue({ state: "anonymous" });
     render(await FountainModal({ params }));
     expect(screen.getByTestId("detail")).toHaveAttribute("data-authed", "false");
+  });
+  it("forwards the viewer token to the detail fetch when authenticated (#114)", async () => {
+    getDetail.mockResolvedValue({ data: { id: "f1" }, status: 200 });
+    getNotes.mockResolvedValue({ data: [], status: 200 });
+    getTokenFn.mockResolvedValue("tok-xyz");
+    render(await FountainModal({ params }));
+    expect(getDetail).toHaveBeenCalledWith("f1", expect.any(String), "tok-xyz");
+  });
+  it("fetches the detail anonymously (null token) when signed out (#114)", async () => {
+    getDetail.mockResolvedValue({ data: { id: "f1" }, status: 200 });
+    getNotes.mockResolvedValue({ data: [], status: 200 });
+    getTokenFn.mockResolvedValue(null);
+    render(await FountainModal({ params }));
+    expect(getDetail).toHaveBeenCalledWith("f1", expect.any(String), null);
   });
 });
