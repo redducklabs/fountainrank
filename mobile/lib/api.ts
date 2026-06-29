@@ -98,6 +98,12 @@ export function isAuthenticatedApiRequest(input: Request): boolean {
   if (path !== "/api/v1/fountains/bbox" && /^\/api\/v1\/fountains\/[^/]+$/.test(path)) {
     return true;
   }
+  // Admin fountain detail exposes hidden notes/fountain state and is never public. Match
+  // only the single-id route, boundary-safely, so future admin subresources are not
+  // accidentally force-authenticated by a loose prefix.
+  if (/^\/api\/v1\/admin\/fountains\/[^/]+$/.test(path)) {
+    return true;
+  }
   return false;
 }
 

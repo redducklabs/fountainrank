@@ -16,6 +16,7 @@ export function FountainDetail({
   notes,
   notesError,
   onRetryNotes,
+  adminControls,
   contribution,
   now,
 }: {
@@ -23,6 +24,7 @@ export function FountainDetail({
   notes: NoteOut[];
   notesError?: boolean;
   onRetryNotes?: () => void;
+  adminControls?: React.ReactNode;
   contribution?: React.ReactNode;
   now: Date;
 }) {
@@ -90,6 +92,8 @@ export function FountainDetail({
       ) : (
         <NotesList notes={notes} now={now} />
       )}
+
+      {adminControls}
 
       {contribution}
 
