@@ -27,9 +27,12 @@ export type PinProps = {
   pill: string | null;
 };
 
-export function basePinIcon(p: PinLike): "pin-broken" | "pin-gold" | "pin-standard" {
+export function basePinIcon(
+  p: PinLike,
+): "pin-broken" | "pin-gold" | "pin-unrated" | "pin-standard" {
   if (!p.is_working || p.current_status === "not_working") return "pin-broken";
   if (p.ranking_score != null && p.ranking_score > GOLD_THRESHOLD) return "pin-gold";
+  if (p.ranking_score == null) return "pin-unrated";
   return "pin-standard";
 }
 

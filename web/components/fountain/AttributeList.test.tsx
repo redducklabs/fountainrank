@@ -27,8 +27,8 @@ describe("AttributeList", () => {
     const { container } = render(<AttributeList attributes={[]} />);
     expect(container.firstChild).toBeNull();
   });
-  it("groups by category with friendly headers + values", () => {
-    render(
+  it("groups by category with friendly headers + positive chips", () => {
+    const { container } = render(
       <AttributeList
         attributes={[
           attr(),
@@ -40,17 +40,45 @@ describe("AttributeList", () => {
     expect(screen.getByText("Accessibility")).toBeInTheDocument();
     expect(screen.getByText("Bottle filler")).toBeInTheDocument();
     expect(screen.getByText("Wheelchair reachable")).toBeInTheDocument();
-    expect(screen.getAllByText("Yes").length).toBe(2);
+    const variants = [...container.querySelectorAll("[data-variant]")].map((n) =>
+      n.getAttribute("data-variant"),
+    );
+    expect(variants).toEqual(["positive", "positive"]);
   });
-  it("mixed shows the latest hint", () => {
-    render(
+  it("renders a value attribute as a neutral 'name: value' chip", () => {
+    const { container } = render(
+      <AttributeList
+        attributes={[
+          attr({
+            attribute_type_id: 3,
+            name: "Venue type",
+            category: "access",
+            consensus_value: "park",
+            latest_observation_value: "park",
+          }),
+        ]}
+      />,
+    );
+    expect(screen.getByText("Venue type: Park")).toBeInTheDocument();
+    expect(container.querySelector("[data-variant]")?.getAttribute("data-variant")).toBe("neutral");
+  });
+  it("low-confidence consensus renders as a muted chip with the value + report count", () => {
+    const { container } = render(
+      <AttributeList attributes={[attr({ confidence: "low", observation_count: 2 })]} />,
+    );
+    expect(container.querySelector("[data-variant]")?.getAttribute("data-variant")).toBe("muted");
+    expect(screen.getByText("Bottle filler: Yes")).toBeInTheDocument();
+    expect(screen.getByText("(2 reports)")).toBeInTheDocument();
+  });
+  it("mixed shows the latest hint as a mixed chip", () => {
+    const { container } = render(
       <AttributeList
         attributes={[
           attr({ consensus_value: null, confidence: "mixed", latest_observation_value: "no" }),
         ]}
       />,
     );
-    expect(screen.getByText("Mixed")).toBeInTheDocument();
+    expect(container.querySelector("[data-variant]")?.getAttribute("data-variant")).toBe("mixed");
     expect(screen.getByText("latest: No")).toBeInTheDocument();
   });
 });

@@ -1,7 +1,8 @@
 import type React from "react";
 import type { FountainDetail as Detail, NoteOut } from "../../lib/fountains";
-import { formatAverage, formatDate, formatDimension, formatVotes } from "../../lib/map/format";
+import { formatAverage, formatDate, formatVotes } from "../../lib/map/format";
 import { ShareButton } from "./ShareButton";
+import { Stars } from "./Stars";
 import { StatusBlock } from "./StatusBlock";
 import { AttributeList } from "./AttributeList";
 import { NotesList } from "./NotesList";
@@ -35,24 +36,57 @@ export function FountainDetail({
           now={renderNow}
         />
       </div>
-      <div className="flex items-baseline gap-2">
-        <span className="text-2xl font-extrabold text-[#0A357E]">
-          {formatAverage(detail.average_rating ?? null)}
-        </span>
-        {detail.average_rating != null && (
-          <>
-            <span className="text-sm text-slate-500">·</span>{" "}
-            <span className="text-sm text-slate-500">{formatVotes(detail.rating_count)}</span>
-          </>
-        )}
-      </div>
-      <dl className="divide-y divide-slate-100 border-t border-slate-100">
+      {detail.average_rating != null ? (
+        <div className="flex items-center gap-3">
+          <span className="text-3xl font-extrabold leading-none text-[#0A357E]">
+            {formatAverage(detail.average_rating)}
+          </span>
+          <div className="flex flex-col">
+            <Stars value={detail.average_rating} size={18} />
+            <span className="text-xs text-slate-500">{formatVotes(detail.rating_count)}</span>
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2">
+          <Stars value={0} size={18} label="Not yet rated" />
+          <span className="text-sm font-medium text-slate-500">Not yet rated</span>
+        </div>
+      )}
+      <dl className="space-y-2 border-t border-slate-100 pt-3">
         {detail.dimensions.map((d) => (
-          <div key={d.rating_type_id} className="flex items-center justify-between py-2">
-            <dt className="text-sm font-medium">{d.name}</dt>
-            <dd className="text-sm text-slate-600">
-              {formatDimension(d.average_rating ?? null, d.vote_count)}
+          <div
+            key={d.rating_type_id}
+            className="grid grid-cols-[1fr_auto] items-center gap-x-3 gap-y-1"
+          >
+            <dt className="text-sm font-medium text-slate-700">{d.name}</dt>
+            <dd className="flex items-center gap-2 text-sm">
+              {d.average_rating != null ? (
+                <>
+                  <Stars
+                    value={d.average_rating}
+                    size={14}
+                    label={`${d.name} rated ${d.average_rating.toFixed(1)} out of 5`}
+                  />
+                  <span className="font-semibold tabular-nums text-[#0A357E]">
+                    {d.average_rating.toFixed(1)}
+                  </span>
+                  <span className="text-xs text-slate-400">({d.vote_count})</span>
+                </>
+              ) : (
+                <span className="text-xs text-slate-400">Not yet rated</span>
+              )}
             </dd>
+            {d.average_rating != null && (
+              <div
+                className="col-span-2 h-1.5 overflow-hidden rounded-full bg-slate-100"
+                aria-hidden="true"
+              >
+                <div
+                  className="h-full rounded-full bg-[#0E4DA4]"
+                  style={{ width: `${(Math.max(0, Math.min(5, d.average_rating)) / 5) * 100}%` }}
+                />
+              </div>
+            )}
           </div>
         ))}
       </dl>

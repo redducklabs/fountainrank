@@ -17,8 +17,14 @@ describe("basePinIcon", () => {
   it("is pin-standard at exactly the gold threshold (strictly-greater rule)", () => {
     expect(basePinIcon({ is_working: true, ranking_score: 4 })).toBe("pin-standard");
   });
-  it("is pin-standard when working with a null ranking_score", () => {
-    expect(basePinIcon({ is_working: true, ranking_score: null })).toBe("pin-standard");
+  it("is pin-standard when working with a rated low ranking_score", () => {
+    expect(basePinIcon({ is_working: true, ranking_score: 3.2 })).toBe("pin-standard");
+  });
+  it("is pin-unrated when working with a null ranking_score", () => {
+    expect(basePinIcon({ is_working: true, ranking_score: null })).toBe("pin-unrated");
+  });
+  it("is pin-broken when not working even with a null ranking_score (broken wins)", () => {
+    expect(basePinIcon({ is_working: false, ranking_score: null })).toBe("pin-broken");
   });
 });
 
@@ -43,7 +49,7 @@ describe("pinsToFeatureCollection", () => {
     expect(f.properties.pill).toBe("★ 4.2");
   });
 
-  it("emits a null pill for an unrated fountain and pin-standard icon", () => {
+  it("emits a null pill for an unrated fountain and pin-unrated icon", () => {
     const fc = pinsToFeatureCollection([
       {
         id: "b2",
@@ -54,6 +60,6 @@ describe("pinsToFeatureCollection", () => {
       },
     ]);
     expect(fc.features[0].properties.pill).toBeNull();
-    expect(fc.features[0].properties.icon).toBe("pin-standard");
+    expect(fc.features[0].properties.icon).toBe("pin-unrated");
   });
 });

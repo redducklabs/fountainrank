@@ -96,12 +96,15 @@ export function pillLayer(): SymbolLayerSpecification {
   };
 }
 
-// Mirrors selectedSwapIcon: working & not-gold -> pin-selected, else the base icon.
+// Mirrors selectedSwapIcon: working & RATED & not-gold -> pin-selected, else the
+// base icon. Unrated (null score coalesces to -1) is excluded by the `>= 0` bound,
+// so it keeps its muted icon under the halo.
 export const SELECTED_ICON_EXPR = [
   "case",
   [
     "all",
     ["get", "is_working"],
+    [">=", ["coalesce", ["get", "ranking_score"], -1], 0],
     ["<=", ["coalesce", ["get", "ranking_score"], -1], GOLD_THRESHOLD],
   ],
   "pin-selected",
