@@ -39,9 +39,11 @@ async def _serialize_admin_note(note: FountainNote, author: User) -> AdminNoteOu
 
 
 async def _serialize_admin_fountain(
-    session: AsyncSession, fountain: Fountain
+    session: AsyncSession, fountain: Fountain, admin: User
 ) -> AdminFountainDetail:
-    public_detail = await serialize_fountain_detail(session, fountain)
+    # Pass the admin's user_id so dimensions[].your_rating is populated: admins read this
+    # endpoint instead of the public detail, and the rating form must still pre-fill (#114).
+    public_detail = await serialize_fountain_detail(session, fountain, user_id=admin.id)
     note_rows = (
         await session.execute(
             select(FountainNote, User)
@@ -62,13 +64,14 @@ async def _serialize_admin_fountain(
 async def admin_fountain_detail(
     fountain_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
+    admin: User = Depends(require_admin),
 ) -> AdminFountainDetail:
     fountain = (
         await session.execute(select(Fountain).where(Fountain.id == fountain_id))
     ).scalar_one_or_none()
     if fountain is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="fountain not found")
-    return await _serialize_admin_fountain(session, fountain)
+    return await _serialize_admin_fountain(session, fountain, admin)
 
 
 @router.patch("/fountains/{fountain_id}", response_model=AdminFountainDetail)
@@ -151,7 +154,7 @@ async def admin_patch_fountain(
             "changed_fields": changes,
         },
     )
-    return await _serialize_admin_fountain(session, fountain)
+    return await _serialize_admin_fountain(session, fountain, admin)
 
 
 @router.delete("/fountains/{fountain_id}", status_code=status.HTTP_204_NO_CONTENT)

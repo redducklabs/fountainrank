@@ -346,3 +346,23 @@ async def test_empty_patch_is_422(raw_client, session, author):
         json={},
     )
     assert resp.status_code == 422
+
+
+async def test_admin_detail_includes_admins_own_rating(raw_client, session, author):
+    # Admins read a fountain via the admin endpoint (not the public detail), so the admin's
+    # own per-dimension rating must still come back so the rating form pre-fills (#114).
+    fountain = await _create_fountain(session, author)
+    rated = await raw_client.post(
+        f"/api/v1/fountains/{fountain.id}/ratings",
+        headers={"X-Dev-User": "admin-sub"},
+        json={"ratings": [{"rating_type_id": 1, "stars": 4}]},
+    )
+    assert rated.status_code == 200
+
+    admin_detail = await raw_client.get(
+        f"/api/v1/admin/fountains/{fountain.id}",
+        headers={"X-Dev-User": "admin-sub"},
+    )
+    assert admin_detail.status_code == 200
+    dims = {d["rating_type_id"]: d for d in admin_detail.json()["dimensions"]}
+    assert dims[1]["your_rating"] == 4
