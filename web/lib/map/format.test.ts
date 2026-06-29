@@ -12,7 +12,38 @@ import {
   attributeDisplay,
   formatCategory,
   conditionStatusLabel,
+  starFills,
+  attributeChipVariant,
 } from "./format";
+
+describe("starFills", () => {
+  it("3.5 -> three full, one half, one empty", () =>
+    expect(starFills(3.5)).toEqual(["full", "full", "full", "half", "empty"]));
+  it("4 -> four full, one empty", () =>
+    expect(starFills(4)).toEqual(["full", "full", "full", "full", "empty"]));
+  it("3.2 rounds down to 3.0", () =>
+    expect(starFills(3.2)).toEqual(["full", "full", "full", "empty", "empty"]));
+  it("3.4 rounds up to 3.5 (half on the 4th)", () => expect(starFills(3.4)[3]).toBe("half"));
+  it("clamps 0 and 5+", () => {
+    expect(starFills(0)).toEqual(["empty", "empty", "empty", "empty", "empty"]);
+    expect(starFills(7)).toEqual(["full", "full", "full", "full", "full"]);
+  });
+});
+
+describe("attributeChipVariant", () => {
+  it("Yes -> positive", () =>
+    expect(attributeChipVariant({ text: "Yes", tone: "normal" })).toBe("positive"));
+  it("low-confidence Yes is still positive", () =>
+    expect(attributeChipVariant({ text: "Yes", tone: "muted" })).toBe("positive"));
+  it("No -> negative", () =>
+    expect(attributeChipVariant({ text: "No", tone: "normal" })).toBe("negative"));
+  it("Unknown -> unknown", () =>
+    expect(attributeChipVariant({ text: "Unknown", tone: "muted" })).toBe("unknown"));
+  it("Mixed tone -> mixed", () =>
+    expect(attributeChipVariant({ text: "Mixed", tone: "mixed" })).toBe("mixed"));
+  it("specific value -> neutral", () =>
+    expect(attributeChipVariant({ text: "Park", tone: "normal" })).toBe("neutral"));
+});
 describe("formatPill", () => {
   it("rounds 1dp", () => expect(formatPill(4.26)).toBe("★ 4.3"));
   it("null -> null", () => expect(formatPill(null)).toBeNull());

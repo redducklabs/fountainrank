@@ -111,6 +111,28 @@ export function attributeDisplay(attr: {
   return { text: "Unknown", tone: "muted", hint: null };
 }
 
+export type StarFill = "full" | "half" | "empty";
+/** Discrete per-star fills for a 0–5 rating, rounded to the nearest half star. */
+export function starFills(value: number): StarFill[] {
+  const v = Math.max(0, Math.min(5, Math.round(value * 2) / 2));
+  return Array.from({ length: 5 }, (_, i) => {
+    const slot = i + 1;
+    if (v >= slot) return "full";
+    if (v >= slot - 0.5) return "half";
+    return "empty";
+  });
+}
+
+export type ChipVariant = "positive" | "negative" | "unknown" | "mixed" | "neutral";
+/** Maps an attributeDisplay result to a chip style/icon variant (tone-aware). */
+export function attributeChipVariant(d: { text: string; tone: AttrTone }): ChipVariant {
+  if (d.tone === "mixed") return "mixed";
+  if (d.text === "Yes") return "positive";
+  if (d.text === "No") return "negative";
+  if (d.text === "Unknown") return "unknown";
+  return "neutral";
+}
+
 const CATEGORY_LABELS: Record<string, string> = {
   physical: "Features",
   accessibility: "Accessibility",
