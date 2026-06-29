@@ -2,10 +2,11 @@ import type { components } from "@fountainrank/api-client";
 import type React from "react";
 import { Alert, Linking, Pressable, StyleSheet, Text, View } from "react-native";
 
-import { formatAverage, formatDate, formatDimension, formatVotes } from "../../lib/map/format";
+import { formatAverage, formatDate, formatVotes } from "../../lib/map/format";
 import { colors, spacing, typography } from "../../theme";
 import { AttributeList } from "./AttributeList";
 import { NotesList } from "./NotesList";
+import { Stars } from "./Stars";
 import { StatusBlock } from "./StatusBlock";
 
 type FountainDetailT = components["schemas"]["FountainDetail"];
@@ -49,21 +50,52 @@ export function FountainDetail({
         />
       </View>
 
-      <View style={styles.ratingRow}>
-        <Text style={styles.average}>{formatAverage(detail.average_rating ?? null)}</Text>
-        {detail.average_rating != null ? (
-          <Text style={styles.votes}>{` · ${formatVotes(detail.rating_count)}`}</Text>
-        ) : null}
-      </View>
+      {detail.average_rating != null ? (
+        <View style={styles.heroRow}>
+          <Text style={styles.average}>{formatAverage(detail.average_rating)}</Text>
+          <View style={styles.heroStars}>
+            <Stars value={detail.average_rating} size={20} />
+            <Text style={styles.votes}>{formatVotes(detail.rating_count)}</Text>
+          </View>
+        </View>
+      ) : (
+        <View style={styles.heroRow}>
+          <Stars value={0} size={20} label="Not yet rated" />
+          <Text style={styles.notRated}>Not yet rated</Text>
+        </View>
+      )}
 
       {detail.dimensions.length > 0 ? (
         <View style={styles.dimensions}>
           {detail.dimensions.map((d) => (
             <View key={d.rating_type_id} style={styles.dimensionRow}>
-              <Text style={styles.dimensionName}>{d.name}</Text>
-              <Text style={styles.dimensionValue}>
-                {formatDimension(d.average_rating ?? null, d.vote_count)}
-              </Text>
+              <View style={styles.dimensionTop}>
+                <Text style={styles.dimensionName}>{d.name}</Text>
+                {d.average_rating != null ? (
+                  <View style={styles.dimensionScore}>
+                    <Stars
+                      value={d.average_rating}
+                      size={14}
+                      label={`${d.name} rated ${d.average_rating.toFixed(1)} out of 5`}
+                    />
+                    <Text style={styles.dimensionValue}>
+                      {`${d.average_rating.toFixed(1)} (${d.vote_count})`}
+                    </Text>
+                  </View>
+                ) : (
+                  <Text style={styles.dimensionMuted}>Not yet rated</Text>
+                )}
+              </View>
+              {d.average_rating != null ? (
+                <View style={styles.meterTrack}>
+                  <View
+                    style={[
+                      styles.meterFill,
+                      { width: `${(Math.max(0, Math.min(5, d.average_rating)) / 5) * 100}%` },
+                    ]}
+                  />
+                </View>
+              ) : null}
             </View>
           ))}
         </View>
@@ -118,19 +150,30 @@ const styles = StyleSheet.create({
   wrap: { gap: spacing.md },
   headerBlock: { gap: spacing.xs },
   title: { ...typography.heading, color: colors.brandBlue },
-  ratingRow: { flexDirection: "row", alignItems: "baseline" },
-  average: { fontSize: 28, fontWeight: "800", color: colors.brandBlue },
-  votes: { ...typography.body, color: colors.textMuted },
-  dimensions: { borderTopColor: colors.border, borderTopWidth: 1 },
-  dimensionRow: {
+  heroRow: { flexDirection: "row", alignItems: "center", gap: spacing.md },
+  average: { fontSize: 34, fontWeight: "800", color: colors.brandBlue, lineHeight: 36 },
+  heroStars: { gap: 2 },
+  votes: { ...typography.meta, color: colors.textMuted },
+  notRated: { ...typography.body, fontWeight: "600", color: colors.textMuted },
+  dimensions: {
+    gap: spacing.sm,
+    borderTopColor: colors.border,
+    borderTopWidth: 1,
+    paddingTop: spacing.sm,
+  },
+  dimensionRow: { gap: spacing.xs },
+  dimensionTop: {
     flexDirection: "row",
     justifyContent: "space-between",
-    paddingVertical: spacing.sm,
-    borderBottomColor: colors.border,
-    borderBottomWidth: 1,
+    alignItems: "center",
+    gap: spacing.sm,
   },
   dimensionName: { ...typography.body, fontWeight: "600", color: colors.text },
-  dimensionValue: { ...typography.body, color: colors.textMuted },
+  dimensionScore: { flexDirection: "row", alignItems: "center", gap: spacing.xs },
+  dimensionValue: { ...typography.meta, fontWeight: "700", color: colors.brandBlue },
+  dimensionMuted: { ...typography.meta, color: colors.textMuted },
+  meterTrack: { height: 6, borderRadius: 999, backgroundColor: colors.border, overflow: "hidden" },
+  meterFill: { height: "100%", borderRadius: 999, backgroundColor: "#0E4DA4" },
   commentCard: {
     backgroundColor: colors.surface,
     borderColor: colors.border,

@@ -2,15 +2,36 @@ import type { components } from "@fountainrank/api-client";
 import { StyleSheet, Text, View } from "react-native";
 
 import { groupAttributes } from "../../lib/detail/attributes";
-import { attributeDisplay, type AttrTone, formatCategory } from "../../lib/map/format";
+import {
+  attributeChipVariant,
+  attributeDisplay,
+  type ChipVariant,
+  formatCategory,
+} from "../../lib/map/format";
 import { colors, spacing, typography } from "../../theme";
 
 type Attr = components["schemas"]["AttributeConsensusOut"];
 
-const TONE: Record<AttrTone, string> = {
-  normal: colors.text,
-  muted: colors.textMuted,
+const CHIP_BG: Record<ChipVariant, string> = {
+  positive: "#E7F0FF",
+  neutral: "#E7F0FF",
+  negative: "#F1F5F9",
+  unknown: "#F1F5F9",
+  mixed: "#FEF3C7",
+};
+const CHIP_FG: Record<ChipVariant, string> = {
+  positive: colors.brandBlue,
+  neutral: colors.brandBlue,
+  negative: colors.textMuted,
+  unknown: colors.textMuted,
   mixed: "#92400E",
+};
+const GLYPH: Record<ChipVariant, string> = {
+  positive: "✓",
+  neutral: "•",
+  negative: "✕",
+  unknown: "?",
+  mixed: "~",
 };
 
 export function AttributeList({ attributes }: { attributes: Attr[] }) {
@@ -21,18 +42,24 @@ export function AttributeList({ attributes }: { attributes: Attr[] }) {
       {groups.map((g) => (
         <View key={g.category} style={styles.group}>
           <Text style={styles.header}>{formatCategory(g.category).toUpperCase()}</Text>
-          {g.items.map((a) => {
-            const d = attributeDisplay(a);
-            return (
-              <View key={a.attribute_type_id} style={styles.row}>
-                <Text style={styles.name}>{a.name}</Text>
-                <Text style={[styles.value, { color: TONE[d.tone] }]}>
-                  {d.text}
-                  {d.hint ? <Text style={styles.hint}>{` ${d.hint}`}</Text> : null}
-                </Text>
-              </View>
-            );
-          })}
+          <View style={styles.chips}>
+            {g.items.map((a) => {
+              const d = attributeDisplay(a);
+              const variant = attributeChipVariant(d);
+              const label = variant === "neutral" ? `${a.name}: ${d.text}` : a.name;
+              return (
+                <View
+                  key={a.attribute_type_id}
+                  style={[styles.chip, { backgroundColor: CHIP_BG[variant] }]}
+                >
+                  <Text style={[styles.chipText, { color: CHIP_FG[variant] }]}>
+                    {`${GLYPH[variant]} ${label}`}
+                  </Text>
+                  {d.hint ? <Text style={styles.chipHint}>{d.hint}</Text> : null}
+                </View>
+              );
+            })}
+          </View>
         </View>
       ))}
     </View>
@@ -43,8 +70,15 @@ const styles = StyleSheet.create({
   wrap: { gap: spacing.md },
   group: { gap: spacing.xs },
   header: { ...typography.meta, color: colors.textMuted, fontWeight: "600", letterSpacing: 0.5 },
-  row: { flexDirection: "row", justifyContent: "space-between", gap: spacing.sm },
-  name: { ...typography.body, color: colors.textMuted, flexShrink: 1 },
-  value: { ...typography.body, textAlign: "right" },
-  hint: { ...typography.meta, color: colors.textMuted },
+  chips: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs },
+  chip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  chipText: { ...typography.meta, fontWeight: "600" },
+  chipHint: { ...typography.meta, color: colors.textMuted, fontSize: 10 },
 });
