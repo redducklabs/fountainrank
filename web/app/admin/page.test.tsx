@@ -46,7 +46,7 @@ it("shows a retry state on error (not admin content, not 404)", async () => {
   expect(notFound).not.toHaveBeenCalled();
 });
 
-it("renders the stub for an admin", async () => {
+it("renders the inline-moderation landing for an admin", async () => {
   getViewer.mockResolvedValue({
     state: "authed",
     displayName: "x",
@@ -54,5 +54,6 @@ it("renders the stub for an admin", async () => {
     isAdmin: true,
   });
   render(await AdminPage());
-  expect(screen.getByText(/moderation tools/i)).toBeTruthy();
+  expect(screen.getByText(/moderation controls live inline/i)).toBeTruthy();
+  expect(screen.getByText(/open a fountain from the map/i)).toBeTruthy();
 });
