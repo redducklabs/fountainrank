@@ -25,6 +25,7 @@ const PIN_IMAGES = {
   "pin-standard": require("../../assets/pins/pin-standard.png"),
   "pin-gold": require("../../assets/pins/pin-gold.png"),
   "pin-broken": require("../../assets/pins/pin-broken.png"),
+  "pin-unrated": require("../../assets/pins/pin-unrated.png"),
 };
 
 /**
