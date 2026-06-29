@@ -15,8 +15,16 @@ issue. This doc summarizes and **sequences** them.
 
 ---
 
-## 🟢 RESUME HERE — current state (updated 2026-06-28, clustering session)
+## 🟢 RESUME HERE — current state (updated 2026-06-28, v0.10.0 release)
 
+> **✅ RELEASED as `v0.10.0` (2026-06-28)** — current test build, supersedes v0.9.0. The all-surface tag deployed
+> backend + web to production (DOKS, `Deploy` run 28341008909 → success; verified live: the #20 global-bbox
+> endpoint now returns **HTTP 200** in prod) **and** built/submitted the mobile app to Play internal + TestFlight
+> (`mobile-store-release.yml` run 28341008913 → success). On top of v0.9.0, v0.10.0 adds **#65** (show a user's
+> existing rating — backend + mobile, PR #115) and the backend/web fixes **#20 / #74 / #53** (PR #112). Run the
+> device-test checklist below as the POST-release verification. Open follow-ups: **#113** (index the bbox
+> geometry fallback) and **#114** (web rating-form parity for #65).
+>
 > **✅ RELEASED as `v0.9.0` (2026-06-28).** The mobile map is fixed AND clustering is implemented; PR #111 is
 > squash-merged to `main` (commit `1fdc61e`) and tag `v0.9.0` shipped to Play internal + TestFlight. The owner
 > chose to release **before** the real-hardware device-test, so the device-test checklist below is now a
@@ -58,7 +66,7 @@ issue. This doc summarizes and **sequences** them.
 
 ### ➡️ Next steps (post-release)
 
-1. **Install the `v0.9.0` build** from TestFlight + Play internal on **both iOS + Android real hardware**.
+1. **Install the `v0.10.0` build** from TestFlight + Play internal on **both iOS + Android real hardware**.
 2. **Run the device-test checklist below** — every fix is hardware-unverified (released on emulator + CI +
    Codex confidence only). This is the verification that was deferred from before-merge to after-release.
 3. **If all pass:** promote to production when ready — the Play **production** track and an App Store release
@@ -72,6 +80,9 @@ issue. This doc summarizes and **sequences** them.
   zoom; tap a cluster → flies in + breaks apart; individual pins + rating pills at street zoom.
 - **#88:** signed-in, the Points chip + Account show real points, not 0.
 - **#103:** Apple sign-in shows the real name + initial, not an opaque id.
+- **#65 (v0.10.0):** open a fountain you've already rated → the rating screen pre-fills your existing stars and
+  shows "already rated"; changing the stars and submitting **updates** your rating (no duplicate; the rating
+  count is unchanged). Needs the v0.10.0 prod backend (now live) to return `your_rating`.
 - **#97:** (iOS, location denied/approximate) can enter Add, place a pin, **Next** enables.
 - **#98:** a draft pin appears immediately on entering Add.
 - **#99:** the draft pin reads as distinct (larger + translucent).
