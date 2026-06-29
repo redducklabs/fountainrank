@@ -8,6 +8,7 @@ from app.config import get_settings
 from app.logging_config import configure_logging, log_startup, request_id_var
 from app.middleware import RequestContextMiddleware
 from app.routers import (
+    admin,
     attribute_types,
     email_webhook,
     fountains,
@@ -41,6 +42,7 @@ def create_app() -> FastAPI:
     app.include_router(rating_types.router)
     app.include_router(attribute_types.router)
     app.include_router(fountains.router)
+    app.include_router(admin.router)
     app.include_router(leaderboard.router)
     app.include_router(users.router)
     app.include_router(email_webhook.router)
