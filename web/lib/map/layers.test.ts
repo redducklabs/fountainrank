@@ -63,9 +63,10 @@ describe("selected layers", () => {
  * rule.  selectedSwapIcon() in pins.ts is the readable TS mirror of that rule;
  * this test guards the two implementations against divergence.
  *
- * Rule: feature gets "pin-selected" when is_working === true AND NOT
- * (ranking_score != null && ranking_score > GOLD_THRESHOLD); otherwise falls
- * back to the feature's own `icon` property.
+ * Rule: feature gets "pin-selected" when is_working === true AND it is RATED
+ * (ranking_score != null) AND not gold (ranking_score <= GOLD_THRESHOLD);
+ * otherwise (broken, gold, or unrated) it falls back to the feature's own
+ * `icon` property.
  */
 describe("SELECTED_ICON_EXPR behavioral matrix", () => {
   const globals: GlobalProperties = { zoom: 0 };
@@ -88,9 +89,9 @@ describe("SELECTED_ICON_EXPR behavioral matrix", () => {
     return parsed.value.evaluate(globals, feature) as string;
   }
 
-  it("working, ranking_score null → pin-selected", () => {
-    expect(evalExpr({ is_working: true, ranking_score: null, icon: "pin-standard" })).toBe(
-      "pin-selected",
+  it("working, ranking_score null (unrated) → falls back to feature icon", () => {
+    expect(evalExpr({ is_working: true, ranking_score: null, icon: "pin-unrated" })).toBe(
+      "pin-unrated",
     );
   });
 

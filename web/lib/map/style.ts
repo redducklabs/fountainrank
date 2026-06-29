@@ -6,13 +6,14 @@ export const BASEMAP = {
   styleUrl: process.env.NEXT_PUBLIC_BASEMAP_STYLE_URL ?? "",
 };
 export const PIN_ASSETS: Record<
-  "pin-standard" | "pin-selected" | "pin-gold" | "pin-broken",
+  "pin-standard" | "pin-selected" | "pin-gold" | "pin-broken" | "pin-unrated",
   string
 > = {
   "pin-standard": "/pins/pin-standard.png",
   "pin-selected": "/pins/pin-selected.png",
   "pin-gold": "/pins/pin-gold.png",
   "pin-broken": "/pins/pin-broken.png",
+  "pin-unrated": "/pins/pin-unrated.png",
 };
 // Stretchable rating-pill background, loaded with 9-patch stretch metadata (icon-text-fit).
 export const PILL_BG_ASSET = "/pins/pill-bg.png";
