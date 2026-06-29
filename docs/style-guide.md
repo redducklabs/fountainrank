@@ -135,6 +135,20 @@ The authenticated utility page (the BFF round-trip surface), on the brand gradie
 (heading + Sign out). Not linked from the marketing hero; reached via the footer
 "Sign in" link.
 
+### Admin moderation controls (`web/components/admin/FountainAdminControls.tsx`)
+
+Inline-only admin panel rendered on fountain detail pages for `viewer.isAdmin`.
+
+- Placement: below community notes and above contribution controls, separated by a simple
+  top border (`border-t border-slate-200 pt-4`) rather than a nested page card.
+- Edit form: compact gray field group (`rounded-lg border border-slate-200 bg-slate-50 p-3`)
+  with native number inputs for latitude/longitude, a select for working state, and textareas
+  for placement note/comments.
+- Actions: primary save uses brand navy fill; hide/unhide uses a navy outline; destructive
+  delete is a two-step confirm with red outline first and solid red confirm.
+- Note moderation: repeated note rows use small bordered items with compact outline buttons;
+  hidden state is shown in muted note metadata.
+
 ---
 
 ## Map UI

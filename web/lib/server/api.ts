@@ -25,3 +25,17 @@ export async function getAuthedApiClientForAction(requestId: string): Promise<Ap
   const token = await getAccessToken(getLogtoConfig(), API_RESOURCE);
   return makeClient(resolveApiBaseUrl(), { headers: authedClientHeaders(token, requestId) });
 }
+
+// The viewer's backend access token for enriching a PUBLIC read with their identity
+// (e.g. #65 `your_rating` on the fountain detail), or null when anonymous / on any
+// session-or-token error. RSC-only (read-only cookies; no refresh persisted). Callers
+// pass the result into a client-bundled fetch helper and fall back to the anonymous
+// response when null, so public pages never break. `server-only` keeps it off the client.
+export async function getViewerAccessToken(): Promise<string | null> {
+  try {
+    const token = await getAccessTokenRSC(getLogtoConfig(), API_RESOURCE);
+    return token || null;
+  } catch {
+    return null;
+  }
+}

@@ -2,7 +2,14 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 NoteBody = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1000)]
 
@@ -211,3 +218,30 @@ class NoteOut(BaseModel):
     author_display_name: str
     created_at: datetime
     updated_at: datetime
+
+
+class AdminNoteOut(NoteOut):
+    is_hidden: bool
+
+
+class AdminNotePatch(BaseModel):
+    is_hidden: bool
+
+
+class AdminFountainPatch(BaseModel):
+    location: Coordinates | None = None
+    is_working: bool | None = None
+    placement_note: str | None = None
+    comments: str | None = None
+    is_hidden: bool | None = None
+
+    @model_validator(mode="after")
+    def _reject_empty_patch(self) -> "AdminFountainPatch":
+        if not self.model_fields_set:
+            raise ValueError("patch must include at least one field")
+        return self
+
+
+class AdminFountainDetail(FountainDetail):
+    is_hidden: bool
+    notes: list[AdminNoteOut]

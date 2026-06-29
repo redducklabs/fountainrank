@@ -132,6 +132,16 @@ async def get_current_user(
     raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="authentication required")
 
 
+async def require_admin(user: User = Depends(get_current_user)) -> User:
+    if not user.is_admin:
+        logger.warning(
+            "non-admin attempted admin access",
+            extra={"sub": user.logto_user_id, "user_id": str(user.id)},
+        )
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="admin required")
+    return user
+
+
 async def get_optional_user(
     authorization: str | None = Header(default=None),
     x_dev_user: str | None = Header(default=None, alias="X-Dev-User"),

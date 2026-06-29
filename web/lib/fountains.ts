@@ -26,8 +26,18 @@ export async function fetchBbox(params: BboxParams, requestId?: string): Promise
   };
 }
 
-export async function getFountainDetailServer(id: string, requestId: string) {
-  const client = makeClient(resolveApiBaseUrl(), { headers: { "X-Request-ID": requestId } });
+// `token` (the viewer's backend access token, when signed in) enriches the detail with
+// the caller's own rating (#65 `your_rating`). It is passed in by the server page — this
+// module is client-bundled, so it must never fetch the token itself (server-only). A
+// null/absent token yields the anonymous response unchanged.
+export async function getFountainDetailServer(
+  id: string,
+  requestId: string,
+  token?: string | null,
+) {
+  const headers: Record<string, string> = { "X-Request-ID": requestId };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const client = makeClient(resolveApiBaseUrl(), { headers });
   try {
     const { data, response } = await client.GET("/api/v1/fountains/{fountain_id}", {
       params: { path: { fountain_id: id } },

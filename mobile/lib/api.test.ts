@@ -188,6 +188,28 @@ describe("createApiClient", () => {
     ).toBe(false);
   });
 
+  it("authenticates the admin GET fountain detail boundary-safely", () => {
+    expect(
+      isAuthenticatedApiRequest(
+        new Request(
+          "https://api.fountainrank.com/api/v1/admin/fountains/123e4567-e89b-12d3-a456-426614174000",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      isAuthenticatedApiRequest(
+        new Request(
+          "https://api.fountainrank.com/api/v1/admin/fountains/123e4567-e89b-12d3-a456-426614174000/notes",
+        ),
+      ),
+    ).toBe(false);
+    expect(
+      isAuthenticatedApiRequest(
+        new Request("https://api.fountainrank.com/api/v1/admin/fountains-extra/abc"),
+      ),
+    ).toBe(false);
+  });
+
   it("authenticates the GET /api/v1/me/* subtree (issue #88: contributions, badges)", () => {
     // These carried no bearer token under the old exact `=== "/api/v1/me"` gate,
     // so the backend 401'd and the map chip + Account points fell back to 0.

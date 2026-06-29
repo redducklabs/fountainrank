@@ -18,13 +18,22 @@ export function RatingForm({
   dimensions: Dimension[];
 }) {
   const router = useRouter();
-  const [stars, setStars] = useState<Record<number, number>>({});
+  const [edits, setEdits] = useState<Record<number, number>>({});
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
-  const chosen = Object.entries(stars).filter(([, s]) => s > 0);
+  // Effective stars: an explicit edit wins, else the viewer's saved rating (#65 your_rating),
+  // else 0. Derived each render (not synced via an effect) so a previously-rated fountain
+  // pre-fills even when your_rating loads after mount, and the user's edits always win (#114).
+  const hasExistingRating = dimensions.some((d) => d.your_rating != null);
+  const effectiveStars: Record<number, number> = Object.fromEntries(
+    dimensions.map((d) => [d.rating_type_id, edits[d.rating_type_id] ?? d.your_rating ?? 0]),
+  );
+  const chosen = dimensions
+    .map((d) => [d.rating_type_id, effectiveStars[d.rating_type_id]] as const)
+    .filter(([, s]) => s > 0);
 
   function submit() {
-    const ratings = chosen.map(([id, s]) => ({ rating_type_id: Number(id), stars: s }));
+    const ratings = chosen.map(([id, s]) => ({ rating_type_id: id, stars: s }));
     start(async () => {
       const res = await submitRating(fountainId, ratings);
       if (res.ok) {
@@ -40,13 +49,18 @@ export function RatingForm({
   return (
     <div>
       <h3 className="text-sm font-semibold text-slate-700">Rate it</h3>
+      {hasExistingRating && (
+        <p className="text-xs font-medium text-[#0A357E]">
+          You&rsquo;ve rated this fountain. Update your stars and submit to change it.
+        </p>
+      )}
       {dimensions.map((d) => (
         <StarGroup
           key={d.rating_type_id}
           id={d.rating_type_id}
           name={d.name}
-          value={stars[d.rating_type_id] ?? 0}
-          onChange={(n) => setStars((s) => ({ ...s, [d.rating_type_id]: n }))}
+          value={effectiveStars[d.rating_type_id] ?? 0}
+          onChange={(n) => setEdits((s) => ({ ...s, [d.rating_type_id]: n }))}
         />
       ))}
       <div className="mt-3">
@@ -58,7 +72,7 @@ export function RatingForm({
         onClick={submit}
         className="mt-2 rounded-full bg-[#0A357E] px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
       >
-        Submit rating
+        {hasExistingRating ? "Update rating" : "Submit rating"}
       </button>
       {msg && (
         <p

@@ -83,6 +83,18 @@ def test_openapi_exposes_notes_contract():
     assert "AddNoteRequest" in components and "NoteOut" in components
 
 
+def test_openapi_exposes_admin_moderation_contract():
+    schema = app.openapi()
+    paths = schema["paths"]
+    assert "/api/v1/admin/fountains/{fountain_id}" in paths
+    assert {"get", "patch", "delete"} <= set(paths["/api/v1/admin/fountains/{fountain_id}"])
+    assert "/api/v1/admin/notes/{note_id}" in paths
+    assert "patch" in paths["/api/v1/admin/notes/{note_id}"]
+    components = schema["components"]["schemas"]
+    for name in ("AdminFountainPatch", "AdminFountainDetail", "AdminNotePatch", "AdminNoteOut"):
+        assert name in components
+
+
 def test_openapi_discovery_filters_on_both_endpoints():
     schema = app.openapi()
     expected = {"working_now", "bottle_filler", "min_rating", "include_unknown", "public_access"}
