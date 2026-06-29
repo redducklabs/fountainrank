@@ -24,7 +24,11 @@ export function AttributeList({ attributes }: { attributes: Attr[] }) {
           </h3>
           <div className="mt-1.5 flex flex-wrap gap-1.5">
             {g.items.map((a) => (
-              <AttributeChip key={a.attribute_type_id} name={a.name} display={attributeDisplay(a)} />
+              <AttributeChip
+                key={a.attribute_type_id}
+                name={a.name}
+                display={attributeDisplay(a)}
+              />
             ))}
           </div>
         </div>

@@ -33,11 +33,16 @@ const base: Detail = {
 };
 
 describe("FountainDetail", () => {
-  it("working + overall + votes", () => {
+  it("working + overall + votes (graphical hero + dimension stars)", () => {
     render(<FountainDetail detail={base} notes={[]} now={now} isAuthenticated={false} />);
     expect(screen.getByText("Working")).toBeInTheDocument();
     expect(screen.getByText("4.3")).toBeInTheDocument();
     expect(screen.getByText("128 ratings")).toBeInTheDocument();
+    // graphical: hero star row + per-dimension star row, numbers preserved
+    expect(screen.getByRole("img", { name: "Rated 4.3 out of 5" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Clarity rated 4.6 out of 5" })).toBeInTheDocument();
+    expect(screen.getByText("Clarity")).toBeInTheDocument();
+    expect(screen.getByText("4.6")).toBeInTheDocument();
   });
   it("out of order", () => {
     render(

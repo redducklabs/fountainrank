@@ -1,4 +1,8 @@
-import { type AttributeDisplay, type ChipVariant, attributeChipVariant } from "../../lib/map/format";
+import {
+  type AttributeDisplay,
+  type ChipVariant,
+  attributeChipVariant,
+} from "../../lib/map/format";
 
 const STYLE: Record<ChipVariant, string> = {
   positive: "bg-[#E7F0FF] text-[#0A357E] ring-1 ring-[#0E4DA4]/20",
