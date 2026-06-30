@@ -44,6 +44,9 @@ class User(Base):
     )
     logto_user_id: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     display_name: Mapped[str] = mapped_column(String, nullable=False)
+    # User-set display-name override (kill "Anonymous"). When set it takes precedence over the
+    # IdP-synced display_name on every public surface; the synced name is kept as the fallback.
+    nickname: Mapped[str | None] = mapped_column(String, nullable=True)
     email: Mapped[str] = mapped_column(String, nullable=False)
     avatar_url: Mapped[str | None] = mapped_column(String, nullable=True)
     is_admin: Mapped[bool] = mapped_column(nullable=False, server_default=text("false"))
