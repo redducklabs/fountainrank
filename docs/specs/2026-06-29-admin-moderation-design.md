@@ -93,12 +93,17 @@ Notes:
   fountain to `status='reversed'` and decrements each affected user's `user_contribution_stats`
   (`total_points` + the matching per-type counter, clamped at 0) — for **all** contributors (creator,
   raters, observers, …), every event type incl. the first-X bonuses. The audit rows survive (now
-  `reversed`); reversed events are already excluded by the leaderboard/profile/badge reads. It runs
-  **before** `session.delete(fountain)` in the same transaction because the `SET NULL` cascade would
-  otherwise sever `fountain_id` and the events could no longer be found. Idempotent (only `awarded`
-  rows are touched, so a double-delete is a no-op). The `first_fountain`/`first_in_area` dedup rows
-  survive as `reversed`, so those one-time bonuses are **not** re-awarded if the user adds again
-  (accepted trade-off). **Soft-hide (`is_hidden`) is reversible and does NOT reverse points.**
+  `reversed`) but reversed events are excluded from **every** read: the local leaderboard and the
+  badge/profile per-dimension counts filter `status='awarded'`; the global leaderboard reads the
+  decremented `total_points`; the **authenticated profile feed** (`GET /me/contributions` recent list)
+  filters `status='awarded'`; and the **global leaderboard excludes zero-point users**
+  (`total_points > 0`) so a contributor whose points were all reversed **drops off** the board (not a
+  0-point ghost row). It runs **before** `session.delete(fountain)` in the same transaction because the
+  `SET NULL` cascade would otherwise sever `fountain_id` and the events could no longer be found.
+  Idempotent (only `awarded` rows are touched, so a double-delete is a no-op). The
+  `first_fountain`/`first_in_area` dedup rows survive as `reversed`, so those one-time bonuses are
+  **not** re-awarded if the user adds again (accepted trade-off). **Soft-hide (`is_hidden`) is
+  reversible and does NOT reverse points.**
 
 ### 4.4 Recompute & consistency
 - If an edit changes an input to a **derived** field (notably `is_working`), recompute the affected

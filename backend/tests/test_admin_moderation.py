@@ -399,8 +399,9 @@ async def test_hard_delete_reverses_creator_points(raw_client, session):
     assert statuses  # events survive as the audit trail...
     assert all(s == "reversed" for s in statuses)  # ...all reversed
 
-    # The creator drops off the local (in-area) leaderboard (sum of awarded events) and
-    # shows 0 on the global leaderboard (denormalized total_points).
+    # The creator drops off BOTH leaderboards: the local (in-area) one sums awarded events,
+    # and the global one excludes zero-point users (#119 — a reversal is a drop-off, not a
+    # 0-point ghost row).
     local = await raw_client.get(
         "/api/v1/leaderboard/contributors",
         params={"near_lat": 41.0, "near_lng": -71.0},
@@ -409,7 +410,17 @@ async def test_hard_delete_reverses_creator_points(raw_client, session):
     assert local.json() == []
     glob = await raw_client.get("/api/v1/leaderboard/contributors")
     assert glob.status_code == 200
-    assert all(row["points"] == 0 for row in glob.json())
+    assert glob.json() == []
+
+    # The reversed events must also disappear from the creator's own contribution feed
+    # (every other read already excludes reversed; the profile feed must too).
+    feed = await raw_client.get(
+        "/api/v1/me/contributions",
+        headers={"X-Dev-User": "creator-sub"},
+    )
+    assert feed.status_code == 200
+    assert feed.json()["stats"]["total_points"] == 0
+    assert feed.json()["recent"] == []
 
 
 async def test_hard_delete_reverses_all_contributors(raw_client, session):
