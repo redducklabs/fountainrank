@@ -175,6 +175,50 @@ Inline-only admin panel rendered on fountain detail pages for `viewer.isAdmin`.
 - Note moderation: repeated note rows use small bordered items with compact outline buttons;
   hidden state is shown in muted note metadata.
 
+### Analytics consent banner (`web/components/analytics/ConsentBanner.tsx`)
+
+A fixed bottom bar that asks the visitor to accept or decline analytics before any Google Analytics
+is loaded (consent-gated, path-only GA4 — see
+`docs/specs/2026-06-30-ga4-web-analytics-design.md`). Mounted site-wide from the root layout via the
+`AnalyticsConsent` coordinator, which owns the consent state and only renders the banner while the
+choice is still pending **and** the app is in production on the canonical host.
+
+**Placement & style:**
+
+```tsx
+<div role="region" aria-label="Analytics consent"
+  className="fixed inset-x-0 bottom-0 z-50 border-t border-white/10 bg-[#0A357E] px-4 py-3 text-white shadow-[0_-4px_16px_rgba(0,0,0,0.25)]">
+  <div className="mx-auto flex max-w-4xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <p className="text-sm leading-relaxed text-white/90"> …copy… <Link href="/privacy">Privacy Policy</Link>. </p>
+    <div className="flex shrink-0 items-center gap-2">
+      <button type="button">Decline</button>   {/* white-outline secondary */}
+      <button type="button">Accept</button>     {/* crown-gold primary */}
+    </div>
+  </div>
+</div>
+```
+
+- Full-width navy bar pinned to the bottom (`fixed inset-x-0 bottom-0 z-50`, `bg-[#0A357E]`, white
+  text, top border + upward shadow so it reads as an overlay on both the map and the white legal
+  pages).
+- **Accept (primary):** crown-gold pill (`bg-[#F2C200]` navy text, `hover:bg-[#ffce1f]`, gold focus
+  ring) — same primary affordance as the Sign-in button.
+- **Decline (secondary):** transparent white-outline pill (`border-white/40`, white text,
+  `hover:bg-white/10`, white focus ring) — same secondary treatment as Sign-out.
+- A short line of copy plus a `next/link` to `/privacy`.
+
+**States** (the banner itself is stateless; visibility is controlled by `AnalyticsConsent`):
+
+| State           | Behaviour                                                                                                                          |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Shown           | Choice is undecided (prod + canonical host). Banner visible; GA not loaded.                                                       |
+| Accepted→hidden | Accept persists `granted`; banner unmounts; GA loads. **Fail-closed:** if the write throws, the banner stays and GA does not load. |
+| Declined→hidden | Decline persists `denied`; banner unmounts; nothing loads, no GA cookies.                                                         |
+
+**Accessibility:** `role="region"` + `aria-label="Analytics consent"`; both actions are real
+`<button type="button">`s (keyboard-focusable with visible `focus-visible` rings); the bar does not
+trap focus or block the page — it is dismissed only by choosing Accept or Decline.
+
 ---
 
 ## Map UI
