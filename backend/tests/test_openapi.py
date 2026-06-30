@@ -43,6 +43,16 @@ def test_openapi_exposes_me_sync_endpoint():
     assert ref.endswith("/MeResponse")
 
 
+def test_openapi_exposes_me_patch_endpoint():
+    schema = app.openapi()
+    op = schema["paths"]["/api/v1/me"]["patch"]
+    assert "UpdateMeRequest" in schema["components"]["schemas"]
+    req_ref = op["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+    assert req_ref.endswith("/UpdateMeRequest")
+    resp_ref = op["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
+    assert resp_ref.endswith("/MeResponse")
+
+
 def test_openapi_exposes_contribution_data_contract():
     schema = app.openapi()
     paths = schema["paths"]

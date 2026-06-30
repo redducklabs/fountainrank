@@ -62,6 +62,22 @@ async def get_me(current_user: Annotated[User, Depends(get_current_user)]) -> Me
     return me_response(current_user)
 
 
+@router.patch("/me", response_model=MeResponse)
+async def update_me(
+    body: UpdateMeRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> MeResponse:
+    # The user-set display name is stored in `nickname` (the IdP `display_name` stays intact as the
+    # fallback). Reject a value equal to the subject — it would re-mask to "Anonymous".
+    if body.display_name == current_user.logto_user_id:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="invalid display name")
+    current_user.nickname = body.display_name
+    await session.commit()
+    logger.info("display name set", extra={"user_id": str(current_user.id)})  # never the value
+    return me_response(current_user)
+
+
 _ZERO_STATS = ContributionStatsOut(
     total_points=0,
     fountains_added=0,
