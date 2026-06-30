@@ -122,6 +122,25 @@ async def test_global_leaderboard_order_and_tie(client, session):
 
 
 @pytest.mark.asyncio
+async def test_global_leaderboard_excludes_zero_point_users(client, session):
+    # A user whose points were all reversed (e.g. after a hard-delete) keeps a stats row at
+    # total_points=0 — it must NOT linger on the public "top contributors" board (#119).
+    keep = await _user(session, "lb-keep")
+    zeroed = await _user(session, "lb-zeroed")
+    session.add_all(
+        [
+            UserContributionStats(user_id=keep.id, total_points=10),
+            UserContributionStats(user_id=zeroed.id, total_points=0, fountains_added=0),
+        ]
+    )
+    await session.commit()
+    rows = (await client.get("/api/v1/leaderboard/contributors")).json()
+    names = [r["display_name"] for r in rows]
+    assert keep.display_name in names
+    assert zeroed.display_name not in names
+
+
+@pytest.mark.asyncio
 async def test_global_leaderboard_masks_subject(client, session):
     sub = "auth0|leak-sub"
     u = await _user(session, sub, display=sub)  # display_name == logto_user_id

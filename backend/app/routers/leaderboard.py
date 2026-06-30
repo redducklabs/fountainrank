@@ -66,6 +66,9 @@ async def contributors(
             )
             .select_from(UserContributionStats)
             .join(User, User.id == UserContributionStats.user_id)
+            # Exclude zero-point users so a contributor whose points were all reversed
+            # (e.g. after a moderated hard-delete, #119) drops off the board entirely.
+            .where(UserContributionStats.total_points > 0)
             .order_by(UserContributionStats.total_points.desc(), User.id.asc())
             .limit(limit)
         )

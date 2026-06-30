@@ -20,6 +20,7 @@ from app.models import (
     OsmImportRun,
     Rating,
     User,
+    UserContributionStats,
 )
 
 pytestmark = pytest.mark.anyio
@@ -333,9 +334,140 @@ async def test_hard_delete_cascades_children_and_preserves_contribution_event(
             select(ContributionEvent).where(ContributionEvent.dedup_key == dedup_key)
         )
     ).scalar_one()
+    # The audit row survives (fountain_id SET NULL) but is now reversed (#119).
     assert contribution.fountain_id is None
+    assert contribution.status == "reversed"
     import_event = (await session.execute(select(FountainImportEvent))).scalar_one()
     assert import_event.fountain_id is None
+
+
+async def _user_by_sub(session, sub: str) -> User:
+    return (await session.execute(select(User).where(User.logto_user_id == sub))).scalar_one()
+
+
+async def _stats_for(session, user_id) -> UserContributionStats:
+    return (
+        await session.execute(
+            select(UserContributionStats).where(UserContributionStats.user_id == user_id)
+        )
+    ).scalar_one()
+
+
+async def test_hard_delete_reverses_creator_points(raw_client, session):
+    # A user adds a fountain through the real API (earning add + first-X bonus points)...
+    added = await raw_client.post(
+        "/api/v1/fountains",
+        headers={"X-Dev-User": "creator-sub"},
+        json={"location": {"latitude": 41.0, "longitude": -71.0}},
+    )
+    assert added.status_code == 201
+    fountain_id = uuid.UUID(added.json()["id"])
+    creator_id = (await _user_by_sub(session, "creator-sub")).id
+
+    before = await _stats_for(session, creator_id)
+    awarded_sum = (
+        await session.execute(
+            select(func.coalesce(func.sum(ContributionEvent.points), 0)).where(
+                ContributionEvent.fountain_id == fountain_id,
+                ContributionEvent.status == "awarded",
+            )
+        )
+    ).scalar_one()
+    assert before.total_points == awarded_sum > 0
+    assert before.fountains_added == 1
+
+    # ...the admin hard-deletes it: every contribution for it must be reversed.
+    resp = await raw_client.delete(
+        f"/api/v1/admin/fountains/{fountain_id}",
+        headers={"X-Dev-User": "admin-sub"},
+    )
+    assert resp.status_code == 204
+    session.expire_all()
+
+    after = await _stats_for(session, creator_id)
+    assert after.total_points == 0
+    assert after.fountains_added == 0
+    statuses = (
+        (
+            await session.execute(
+                select(ContributionEvent.status).where(ContributionEvent.user_id == creator_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert statuses  # events survive as the audit trail...
+    assert all(s == "reversed" for s in statuses)  # ...all reversed
+
+    # The creator drops off BOTH leaderboards: the local (in-area) one sums awarded events,
+    # and the global one excludes zero-point users (#119 — a reversal is a drop-off, not a
+    # 0-point ghost row).
+    local = await raw_client.get(
+        "/api/v1/leaderboard/contributors",
+        params={"near_lat": 41.0, "near_lng": -71.0},
+    )
+    assert local.status_code == 200
+    assert local.json() == []
+    glob = await raw_client.get("/api/v1/leaderboard/contributors")
+    assert glob.status_code == 200
+    assert glob.json() == []
+
+    # The reversed events must also disappear from the creator's own contribution feed
+    # (every other read already excludes reversed; the profile feed must too).
+    feed = await raw_client.get(
+        "/api/v1/me/contributions",
+        headers={"X-Dev-User": "creator-sub"},
+    )
+    assert feed.status_code == 200
+    assert feed.json()["stats"]["total_points"] == 0
+    assert feed.json()["recent"] == []
+
+
+async def test_hard_delete_reverses_all_contributors(raw_client, session):
+    # Creator adds the fountain; a *second* user rates it. Both earn points.
+    added = await raw_client.post(
+        "/api/v1/fountains",
+        headers={"X-Dev-User": "creator-sub"},
+        json={"location": {"latitude": 42.0, "longitude": -72.0}},
+    )
+    assert added.status_code == 201
+    fountain_id = uuid.UUID(added.json()["id"])
+
+    rated = await raw_client.post(
+        f"/api/v1/fountains/{fountain_id}/ratings",
+        headers={"X-Dev-User": "rater-sub"},
+        json={"ratings": [{"rating_type_id": 1, "stars": 5}]},
+    )
+    assert rated.status_code == 200
+
+    creator_id = (await _user_by_sub(session, "creator-sub")).id
+    rater_id = (await _user_by_sub(session, "rater-sub")).id
+    assert (await _stats_for(session, creator_id)).total_points > 0
+    rater_before = await _stats_for(session, rater_id)
+    assert rater_before.total_points > 0
+    assert rater_before.ratings_count == 1
+
+    resp = await raw_client.delete(
+        f"/api/v1/admin/fountains/{fountain_id}",
+        headers={"X-Dev-User": "admin-sub"},
+    )
+    assert resp.status_code == 204
+    session.expire_all()
+
+    creator_after = await _stats_for(session, creator_id)
+    rater_after = await _stats_for(session, rater_id)
+    assert creator_after.total_points == 0
+    assert creator_after.fountains_added == 0
+    assert rater_after.total_points == 0
+    assert rater_after.ratings_count == 0
+    remaining_awarded = (
+        await session.execute(
+            select(func.count())
+            .select_from(ContributionEvent)
+            .where(ContributionEvent.status == "awarded")
+        )
+    ).scalar_one()
+    assert remaining_awarded == 0
 
 
 async def test_empty_patch_is_422(raw_client, session, author):

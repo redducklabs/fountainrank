@@ -61,11 +61,16 @@ async def get_my_contributions(
         )
     ).scalar_one_or_none()
     stats = ContributionStatsOut.model_validate(stats_row) if stats_row else _ZERO_STATS
+    # AWARDED events only — reversed events (e.g. after a moderated hard-delete, #119) must
+    # not surface as accepted contributions, consistent with the stats/badges/leaderboard reads.
     recent_rows = (
         (
             await session.execute(
                 select(ContributionEvent)
-                .where(ContributionEvent.user_id == current_user.id)
+                .where(
+                    ContributionEvent.user_id == current_user.id,
+                    ContributionEvent.status == "awarded",
+                )
                 .order_by(ContributionEvent.created_at.desc())
                 .limit(20)
             )
