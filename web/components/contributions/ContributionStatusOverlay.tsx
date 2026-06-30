@@ -25,7 +25,8 @@ export function ContributionStatusOverlay({ initialTotalPoints }: { initialTotal
 
   return (
     <div className="pointer-events-none fixed inset-x-0 top-16 bottom-0 z-40">
-      <PointsBadge total={totalPoints} />
+      {/* No map context here → the badge links to the global leaderboard. */}
+      <PointsBadge total={totalPoints} href="/leaderboard" />
       <WaterCelebration triggerKey={celebrationKey} />
     </div>
   );
