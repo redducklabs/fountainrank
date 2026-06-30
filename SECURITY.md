@@ -11,7 +11,7 @@ Report privately through either channel:
 
 - **GitHub Security Advisories** — use the **"Report a vulnerability"** button on
   the repository's **Security** tab (preferred).
-- **Email** — `security@redducklabs.com`.
+- **Email** — `security@fountainrank.com`.
 
 Please include enough detail to reproduce the issue: affected component
 (backend, web, mobile, infrastructure), steps to reproduce, impact, and any
