@@ -15,17 +15,20 @@ export function LeaderboardRows({
   you: YourStanding | null;
   sort: LeaderboardSort;
 }) {
-  if (rows.length === 0) {
-    return <p className="mt-8 text-center text-slate-500">No contributors yet.</p>;
-  }
+  // Render the empty state and the pinned "You" row together: the board can be empty (no one has a
+  // positive metric) while a signed-in caller still has a standing — "Your rank, always" (#117).
   const youInList = rows.some((r) => r.is_you);
   return (
     <div className="mt-4">
-      <ol className="divide-y divide-slate-100">
-        {rows.map((row) => (
-          <Row key={`${row.rank}-${row.display_name}`} row={row} sort={sort} />
-        ))}
-      </ol>
+      {rows.length === 0 ? (
+        <p className="text-center text-slate-500">No contributors yet.</p>
+      ) : (
+        <ol className="divide-y divide-slate-100">
+          {rows.map((row) => (
+            <Row key={`${row.rank}-${row.display_name}`} row={row} sort={sort} />
+          ))}
+        </ol>
+      )}
       {you && !youInList ? (
         <div className="mt-3 border-t-2 border-dashed border-slate-200 pt-3">
           <YouRow you={you} sort={sort} />
