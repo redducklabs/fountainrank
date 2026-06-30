@@ -161,10 +161,22 @@ class MeResponse(BaseModel):
     avatar_url: str | None
     is_admin: bool
     created_at: datetime
+    # True when the account still resolves to "Anonymous" (no nickname and display_name == subject);
+    # drives the client name-capture gate. When true, display_name is "" (never the raw subject).
+    needs_name: bool = False
 
 
 class SyncProfileRequest(BaseModel):
     userinfo_token: str = Field(min_length=1)
+
+
+class UpdateMeRequest(BaseModel):
+    # The API speaks "display_name"; it is persisted to the internal `nickname` column (which
+    # overrides the IdP-synced display_name while keeping it intact as the fallback). Max 80 so the
+    # account screen can pre-fill and re-save an existing long IdP name unchanged.
+    display_name: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)
+    ]
 
 
 class ContributionStatsOut(BaseModel):

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import get_current_user
 from app.badges import earned_badges
 from app.db import get_session
+from app.display import resolved_display_name
 from app.models import ContributionEvent, User, UserContributionStats
 from app.schemas import (
     BadgeOut,
@@ -16,8 +17,10 @@ from app.schemas import (
     MeContributionsOut,
     MeResponse,
     SyncProfileRequest,
+    UpdateMeRequest,
 )
 from app.userinfo import (
+    SYNTHETIC_EMAIL_DOMAIN,
     UserinfoError,
     UserinfoFetcher,
     accept_avatar,
@@ -31,11 +34,32 @@ logger = logging.getLogger("app.users")
 router = APIRouter(prefix="/api/v1", tags=["users"])
 
 
+def me_response(user: User) -> MeResponse:
+    """Self-view profile. The raw Logto subject must never reach the client, so:
+    - display_name is the resolved name (nickname → IdP name), or "" when the account resolves to
+      "Anonymous" (the subject is never sent; the client gate keys off needs_name);
+    - email is "" when it is the synthetic subject-derived fallback
+      (f"{sub}@users.noreply.fountainrank.com"); a real email passes through. The DB keeps its
+      NOT-NULL synthetic value — only the wire is sanitized.
+    """
+    resolved = resolved_display_name(user.display_name, user.logto_user_id, user.nickname)
+    email = "" if user.email.lower().endswith(SYNTHETIC_EMAIL_DOMAIN) else user.email
+    return MeResponse(
+        id=user.id,
+        display_name=resolved or "",
+        email=email,
+        avatar_url=user.avatar_url,
+        is_admin=user.is_admin,
+        created_at=user.created_at,
+        needs_name=resolved is None,
+    )
+
+
 @router.get("/me", response_model=MeResponse)
-async def get_me(current_user: Annotated[User, Depends(get_current_user)]) -> User:
+async def get_me(current_user: Annotated[User, Depends(get_current_user)]) -> MeResponse:
     # Auth failures are raised by get_current_user (401). Unexpected errors propagate
     # to the centralized exception handler in main.py (logged 500) — not swallowed here.
-    return current_user
+    return me_response(current_user)
 
 
 _ZERO_STATS = ContributionStatsOut(
@@ -128,7 +152,7 @@ async def sync_me(
     current_user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     fetch_userinfo: Annotated[UserinfoFetcher, Depends(get_userinfo_fetcher)],
-) -> User:
+) -> MeResponse:
     # Backend-authoritative: call Logto userinfo with the forwarded opaque token.
     try:
         claims = await fetch_userinfo(body.userinfo_token)
@@ -148,4 +172,4 @@ async def sync_me(
     await session.commit()
     await session.refresh(current_user)
     logger.info("profile synced", extra={"sub": current_user.logto_user_id})
-    return current_user
+    return me_response(current_user)
