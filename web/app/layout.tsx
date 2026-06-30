@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 
+import { AnalyticsConsent } from "../components/analytics/AnalyticsConsent";
 import "./globals.css";
 
 const title = "FountainRank — Find drinking fountains near you";
@@ -30,6 +31,7 @@ export default function RootLayout({
       <body>
         {children}
         {modal}
+        <AnalyticsConsent />
       </body>
     </html>
   );

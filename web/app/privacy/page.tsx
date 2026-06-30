@@ -6,7 +6,7 @@ export const metadata: Metadata = {
   description: "Privacy Policy for FountainRank.",
 };
 
-const lastUpdated = "June 19, 2026";
+const lastUpdated = "June 30, 2026";
 
 const sections = [
   {
@@ -36,6 +36,15 @@ const sections = [
       "We use service providers to host, authenticate, store, deliver email, and operate FountainRank. These providers process information only as needed to provide their services to us.",
       "We may disclose information if required by law, to protect rights and safety, or to investigate abuse, security incidents, or violations of our Terms.",
       "We do not sell personal information.",
+    ],
+  },
+  {
+    title: "Analytics",
+    body: [
+      "We use Google Analytics 4 to understand, in aggregate, how FountainRank is used (for example, which pages are visited). It is loaded only after you accept the analytics consent banner; if you decline, it is never loaded and sets no cookies.",
+      "We send only the page path to Google Analytics. Query strings are stripped from both the page address and the referring page before anything is sent, so details such as your approximate map location are not shared with Google.",
+      "Google Analytics may collect standard usage information such as device and browser type, an approximate location that Google derives from your IP address, and the pages viewed. We do not send Google any account identifiers.",
+      "You can change your choice at any time by clearing this site's stored data in your browser, which removes the saved analytics choice and shows the banner again on your next visit.",
     ],
   },
   {
