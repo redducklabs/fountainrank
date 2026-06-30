@@ -270,12 +270,15 @@ refinement: it can't do consent-gated, query-string-free GA on 16.2.9); `vitest`
 
 - **`process.env.NODE_ENV` in tests** is `"test"`, not `"production"` — exercise the prod branches by
   mocking the helper functions or `NODE_ENV`, not by relying on the ambient value.
-- **gtag/dataLayer ordering** — two guarantees: (1) `sendPageView` calls `ensureGaConfigured` first,
-  so `js` + `config` precede any `page_view`; (2) `GaScripts` gates the external loader `<Script>`
-  behind a `ready` state set only after `ensureGaConfigured` ran, so the data layer + `js` + `config`
-  exist **before** `gtag.js` loads (Google's documented order). Commands use the **canonical `gtag()`
-  wrapper** (pushes `arguments`), not array literals, so production and tests exercise the exact shape
-  gtag.js consumes. Asserted by `gtag.test.ts` + `GaScripts.test.tsx`. No `@next/third-parties` dep.
+- **gtag/dataLayer ordering** — ordering is guaranteed by the **command queue**, not script timing:
+  `sendPageView` calls `ensureGaConfigured` first, so `js` + `config(send_page_view:false)` precede
+  any `page_view`. The external loader carries no hit on its own and gtag.js drains the data layer in
+  order whenever it executes, so a loader that runs before the first command is harmless. `GaScripts`
+  also calls `ensureGaConfigured` in a side-effect (no `setState` — the `react-hooks/set-state-in-effect`
+  rule forbids a `ready`-state gate). Commands use the **canonical `gtag()` wrapper** (`function
+  gtag(){ window.dataLayer.push(arguments); }`), not array literals, so production and tests exercise
+  the exact shape gtag.js consumes. Asserted by `gtag.test.ts` + `GaScripts.test.tsx`. No
+  `@next/third-parties` dep.
 - **Do not** add `useSearchParams()` anywhere in the analytics subtree (it both reintroduces query
   strings and would opt routes into client rendering / Suspense requirements).
 - **No `.env` writes**; the public Measurement ID lives as a source constant.
