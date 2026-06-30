@@ -18,10 +18,34 @@ describe("AuthControl", () => {
     expect(screen.getByRole("button", { name: /sign in/i })).toBeTruthy();
   });
 
+  it("shows a Finish setup link (not a name menu) when needsName, never the subject", () => {
+    render(
+      <AuthControl
+        viewer={{
+          state: "authed",
+          displayName: "",
+          avatarUrl: null,
+          isAdmin: false,
+          needsName: true,
+        }}
+      />,
+    );
+    const link = screen.getByRole("link", { name: /finish setup/i });
+    expect(link.getAttribute("href")).toBe("/account");
+    // No account menu button is rendered in this state.
+    expect(screen.queryByRole("button", { name: /open account menu/i })).toBeNull();
+  });
+
   it("authed shows avatar menu with Account + Sign out, no Admin for non-admin", () => {
     render(
       <AuthControl
-        viewer={{ state: "authed", displayName: "Aron", avatarUrl: null, isAdmin: false }}
+        viewer={{
+          state: "authed",
+          displayName: "Aron",
+          avatarUrl: null,
+          isAdmin: false,
+          needsName: false,
+        }}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /open account menu/i }));
@@ -33,7 +57,13 @@ describe("AuthControl", () => {
   it("authed admin shows the Admin item", () => {
     render(
       <AuthControl
-        viewer={{ state: "authed", displayName: "Aron", avatarUrl: null, isAdmin: true }}
+        viewer={{
+          state: "authed",
+          displayName: "Aron",
+          avatarUrl: null,
+          isAdmin: true,
+          needsName: false,
+        }}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /open account menu/i }));
@@ -50,7 +80,13 @@ describe("AuthControl", () => {
   it("closes the menu on Escape", () => {
     render(
       <AuthControl
-        viewer={{ state: "authed", displayName: "Aron", avatarUrl: null, isAdmin: false }}
+        viewer={{
+          state: "authed",
+          displayName: "Aron",
+          avatarUrl: null,
+          isAdmin: false,
+          needsName: false,
+        }}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /open account menu/i }));
@@ -61,7 +97,13 @@ describe("AuthControl", () => {
   it("closes the menu and restores focus to the button on outside-click", () => {
     render(
       <AuthControl
-        viewer={{ state: "authed", displayName: "Aron", avatarUrl: null, isAdmin: false }}
+        viewer={{
+          state: "authed",
+          displayName: "Aron",
+          avatarUrl: null,
+          isAdmin: false,
+          needsName: false,
+        }}
       />,
     );
     const button = screen.getByRole("button", { name: /open account menu/i });

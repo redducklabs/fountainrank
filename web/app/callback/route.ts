@@ -7,6 +7,7 @@ import { getLogtoConfig } from "../../lib/logto";
 import { log } from "../../lib/server/log";
 import { RETURN_COOKIE, safeReturnPath } from "../../lib/return-path";
 import { syncProfileForRoute } from "../../lib/server/sync";
+import { getViewerForRoute } from "../../lib/server/viewer";
 
 export const dynamic = "force-dynamic";
 
@@ -37,5 +38,9 @@ export async function GET(request: NextRequest): Promise<void> {
   const store = await cookies();
   const raw = store.get(RETURN_COOKIE)?.value;
   store.delete({ name: RETURN_COOKIE, path: "/" });
+  // First-sign-in gate: if the account still resolves to "Anonymous", send the user to the
+  // /account name capture instead of the return path (route-safe viewer; never logs the name).
+  const viewer = await getViewerForRoute(requestId);
+  if (viewer.state === "authed" && viewer.needsName) redirect("/account");
   redirect(safeReturnPath(raw) ?? "/account");
 }
