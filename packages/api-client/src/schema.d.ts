@@ -238,8 +238,10 @@ export interface paths {
         };
         /**
          * Contributors
-         * @description Top contributors — global by total points, or local (in-area) when near_lat+near_lng
-         *     are given. Public; author names go through public_display_name (never the raw subject).
+         * @description Top contributors — global by total points (or a category counter), or local (in-area) when
+         *     near_lat+near_lng are given. Public; author names go through public_display_name (never the raw
+         *     subject). When the caller is signed in (get_optional_user), `you` carries their own standing —
+         *     an invalid bearer is still a hard 401, never silently downgraded to anonymous (#117).
          */
         get: operations["contributors_api_v1_leaderboard_contributors_get"];
         put?: never;
@@ -540,14 +542,19 @@ export interface components {
         };
         /** ContributorRow */
         ContributorRow: {
+            /** Rank */
+            rank: number;
             /** Display Name */
             display_name: string;
             /** Points */
             points: number;
-            /** Fountains Added */
-            fountains_added?: number | null;
-            /** Ratings Count */
-            ratings_count?: number | null;
+            /** Category Count */
+            category_count?: number | null;
+            /**
+             * Is You
+             * @default false
+             */
+            is_you: boolean;
         };
         /** Coordinates */
         Coordinates: {
@@ -654,6 +661,12 @@ export interface components {
             /** Status */
             status: string;
         };
+        /** LeaderboardOut */
+        LeaderboardOut: {
+            /** Rows */
+            rows: components["schemas"]["ContributorRow"][];
+            you?: components["schemas"]["YourStanding"] | null;
+        };
         /** MeContributionsOut */
         MeContributionsOut: {
             stats: components["schemas"]["ContributionStatsOut"];
@@ -757,6 +770,22 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /**
+         * YourStanding
+         * @description The signed-in caller's standing on the active board (#117).
+         *
+         *     Null on the response when the caller is anonymous. `rank` is null when the caller is
+         *     signed in but unranked in this scope/category (e.g. all points reversed, or zero in the
+         *     selected category); `points`/`category_count` still reflect their real values.
+         */
+        YourStanding: {
+            /** Rank */
+            rank?: number | null;
+            /** Points */
+            points: number;
+            /** Category Count */
+            category_count?: number | null;
         };
     };
     responses: never;
@@ -1365,8 +1394,14 @@ export interface operations {
                 near_lat?: number | null;
                 near_lng?: number | null;
                 radius_m?: number | null;
+                sort?: "total" | "fountains" | "ratings" | "verifications" | "conditions" | "attributes" | "notes";
             };
-            header?: never;
+            header?: {
+                authorization?: string | null;
+                "X-Dev-User"?: string | null;
+                "X-Dev-Email"?: string | null;
+                "X-Dev-Name"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -1378,7 +1413,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ContributorRow"][];
+                    "application/json": components["schemas"]["LeaderboardOut"];
                 };
             };
             /** @description Validation Error */

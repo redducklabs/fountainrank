@@ -129,6 +129,11 @@ Document the new components in `docs/style-guide.md` (mandatory): read-only `Sta
 
 ## Item 4 — Leaderboard ticket (GitHub issue only)
 
+> **Superseded (2026-06-29):** Item 4 is now designed and implemented — see
+> `docs/specs/2026-06-29-leaderboard-design.md` (#117). The endpoint response shape described
+> below (a bare list of `ContributorRow` with `fountains_added`/`ratings_count`) changed there to
+> `LeaderboardOut { rows, you }`; treat the leaderboard spec as authoritative for the contract.
+
 Filed as a GitHub issue (label `enhancement`). Summary of the behavior it must capture:
 
 - **Entry point (web + mobile):** tap the on-map points display → navigate to a Leaderboard screen.

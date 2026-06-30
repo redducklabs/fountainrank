@@ -14,6 +14,7 @@ import { BASEMAP, PIN_ASSETS, PILL_BG_ASSET } from "../../lib/map/style";
 import { fetchBbox, type FountainPin } from "../../lib/fountains";
 import { resolveApiBaseUrl } from "../../lib/api";
 import { pinsToFeatureCollection } from "../../lib/map/pins";
+import { leaderboardHref } from "../../lib/leaderboard";
 import { normalizeBounds, shouldLoadPins, isAtCap } from "../../lib/map/bounds";
 import {
   EMPTY_FC,
@@ -101,6 +102,9 @@ export default function MapBrowser({
   const [totalPoints, setTotalPoints] = useState(initialTotalPoints);
   const [celebrationKey, setCelebrationKey] = useState(0);
   const [webglOk] = useState(isWebglSupported);
+  // Latest map center, kept fresh from `moveend`, so the PointsBadge → /leaderboard link points
+  // "Near here" at where the user is actually looking (null until the map is ready → global).
+  const [center, setCenter] = useState<{ lat: number; lng: number } | null>(null);
   const activeId = activeIdFromPath(pathname);
   const add = useAddFountainMode(placementMap, {
     isAuthenticated,
@@ -268,6 +272,13 @@ export default function MapBrowser({
         { enableHighAccuracy: false, timeout: GEOLOCATE_TIMEOUT_MS },
       );
       map.on("moveend", onMoveEnd);
+      // Keep the leaderboard "Near here" target current (separate from the debounced pin load).
+      const syncCenter = () => {
+        const c = map.getCenter();
+        setCenter({ lat: c.lat, lng: c.lng });
+      };
+      syncCenter();
+      map.on("moveend", syncCenter);
       void load();
     });
 
@@ -372,7 +383,7 @@ export default function MapBrowser({
       {status === "capped" && <CapHint />}
       {status === "error" && <ErrorToast onRetry={retry} />}
       {!webglOk && <UnsupportedHint />}
-      {isAuthenticated && <PointsBadge total={totalPoints} />}
+      {isAuthenticated && <PointsBadge total={totalPoints} href={leaderboardHref(center)} />}
       <WaterCelebration triggerKey={celebrationKey} />
       {webglOk && add.fab}
       {add.panel}
