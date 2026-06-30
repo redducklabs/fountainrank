@@ -126,12 +126,13 @@ refinement: it can't do consent-gated, query-string-free GA on 16.2.9); `vitest`
     `js → config → page_view` order.** No `@next/third-parties` import.
   - `__resetGaConfigured(): void` — test-only; sets `configuredId = null`.
 - [ ] `GaScripts.tsx` (`"use client"`): props `{ gaId: string }`. If `!isValidGaMeasurementId(gaId)`
-  return `null`. A `const [ready, setReady] = useState(false)`; a mount `useEffect` (keyed on `gaId`)
-  calls `ensureGaConfigured(gaId)` **then** `setReady(true)`. Render the loader **only when `ready`**:
-  `{ready && <Script id="ga-loader" src={`https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(gaId)}`}
-  strategy="afterInteractive" />}` — so the data layer + `js` + `config` exist **before** `gtag.js`
-  loads (Google's documented order; no inline `dangerouslySetInnerHTML`). Always render
-  `<GaPageView gaId={gaId} />`.
+  return `null`. A mount `useEffect` (keyed on `gaId`/`valid`) calls `ensureGaConfigured(gaId)` — a
+  **plain side effect, NO `setState`** (a `ready`-state gate trips `react-hooks/set-state-in-effect`).
+  Render the loader directly: `<Script id="ga-loader"
+  src={`https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(gaId)}`} strategy="afterInteractive" />`
+  (no inline `dangerouslySetInnerHTML`), plus `<GaPageView gaId={gaId} />`. Ordering is guaranteed by
+  the command queue (`sendPageView`/`ensureGaConfigured` push `config` before any `page_view`; the
+  loader carries no hit; gtag.js drains in order), not by gating the loader render.
 - [ ] `GaPageView.tsx` (`"use client"`): props `{ gaId: string }`. `const pathname = usePathname();`
   keep a `useRef` of the previously-sent sanitized `page_location` (init `null`). In a `useEffect`
   keyed on `pathname`: compute `path = sanitizePagePath(pathname)`, `loc = window.location.origin +
@@ -144,15 +145,15 @@ refinement: it can't do consent-gated, query-string-free GA on 16.2.9); `vitest`
   new pathname sends `page_referrer` = the prior sanitized `page_location`.
 - [ ] `gtag.test.ts` (jsdom, helper NOT mocked; `__resetGaConfigured()` + `delete window.dataLayer`/
   `window.gtag` between cases): call `sendPageView("G-ABC123", {page_path:"/x", …})`. Each
-  `window.dataLayer` entry is a `gtag()` `arguments` object → assert **by index**: entry0 `[0]==="js"`;
-  entry1 `[0]==="config"`, `[1]==="G-ABC123"`, `[2]` deep-equals `{send_page_view:false}`; entry2
-  `[0]==="event"`, `[1]==="page_view"`, `[2]` = the params — **in that order** (config BEFORE event).
-  A second `sendPageView` appends only another `event`/`page_view` (no duplicate `config`).
-- [ ] `GaScripts.test.tsx` (jsdom): spy on `ensureGaConfigured`; mock `GaPageView` to a sentinel.
+  `window.dataLayer` entry is a command array (`gtag(...args)` pushes `args`) → assert **by index**:
+  `["js", <Date>]`; `["config","G-ABC123",{send_page_view:false}]`; `["event","page_view",{…/x…}]` —
+  **in that order** (config BEFORE event). A second `sendPageView` appends only another
+  `["event","page_view",…]` (no duplicate `config`).
+- [ ] `GaScripts.test.tsx` (jsdom): spy on `ensureGaConfigured`; mock `GaPageView` to a sentinel and
+  `next/script` to a non-`<script>` element (carrying `data-src`, to avoid `@next/next/no-sync-scripts`).
   (a) invalid `gaId` → renders nothing, `ensureGaConfigured` not called; (b) valid `gaId` → after
-  mount, `ensureGaConfigured` called with `gaId` and the loader `<script>` is present with the
-  `encodeURIComponent`-built `?id=` (the loader is gated behind the `ready` state set right after
-  `ensureGaConfigured`, so the data layer is established first).
+  mount, `ensureGaConfigured` called with `gaId` and the loader element is present with the
+  `encodeURIComponent`-built `?id=`.
 - [ ] Local vitest on these files (jsdom); `tsc`; prettier on `components/**`. Record any step the
   environment blocks with its exact error.
 - [ ] Commit: `feat(web): GA gtag bootstrap (send_page_view off) + path-only page_view sender`.
@@ -180,16 +181,20 @@ refinement: it can't do consent-gated, query-string-free GA on 16.2.9); `vitest`
 **Files:** Create `web/components/analytics/AnalyticsConsent.tsx`,
 `web/components/analytics/AnalyticsConsent.test.tsx`.
 
-- [ ] `AnalyticsConsent.tsx` (`"use client"`):
-  - State: `mounted` (false), `consent: Consent` ("undecided"), `hostname: string` ("").
-  - `useEffect` (mount once): set `hostname = window.location.hostname`; read consent via
-    `parseConsent(safeGet(CONSENT_STORAGE_KEY))` where `safeGet` wraps `localStorage.getItem` in
-    try/catch (→ `null` + `console.warn` on throw); `setMounted(true)`.
-  - `accept()`: `try { localStorage.setItem(CONSENT_STORAGE_KEY,"granted") } catch { console.warn(...);
-    return }` — **only on success** `setConsent("granted")` (fail-closed: no state flip if the write
-    threw). `decline()`: `try { localStorage.setItem(key,"denied") } catch { console.warn(...) }` then
-    `setConsent("denied")` regardless.
-  - If `!mounted` return `null` (SSR-safe; no hydration mismatch).
+- [ ] `AnalyticsConsent.tsx` (`"use client"`): **no mount `useEffect`/`setState`** (the
+  `react-hooks/set-state-in-effect` rule forbids it). Read both browser values via
+  `useSyncExternalStore`:
+  - `consent = useSyncExternalStore(subscribeConsent, getConsentSnapshot, getServerConsent)` where
+    `getServerConsent` returns `"undecided"`, `getConsentSnapshot` returns
+    `parseConsent(localStorage.getItem(KEY))` (try/catch → `"undecided"` + `console.warn`), and
+    `subscribeConsent` listens for a custom `fr-analytics-consent-change` event + `storage`.
+  - `hostname = useSyncExternalStore(noopSubscribe, () => window.location.hostname, () => "")`.
+  - Server snapshots (`"undecided"`/`""`) → both `shouldLoadGa`/`shouldShowBanner` are false → renders
+    nothing on the server and the first client paint (no hydration mismatch).
+  - `accept()`/`decline()`: `try { localStorage.setItem(KEY, value) } catch { console.warn(...); return }`
+    — **only on success** `window.dispatchEvent(new Event("fr-analytics-consent-change"))` so the
+    store re-reads. Fail-closed: a failed write leaves `localStorage` (and thus the snapshot)
+    unchanged → still `"undecided"`, GA off, banner stays.
   - Render `{shouldLoadGa(consent, process.env.NODE_ENV, hostname) && <GaScripts gaId={resolveGaMeasurementId()} />}`
     and `{shouldShowBanner(consent, process.env.NODE_ENV, hostname) && <ConsentBanner onAccept={accept} onDecline={decline} />}`.
 - [ ] `AnalyticsConsent.test.tsx` (jsdom). Mock `GaScripts` to a sentinel to detect mount without

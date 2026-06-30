@@ -7,9 +7,11 @@ vi.mock("./gtag", () => ({
   ensureGaConfigured: (...args: unknown[]) => ensureGaConfigured(...args),
 }));
 vi.mock("./GaPageView", () => ({ GaPageView: () => null }));
+// Mock next/script as a plain element (not a real <script>, which would trip @next/next/no-sync-scripts)
+// carrying the resolved src so we can assert the encoded id.
 vi.mock("next/script", () => ({
   default: (props: { id?: string; src?: string }) => (
-    <script data-testid="ga-loader" id={props.id} src={props.src} />
+    <div data-testid="ga-loader" data-src={props.src} />
   ),
 }));
 
@@ -32,6 +34,6 @@ describe("GaScripts", () => {
     expect(ensureGaConfigured).toHaveBeenCalledWith("G-ABC123");
     const loader = container.querySelector("[data-testid='ga-loader']");
     expect(loader).not.toBeNull();
-    expect(loader?.getAttribute("src")).toContain("id=G-ABC123");
+    expect(loader?.getAttribute("data-src")).toContain("id=G-ABC123");
   });
 });

@@ -162,16 +162,18 @@ nothing to consent to off the canonical site — consistent with "dev/forks neve
 A small **client** subtree, the single source of truth for consent state (no custom-event plumbing):
 
 - `AnalyticsConsent.tsx` (client, `"use client"`):
-  - **SSR-safe:** holds `mounted` state; on `useEffect` mount it reads `hostname` from
-    `window.location` and `localStorage[CONSENT_STORAGE_KEY]` via `parseConsent`. **Renders `null`
-    until mounted** (server + first client render both produce nothing → no hydration mismatch).
-  - `accept()` — **fail-closed persistence:** attempt `localStorage.setItem(key,"granted")` inside
-    try/catch; **only on success** set `consent="granted"` (→ GA loads, banner hides). On failure:
-    `console.warn`, leave `consent="undecided"` so GA does **not** load and the banner remains
-    (a privacy gate must not start tracking on an unpersisted accept).
-  - `decline()` — attempt `localStorage.setItem(key,"denied")`; set `consent="denied"` regardless
-    (nothing loads either way; an unpersisted decline simply re-prompts next visit — fail-safe
-    toward not-tracking).
+  - **SSR-safe via `useSyncExternalStore`** (not a mount `useEffect`+`setState`, which the project's
+    `react-hooks/set-state-in-effect` lint rule forbids): the persisted consent and the hostname are
+    read through `useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)` where the **server
+    snapshots are `"undecided"`/`""`** → the server and first client paint both render nothing (no
+    hydration mismatch), and the client snapshot reads `localStorage[CONSENT_STORAGE_KEY]` (via
+    `parseConsent`) and `window.location.hostname`. The consent store subscribes to a custom
+    `fr-analytics-consent-change` event + `storage`.
+  - `accept()` / `decline()` — **fail-closed persistence:** `localStorage.setItem(key, value)` inside
+    try/catch; **only on success** dispatch the change event (which makes `useSyncExternalStore`
+    re-read the new value). On failure: `console.warn` and do nothing — `localStorage` is unchanged,
+    so the snapshot is still `"undecided"`, GA does **not** load, and the banner remains (a privacy
+    gate must not start tracking on an unpersisted accept; an unpersisted decline simply re-prompts).
   - All `localStorage` access wrapped in try/catch (private-mode/disabled storage → treated as
     `undecided`, `console.warn`, never throws).
   - Renders `{shouldLoadGa(consent, process.env.NODE_ENV, hostname) && <GaScripts
@@ -193,11 +195,14 @@ leaderboard `?lat/lng` (approximate location), `?add=1`, and return-path query s
 sent to Google.
 
 - `GaScripts.tsx` (client) renders **nothing** unless `isValidGaMeasurementId(gaId)` (§5.A). When
-  valid it: (a) in a mount `useEffect`, calls `ensureGaConfigured(gaId)` and then sets a `ready`
-  state; (b) renders the loader `<Script src={`…/gtag/js?id=${encodeURIComponent(gaId)}`}
-  strategy="afterInteractive" />` **only when `ready`** — so the data layer + `js` + `config` are
-  established **before** the external `gtag.js` loads (Google's documented order); and (c) renders
-  `<GaPageView gaId={gaId} />`. No inline `dangerouslySetInnerHTML`.
+  valid it: (a) in a mount `useEffect`, calls `ensureGaConfigured(gaId)` — a **plain side effect, no
+  `setState`** (the `react-hooks/set-state-in-effect` rule forbids a `ready`-state gate) — which
+  establishes the data layer + queues `js` + `config`; (b) renders the loader `<Script
+  src={`…/gtag/js?id=${encodeURIComponent(gaId)}`} strategy="afterInteractive" />` directly; and (c)
+  renders `<GaPageView gaId={gaId} />`. **Ordering** is guaranteed by the command queue, not script
+  timing: `sendPageView`/`ensureGaConfigured` always push `config` before any `page_view`, the loader
+  alone sends no hit, and gtag.js drains the data layer in order whenever it executes. No inline
+  `dangerouslySetInnerHTML`.
 - `gtag.ts` (client helper, `web/components/analytics/gtag.ts`) — owns the `Window` augmentation
   (`dataLayer?`, `gtag?`) and the **canonical `gtag()` wrapper** (pushes its `arguments`, exactly the
   shape gtag.js expects — not array literals), and **guarantees config precedes the first event**:
