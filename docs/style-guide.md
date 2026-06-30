@@ -130,10 +130,36 @@ Pill-shaped buttons that submit a Next.js server action (`<form action={...}>`).
 ### Account panel (`web/app/account/page.tsx`)
 
 The authenticated utility page (the BFF round-trip surface), on the brand gradient
-(`min-h-dvh`, centered). Three states: signed-out (heading + copy + Sign in), signed-in
-(heading + a `name`/`email` definition list + Sign out), and a profile-load error
-(heading + Sign out). Not linked from the marketing hero; reached via the footer
-"Sign in" link.
+(`min-h-dvh`, centered). States: signed-out (heading + copy + Sign in); signed-in
+(heading + a `name`/`email` definition list + the **Display name field** + Sign out); a
+profile-load error (heading + Sign out); and the **first-sign-in name gate** (below) when
+the account still resolves to "Anonymous" (`needs_name`). Not linked from the marketing hero;
+reached via the footer "Sign in" link (or the header "Finish setup" prompt).
+
+### Display name field + first-sign-in name gate (`web/components/account/DisplayNameForm.tsx`, `mobile/components/account/DisplayNameForm.tsx`)
+
+A single **"Display name"** field — one form, two variants — used on the account surface of both
+clients. It saves the user's chosen name (stored backend-side as a `nickname` override) via
+`PATCH /api/v1/me`; on success it refreshes so the resolved name (and `needs_name`) update.
+
+- **Change-name variant (`required={false}`):** a labelled text input pre-filled with the current
+  display name (the IdP name if present, else blank), `maxLength={80}`, with a **Save** button. Shown
+  in the normal signed-in account view alongside the profile.
+- **First-sign-in gate variant (`required`):** shown on its own (no other account body, no dismiss —
+  only Sign out escapes) when the resolved public name is "Anonymous". Adds a heading ("Choose a
+  display name") + one line of helper copy, a blank input, and a **Continue** button. This is the
+  hard gate: a name-less account is routed here after sign-in and cannot contribute until a name is
+  set (the backend also rejects contribution writes with `409 display_name_required`).
+- **Styling:** web uses the gradient-surface tokens (white label, `bg-white/10` input, crown-gold
+  `bg-[#F2C200]` navy-text button); mobile uses the theme tokens (`colors.surface` input,
+  `colors.brandYellow` button) matching the account tab.
+- **States:** default; **saving** (button reads "Saving…", input disabled); **validation error**
+  ("Please enter 1–80 characters." — also enforced server-side); **server error**. The button is
+  disabled while saving or when the trimmed value is empty.
+- **Accessibility:** the input is label-associated ("Display name"); the button exposes a disabled
+  state; status/error text is announced (`role="status"`, `aria-live="polite"` on web).
+- **Mobile root gate (`mobile/app/(tabs)/_layout.tsx`):** because sign-in can begin from the map, a
+  mounted watcher routes an authenticated, still-name-less user to the Account tab's gate variant.
 
 ### Admin moderation controls (`web/components/admin/FountainAdminControls.tsx`)
 
@@ -371,8 +397,11 @@ Used for add-fountain placement errors, especially out-of-area taps.
 
 ### Auth control (`web/components/AuthControl.tsx`)
 
-A client component placed in the top-right of `SiteHeader`. Renders one of two affordances
-depending on the viewer state produced by `getViewer()`.
+A client component placed in the top-right of `SiteHeader`. Renders one of three affordances
+depending on the viewer state produced by `getViewer()`. When the signed-in account still resolves
+to "Anonymous" (`viewer.needsName`), it shows a gold **"Finish setup"** pill linking to `/account`
+(the name gate) instead of the avatar menu — and never renders the (empty) name, so the raw Logto
+subject is never exposed.
 
 #### Sign-in button (signed-out state)
 
