@@ -1670,7 +1670,7 @@
           "leaderboard"
         ],
         "summary": "Contributors",
-        "description": "Top contributors \u2014 global by total points, or local (in-area) when near_lat+near_lng\nare given. Public; author names go through public_display_name (never the raw subject).",
+        "description": "Top contributors \u2014 global by total points (or a category counter), or local (in-area) when\nnear_lat+near_lng are given. Public; author names go through public_display_name (never the raw\nsubject). When the caller is signed in (get_optional_user), `you` carries their own standing \u2014\nan invalid bearer is still a hard 401, never silently downgraded to anonymous (#117).",
         "operationId": "contributors_api_v1_leaderboard_contributors_get",
         "parameters": [
           {
@@ -1737,6 +1737,89 @@
               ],
               "title": "Radius M"
             }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "total",
+                "fountains",
+                "ratings",
+                "verifications",
+                "conditions",
+                "attributes",
+                "notes"
+              ],
+              "type": "string",
+              "default": "total",
+              "title": "Sort"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "X-Dev-User",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Dev-User"
+            }
+          },
+          {
+            "name": "X-Dev-Email",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Dev-Email"
+            }
+          },
+          {
+            "name": "X-Dev-Name",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Dev-Name"
+            }
           }
         ],
         "responses": {
@@ -1745,11 +1828,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/ContributorRow"
-                  },
-                  "title": "Response Contributors Api V1 Leaderboard Contributors Get"
+                  "$ref": "#/components/schemas/LeaderboardOut"
                 }
               }
             }
@@ -2807,6 +2886,10 @@
       },
       "ContributorRow": {
         "properties": {
+          "rank": {
+            "type": "integer",
+            "title": "Rank"
+          },
           "display_name": {
             "type": "string",
             "title": "Display Name"
@@ -2815,7 +2898,7 @@
             "type": "integer",
             "title": "Points"
           },
-          "fountains_added": {
+          "category_count": {
             "anyOf": [
               {
                 "type": "integer"
@@ -2824,22 +2907,17 @@
                 "type": "null"
               }
             ],
-            "title": "Fountains Added"
+            "title": "Category Count"
           },
-          "ratings_count": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Ratings Count"
+          "is_you": {
+            "type": "boolean",
+            "title": "Is You",
+            "default": false
           }
         },
         "type": "object",
         "required": [
+          "rank",
           "display_name",
           "points"
         ],
@@ -3176,6 +3254,32 @@
         ],
         "title": "HealthResponse"
       },
+      "LeaderboardOut": {
+        "properties": {
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/ContributorRow"
+            },
+            "type": "array",
+            "title": "Rows"
+          },
+          "you": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/YourStanding"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "rows"
+        ],
+        "title": "LeaderboardOut"
+      },
       "MeContributionsOut": {
         "properties": {
           "stats": {
@@ -3437,6 +3541,42 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "YourStanding": {
+        "properties": {
+          "rank": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rank"
+          },
+          "points": {
+            "type": "integer",
+            "title": "Points"
+          },
+          "category_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "points"
+        ],
+        "title": "YourStanding",
+        "description": "The signed-in caller's standing on the active board (#117).\n\nNull on the response when the caller is anonymous. `rank` is null when the caller is\nsigned in but unranked in this scope/category (e.g. all points reversed, or zero in the\nselected category); `points`/`category_count` still reflect their real values."
       }
     }
   }
