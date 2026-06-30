@@ -52,6 +52,7 @@ describe("mapContributionError", () => {
   it("maps HTTP statuses to stable errors", () => {
     expect(mapContributionError(new ApiError(404))).toBe("not_found");
     expect(mapContributionError(new ApiError(422))).toBe("validation");
+    expect(mapContributionError(new ApiError(409))).toBe("needs_name");
     expect(mapContributionError(new ApiError(503))).toBe("server");
   });
 
@@ -69,6 +70,7 @@ describe("contributionErrorText", () => {
     expect(contributionErrorText("unauthenticated")).toMatch(/sign in/i);
     expect(contributionErrorText("not_found")).toMatch(/no longer/i);
     expect(contributionErrorText("validation")).toMatch(/check/i);
+    expect(contributionErrorText("needs_name")).toMatch(/display name/i);
     expect(contributionErrorText("network")).toMatch(/connection/i);
     expect(contributionErrorText("server")).toMatch(/try again/i);
   });

@@ -11,6 +11,7 @@ export type ContributionError =
   | "unauthenticated"
   | "validation"
   | "not_found"
+  | "needs_name"
   | "network"
   | "server";
 
@@ -29,6 +30,8 @@ export function mapContributionError(error: unknown): ContributionError {
     if (error.status === 401) return "unauthenticated";
     if (error.status === 404) return "not_found";
     if (error.status === 422) return "validation";
+    // These detail writes have only ONE 409 shape — the name gate (require_named_user).
+    if (error.status === 409) return "needs_name";
     return "server";
   }
   if (error instanceof TypeError) {
@@ -48,6 +51,8 @@ export function contributionErrorText(error: ContributionError): string {
       return "This fountain is no longer available.";
     case "validation":
       return "Please check your input and try again.";
+    case "needs_name":
+      return "Add a display name on the Account tab to contribute.";
     case "network":
       return "Check your connection and try again.";
     case "server":
