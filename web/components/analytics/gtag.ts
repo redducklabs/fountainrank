@@ -21,15 +21,14 @@ export type PageViewParams = {
 
 let configuredId: string | null = null;
 
-// Establish window.dataLayer and a gtag(...args) wrapper. Each call pushes the args array onto the
-// data layer; gtag.js reads command entries by index (array-like), so `["config", id, opts]` is the
-// same shape it consumes from Google's canonical `arguments`-based snippet. Idempotent: defines the
-// wrapper once.
+// Establish window.dataLayer and the canonical gtag() wrapper. gtag pushes its `arguments` object —
+// exactly Google's documented snippet (`function gtag(){ dataLayer.push(arguments); }`) — so the
+// queue entries are the precise shape gtag.js consumes. Idempotent: defines the wrapper once.
 function getGtag(): (...args: unknown[]) => void {
   window.dataLayer = window.dataLayer || [];
   if (typeof window.gtag !== "function") {
-    window.gtag = (...args: unknown[]): void => {
-      window.dataLayer!.push(args);
+    window.gtag = function gtag() {
+      window.dataLayer!.push(arguments);
     };
   }
   return window.gtag;

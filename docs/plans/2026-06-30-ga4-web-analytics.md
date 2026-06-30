@@ -145,10 +145,11 @@ refinement: it can't do consent-gated, query-string-free GA on 16.2.9); `vitest`
   new pathname sends `page_referrer` = the prior sanitized `page_location`.
 - [ ] `gtag.test.ts` (jsdom, helper NOT mocked; `__resetGaConfigured()` + `delete window.dataLayer`/
   `window.gtag` between cases): call `sendPageView("G-ABC123", {page_path:"/x", …})`. Each
-  `window.dataLayer` entry is a command array (`gtag(...args)` pushes `args`) → assert **by index**:
-  `["js", <Date>]`; `["config","G-ABC123",{send_page_view:false}]`; `["event","page_view",{…/x…}]` —
-  **in that order** (config BEFORE event). A second `sendPageView` appends only another
-  `["event","page_view",…]` (no duplicate `config`).
+  `window.dataLayer` entry is the `gtag()` `arguments` object (array-like) → assert **by index**:
+  entry0 `[0]==="js"`, `[1]` is a `Date`; entry1 `[0]==="config"`, `[1]==="G-ABC123"`, `[2]` deep-equals
+  `{send_page_view:false}`; entry2 `[0]==="event"`, `[1]==="page_view"`, `[2]` = the params — **in that
+  order** (config BEFORE event). A second `sendPageView` appends only another `event`/`page_view`
+  entry (no duplicate `config`).
 - [ ] `GaScripts.test.tsx` (jsdom): spy on `ensureGaConfigured`; mock `GaPageView` to a sentinel and
   `next/script` to a non-`<script>` element (carrying `data-src`, to avoid `@next/next/no-sync-scripts`).
   (a) invalid `gaId` → renders nothing, `ensureGaConfigured` not called; (b) valid `gaId` → after

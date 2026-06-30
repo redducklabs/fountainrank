@@ -9,6 +9,11 @@ const params: PageViewParams = {
   page_title: "X",
 };
 
+// Each dataLayer entry is the gtag() `arguments` object — array-like, read by index.
+function dataLayer(): IArguments[] {
+  return (window.dataLayer ?? []) as unknown as IArguments[];
+}
+
 afterEach(() => {
   __resetGaConfigured();
   delete window.dataLayer;
@@ -18,20 +23,26 @@ afterEach(() => {
 describe("sendPageView / ensureGaConfigured", () => {
   it("queues js -> config(send_page_view:false) -> page_view, in that order", () => {
     sendPageView("G-ABC123", params);
-    const dl = window.dataLayer!;
+    const dl = dataLayer();
     expect(dl).toHaveLength(3);
-    expect(dl[0]).toEqual(["js", expect.any(Date)]);
-    expect(dl[1]).toEqual(["config", "G-ABC123", { send_page_view: false }]);
-    expect(dl[2]).toEqual(["event", "page_view", params]);
+    expect(dl[0][0]).toBe("js");
+    expect(dl[0][1]).toBeInstanceOf(Date);
+    expect(dl[1][0]).toBe("config");
+    expect(dl[1][1]).toBe("G-ABC123");
+    expect(dl[1][2]).toEqual({ send_page_view: false });
+    expect(dl[2][0]).toBe("event");
+    expect(dl[2][1]).toBe("page_view");
+    expect(dl[2][2]).toEqual(params);
   });
 
   it("does not re-push config on the second page view", () => {
     sendPageView("G-ABC123", params);
     sendPageView("G-ABC123", { ...params, page_path: "/y" });
-    const dl = window.dataLayer!;
+    const dl = dataLayer();
     expect(dl).toHaveLength(4);
-    expect(dl.filter((e) => Array.isArray(e) && e[0] === "config")).toHaveLength(1);
-    expect(dl[3]).toEqual(["event", "page_view", { ...params, page_path: "/y" }]);
+    expect(Array.from(dl).filter((e) => e[0] === "config")).toHaveLength(1);
+    expect(dl[3][0]).toBe("event");
+    expect(dl[3][2]).toEqual({ ...params, page_path: "/y" });
   });
 
   it("creates window.dataLayer when it does not exist yet", () => {
