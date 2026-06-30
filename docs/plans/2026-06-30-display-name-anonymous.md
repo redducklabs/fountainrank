@@ -926,15 +926,23 @@ git commit -m "feat(web): display-name field + first-sign-in name-capture gate o
 
 **Interfaces:**
 - `Viewer` authed state gains `needsName: boolean`.
+- New `getViewerForRoute(requestId: string): Promise<Viewer>` — the **route-handler-safe** sibling of `getViewer`.
 
 > Why: `getViewer()` feeds `SiteHeader`/`AuthControl` on **every** page. Without this, a signed-in
 > Anonymous-name account would render whatever `/me` sends. The backend now returns `display_name=""`
 > when `needs_name` (Task 4), so the subject can't leak; this task additionally surfaces the gate in
 > the header and forces the capture screen right after sign-in.
+>
+> **RSC vs route-handler boundary:** `getViewer` uses `getAuthedApiClient` → `getAccessTokenRSC` (RSC,
+> read-only cookies). The sign-in **callback is a route handler**, where RSC token helpers are not
+> available — exactly why the repo already has `syncProfile` (RSC) vs `syncProfileForRoute` (route,
+> `getAccessToken`). So the callback must NOT call `getViewer`; it calls a route-safe variant.
 
 - [ ] **Step 1: `getViewer` carries `needsName`.** In `web/lib/server/viewer.ts`, add `needsName: boolean` to the authed `Viewer` variant and set it from `data.needs_name` in the `if (data)` branch (keep `displayName: data.display_name`, which is now `""` when `needs_name`).
 
-- [ ] **Step 2: Test no-leak.** In `web/lib/server/viewer.test.ts`, add a case: a `/me` mock with `needs_name: true, display_name: ""` → `getViewer` returns `state: "authed", needsName: true, displayName: ""` and the result JSON contains no subject. Run:
+- [ ] **Step 2: Add the route-safe `getViewerForRoute`.** In `web/lib/server/viewer.ts`, add a sibling that mirrors `getViewer`'s `/me` read but builds the client with `getAuthedApiClientForAction(requestId)` (which uses `getAccessToken`, the writable-cookie route/action variant) instead of `getAuthedApiClient`. Factor the shared `/me` → `Viewer` mapping into a small internal `viewerFromMe(client, requestId)` so both call it (DRY). It returns the same `Viewer` shape (incl. `needsName`). After sign-in in the callback the session is already authenticated, so a token/`/me` failure here resolves to `{ state: "anonymous" }` (no gate — the user can retry), never a throw.
+
+- [ ] **Step 3: Test no-leak (both variants).** In `web/lib/server/viewer.test.ts`, add: a `/me` mock with `needs_name: true, display_name: ""` → `getViewer` returns `state: "authed", needsName: true, displayName: ""` and the JSON contains no subject. Add a parallel case for `getViewerForRoute` by mocking the **action** token path (`getAccessToken`)/`getAuthedApiClientForAction`. Keep the existing RSC `getViewer` tests. Run:
 
 ```bash
 cd /d/repos/fountainrank/web && node node_modules/vitest/vitest.mjs run lib/server/viewer.test.ts
@@ -942,11 +950,11 @@ cd /d/repos/fountainrank/web && node node_modules/vitest/vitest.mjs run lib/serv
 
 Expected: PASS.
 
-- [ ] **Step 3: Header prompt.** In `web/components/AuthControl.tsx`, when `viewer.state === "authed" && viewer.needsName`, render a small "Finish setup — set your name" link to `/account` (reuse the existing button/menu styling). The `UserMenu` already falls back to initial `"?"` when `name` is empty, so an empty name renders no subject.
+- [ ] **Step 4: Header prompt.** In `web/components/AuthControl.tsx`, when `viewer.state === "authed" && viewer.needsName`, render a small "Finish setup — set your name" link to `/account` (reuse the existing button/menu styling). The `UserMenu` already falls back to initial `"?"` when `name` is empty, so an empty name renders no subject.
 
-- [ ] **Step 4: Sign-in callback forces capture.** In `web/app/callback/route.ts`, after `syncProfileForRoute(requestId)` and before computing the return redirect, fetch the viewer (`getViewer(requestId)`); when `state === "authed" && needsName`, `redirect("/account")` (the gate) instead of the stored return path. Keep the existing return-path logic for the named case. Never log the name.
+- [ ] **Step 5: Sign-in callback forces capture (route-safe).** In `web/app/callback/route.ts`, after `syncProfileForRoute(requestId)` and before computing the return redirect, call **`getViewerForRoute(requestId)`** (NOT `getViewer`); when `state === "authed" && needsName`, `redirect("/account")` (the gate) instead of the stored return path. Keep the existing return-path logic for the named case. Never log the name. (`redirect()` throws `NEXT_REDIRECT` — call it outside any try/catch, like the existing redirects in this file.)
 
-- [ ] **Step 5: Type-check + format + commit.**
+- [ ] **Step 6: Type-check + format + commit.**
 
 ```bash
 cd /d/repos/fountainrank/web && node node_modules/typescript/bin/tsc --noEmit && node node_modules/prettier/bin/prettier.cjs --write lib/server/viewer.ts lib/server/viewer.test.ts components/AuthControl.tsx app/callback/route.ts
