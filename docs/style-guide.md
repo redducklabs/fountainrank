@@ -276,6 +276,36 @@ Used on the authenticated web and mobile map/home surfaces.
 - Label reads `Points`; the numeric total is the visual focus.
 - On entry/update, the badge may pulse or count up once. Respect reduced-motion preferences and
   keep the numeric value visible without animation.
+- **Interactive (link/button to the leaderboard, #117).** The badge navigates to the leaderboard
+  (web: a real `<Link>` whose href tracks the live map center → `/leaderboard?lat&lng`, falling
+  back to the global board; mobile: a `Pressable` that pushes `/leaderboard` with the map center).
+  It is keyboard-focusable with a visible focus ring and a hover affordance, and exposes an
+  accessible label like *"View leaderboard — N points"*. When rendered inside a
+  `pointer-events-none` overlay (e.g. the contribution overlay), the badge re-enables pointer
+  events on itself.
+
+### Leaderboard (`/leaderboard` — `web/app/leaderboard/page.tsx`, `mobile/app/leaderboard.tsx`)
+
+The rankings screen reached from the points badge. Same model on web and mobile (#117).
+
+- **Header:** title `Leaderboard` + a subtitle reflecting the scope ("everywhere" vs "near this
+  part of the map"). Web shows a `← Back to the map` link; mobile uses the native stack back.
+- **Scope toggle:** a pill segmented control **Global / Near here**. "Near here" only appears when a
+  map center is available. Active segment = brand-blue fill (`#0A357E`), white text; inactive =
+  muted text. (Web implements each segment as a query-param `<Link>`; mobile as a `Pressable` over
+  local state.)
+- **Category chips:** a horizontally-scrollable row — `Total` (default) · `Fountains` · `Ratings` ·
+  `Verifications` · `Conditions` · `Attributes` · `Notes`. Active chip = brand-blue fill; inactive
+  = `surface` fill with `border` outline (matches the map filter chips).
+- **List row:** `#rank` (muted, tabular) · display name (truncates) · a right-aligned metric block.
+  The metric's big number is the **category count** in category mode (caption = the category noun +
+  the user's total points, e.g. `fountains added · 1,234 pts`) or the **total points** on the
+  Total board (caption `pts`). `points` is always labelled total points, never "category points".
+- **You-highlight + pinned You row:** the signed-in caller's row gets a light-blue fill
+  (`#EAF1FF`) + brand-blue ring/`You` tag. When the caller is below the visible cut, a **pinned
+  "You — #N"** row is shown (web: dashed separator above it; mobile: as the list footer), reading
+  *Not yet ranked* when they have no qualifying points in the active scope/category.
+- **Empty state:** `No contributors yet.`
 
 ### Possible-points preview
 

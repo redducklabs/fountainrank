@@ -20,6 +20,10 @@ Same as prior slices. Branch `feat/gamification-leaderboards` → PR → CI gree
 (Stats counters are not yet decremented on reversal — moderation-reversal is deferred — but no events are reversed today; the direct dimension query is reversal-safe regardless. Documented.)
 
 ## API
+> **Superseded for the leaderboard endpoint (2026-06-29, #117):** the leaderboard response below
+> is historical. It now returns `LeaderboardOut { rows: list[ContributorRow], you }` with a `sort`
+> category param and a caller `you` standing — see `docs/specs/2026-06-29-leaderboard-design.md`.
+> `/me/badges` is unchanged.
 - `GET /api/v1/me/badges` (auth): caller's earned badges → `list[BadgeOut{key,name,description}]`. `created_rank` via the `(created_at,id)` total order; dimension counts via the awarded-only grouped query. Caller-only.
 - `GET /api/v1/leaderboard/contributors` (public): `ContributorRow{display_name, points: int, fountains_added: int|None, ratings_count: int|None}` — counts are **null for local scope** (never fake `0`).
   - **Global** (no `near_lat`/`near_lng`): top `limit` by `user_contribution_stats.total_points DESC, user_id ASC`, joined to users; `points=total_points`, counts populated. Public.
