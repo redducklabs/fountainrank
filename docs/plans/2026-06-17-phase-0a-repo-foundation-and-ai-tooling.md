@@ -163,7 +163,7 @@ git commit -m "chore: add git hygiene config (gitattributes, gitignore, trivyign
 
 Content requirements (author verbatim):
 - Title "Security Policy".
-- "Reporting a Vulnerability" section: report privately via GitHub Security Advisories ("Report a vulnerability" on the repo's Security tab) or email `security@redducklabs.com`; do not open public issues for vulnerabilities.
+- "Reporting a Vulnerability" section: report privately via GitHub Security Advisories ("Report a vulnerability" on the repo's Security tab) or email `security@fountainrank.com`; do not open public issues for vulnerabilities.
 - Response targets: acknowledge within 3 business days; triage within 7 business days.
 - "Supported Versions": only the latest `main` is supported (pre-release project).
 - "Scope": the FountainRank backend, web, mobile, and infrastructure in this repo. Out of scope: third-party services (DigitalOcean, Logto upstream, Google/Apple), social-engineering, DoS.
