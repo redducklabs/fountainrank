@@ -15,7 +15,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import func
+from sqlalchemy import func, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -196,3 +196,73 @@ async def record_contributions(
         len(specs) - len(inserted),
     )
     return [row.id for row in inserted]
+
+
+async def reverse_contributions(session: AsyncSession, fountain_id: uuid.UUID) -> int:
+    """Reverse every still-awarded contribution event tied to a fountain and decrement the
+    affected users' denormalized stats — the inverse of ``record_contributions`` (#119).
+
+    When a fountain is hard-deleted (admin moderation), points earned for content that has
+    been removed must not persist, or the leaderboard rewards point-farming. Covers EVERY
+    contributing user tied to the fountain (creator + raters/observers/verifiers/note authors),
+    not just the creator, and every event_type (incl. the first-X bonus events, which also
+    carry ``fountain_id``).
+
+    Idempotent: only ``status='awarded'`` rows are flipped to ``reversed`` (the audit row
+    survives), so a re-run or a double-delete is a no-op. Counters are clamped at 0 so any
+    pre-existing inconsistency can't drive one negative. Caller owns the transaction.
+
+    MUST run BEFORE the fountain row is deleted: ``contribution_events.fountain_id`` is
+    ``ON DELETE SET NULL``, so once the fountain is gone the events can no longer be found by
+    ``fountain_id``.
+
+    Returns the number of events reversed.
+    """
+    reversed_rows = (
+        await session.execute(
+            update(ContributionEvent)
+            .where(
+                ContributionEvent.fountain_id == fountain_id,
+                ContributionEvent.status == "awarded",
+            )
+            .values(status="reversed")
+            .returning(
+                ContributionEvent.user_id,
+                ContributionEvent.event_type,
+                ContributionEvent.points,
+            )
+        )
+    ).all()
+
+    if not reversed_rows:
+        logger.info("contribution reversal no-op fountain_id=%s events=0", fountain_id)
+        return 0
+
+    # Aggregate the per-user decrements (a fountain's events span many users).
+    per_user: dict[uuid.UUID, dict[str, int]] = {}
+    for row in reversed_rows:
+        agg = per_user.setdefault(row.user_id, {"total_points": 0})
+        agg["total_points"] += row.points
+        counter = _STAT_COUNTER.get(row.event_type)
+        if counter:
+            agg[counter] = agg.get(counter, 0) + 1
+
+    for user_id, agg in per_user.items():
+        set_ = {
+            col: func.greatest(UserContributionStats.__table__.c[col] - delta, 0)
+            for col, delta in agg.items()
+        }
+        set_["updated_at"] = func.now()
+        await session.execute(
+            update(UserContributionStats)
+            .where(UserContributionStats.user_id == user_id)
+            .values(**set_)
+        )
+
+    logger.info(
+        "contribution reversal fountain_id=%s events=%d users=%d",
+        fountain_id,
+        len(reversed_rows),
+        len(per_user),
+    )
+    return len(reversed_rows)

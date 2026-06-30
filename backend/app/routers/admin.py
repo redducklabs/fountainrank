@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import require_admin
+from app.contributions import reverse_contributions
 from app.db import get_session
 from app.display import public_display_name
 from app.geo import point_geography
@@ -168,6 +169,11 @@ async def admin_delete_fountain(
     ).scalar_one_or_none()
     if fountain is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="fountain not found")
+    # Reverse every contribution tied to this fountain BEFORE deleting it (#119 anti-gaming):
+    # removing the content must not let its points persist on the leaderboard. Must run first
+    # because contribution_events.fountain_id is ON DELETE SET NULL — once the fountain row is
+    # gone the events can no longer be found by fountain_id.
+    reversed_events = await reverse_contributions(session, fountain_id)
     await session.delete(fountain)
     await session.commit()
     logger.info(
@@ -177,7 +183,7 @@ async def admin_delete_fountain(
             "action": "delete",
             "target_type": "fountain",
             "target_id": str(fountain_id),
-            "changed_fields": {},
+            "changed_fields": {"reversed_contribution_events": reversed_events},
         },
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

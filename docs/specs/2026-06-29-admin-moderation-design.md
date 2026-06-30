@@ -85,8 +85,20 @@ Notes:
 - **Hard-delete is destructive and irreversible.** Per the FK graph it **cascades**:
   `ratings`, `attribute_observations`, `fountain_attribute_consensus`, `condition_reports`,
   `fountain_notes`, `fountain_provenances` are **deleted**; `contribution_events.fountain_id` and
-  `fountain_import_events.fountain_id` are **SET NULL** (points/audit survive). The UI MUST require an
+  `fountain_import_events.fountain_id` are **SET NULL** (the audit rows survive). The UI MUST require an
   explicit confirmation before calling `DELETE`. Reserve for spam/junk.
+- **Points are reversed on hard-delete (#119, anti-gaming).** Before the fountain row is deleted,
+  `reverse_contributions(session, fountain_id)` (`app/contributions.py`, the inverse of
+  `record_contributions`) flips **every** `status='awarded'` `contribution_events` row tied to the
+  fountain to `status='reversed'` and decrements each affected user's `user_contribution_stats`
+  (`total_points` + the matching per-type counter, clamped at 0) — for **all** contributors (creator,
+  raters, observers, …), every event type incl. the first-X bonuses. The audit rows survive (now
+  `reversed`); reversed events are already excluded by the leaderboard/profile/badge reads. It runs
+  **before** `session.delete(fountain)` in the same transaction because the `SET NULL` cascade would
+  otherwise sever `fountain_id` and the events could no longer be found. Idempotent (only `awarded`
+  rows are touched, so a double-delete is a no-op). The `first_fountain`/`first_in_area` dedup rows
+  survive as `reversed`, so those one-time bonuses are **not** re-awarded if the user adds again
+  (accepted trade-off). **Soft-hide (`is_hidden`) is reversible and does NOT reverse points.**
 
 ### 4.4 Recompute & consistency
 - If an edit changes an input to a **derived** field (notably `is_working`), recompute the affected
@@ -116,7 +128,9 @@ Unhandled errors already flow through the centralized 500 handler — keep it th
   admin GET; unhide restores it.
 - Edit persists each field; editing `is_working` triggers a ranking recompute.
 - Hard-delete removes the fountain + cascaded children; a `contribution_events` row for it survives
-  with `fountain_id IS NULL`.
+  with `fountain_id IS NULL` and `status='reversed'`, and the contributors' `user_contribution_stats`
+  (`total_points` + per-type counters) are decremented for **all** affected users — covering a second
+  user who rated the fountain, idempotency on re-delete, and the clamp-at-0 floor (#119).
 - Empty `PATCH` → 422.
 
 ## 5. Web design
