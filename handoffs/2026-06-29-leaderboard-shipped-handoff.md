@@ -6,6 +6,60 @@ web+backend to prod (which also shipped the previously-merged-but-undeployed #11
 
 ---
 
+## 🔴 NEXT SESSION (owner directive, 2026-06-30) — kill "Anonymous": first-sign-in name capture + user nicknames
+
+**Why:** the live leaderboard showed an **"Anonymous"** row at rank 2 (28 pts). A read-only prod
+query (via `kubectl exec` into the backend pod — context `do-sfo3-fountainrank-production-cluster`,
+namespace `fountainrank`) found it is **one real account**, not an anonymous session:
+
+- subject **`4zsznfwtd8cx`** (the exact opaque id from issue **#103**), email
+  `4zsznfwtd8cx@users.noreply.fountainrank.com` (synthetic — the token carried no email), created
+  2026-06-30 00:51 UTC, **28 pts** (1 fountain + 4 ratings). Almost certainly the owner's own
+  **mobile Apple/SSO sign-in** that day.
+- It renders "Anonymous" because `public_display_name` (`backend/app/display.py`) masks the raw
+  subject when `display_name == logto_user_id` — which happens because the mobile Logto token had
+  **no `name`/`email`** (mobile requests no `profile`/`email` scopes and never calls `/me/sync`).
+  **The masking is correct; the root cause is #103.** The leaderboard does not need changing.
+
+**Owner requirements (must do — "we can't have things showing Anonymous"):**
+1. **Capture a name on first sign-in.** When an account would resolve to no real name (i.e. masks
+   to "Anonymous"), the app MUST prompt for the user's name the first time they sign in (web **and**
+   mobile) and not let that state persist. This is broader than #103's "just call `/me/sync`": even
+   when the IdP supplies no name, we actively ask.
+2. **Let users set/change a display name or nickname that overrides the IdP name.** A user can edit
+   their display name, or set a **nickname** that takes precedence over the provisioned
+   `display_name`. Reachable from the account/profile surface on web and mobile.
+
+**Design seeds (next session — full spec → plan → Codex → PR → deploy):**
+- **Data model:** prefer adding a nullable `users.nickname` column over overwriting the IdP-synced
+  `display_name`. Then resolve `nickname or display_name` and only mask to "Anonymous" when BOTH are
+  empty / equal the subject. (Owner said edit-display *or* nickname is fine; a separate column keeps
+  the synced name intact and is cleaner.) `public_display_name` currently takes
+  `(display_name, logto_user_id)` — it (and its callers: the leaderboard query, notes) will need the
+  nickname too.
+- **Backend:** a mutation endpoint (e.g. `PATCH /me` or `POST /me/nickname`) — validate trimmed,
+  non-empty, max length, reject a value equal to the subject; structured-log the change (user id
+  only, no PII). `get_me` + `/me/sync` already exist; every public surface (leaderboard, notes)
+  benefits automatically once `public_display_name` consults the nickname. Add tests incl. the
+  masking interaction.
+- **Web + mobile:** (a) a "Display name / nickname" field on the account screen (web
+  `app/account/page.tsx`, mobile `app/(tabs)/account.tsx`) calling the new endpoint; (b) a
+  **mandatory first-sign-in name-capture** step (blocking modal/route) when the resolved public name
+  is "Anonymous"/empty. Mobile should ALSO request the Logto `profile`/`email` scopes + call
+  `/me/sync` (the #103 half) so an IdP-supplied name is used when present, falling back to the prompt
+  only when there genuinely is none.
+- **Folds in #103:** #103 (mobile `/me/sync` + scopes) is the "use the IdP name when it exists" half;
+  this directive adds the "ask when it doesn't" + "let users override" halves. Do both together (and
+  close #103 into this, or keep #103 for just the mobile-sync slice).
+- **Backfill:** the existing `4zsznfwtd8cx` account already has `display_name == subject`; once
+  shipped, the owner re-signing-in or setting a nickname fixes its display — **no hand DB mutation**.
+
+**Acceptance:** no public surface ever shows "Anonymous" for an account that has signed in and used
+the app; a user can set/change a display name or nickname on web and mobile and see it on the
+leaderboard/notes.
+
+---
+
 ## 🟢 RESUME HERE — current state
 
 - **Branch:** `main`, clean, synced. Latest: **`cf4877d`** `feat: leaderboard (#117) — category sort
@@ -19,9 +73,11 @@ web+backend to prod (which also shipped the previously-merged-but-undeployed #11
   `{"rows":[…],"you":…}` shape; `?sort=ratings` → 200; `?sort=bogus` → 422.
 - **✅ #119 anti-gaming is now DEPLOYED** — `71098f2` is an ancestor of the deployed `cf4877d`, so
   this batched deploy shipped it. (The prior handoff's "⚠️ #119 not deployed" is now resolved.)
-- **⏳ Mobile NOT yet on devices.** The mobile leaderboard code is merged, but `deploy.yml` only
-  ships web+backend. Mobile reaches TestFlight/Play via a **separate** `mobile-store-release.yml`
-  run (owner's call): `gh workflow run mobile-store-release.yml --ref main -f platform=all`.
+- **✅ Mobile store release SUBMITTED.** `mobile-store-release.yml` run `28456181725` on `c9a4599`
+  (`-f platform=all`) completed green: release notes + **Android build + Play internal submit** +
+  **iOS build + App Store Connect submit** all succeeded. The build is in Play internal + TestFlight
+  (App Store Connect) pending Apple/Google processing before it's installable. Re-run the same
+  workflow for future mobile releases.
 
 ### What #117 shipped (so you don't re-investigate)
 
