@@ -176,10 +176,19 @@ vs a valid `fountain_id` there.
 - Add **`needs_name: bool`** =
   `resolved_display_name(display_name, logto_user_id, nickname) is None` — drives the §7 client gate
   and the field pre-fill (pre-fill = current `display_name` when `needs_name` is false, else blank).
+- **`email` must not leak the subject either.** Provisioning stores a synthetic
+  `f"{sub}@users.noreply.fountainrank.com"` when the token carries no email (`auth.py`), so the raw
+  subject is embedded in `User.email`. `me_response` returns `email = ""` when the stored email ends
+  with the synthetic domain (`SYNTHETIC_EMAIL_DOMAIN` from `app/userinfo.py`); a real email passes
+  through unchanged. The DB keeps the NOT-NULL synthetic value (storage is unaffected). Clients
+  already hide synthetic emails (`isDisplayableEmail`/`displayEmail`), so `""` renders the same — but
+  the subject no longer crosses the wire.
 - `MeResponse` is built via one small helper (`me_response(user)`) reused by `get_me`, `sync_me`, and
   the new `PATCH /me`, so the three stay consistent.
-- **Tests assert** `/me` and `/me/sync` never return the raw subject in `display_name` (it is `""`
-  when `needs_name`), including the real Logto-JWT path where the token carries no `name`/`username`.
+- **Tests assert** `/me` and `/me/sync` never return the raw subject **anywhere** in the body —
+  `display_name` is `""` when `needs_name` and `email` is `""` for the synthetic fallback — including
+  the real Logto-JWT path with a token carrying no `name`/`username` **and** no `email` (and a
+  separate real-email token still passes its email through).
 
 ## 10. Client UI
 
@@ -188,7 +197,8 @@ The gate is enforced at three points so a nameless user is captured immediately 
 never surfaces:
 1. **Sign-in callback** (`web/app/callback/route.ts`): after `syncProfileForRoute`, fetch `/me`; when
    `needs_name`, redirect to the capture surface (`/account`) instead of the stored return path —
-   this is the "first-sign-in prompt". (Preserve the return path so the user lands back after naming.)
+   this is the "first-sign-in prompt". The gate lands on `/account`; once named the user continues
+   from there (we do **not** thread the original return path through the gate — YAGNI).
 2. **Header / viewer** (`web/lib/server/viewer.ts`, `web/components/AuthControl.tsx`): the `Viewer`
    type gains `needsName: boolean`; `getViewer` reads it from `/me`. Because the API now sends
    `display_name = ""` when `needs_name`, the header can never render the subject; additionally, when
@@ -201,18 +211,25 @@ never surfaces:
   to `/account` (covers a write attempt by a nameless user).
 
 ### 10.2 Mobile (`mobile/`)
+Sign-in can start from the **account tab** *or* the **map add button** (`(tabs)/index.tsx` calls
+`auth.signIn()` from the add gate), so the first-sign-in capture cannot live only on the account tab.
+- **Root gate** (`mobile/app/(tabs)/_layout.tsx`): a small mounted effect/component reads the `["me"]`
+  query; when `auth.status === "authenticated"` **and** `me.needs_name` **and** the user is not already
+  on the account route, it `router.navigate("/account")`. This catches sign-in from any surface. The
+  decision is a pure helper (`shouldRouteToNameGate(status, needsName, onAccountRoute)`), unit-tested.
 - **Account tab** (`mobile/app/(tabs)/account.tsx`): when `needs_name`, render **only** the required
-  `DisplayNameForm` (no dismiss) as the gate — and this is where sign-in happens, so it is the
-  first-sign-in capture point. Otherwise show the profile plus an "edit display name" affordance. The
-  form calls `PATCH /me` via the authed `useApi` client and invalidates `["me"]`.
-- **Add-fountain gate** (`mobile/app/(tabs)/index.tsx` + `mobile/lib/add-fountain/state.ts`): extend
-  the add gate so entering add-mode while `needs_name` shows "Set a display name first" routing to the
-  account tab; the add mutation also maps its 409 `display_name_required` body to that prompt.
+  `DisplayNameForm` (no dismiss) as the gate; otherwise show the profile plus an "edit display name"
+  affordance. The form calls `PATCH /me` via the authed `useApi` client and invalidates `["me"]`.
+- **Add-fountain** (active inline `MapAddPanel` in `mobile/app/(tabs)/index.tsx`, **not** the dead
+  `components/add-fountain/AddFountainForm.tsx`): the add mutation's 409 branch classifies the body
+  (`classifyAddConflict`) → `needs_name`; the panel's `onSubmit` result handler routes to the account
+  tab on `needs_name`. Entering add-mode while `needs_name` shows "Set a display name first".
 - **Detail writes** (`mobile/app/fountains/[id].tsx` + `mobile/lib/contributions/state.ts`): map a 409
   on rate/condition/attribute/note (unambiguous → gate) to a `needs_name` outcome that routes to the
   account tab.
-- A small pure helper (`mobile/lib/auth/display-name.ts`) holds the validation + gate decision so the
-  logic is unit-tested without rendering.
+- Small pure helpers (`mobile/lib/auth/display-name.ts` for validation; `shouldRouteToNameGate`;
+  `classifyAddConflict`; the contribution-error mapper) hold the logic so it is unit-tested without
+  rendering.
 
 ### 10.3 Style guide
 Document the **name-capture screen** and the **"Display name" form field** (states: default, saving,

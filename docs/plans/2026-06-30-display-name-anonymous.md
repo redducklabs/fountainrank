@@ -320,6 +320,22 @@ async def test_me_display_name_prefers_nickname(client, test_user, session):
     body = resp.json()
     assert body["display_name"] == "Nick"
     assert body["needs_name"] is False
+
+
+async def test_me_blanks_synthetic_subject_email(client, test_user, session):
+    # The provisioning fallback embeds the subject in a synthetic email — it must NOT cross the wire.
+    test_user.email = f"{test_user.logto_user_id}@users.noreply.fountainrank.com"
+    await session.commit()
+    resp = await client.get("/api/v1/me")
+    body = resp.json()
+    assert body["email"] == ""
+    assert test_user.logto_user_id not in str(body)  # subject nowhere in /me
+
+
+async def test_me_real_email_passes_through(client, test_user, session):
+    test_user.email = "real@example.com"
+    await session.commit()
+    assert (await client.get("/api/v1/me")).json()["email"] == "real@example.com"
 ```
 
 - [ ] **Step 2: Run to verify failure.**
@@ -339,20 +355,24 @@ Expected: FAIL (`needs_name` missing).
 (Keep `model_config = ConfigDict(from_attributes=True)`; the helper constructs it explicitly.)
 
 - [ ] **Step 4: Add the helper + use it.** In `backend/app/routers/users.py`:
-  - Add import: `from app.display import resolved_display_name`.
+  - Add imports: `from app.display import resolved_display_name` and
+    `from app.userinfo import SYNTHETIC_EMAIL_DOMAIN` (already imports other names from `app.userinfo`).
   - Add near the top (after `router = ...`):
 
 ```python
 def me_response(user: User) -> MeResponse:
-    """Self-view profile: display_name is the resolved name (nickname → IdP name); needs_name
-    is True when the account still resolves to "Anonymous" (drives the client name-capture gate)."""
+    """Self-view profile. The raw Logto subject must never reach the client, so:
+    - display_name is the resolved name (nickname → IdP name), or "" when the account resolves to
+      "Anonymous" (drives the client name-capture gate; the subject is never sent);
+    - email is "" when it is the synthetic subject-derived fallback
+      (f"{sub}@users.noreply.fountainrank.com"); a real email passes through. The DB keeps its
+      NOT-NULL synthetic value — only the wire is sanitized."""
     resolved = resolved_display_name(user.display_name, user.logto_user_id, user.nickname)
+    email = "" if user.email.lower().endswith(SYNTHETIC_EMAIL_DOMAIN) else user.email
     return MeResponse(
         id=user.id,
-        # "" (never the raw subject) when the account resolves to Anonymous — the client pre-fill in
-        # that state is blank, and the subject must never reach the client (data-exposure rule).
         display_name=resolved or "",
-        email=user.email,
+        email=email,
         avatar_url=user.avatar_url,
         is_admin=user.is_admin,
         created_at=user.created_at,
@@ -372,7 +392,7 @@ cd /d/repos/fountainrank/backend && uv run pytest tests/test_me.py -v
 Expected: PASS (existing + 3 new). The pre-existing `test_me_returns_profile` still passes (`display_name == "Dev One"`, `needs_name` absent from its assertions).
 
 - [ ] **Step 6: Regression-test the real Logto path + /me/sync (no subject leak).** In `backend/tests/test_logto_auth.py` (which already exercises the real bearer path and `/me/sync`), add assertions that:
-  - a `/me` (or `/me/sync`) response for a token carrying **no** `name`/`username` has `needs_name is True` and `display_name == ""` (the subject must not appear anywhere in the body — `assert sub not in str(body)`);
+  - a `/me` (or `/me/sync`) response for a token carrying **no** `name`/`username` **and no `email`** has `needs_name is True`, `display_name == ""`, and `email == ""` — the subject must not appear anywhere in the body (`assert sub not in str(body)`);
   - after a `/me/sync` that resolves a real name (existing test), `needs_name is False` and `display_name` equals that name.
   Match the file's existing fixtures/fake-userinfo helpers — do not invent new auth scaffolding. Run:
 
@@ -945,12 +965,26 @@ git commit -m "feat(web): viewer/header hide subject + sign-in callback routes t
 **Files:**
 - Create: `mobile/lib/auth/display-name.ts`, `mobile/lib/auth/display-name.test.ts`
 - Create: `mobile/components/account/DisplayNameForm.tsx`
-- Modify: `mobile/app/(tabs)/account.tsx`
+- Modify: `mobile/app/(tabs)/account.tsx`, `mobile/app/(tabs)/_layout.tsx`
 
 **Interfaces:**
-- Produces: `validateDisplayName(raw: string)` (same contract as web). `MeProfile` now has `needs_name`.
+- Produces: `validateDisplayName(raw: string)` (same contract as web); `shouldRouteToNameGate(status: string, needsName: boolean, onAccountRoute: boolean): boolean`. `MeProfile` now has `needs_name`.
 
-- [ ] **Step 1: Pure helper + test.** Create `mobile/lib/auth/display-name.ts` (identical contract to `web/lib/display-name.ts`) and `mobile/lib/auth/display-name.test.ts` (trim/blank/too-long). Run:
+- [ ] **Step 1: Pure helpers + test.** Create `mobile/lib/auth/display-name.ts` with `validateDisplayName` (identical contract to `web/lib/display-name.ts`) **and**:
+
+```ts
+export function shouldRouteToNameGate(
+  status: string,
+  needsName: boolean,
+  onAccountRoute: boolean,
+): boolean {
+  // Sign-in can start from the map (not just the account tab); once authenticated and still
+  // name-less, force the account capture screen — unless already there.
+  return status === "authenticated" && needsName && !onAccountRoute;
+}
+```
+
+  In `mobile/lib/auth/display-name.test.ts` cover `validateDisplayName` (trim/blank/too-long) and `shouldRouteToNameGate` (true only when authenticated + needsName + not already on account; false otherwise). Run:
 
 ```bash
 cd /d/repos/fountainrank/mobile && node node_modules/vitest/vitest.mjs run lib/auth/display-name.test.ts
@@ -962,7 +996,9 @@ Expected: PASS.
 
 - [ ] **Step 3: Gate the account tab.** In `mobile/app/(tabs)/account.tsx`, `SignedInProfile`: when `profile.needs_name` is true, render **only** the `DisplayNameForm` (`required`, heading "Choose a display name to continue") instead of the normal profile body. When false, render the normal body plus an "Edit display name" affordance that shows the form (`required={false}`). The `["me"]` invalidation already drives a refetch so `needs_name` flips after save.
 
-- [ ] **Step 4: Type-check.**
+- [ ] **Step 4: Root gate (catches sign-in from the map/detail, not just the account tab).** In `mobile/app/(tabs)/_layout.tsx`, add a small effect that reads the shared `["me"]` query (a `useQuery({ queryKey: ["me"], enabled: auth.status === "authenticated", queryFn: … GET /api/v1/me })` — reuse the same key the account tab uses so it's one cache entry) and the current route (`usePathname()` / `useSegments()` from `expo-router`), and when `shouldRouteToNameGate(auth.status, me?.needs_name ?? false, onAccountRoute)` is true, calls `router.navigate("/account")`. This makes a sign-in begun from the map add button route to the capture screen. Keep it minimal and effectful; the decision itself is the unit-tested `shouldRouteToNameGate`.
+
+- [ ] **Step 5: Type-check.**
 
 ```bash
 cd /d/repos/fountainrank/mobile && node node_modules/typescript/bin/tsc --noEmit
@@ -970,12 +1006,12 @@ cd /d/repos/fountainrank/mobile && node node_modules/typescript/bin/tsc --noEmit
 
 Expected: no type errors.
 
-- [ ] **Step 5: Format + commit.**
+- [ ] **Step 6: Format + commit.**
 
 ```bash
-cd /d/repos/fountainrank/mobile && node node_modules/prettier/bin/prettier.cjs --write lib/auth/display-name.ts lib/auth/display-name.test.ts components/account/DisplayNameForm.tsx "app/(tabs)/account.tsx"
-git add mobile/lib/auth/display-name.ts mobile/lib/auth/display-name.test.ts mobile/components/account/DisplayNameForm.tsx "mobile/app/(tabs)/account.tsx"
-git commit -m "feat(mobile): display-name field + first-sign-in capture gate on account tab"
+cd /d/repos/fountainrank/mobile && node node_modules/prettier/bin/prettier.cjs --write lib/auth/display-name.ts lib/auth/display-name.test.ts components/account/DisplayNameForm.tsx "app/(tabs)/account.tsx" "app/(tabs)/_layout.tsx"
+git add mobile/lib/auth/display-name.ts mobile/lib/auth/display-name.test.ts mobile/components/account/DisplayNameForm.tsx "mobile/app/(tabs)/account.tsx" "mobile/app/(tabs)/_layout.tsx"
+git commit -m "feat(mobile): display-name field + first-sign-in capture gate (account tab + root gate)"
 ```
 
 > The screen render, the gate, and sign-in→capture flow are **owner device-verified** (memory `fountainrank-verify-code-before-implementing-open-issue`): the PR ships them; the owner confirms on-device.
@@ -986,8 +1022,7 @@ git commit -m "feat(mobile): display-name field + first-sign-in capture gate on 
 
 **Files (correct targets — `(tabs)/add.tsx` is only a `<Redirect href="/" />`; the real add POST lives in `(tabs)/index.tsx`):**
 - Modify: `mobile/lib/add-fountain/state.ts`, `mobile/lib/add-fountain/state.test.ts` (add-fountain 409 classification + error text)
-- Modify: `mobile/app/(tabs)/index.tsx` (add mutation 409 branch + add-mode `needs_name` guard)
-- Modify: `mobile/components/add-fountain/AddFountainForm.tsx` (route to account on `needs_name`)
+- Modify: `mobile/app/(tabs)/index.tsx` (add mutation 409 branch + the **active inline `MapAddPanel` `onSubmit` handler** + add-mode `needs_name` guard). **Do NOT touch `mobile/components/add-fountain/AddFountainForm.tsx` — it is dead code (no importers); the live add UI is `MapAddPanel`, defined and rendered in `(tabs)/index.tsx`.**
 - Modify: `mobile/lib/contributions/state.ts`, `mobile/lib/contributions/state.test.ts` (detail-write 409 → `needs_name`)
 - Modify: `mobile/app/fountains/[id].tsx` (route to account on `needs_name`)
 
@@ -1029,7 +1064,7 @@ export function classifyAddConflict(
 
 - [ ] **Step 2: Wire the classifier into the add mutation.** In `mobile/app/(tabs)/index.tsx`, replace the `if (result.response.status === 409) { ... }` body of `addMutation.mutationFn` to use `classifyAddConflict(result.error)`: `needs_name` → `{ ok: false, error: "needs_name" }`; `duplicate` → `{ ok: false, error: "duplicate", fountainId }`; `server` → `{ ok: false, error: "server" }`. (`AddFountainResult` already allows `{ ok: false; error: AddFountainError }`, and `"needs_name"` is now in `AddFountainError`.)
 
-- [ ] **Step 3: Add-mode entry guard + form routing.** In `mobile/app/(tabs)/index.tsx`, when the `["me"]` profile has `needs_name` (the screen already has a `client.GET("/api/v1/me/contributions")` query — add or reuse a `/me` read for `needs_name`), block entering add mode and show "Set a display name on the Account tab first" with a tap that routes to `/account`. In `mobile/components/add-fountain/AddFountainForm.tsx`, when a submit returns `error === "needs_name"`, route to the account tab (add an `onNeedsName` prop or `router.navigate("/account")`) instead of the generic error toast.
+- [ ] **Step 3: Route the active submit handler + add-mode guard (in `(tabs)/index.tsx`).** In the **inline `MapAddPanel` `onSubmit` handler** (the `async () => { … const result = await addMutation.mutateAsync(...) … }` block, ~`index.tsx:472`), add a branch **before** the generic `submitError`/`addFountainErrorText` path: when `result.error === "needs_name"` (or a caught error maps to `needs_name`), reset add mode (`addDispatch({ type: "reset" })`), show "Set a display name on the Account tab to contribute", and `router.navigate("/account")`. Also add an add-mode entry guard: read `needs_name` from the shared `["me"]` query and, when true, block entering add mode with the same prompt + route. (`AddFountainForm.tsx` is dead code and is intentionally left untouched.)
 
 - [ ] **Step 4: Detail writes — pure 409 → needs_name (TDD).** In `mobile/lib/contributions/state.ts`: add `"needs_name"` to `ContributionError` and map a 409 to it in the existing error mapper (read the file for the mapper's real name — it is consumed via `handleMutationError` in `mobile/app/fountains/[id].tsx`). Add a test in `mobile/lib/contributions/state.test.ts`:
 
@@ -1046,8 +1081,8 @@ it("maps a 409 to needs_name", () => {
 - [ ] **Step 6: Type-check + format + commit.**
 
 ```bash
-cd /d/repos/fountainrank/mobile && node node_modules/typescript/bin/tsc --noEmit && node node_modules/prettier/bin/prettier.cjs --write lib/add-fountain/state.ts lib/add-fountain/state.test.ts "app/(tabs)/index.tsx" components/add-fountain/AddFountainForm.tsx lib/contributions/state.ts lib/contributions/state.test.ts "app/fountains/[id].tsx"
-git add mobile/lib/add-fountain/state.ts mobile/lib/add-fountain/state.test.ts "mobile/app/(tabs)/index.tsx" mobile/components/add-fountain/AddFountainForm.tsx mobile/lib/contributions/state.ts mobile/lib/contributions/state.test.ts "mobile/app/fountains/[id].tsx"
+cd /d/repos/fountainrank/mobile && node node_modules/typescript/bin/tsc --noEmit && node node_modules/prettier/bin/prettier.cjs --write lib/add-fountain/state.ts lib/add-fountain/state.test.ts "app/(tabs)/index.tsx" lib/contributions/state.ts lib/contributions/state.test.ts "app/fountains/[id].tsx"
+git add mobile/lib/add-fountain/state.ts mobile/lib/add-fountain/state.test.ts "mobile/app/(tabs)/index.tsx" mobile/lib/contributions/state.ts mobile/lib/contributions/state.test.ts "mobile/app/fountains/[id].tsx"
 git commit -m "feat(mobile): route to account when a contribution is blocked (display_name_required)"
 ```
 
