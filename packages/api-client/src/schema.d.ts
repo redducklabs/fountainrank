@@ -266,7 +266,8 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /** Update Me */
+        patch: operations["update_me_api_v1_me_patch"];
         trace?: never;
     };
     "/api/v1/me/contributions": {
@@ -576,6 +577,19 @@ export interface components {
             /** Your Rating */
             your_rating?: number | null;
         };
+        /**
+         * DisplayNameRequiredConflict
+         * @description 409 body for a contribution-write by an account that still resolves to "Anonymous"
+         *     (no nickname and display_name == subject). The client routes the user to set a name.
+         */
+        DisplayNameRequiredConflict: {
+            /**
+             * Detail
+             * @default display_name_required
+             * @constant
+             */
+            detail: "display_name_required";
+        };
         /** DuplicateFountainConflict */
         DuplicateFountainConflict: {
             /**
@@ -693,6 +707,11 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /**
+             * Needs Name
+             * @default false
+             */
+            needs_name: boolean;
         };
         /** NoteOut */
         NoteOut: {
@@ -757,6 +776,11 @@ export interface components {
         SyncProfileRequest: {
             /** Userinfo Token */
             userinfo_token: string;
+        };
+        /** UpdateMeRequest */
+        UpdateMeRequest: {
+            /** Display Name */
+            display_name: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -952,7 +976,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DuplicateFountainConflict"];
+                    "application/json": components["schemas"]["DuplicateFountainConflict"] | components["schemas"]["DisplayNameRequiredConflict"];
                 };
             };
             /** @description Validation Error */
@@ -1075,6 +1099,15 @@ export interface operations {
                     "application/json": components["schemas"]["FountainDetail"];
                 };
             };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DisplayNameRequiredConflict"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -1115,6 +1148,15 @@ export interface operations {
                     "application/json": components["schemas"]["FountainDetail"];
                 };
             };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DisplayNameRequiredConflict"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -1153,6 +1195,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FountainDetail"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DisplayNameRequiredConflict"];
                 };
             };
             /** @description Validation Error */
@@ -1224,6 +1275,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["NoteOut"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DisplayNameRequiredConflict"];
                 };
             };
             /** @description Validation Error */
@@ -1440,6 +1500,44 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_me_api_v1_me_patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "X-Dev-User"?: string | null;
+                "X-Dev-Email"?: string | null;
+                "X-Dev-Name"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateMeRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

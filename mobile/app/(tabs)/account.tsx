@@ -3,6 +3,7 @@ import { Link } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from "react-native";
 
+import { DisplayNameForm } from "../../components/account/DisplayNameForm";
 import { ScreenContainer } from "../../components/ScreenContainer";
 import { apiErrorStatus, unwrap } from "../../lib/api";
 import { displayEmail, profileInitial, type MeProfile } from "../../lib/auth/profile";
@@ -170,6 +171,16 @@ function SignedInProfile({
       </View>
     );
   }
+  // First-sign-in gate: when the account still resolves to "Anonymous", require a name before
+  // showing the profile. The raw subject never reaches here (the API sends display_name="").
+  if (profile.needs_name) {
+    return (
+      <View style={styles.section}>
+        <DisplayNameForm initialValue="" required />
+        <SecondaryButton label="Sign out" onPress={onSignOut} />
+      </View>
+    );
+  }
   const email = displayEmail(profile.email);
   return (
     <View style={styles.section}>
@@ -203,6 +214,7 @@ function SignedInProfile({
           </Text>
         </View>
       ) : null}
+      <DisplayNameForm initialValue={profile.display_name} required={false} />
       <SecondaryButton label="Sign out" onPress={onSignOut} />
     </View>
   );

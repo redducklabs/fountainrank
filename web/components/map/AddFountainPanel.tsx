@@ -43,6 +43,7 @@ export type AddFountainPanelProps = {
 const ERROR_COPY: Record<AddFountainError, string> = {
   unauthenticated: "Your session expired — sign in to finish.",
   validation: "Something about this fountain looks off. Check the details and try again.",
+  needs_name: "Add a display name to your account before adding a fountain.",
   server: "Couldn't add the fountain — please try again.",
 };
 
@@ -119,6 +120,14 @@ export function AddFountainPanel(props: AddFountainPanelProps) {
                 Sign in
               </button>
             </form>
+          ) : props.errorKind === "needs_name" ? (
+            // Retrying won't help until a name is set — send the user to the account name gate.
+            <Link
+              href="/account"
+              className="inline-block rounded-full bg-[#F2C200] px-4 py-2 text-sm font-bold text-[#0A357E]"
+            >
+              Set your name
+            </Link>
           ) : (
             <button
               type="button"

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
 from app.db import get_session
+from app.display import resolved_display_name
 from app.logto_auth import AuthError, JwksCache, validate_bearer_token
 from app.models import User
 
@@ -139,6 +140,16 @@ async def require_admin(user: User = Depends(get_current_user)) -> User:
             extra={"sub": user.logto_user_id, "user_id": str(user.id)},
         )
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="admin required")
+    return user
+
+
+async def require_named_user(user: User = Depends(get_current_user)) -> User:
+    """Gate contribution-write endpoints: a user whose name resolves to "Anonymous" (no nickname
+    and display_name == subject) must set a display name first (kill Anonymous). Reads, GET/PATCH
+    /me, and admin endpoints are intentionally NOT gated."""
+    if resolved_display_name(user.display_name, user.logto_user_id, user.nickname) is None:
+        logger.warning("contribution blocked: no display name", extra={"user_id": str(user.id)})
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="display_name_required")
     return user
 
 

@@ -89,7 +89,7 @@ async def test_concurrent_ratings_keep_aggregates_consistent():
             created = await ac.post(
                 "/api/v1/fountains",
                 json={"location": {"latitude": 37.7749, "longitude": -122.4194}},
-                headers={"X-Dev-User": "creator"},
+                headers={"X-Dev-User": "creator", "X-Dev-Name": "Creator"},
             )
             assert created.status_code == 201
             fid = created.json()["id"]
@@ -98,7 +98,7 @@ async def test_concurrent_ratings_keep_aggregates_consistent():
                 return await ac.post(
                     f"/api/v1/fountains/{fid}/ratings",
                     json={"ratings": [{"rating_type_id": 1, "stars": stars}]},
-                    headers={"X-Dev-User": subject},
+                    headers={"X-Dev-User": subject, "X-Dev-Name": f"Name {subject}"},
                 )
 
             r_a, r_b = await asyncio.gather(rate("rater-a", 5), rate("rater-b", 1))

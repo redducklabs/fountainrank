@@ -3,7 +3,12 @@ import { isAuthSessionError, type AuthStatus } from "../auth/state";
 import { normalizeFountainId } from "../detail/id";
 import { clampToBound, nudgePoint, type Bound, type LngLat } from "./placement";
 
-export type AddFountainError = "unauthenticated" | "validation" | "network" | "server";
+export type AddFountainError =
+  | "unauthenticated"
+  | "validation"
+  | "needs_name"
+  | "network"
+  | "server";
 export type DuplicateConflict = { fountain_id?: unknown };
 export type AddFountainResult =
   | { ok: true; fountainId: string }
@@ -101,12 +106,26 @@ export function duplicateFountainId(error: DuplicateConflict | undefined): strin
   );
 }
 
+// add_fountain has TWO 409 shapes: the name gate (detail === "display_name_required") and the
+// duplicate-proximity conflict (carries a fountain_id). Branch on the typed openapi-fetch error body.
+export function classifyAddConflict(
+  errorBody: unknown,
+): { kind: "needs_name" } | { kind: "duplicate"; fountainId: string } | { kind: "server" } {
+  if ((errorBody as { detail?: unknown })?.detail === "display_name_required") {
+    return { kind: "needs_name" };
+  }
+  const fountainId = duplicateFountainId(errorBody as DuplicateConflict | undefined);
+  return fountainId ? { kind: "duplicate", fountainId } : { kind: "server" };
+}
+
 export function addFountainErrorText(error: AddFountainError): string {
   switch (error) {
     case "unauthenticated":
       return "Your session expired. Please sign in again.";
     case "validation":
       return "Please check the fountain details and try again.";
+    case "needs_name":
+      return "Add a display name on the Account tab to contribute.";
     case "network":
       return "Check your connection and try again.";
     case "server":

@@ -1,22 +1,26 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { getLogtoContext, GET, getAuthedApiClient } = vi.hoisted(() => ({
-  getLogtoContext: vi.fn(),
-  GET: vi.fn(),
-  getAuthedApiClient: vi.fn(async () => ({ GET: vi.fn() })),
-}));
+const { getLogtoContext, GET, getAuthedApiClient, getAuthedApiClientForAction } = vi.hoisted(
+  () => ({
+    getLogtoContext: vi.fn(),
+    GET: vi.fn(),
+    getAuthedApiClient: vi.fn(async () => ({ GET: vi.fn() })),
+    getAuthedApiClientForAction: vi.fn(async () => ({ GET: vi.fn() })),
+  }),
+);
 
 vi.mock("server-only", () => ({}));
 vi.mock("@logto/next/server-actions", () => ({ getLogtoContext, getAccessTokenRSC: vi.fn() }));
-vi.mock("./api", () => ({ getAuthedApiClient }));
+vi.mock("./api", () => ({ getAuthedApiClient, getAuthedApiClientForAction }));
 vi.mock("../logto", () => ({ getLogtoConfig: () => ({}), API_RESOURCE: "https://api" }));
 
-import { getViewer, getViewerTotalPoints } from "./viewer";
+import { getViewer, getViewerForRoute, getViewerTotalPoints } from "./viewer";
 
 afterEach(() => {
   vi.clearAllMocks();
-  // Restore default: getAuthedApiClient resolves with a client that has GET
+  // Restore default: the clients resolve with a stub that has GET
   getAuthedApiClient.mockImplementation(async () => ({ GET }));
+  getAuthedApiClientForAction.mockImplementation(async () => ({ GET }));
 });
 
 describe("getViewer", () => {
@@ -39,7 +43,7 @@ describe("getViewer", () => {
   it("returns authed with profile on success", async () => {
     getLogtoContext.mockResolvedValue({ isAuthenticated: true });
     GET.mockResolvedValue({
-      data: { display_name: "Aron", avatar_url: "http://a", is_admin: true },
+      data: { display_name: "Aron", avatar_url: "http://a", is_admin: true, needs_name: false },
       response: { status: 200 },
     });
     expect(await getViewer("r1")).toEqual({
@@ -47,7 +51,25 @@ describe("getViewer", () => {
       displayName: "Aron",
       avatarUrl: "http://a",
       isAdmin: true,
+      needsName: false,
     });
+  });
+
+  it("does not leak the subject when needs_name is true (display_name is empty)", async () => {
+    getLogtoContext.mockResolvedValue({ isAuthenticated: true });
+    GET.mockResolvedValue({
+      data: { display_name: "", avatar_url: null, is_admin: false, needs_name: true },
+      response: { status: 200 },
+    });
+    const viewer = await getViewer("r1");
+    expect(viewer).toEqual({
+      state: "authed",
+      displayName: "",
+      avatarUrl: null,
+      isAdmin: false,
+      needsName: true,
+    });
+    expect(JSON.stringify(viewer)).not.toContain("4zsznfwtd8cx"); // no subject anywhere
   });
 
   it("returns anonymous when /me is 401 (session no longer usable)", async () => {
@@ -66,6 +88,28 @@ describe("getViewer", () => {
     getLogtoContext.mockResolvedValue({ isAuthenticated: true });
     GET.mockRejectedValue(new Error("network"));
     expect(await getViewer("r1")).toEqual({ state: "error" });
+  });
+});
+
+describe("getViewerForRoute (route-handler-safe)", () => {
+  it("reads /me via the action client and carries needsName", async () => {
+    GET.mockResolvedValue({
+      data: { display_name: "", avatar_url: null, is_admin: false, needs_name: true },
+      response: { status: 200 },
+    });
+    expect(await getViewerForRoute("r1")).toEqual({
+      state: "authed",
+      displayName: "",
+      avatarUrl: null,
+      isAdmin: false,
+      needsName: true,
+    });
+    expect(getAuthedApiClientForAction).toHaveBeenCalled();
+  });
+
+  it("returns anonymous when the action token client throws", async () => {
+    getAuthedApiClientForAction.mockRejectedValue(new Error("no token"));
+    expect(await getViewerForRoute("r1")).toEqual({ state: "anonymous" });
   });
 });
 

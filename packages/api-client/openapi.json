@@ -385,7 +385,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DuplicateFountainConflict"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DuplicateFountainConflict"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DisplayNameRequiredConflict"
+                    }
+                  ],
+                  "title": "Response 409 Add Fountain Api V1 Fountains Post"
                 }
               }
             },
@@ -818,6 +826,16 @@
               }
             }
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DisplayNameRequiredConflict"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -934,6 +952,16 @@
                 }
               }
             }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DisplayNameRequiredConflict"
+                }
+              }
+            },
+            "description": "Conflict"
           },
           "422": {
             "description": "Validation Error",
@@ -1052,6 +1080,16 @@
               }
             }
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DisplayNameRequiredConflict"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -1168,6 +1206,16 @@
                 }
               }
             }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DisplayNameRequiredConflict"
+                }
+              }
+            },
+            "description": "Conflict"
           },
           "422": {
             "description": "Validation Error",
@@ -1919,6 +1967,111 @@
             }
           }
         ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Update Me",
+        "operationId": "update_me_api_v1_me_patch",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "X-Dev-User",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Dev-User"
+            }
+          },
+          {
+            "name": "X-Dev-Email",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Dev-Email"
+            }
+          },
+          {
+            "name": "X-Dev-Name",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Dev-Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateMeRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -2991,6 +3144,19 @@
         ],
         "title": "DimensionSummary"
       },
+      "DisplayNameRequiredConflict": {
+        "properties": {
+          "detail": {
+            "type": "string",
+            "const": "display_name_required",
+            "title": "Detail",
+            "default": "display_name_required"
+          }
+        },
+        "type": "object",
+        "title": "DisplayNameRequiredConflict",
+        "description": "409 body for a contribution-write by an account that still resolves to \"Anonymous\"\n(no nickname and display_name == subject). The client routes the user to set a name."
+      },
       "DuplicateFountainConflict": {
         "properties": {
           "detail": {
@@ -3334,6 +3500,11 @@
             "type": "string",
             "format": "date-time",
             "title": "Created At"
+          },
+          "needs_name": {
+            "type": "boolean",
+            "title": "Needs Name",
+            "default": false
           }
         },
         "type": "object",
@@ -3501,6 +3672,21 @@
           "userinfo_token"
         ],
         "title": "SyncProfileRequest"
+      },
+      "UpdateMeRequest": {
+        "properties": {
+          "display_name": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Display Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "display_name"
+        ],
+        "title": "UpdateMeRequest"
       },
       "ValidationError": {
         "properties": {

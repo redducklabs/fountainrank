@@ -1,5 +1,6 @@
 import { getLogtoContext } from "@logto/next/server-actions";
 
+import { DisplayNameForm } from "../../components/account/DisplayNameForm";
 import { SignInButton } from "../../components/SignInButton";
 import { SignOutButton } from "../../components/SignOutButton";
 import { SiteHeader } from "../../components/SiteHeader";
@@ -44,7 +45,12 @@ export default async function AccountPage({
   const requestId = crypto.randomUUID();
   // Best-effort: refresh the stored profile from Logto before reading it (never throws).
   await syncProfile(requestId);
-  let profile: { display_name: string; email: string; avatar_url: string | null } | null = null;
+  let profile: {
+    display_name: string;
+    email: string;
+    avatar_url: string | null;
+    needs_name: boolean;
+  } | null = null;
   try {
     const { data, error, response } = await (await getAuthedApiClient(requestId)).GET("/api/v1/me");
     if (error || !data) {
@@ -72,6 +78,20 @@ export default async function AccountPage({
     );
   }
 
+  // First-sign-in gate: when the account still resolves to "Anonymous", require a name before
+  // anything else. The raw subject never reaches here (the API sends display_name="" when needs_name).
+  if (profile.needs_name) {
+    return (
+      <>
+        <SiteHeader variant="bar" />
+        <main className={shell}>
+          <DisplayNameForm initialValue="" required />
+          <SignOutButton />
+        </main>
+      </>
+    );
+  }
+
   return (
     <>
       <SiteHeader variant="bar" />
@@ -93,6 +113,7 @@ export default async function AccountPage({
             </div>
           )}
         </dl>
+        <DisplayNameForm initialValue={profile.display_name} required={false} />
         <SignOutButton />
       </main>
     </>

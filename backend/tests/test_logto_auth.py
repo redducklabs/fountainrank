@@ -404,11 +404,35 @@ async def test_me_sync_updates_profile_via_userinfo(keypair, cache, clean_db):
             assert body["email"] == "real@gmail.com"
             assert body["display_name"] == "Real Name"
             assert body["avatar_url"] == "https://img.example/a.png"
+            assert body["needs_name"] is False  # a real IdP name resolves -> no gate
             assert "logto_user_id" not in body
             me = await ac.get("/api/v1/me", headers=headers)  # persisted across requests
             assert me.json()["email"] == "real@gmail.com"
     finally:
         _clear_sync_overrides()
+
+
+async def test_me_via_bearer_no_name_no_email_does_not_leak_subject(keypair, cache, clean_db):
+    # A real Logto JWT carrying no name/username and no email provisions display_name=sub +
+    # a synthetic subject-derived email. /me must expose neither: needs_name gates the client and
+    # the raw subject must appear nowhere in the response body.
+    priv, _ = keypair
+    app.dependency_overrides[get_jwks_cache] = lambda: cache
+    app.dependency_overrides[get_settings] = lambda: Settings(dev_auth_enabled=False)
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            headers = {"Authorization": f"Bearer {_mint(priv, name=None, email=None)}"}
+            resp = await ac.get("/api/v1/me", headers=headers)
+            assert resp.status_code == 200
+            body = resp.json()
+            assert body["needs_name"] is True
+            assert body["display_name"] == ""
+            assert body["email"] == ""
+            assert "logto|abc" not in str(body)  # the subject must appear nowhere
+    finally:
+        for dep in (get_jwks_cache, get_settings):
+            app.dependency_overrides.pop(dep, None)
 
 
 async def test_me_sync_sub_mismatch_is_403_and_no_change(keypair, cache, clean_db):

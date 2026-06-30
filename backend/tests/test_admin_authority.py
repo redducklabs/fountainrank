@@ -55,6 +55,6 @@ async def test_write_endpoint_works_immediately_after_admin_transition(settings_
         resp = await ac.post(
             "/api/v1/fountains",
             json={"location": {"latitude": 5.0, "longitude": 6.0}, "is_working": True},
-            headers={"X-Dev-User": "logto-writer"},
+            headers={"X-Dev-User": "logto-writer", "X-Dev-Name": "Writer"},
         )
     assert resp.status_code == 201

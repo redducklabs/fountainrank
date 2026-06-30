@@ -86,6 +86,6 @@ async def test_dev_path_used_when_enabled_and_no_authorization_header(settings_o
         resp = await ac.post(
             "/api/v1/fountains",
             json={"location": {"latitude": 3.0, "longitude": 4.0}, "is_working": True},
-            headers={"X-Dev-User": "logto-dev-1"},
+            headers={"X-Dev-User": "logto-dev-1", "X-Dev-Name": "Dev One"},
         )
     assert resp.status_code == 201  # dev seam provisions + authorizes when no Bearer

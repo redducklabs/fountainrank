@@ -68,6 +68,15 @@ describe("addFountain", () => {
     expect(await addFountain(input)).toEqual({ ok: false, error: "server" });
   });
 
+  it("maps a display_name_required 409 to needs_name (the name gate, not a duplicate)", async () => {
+    POST.mockResolvedValue({
+      data: undefined,
+      error: { detail: "display_name_required" },
+      response: { status: 409 },
+    });
+    expect(await addFountain(input)).toEqual({ ok: false, error: "needs_name" });
+  });
+
   it("maps 401/422/5xx (each HTTP non-success status logs a warn with status)", async () => {
     POST.mockResolvedValue({ error: {}, response: { status: 401 } });
     expect(await addFountain(input)).toEqual({ ok: false, error: "unauthenticated" });

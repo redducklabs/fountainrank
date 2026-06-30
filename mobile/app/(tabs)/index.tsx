@@ -45,7 +45,7 @@ import {
   addFountainErrorText,
   addFountainGate,
   addFountainReducer,
-  duplicateFountainId,
+  classifyAddConflict,
   initialAddFountainState,
   mapAddFountainError,
   type AddFountainResult,
@@ -165,10 +165,12 @@ export default function MapScreen() {
         return { ok: true, fountainId: result.data.id };
       }
       if (result.response.status === 409) {
-        const fountainId = duplicateFountainId(result.error as { fountain_id?: unknown });
-        return fountainId
-          ? { ok: false, error: "duplicate", fountainId }
-          : { ok: false, error: "server" };
+        const conflict = classifyAddConflict(result.error);
+        if (conflict.kind === "needs_name") return { ok: false, error: "needs_name" };
+        if (conflict.kind === "duplicate") {
+          return { ok: false, error: "duplicate", fountainId: conflict.fountainId };
+        }
+        return { ok: false, error: "server" };
       }
       if (result.response.status === 401) throw new ApiError(401);
       if (result.response.status === 422) throw new ApiError(422);
@@ -498,6 +500,14 @@ export default function MapScreen() {
               if (result.error === "duplicate") {
                 addDispatch({ type: "duplicate", fountainId: result.fountainId });
                 setAddMessage({ tone: "err", text: "A fountain already exists here." });
+                return;
+              }
+              if (result.error === "needs_name") {
+                // The name gate: retrying won't help — close add mode and send to the account
+                // capture screen (kill Anonymous). The backend already rejected the write.
+                addDispatch({ type: "reset" });
+                setAddMode(false);
+                router.push("/account");
                 return;
               }
               addDispatch({ type: "submitError", error: result.error });

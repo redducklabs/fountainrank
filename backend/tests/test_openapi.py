@@ -43,6 +43,16 @@ def test_openapi_exposes_me_sync_endpoint():
     assert ref.endswith("/MeResponse")
 
 
+def test_openapi_exposes_me_patch_endpoint():
+    schema = app.openapi()
+    op = schema["paths"]["/api/v1/me"]["patch"]
+    assert "UpdateMeRequest" in schema["components"]["schemas"]
+    req_ref = op["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+    assert req_ref.endswith("/UpdateMeRequest")
+    resp_ref = op["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
+    assert resp_ref.endswith("/MeResponse")
+
+
 def test_openapi_exposes_contribution_data_contract():
     schema = app.openapi()
     paths = schema["paths"]
@@ -81,6 +91,22 @@ def test_openapi_exposes_notes_contract():
     assert "get" in note_path and "post" in note_path
     components = schema["components"]["schemas"]
     assert "AddNoteRequest" in components and "NoteOut" in components
+
+
+def test_openapi_gated_writes_document_display_name_required_409():
+    # The name-gate 409 must be documented on the gated writes so the generated client types it.
+    schema = app.openapi()
+    assert "DisplayNameRequiredConflict" in schema["components"]["schemas"]
+    for path in (
+        "/api/v1/fountains/{fountain_id}/ratings",
+        "/api/v1/fountains/{fountain_id}/attributes",
+        "/api/v1/fountains/{fountain_id}/conditions",
+        "/api/v1/fountains/{fountain_id}/notes",
+    ):
+        ref = schema["paths"][path]["post"]["responses"]["409"]["content"]["application/json"][
+            "schema"
+        ]["$ref"]
+        assert ref == "#/components/schemas/DisplayNameRequiredConflict", path
 
 
 def test_openapi_exposes_admin_moderation_contract():

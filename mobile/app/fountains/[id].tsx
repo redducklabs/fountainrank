@@ -1,6 +1,6 @@
 import type { components } from "@fountainrank/api-client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Stack, useLocalSearchParams } from "expo-router";
+import { Stack, router, useLocalSearchParams } from "expo-router";
 import { useState } from "react";
 import {
   Alert,
@@ -153,6 +153,10 @@ export default function FountainDetailScreen() {
     const mapped = mapContributionError(error);
     if (mapped === "unauthenticated") {
       auth.markReauthRequired();
+    }
+    if (mapped === "needs_name") {
+      // The name gate (kill Anonymous): send the user to the account capture screen to set a name.
+      router.navigate("/account");
     }
     return { ok: false, error: mapped };
   };

@@ -32,7 +32,9 @@ async def _serialize_admin_note(note: FountainNote, author: User) -> AdminNoteOu
     return AdminNoteOut(
         id=note.id,
         body=note.body,
-        author_display_name=public_display_name(author.display_name, author.logto_user_id),
+        author_display_name=public_display_name(
+            author.display_name, author.logto_user_id, author.nickname
+        ),
         is_hidden=note.is_hidden,
         created_at=note.created_at,
         updated_at=note.updated_at,

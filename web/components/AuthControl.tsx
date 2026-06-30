@@ -23,6 +23,19 @@ export function AuthControl({ viewer }: { viewer: Viewer }) {
     );
   }
 
+  // Still resolving to "Anonymous" — prompt to finish setup instead of an (empty) name menu. The
+  // API sends displayName="" here, so this never renders the raw subject.
+  if (viewer.state === "authed" && viewer.needsName) {
+    return (
+      <Link
+        href="/account"
+        className="inline-flex shrink-0 items-center justify-center rounded-full bg-[#F2C200] px-5 py-2 text-sm font-semibold text-[#0A357E] transition hover:bg-[#ffce1f]"
+      >
+        Finish setup
+      </Link>
+    );
+  }
+
   const isAdmin = viewer.state === "authed" && viewer.isAdmin;
   const name = viewer.state === "authed" ? viewer.displayName : "";
   const avatarUrl = viewer.state === "authed" ? viewer.avatarUrl : null;

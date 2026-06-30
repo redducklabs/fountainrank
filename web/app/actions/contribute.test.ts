@@ -64,6 +64,12 @@ describe("submitRating", () => {
       ok: false,
       error: "server",
     });
+    // 409 on a rating is unambiguously the name gate.
+    POST.mockResolvedValue({ response: { status: 409 } });
+    expect(await submitRating(FID, [{ rating_type_id: 1, stars: 4 }])).toEqual({
+      ok: false,
+      error: "needs_name",
+    });
   });
   it("treats a thrown token error as unauthenticated", async () => {
     getClient.mockRejectedValueOnce(new Error("no token"));

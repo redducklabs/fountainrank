@@ -6,6 +6,7 @@ import {
   addFountainErrorText,
   addFountainGate,
   addFountainReducer,
+  classifyAddConflict,
   duplicateFountainId,
   initialAddFountainState,
   mapAddFountainError,
@@ -71,10 +72,30 @@ describe("duplicateFountainId", () => {
   });
 });
 
+describe("classifyAddConflict", () => {
+  it("classifies a display_name_required 409 body as needs_name", () => {
+    expect(classifyAddConflict({ detail: "display_name_required" })).toEqual({
+      kind: "needs_name",
+    });
+  });
+  it("classifies a duplicate 409 body (valid fountain_id)", () => {
+    expect(classifyAddConflict({ fountain_id: UUID })).toEqual({
+      kind: "duplicate",
+      fountainId: UUID,
+    });
+  });
+  it("classifies an unrecognized / malformed 409 body as server", () => {
+    expect(classifyAddConflict({})).toEqual({ kind: "server" });
+    expect(classifyAddConflict({ fountain_id: "not-a-uuid" })).toEqual({ kind: "server" });
+    expect(classifyAddConflict(undefined)).toEqual({ kind: "server" });
+  });
+});
+
 describe("addFountainErrorText", () => {
   it("has user-facing copy for every error", () => {
     expect(addFountainErrorText("unauthenticated")).toMatch(/sign in/i);
     expect(addFountainErrorText("validation")).toMatch(/check/i);
+    expect(addFountainErrorText("needs_name")).toMatch(/display name/i);
     expect(addFountainErrorText("network")).toMatch(/connection/i);
     expect(addFountainErrorText("server")).toMatch(/try again/i);
   });

@@ -94,6 +94,7 @@ async def _global_board(
                 User.id,
                 User.display_name,
                 User.logto_user_id,
+                User.nickname,
                 UserContributionStats.total_points,
                 metric_col.label("metric"),
             )
@@ -110,7 +111,7 @@ async def _global_board(
     rows = [
         ContributorRow(
             rank=i,
-            display_name=public_display_name(r.display_name, r.logto_user_id),
+            display_name=public_display_name(r.display_name, r.logto_user_id, r.nickname),
             points=r.total_points,
             category_count=(None if sort == "total" else r.metric),
             is_you=user is not None and r.id == user.id,
@@ -215,6 +216,7 @@ async def _local_board(
         ranked.c.rn,
         User.display_name,
         User.logto_user_id,
+        User.nickname,
     ]
     if is_category:
         select_cols.append(base.c.category_count)
@@ -232,7 +234,7 @@ async def _local_board(
     rows = [
         ContributorRow(
             rank=r.rn,
-            display_name=public_display_name(r.display_name, r.logto_user_id),
+            display_name=public_display_name(r.display_name, r.logto_user_id, r.nickname),
             points=int(r.points),
             category_count=(int(r.category_count) if is_category else None),
             is_you=user is not None and r.user_id == user.id,
