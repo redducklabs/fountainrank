@@ -1,7 +1,8 @@
 # GA4 web analytics (consent-gated) — design
 
-**Status:** approved design (owner-approved 2026-06-30), in Codex spec review (round 2 addresses
-the round-1 findings).
+**Status:** owner-approved 2026-06-30; **Codex spec review APPROVED** (round 3). Subsequently
+amended during *plan* review (owner-confirmed): dropped `@next/third-parties` for a `next/script` +
+typed-`gtag` bootstrap with config-first dataLayer ordering (§2/§4/§5.C).
 **Driver:** owner directive (handoff `handoffs/2026-06-30-display-name-merged-ga4-next-handoff.md`,
 §"NEXT SESSION #2") — add Google Analytics 4 to the **web** app. Mobile GA is a later, separate
 effort and is **out of scope** here.
@@ -15,7 +16,8 @@ Measure web traffic with **Google Analytics 4**, loaded **only after the visitor
 analytics consent banner, **only in production**, and **only on the canonical FountainRank host**.
 Concretely:
 
-1. GA4 is wired into the web app via the official Next 16 integration (`@next/third-parties`).
+1. GA4 is wired into the web app via `next/script` (the core Next script primitive) + a typed gtag
+   helper (see §2 refinement; `@next/third-parties` does not fit the privacy requirement).
 2. A bottom **consent banner** (Accept / Decline, with a link to `/privacy`) gates loading: GA is
    **not loaded at all** until the visitor accepts. Decline → nothing loads, no GA cookies.
 3. The choice persists in `localStorage` and survives reloads (**fail-closed**: if persistence
@@ -41,14 +43,17 @@ Open follow-ups flagged for owner confirmation during this review (not blockers;
 banner copy; whether "Decline" is re-promptable later; whether to emit GA events for key actions
 (default: **page_view only** for v1, YAGNI).
 
-**One refinement to the approved design (flagged for owner awareness, §5.C):** the approved design
-said "render `@next/third-parties`' `GoogleAnalytics` component." That component runs
-`gtag('config', gaId)` with the default `send_page_view: true`, which sends the **full landing URL
-incl. query strings** at load — the exact privacy leak we must avoid (approximate location via the
-leaderboard `?lat/lng`). The component exposes **no** flag to disable it. So we keep the same
-library and its official **`sendGAEvent`** API, but bootstrap gtag with a minimal `next/script` pair
-(mirroring the component) that sets `send_page_view: false`, and emit our **own** path-only page
-views. Same dependency, same official event API; only the auto-page-view is replaced for privacy.
+**Refinement to the approved design — owner-confirmed 2026-06-30 (see §4/§5.C):** the approved
+design said "Add `@next/third-parties` and render its `GoogleAnalytics` component." Codex verified
+against `@next/third-parties@16.2.9` that this library **cannot** meet our privacy requirement:
+(1) its `<GoogleAnalytics>` runs `gtag('config', gaId)` with the default `send_page_view: true`,
+sending the **full landing URL incl. query strings** at load (the leaderboard `?lat/lng` approximate
+location), and exposes **no** flag to disable it; (2) its `sendGAEvent` reads a module-scoped
+`currDataLayerName` that is **only set when `<GoogleAnalytics>` renders**, so it no-ops ("GA has not
+been initialized") without the leaking component. We therefore **drop `@next/third-parties`** and use
+**`next/script`** (the core Next primitive `@next/third-parties` itself wraps) to bootstrap gtag with
+`send_page_view: false`, plus our own **typed `window.gtag`/`dataLayer`** page-view helper. No new
+runtime dependency; full control; no query-string leak.
 
 ## 3. GA4 stream + required GA-Admin configuration
 
@@ -88,22 +93,32 @@ This checklist is reproduced in the implementation plan and the **pre-deploy** o
   (approximate map location) + `scope`/`sort`; `web/app/page.tsx` reads `?add=1`; `AuthControl`
   builds return paths from pathname+query.
 
-**Next version:** `next` `16.2.9`, `react` `19.2.7`. `@next/third-parties` is **not** yet a
-dependency.
+**Next version:** `next` `16.2.9`, `react` `19.2.7`. We use `next/script` (bundled with `next`) and
+add **no** new runtime dependency (`@next/third-parties` is deliberately not added — §2 refinement).
 
-**`@next/third-parties` API (verified via Context7, Next 16 / App Router):**
+**GA wiring (`next/script` loader + typed gtag helper — see §2 refinement; no `@next/third-parties`):**
 ```tsx
-import { sendGAEvent } from "@next/third-parties/google"; // official event push to dataLayer
-// sendGAEvent("event", "page_view", { page_path: "/leaderboard" })
+import Script from "next/script";
+// helper uses the CANONICAL gtag() wrapper (pushes its `arguments`, exactly like Google's snippet):
+//   getGtag():   window.dataLayer = window.dataLayer || [];
+//                window.gtag ||= function gtag(){ window.dataLayer.push(arguments); };  // creates the layer
+//   ensureGaConfigured(gaId):  gtag('js', new Date()); gtag('config', gaId, { send_page_view:false }); // once
+//   sendPageView(gaId, p):     ensureGaConfigured(gaId); gtag('event','page_view', p);  // config FIRST
+// loader (next/script) is rendered ONLY AFTER ensureGaConfigured has run (gated by a `ready` state),
+// so window.dataLayer + js + config exist before gtag.js loads:
+//   <Script src="https://www.googletagmanager.com/gtag/js?id=<gaId>" />   // gaId via encodeURIComponent
 ```
-`@next/third-parties` also exports a `<GoogleAnalytics gaId>` component, but it runs
-`gtag('config', gaId)` with the default `send_page_view: true` (full-URL page view at load) and
-`GoogleAnalyticsProps` (`gaId`, `dataLayerName`, `nonce`, `debugMode`) has **no `send_page_view`
-flag** to disable it — so we cannot use it without leaking query strings (§2 refinement / §5.C). We
-keep `sendGAEvent` (it pushes to the default `dataLayer`, which our bootstrap creates) and provide a
-minimal `next/script` bootstrap that sets `send_page_view: false`. SPA page views are then emitted
-by **our** sanitized sender; GA4 **Enhanced Measurement "Page views"** is disabled GA-Admin-side
-(§3) so no unsanitized history-event duplicates are added.
+`next/script` (already shipped with `next`) is the same primitive `@next/third-parties` wraps, so we
+keep the official script-loading optimization without the leaking component or its `sendGAEvent`
+initialization coupling. **There is no inline `dangerouslySetInnerHTML` script** — the data layer,
+the `gtag` queue function, and the `js`/`config`/`event` commands are all established from typed JS
+via the canonical `gtag()` wrapper, `config` always queued before the first `page_view`, and the
+external loader is rendered only after that setup (matching Google's "establish the data layer before
+loading the tag" guidance; gtag.js then drains the queue in order). Our helper creates the default
+`window.dataLayer` and disables the
+config-time page view; **our** typed `sendPageView` helper (§5.C) pushes a sanitized `page_view`.
+GA4 **Enhanced Measurement "Page views"** is disabled GA-Admin-side (§3) so no unsanitized
+history-event duplicates are added.
 
 ## 5. Design
 
@@ -118,9 +133,10 @@ All env/consent/host/path logic lives in **pure functions** so it is testable wi
   GA_MEASUREMENT_ID_DEFAULT`, via a **literal static** `process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID`
   access (mirrors `resolveApiBaseUrl`; `envOverride` only for tests).
 - `isValidGaMeasurementId(id: string): boolean` — matches the GA4 pattern `^G-[A-Z0-9]+$`. The
-  `NEXT_PUBLIC_GA_MEASUREMENT_ID` override is **validated** against this before any script renders;
-  an invalid ID → GA does not load (treated like "no ID"). This is injection-hardening for the
-  inline bootstrap (see §5.C), since the ID flows into `dangerouslySetInnerHTML` and a script URL.
+  `NEXT_PUBLIC_GA_MEASUREMENT_ID` override is **validated** against this before any script renders or
+  any `config` is queued; an invalid ID → GA does not load (treated like "no ID"). Defense-in-depth:
+  the ID flows into the loader **script URL** (built with `encodeURIComponent`) and into the
+  `dataLayer` `config` entry as a plain JS value (no string-interpolated inline script — see §5.C).
 - `type Consent = "granted" | "denied" | "undecided"`.
 - `parseConsent(raw: string | null | undefined): Consent` — `"granted"`→`granted`,
   `"denied"`→`denied`, else (`null`/unknown)→`undecided`.
@@ -176,23 +192,29 @@ A small **client** subtree, the single source of truth for consent state (no cus
 leaderboard `?lat/lng` (approximate location), `?add=1`, and return-path query strings must never be
 sent to Google.
 
-- `GaScripts.tsx` (client) renders a minimal gtag bootstrap (two `next/script` tags mirroring the
-  official component) into the **default `dataLayer`** (the same data layer
-  `@next/third-parties`' `sendGAEvent` pushes to), with the **automatic page view disabled**:
-  ```js
-  window.dataLayer = window.dataLayer || [];
-  function gtag(){ dataLayer.push(arguments); }
-  gtag('js', new Date());
-  gtag('config', <gaId>, { send_page_view: false });   // ← no auto page view, no URL leak
-  ```
-  plus `<Script src={ga.js?id=…} />`. **Injection-hardening:** `GaScripts` renders **nothing** unless
-  `isValidGaMeasurementId(gaId)` (§5.A); the inline value uses `JSON.stringify(gaId)` (not raw
-  interpolation into `dangerouslySetInnerHTML`) and the script URL is built with
-  `encodeURIComponent(gaId)`. It then renders `<GaPageView />`.
-- `GaPageView.tsx` (client) — uses **`usePathname()` only** (deliberately **not**
-  `useSearchParams()`); keeps the previously-sent sanitized location in a ref, and on each pathname
-  change (incl. initial mount) calls `sendGAEvent("event", "page_view", { ...payload })` where the
-  payload is **fully sanitized**:
+- `GaScripts.tsx` (client) renders **nothing** unless `isValidGaMeasurementId(gaId)` (§5.A). When
+  valid it: (a) in a mount `useEffect`, calls `ensureGaConfigured(gaId)` and then sets a `ready`
+  state; (b) renders the loader `<Script src={`…/gtag/js?id=${encodeURIComponent(gaId)}`}
+  strategy="afterInteractive" />` **only when `ready`** — so the data layer + `js` + `config` are
+  established **before** the external `gtag.js` loads (Google's documented order); and (c) renders
+  `<GaPageView gaId={gaId} />`. No inline `dangerouslySetInnerHTML`.
+- `gtag.ts` (client helper, `web/components/analytics/gtag.ts`) — owns the `Window` augmentation
+  (`dataLayer?`, `gtag?`) and the **canonical `gtag()` wrapper** (pushes its `arguments`, exactly the
+  shape gtag.js expects — not array literals), and **guarantees config precedes the first event**:
+  - `getGtag()` — `window.dataLayer = window.dataLayer || []`; defines `window.gtag` once as
+    `function gtag(){ window.dataLayer.push(arguments); }`; returns it.
+  - `ensureGaConfigured(gaId)` — **once** (module-scoped guard) `gtag("js", new Date())` then
+    `gtag("config", gaId, { send_page_view: false })`.
+  - `sendPageView(gaId, params)` — calls `ensureGaConfigured(gaId)` **then** `gtag("event",
+    "page_view", params)`. So the dataLayer order is always `js → config → page_view`, regardless of
+    when the loader executes (gtag.js drains in order on load).
+  - This is **our** code — no `@next/third-parties` module-state dependency; `gaId` is a plain JS
+    value passed to `gtag()` (no HTML interpolation). A test-only `__resetGaConfigured()` resets the
+    guard between tests.
+- `GaPageView.tsx` (client) — props `{ gaId: string }`; uses **`usePathname()` only** (deliberately
+  **not** `useSearchParams()`); keeps the previously-sent sanitized location in a ref, and on each
+  pathname change (incl. initial mount) calls `sendPageView(gaId, { ...payload })` where the payload
+  is **fully sanitized**:
   - `page_path: sanitizePagePath(pathname)`
   - `page_location: window.location.origin + sanitizePagePath(pathname)`
   - `page_referrer:` the **previous** sanitized `page_location` for in-app navigations, or
@@ -207,8 +229,8 @@ sent to Google.
 - Tests: unit tests assert `sanitizePagePath`/`sanitizeUrl` strip `?…`/`#…` and `isValidGaMeasurementId`
   accepts `G-…`/rejects junk; a render test asserts the page_view payload's `page_path`,
   `page_location`, **and `page_referrer`** contain no `?`/`#`; and an integration test (see §6)
-  proves the **real** `sendGAEvent` lands the event on the default `window.dataLayer` our bootstrap
-  initializes (not just a mock), confirming the manual bootstrap and the helper agree on the layer.
+  proves `sendPageView` produces the **dataLayer order `js → config(send_page_view:false) → page_view`**
+  for the first hit (and does not re-push `config` on the second hit).
 
 ### D. Privacy page — `web/app/privacy/page.tsx`
 
@@ -253,13 +275,14 @@ gate.
   the buttons + `/privacy` link + a11y attrs and invokes the callbacks; `AnalyticsConsent` returns
   `null` before mount (SSR safety), shows the banner only when `shouldShowBanner` is true, and on
   accept persists + flips to loading GA (and on a thrown `setItem`, stays fail-closed: no GA, banner
-  remains); `GaScripts` renders nothing for an invalid `gaId`; `GaPageView` calls `sendGAEvent` with
-  `page_path`, `page_location`, **and `page_referrer`** all free of `?`/`#` (`sendGAEvent` mocked).
-- **Integration test (jsdom, `sendGAEvent` NOT mocked):** initialize `window.dataLayer` via the
-  bootstrap shape, call the **real** `@next/third-parties` `sendGAEvent("event","page_view",{…})`,
-  and assert the event is appended to `window.dataLayer` — proving the manual bootstrap's default
-  data layer matches what the helper pushes to (guards the §5.C refinement against a future
-  `@next/third-parties` change).
+  remains); `GaScripts` renders nothing for an invalid `gaId`; `GaPageView` calls `sendPageView` with
+  `page_path`, `page_location`, **and `page_referrer`** all free of `?`/`#` (`sendPageView` mocked).
+- **Integration test (jsdom):** call our real `sendPageView(gaId, {…})`
+  (`web/components/analytics/gtag.ts`) against a fresh `window` (`__resetGaConfigured()` first) and
+  assert `window.dataLayer` entries — each a `gtag()` `arguments` object, read by index — are, **in
+  order**, `[0]="js"`, then `["config", gaId, {send_page_view:false}]`, then
+  `["event","page_view",{…}]` (config before the event), and that a second call appends only another
+  `page_view` (no duplicate `config`). No dependency on `@next/third-parties` module state.
 - **Environment caveat (honest):** on this Windows host with Codex's WSL-built `node_modules`
   ([[fountainrank-windows-wsl-local-check-workarounds]]), specific mirror steps may not run cleanly
   locally. The plan/PR will **run what runs and record any step that the environment blocks with its
@@ -273,15 +296,16 @@ gate.
 - **Data minimization** — only path-only `page_view` reaches GA; query strings + fragments (incl.
   approximate location) are stripped from `page_path`, `page_location`, **and `page_referrer`**
   (§5.C). We pass no user identifiers to GA.
-- **Script-injection hardening** — the Measurement ID (incl. any `NEXT_PUBLIC_GA_MEASUREMENT_ID`
-  override) is validated against `^G-[A-Z0-9]+$` before any script renders, inline-embedded via
-  `JSON.stringify`, and URL-embedded via `encodeURIComponent` (§5.A/§5.C) — no raw interpolation
-  into `dangerouslySetInnerHTML` or the script `src`.
+- **Script-injection hardening** — there is **no inline `dangerouslySetInnerHTML`** at all (config is
+  pushed to `dataLayer` as a plain JS value). The Measurement ID (incl. any
+  `NEXT_PUBLIC_GA_MEASUREMENT_ID` override) is validated against `^G-[A-Z0-9]+$` before anything
+  loads, and the only place it enters markup — the loader `src` — is `encodeURIComponent`-escaped
+  (§5.A/§5.C).
 - **Scope containment** — GA loads only on `NODE_ENV==="production"` **and** a canonical host
   (`fountainrank.com`/`www.fountainrank.com`), so forks, previews, and local `next build && next
   start` do **not** send traffic into the owner's property. A self-hoster who wants their own
   analytics overrides `NEXT_PUBLIC_GA_MEASUREMENT_ID` and edits `CANONICAL_HOSTS`.
-- **Third-party scripts** — `@next/third-parties` loads `googletagmanager.com` /
+- **Third-party scripts** — our `next/script` gtag bootstrap loads `googletagmanager.com` /
   `google-analytics.com` only after consent. No CSP exists today (no allowlist change needed); if a
   CSP is added later it must permit those origins (noted; out of scope).
 - **Privacy-respecting by construction** — no GA cookies or network calls before `granted`, and a
@@ -315,14 +339,15 @@ page-view/history measurement before it is flipped. No AI attribution; no time e
 
 | File | Change |
 |---|---|
-| `web/package.json` | add `@next/third-parties` (pinned, matching Next 16) — used for `sendGAEvent` |
+| `web/package.json` | **no new runtime dep** — uses `next/script` (ships with `next`) |
 | `web/lib/analytics.ts` | **new** — pure consent/env/host/id/path helpers |
 | `web/lib/analytics.test.ts` | **new** — unit tests (local) |
 | `web/components/analytics/AnalyticsConsent.tsx` | **new** — client coordinator (consent state + GA + banner) |
 | `web/components/analytics/ConsentBanner.tsx` | **new** — client presentational bottom bar |
-| `web/components/analytics/GaScripts.tsx` | **new** — gtag bootstrap (`send_page_view:false`) + mounts `GaPageView` |
+| `web/components/analytics/GaScripts.tsx` | **new** — `next/script` gtag bootstrap (`send_page_view:false`) + mounts `GaPageView` |
+| `web/components/analytics/gtag.ts` | **new** — typed `Window` augmentation + `sendPageView` (dataLayer push) |
 | `web/components/analytics/GaPageView.tsx` | **new** — client sanitized path-only page_view sender |
-| `web/components/analytics/*.test.tsx` | **new** — JSX render tests (jsdom) |
+| `web/components/analytics/*.test.tsx` | **new** — JSX render + integration tests (jsdom) |
 | `web/app/layout.tsx` | render `<AnalyticsConsent />` |
 | `web/app/privacy/page.tsx` | add "Analytics" section + bump `lastUpdated` |
 | `docs/style-guide.md` | document the Consent banner element (create if absent) |
