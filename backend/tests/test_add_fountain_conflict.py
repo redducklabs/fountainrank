@@ -29,7 +29,14 @@ def test_openapi_declares_typed_conflict_schema():
     from app.main import app
 
     schema = app.openapi()
-    assert "DuplicateFountainConflict" in schema["components"]["schemas"]
+    components = schema["components"]["schemas"]
+    # add_fountain now has TWO 409 shapes: the duplicate conflict and the name gate.
+    assert "DuplicateFountainConflict" in components
+    assert "DisplayNameRequiredConflict" in components
     post = schema["paths"]["/api/v1/fountains"]["post"]
-    ref = post["responses"]["409"]["content"]["application/json"]["schema"]["$ref"]
-    assert ref == "#/components/schemas/DuplicateFountainConflict"
+    conflict = post["responses"]["409"]["content"]["application/json"]["schema"]
+    refs = {opt.get("$ref") for opt in conflict["anyOf"]}
+    assert refs == {
+        "#/components/schemas/DuplicateFountainConflict",
+        "#/components/schemas/DisplayNameRequiredConflict",
+    }

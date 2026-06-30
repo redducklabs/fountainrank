@@ -153,18 +153,19 @@ async def test_public_note_does_not_leak_logto_subject(client, test_user, sessio
 
     fid = await _add_fountain(client)
     # Simulate provisioning that fell back to the Logto subject (no name/username):
-    # display_name == logto_user_id (the raw subject).
+    # display_name == logto_user_id (the raw subject). Such a user can no longer POST a note —
+    # the require_named_user gate blocks it — but legacy/pre-gate rows may exist, so insert one
+    # directly and verify the PUBLIC read masks it to "Anonymous", never leaking the subject.
     sub = "auth0|deadbeefsubject"
     leaky = User(logto_user_id=sub, email="leak@example.com", display_name=sub)
     session.add(leaky)
-    await session.commit()
-    app.dependency_overrides[get_current_user] = lambda: leaky
-    try:
-        await client.post(
-            f"/api/v1/fountains/{fid}/notes", json={"body": "hi from a synced-less user"}
+    await session.flush()
+    session.add(
+        FountainNote(
+            fountain_id=uuid.UUID(fid), user_id=leaky.id, body="hi from a synced-less user"
         )
-    finally:
-        app.dependency_overrides[get_current_user] = lambda: test_user
+    )
+    await session.commit()
 
     notes = (await client.get(f"/api/v1/fountains/{fid}/notes")).json()
     assert len(notes) == 1

@@ -357,7 +357,7 @@ async def test_hard_delete_reverses_creator_points(raw_client, session):
     # A user adds a fountain through the real API (earning add + first-X bonus points)...
     added = await raw_client.post(
         "/api/v1/fountains",
-        headers={"X-Dev-User": "creator-sub"},
+        headers={"X-Dev-User": "creator-sub", "X-Dev-Name": "Creator"},
         json={"location": {"latitude": 41.0, "longitude": -71.0}},
     )
     assert added.status_code == 201
@@ -427,7 +427,7 @@ async def test_hard_delete_reverses_all_contributors(raw_client, session):
     # Creator adds the fountain; a *second* user rates it. Both earn points.
     added = await raw_client.post(
         "/api/v1/fountains",
-        headers={"X-Dev-User": "creator-sub"},
+        headers={"X-Dev-User": "creator-sub", "X-Dev-Name": "Creator"},
         json={"location": {"latitude": 42.0, "longitude": -72.0}},
     )
     assert added.status_code == 201
@@ -435,7 +435,7 @@ async def test_hard_delete_reverses_all_contributors(raw_client, session):
 
     rated = await raw_client.post(
         f"/api/v1/fountains/{fountain_id}/ratings",
-        headers={"X-Dev-User": "rater-sub"},
+        headers={"X-Dev-User": "rater-sub", "X-Dev-Name": "Rater"},
         json={"ratings": [{"rating_type_id": 1, "stars": 5}]},
     )
     assert rated.status_code == 200
@@ -486,7 +486,7 @@ async def test_admin_detail_includes_admins_own_rating(raw_client, session, auth
     fountain = await _create_fountain(session, author)
     rated = await raw_client.post(
         f"/api/v1/fountains/{fountain.id}/ratings",
-        headers={"X-Dev-User": "admin-sub"},
+        headers={"X-Dev-User": "admin-sub", "X-Dev-Name": "Admin"},
         json={"ratings": [{"rating_type_id": 1, "stars": 4}]},
     )
     assert rated.status_code == 200

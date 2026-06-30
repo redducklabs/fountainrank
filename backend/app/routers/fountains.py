@@ -9,7 +9,7 @@ from sqlalchemy import cast, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import get_current_user, get_optional_user
+from app.auth import get_optional_user, require_named_user
 from app.conditions import recompute_fountain_status
 from app.config import Settings, get_settings
 from app.consensus import recompute_attribute_consensus
@@ -50,6 +50,7 @@ from app.schemas import (
     ConditionReportRequest,
     Coordinates,
     DimensionSummary,
+    DisplayNameRequiredConflict,
     DuplicateFountainConflict,
     FountainDetail,
     FountainPin,
@@ -499,12 +500,14 @@ async def fountain_detail(
     "/fountains",
     response_model=FountainDetail,
     status_code=status.HTTP_201_CREATED,
-    responses={status.HTTP_409_CONFLICT: {"model": DuplicateFountainConflict}},
+    responses={
+        status.HTTP_409_CONFLICT: {"model": DuplicateFountainConflict | DisplayNameRequiredConflict}
+    },
 )
 async def add_fountain(
     payload: AddFountainRequest,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_named_user),
     settings: Settings = Depends(get_settings),
 ) -> FountainDetail | JSONResponse:
     await _validate_rating_types(session, payload.ratings)
@@ -621,12 +624,16 @@ async def add_fountain(
     return await serialize_fountain_detail(session, fountain, user_id=user.id)
 
 
-@router.post("/fountains/{fountain_id}/ratings", response_model=FountainDetail)
+@router.post(
+    "/fountains/{fountain_id}/ratings",
+    response_model=FountainDetail,
+    responses={status.HTTP_409_CONFLICT: {"model": DisplayNameRequiredConflict}},
+)
 async def submit_ratings(
     fountain_id: uuid.UUID,
     payload: RateRequest,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_named_user),
 ) -> FountainDetail:
     # Lock the parent fountain row for the txn so concurrent raters serialize their
     # aggregate recompute. The per-rating ON CONFLICT keeps the rating ROWS race-safe,
@@ -672,12 +679,16 @@ async def submit_ratings(
     return await serialize_fountain_detail(session, fountain, user_id=user.id)
 
 
-@router.post("/fountains/{fountain_id}/attributes", response_model=FountainDetail)
+@router.post(
+    "/fountains/{fountain_id}/attributes",
+    response_model=FountainDetail,
+    responses={status.HTTP_409_CONFLICT: {"model": DisplayNameRequiredConflict}},
+)
 async def submit_attributes(
     fountain_id: uuid.UUID,
     payload: ObserveAttributesRequest,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_named_user),
 ) -> FountainDetail:
     # Lock the fountain row for the txn so concurrent observers serialize their consensus
     # recompute (mirrors submit_ratings' FOR UPDATE discipline).
@@ -725,12 +736,16 @@ async def submit_attributes(
     return await serialize_fountain_detail(session, fountain, user_id=user.id)
 
 
-@router.post("/fountains/{fountain_id}/conditions", response_model=FountainDetail)
+@router.post(
+    "/fountains/{fountain_id}/conditions",
+    response_model=FountainDetail,
+    responses={status.HTTP_409_CONFLICT: {"model": DisplayNameRequiredConflict}},
+)
 async def submit_condition(
     fountain_id: uuid.UUID,
     payload: ConditionReportRequest,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_named_user),
 ) -> FountainDetail:
     # One captured timestamp drives the row created_at, the status recompute window, and the
     # per-day dedup key — so they can never straddle a UTC-midnight boundary.
@@ -796,12 +811,16 @@ async def submit_condition(
     return await serialize_fountain_detail(session, fountain, user_id=user.id)
 
 
-@router.post("/fountains/{fountain_id}/notes", response_model=NoteOut)
+@router.post(
+    "/fountains/{fountain_id}/notes",
+    response_model=NoteOut,
+    responses={status.HTTP_409_CONFLICT: {"model": DisplayNameRequiredConflict}},
+)
 async def submit_note(
     fountain_id: uuid.UUID,
     payload: AddNoteRequest,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_named_user),
 ) -> NoteOut:
     fountain = (
         await session.execute(
@@ -859,7 +878,9 @@ async def submit_note(
     return NoteOut(
         id=note.id,
         body=payload.body,
-        author_display_name=public_display_name(user.display_name, user.logto_user_id, user.nickname),
+        author_display_name=public_display_name(
+            user.display_name, user.logto_user_id, user.nickname
+        ),
         created_at=note.created_at,
         updated_at=note.updated_at,
     )

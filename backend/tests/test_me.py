@@ -45,7 +45,7 @@ async def test_me_includes_needs_name_false_for_named(client, test_user):
 
 
 async def test_me_needs_name_true_when_anonymous(client, test_user, session):
-    # display_name fell back to the subject and no nickname -> needs_name; the subject must NOT leak.
+    # display_name fell back to the subject and no nickname -> needs_name; subject must not leak.
     test_user.display_name = test_user.logto_user_id
     test_user.nickname = None
     await session.commit()
@@ -66,7 +66,7 @@ async def test_me_display_name_prefers_nickname(client, test_user, session):
 
 
 async def test_me_blanks_synthetic_subject_email(client, test_user, session):
-    # The provisioning fallback embeds the subject in a synthetic email — it must NOT cross the wire.
+    # The synthetic fallback email embeds the subject — it must not cross the wire.
     test_user.email = f"{test_user.logto_user_id}@users.noreply.fountainrank.com"
     await session.commit()
     resp = await client.get("/api/v1/me")

@@ -131,6 +131,13 @@ class DuplicateFountainConflict(BaseModel):
     fountain_id: uuid.UUID
 
 
+class DisplayNameRequiredConflict(BaseModel):
+    """409 body for a contribution-write by an account that still resolves to "Anonymous"
+    (no nickname and display_name == subject). The client routes the user to set a name."""
+
+    detail: Literal["display_name_required"] = "display_name_required"
+
+
 class AddFountainRequest(BaseModel):
     location: Coordinates
     is_working: bool = True

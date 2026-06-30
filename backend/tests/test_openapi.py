@@ -93,6 +93,22 @@ def test_openapi_exposes_notes_contract():
     assert "AddNoteRequest" in components and "NoteOut" in components
 
 
+def test_openapi_gated_writes_document_display_name_required_409():
+    # The name-gate 409 must be documented on the gated writes so the generated client types it.
+    schema = app.openapi()
+    assert "DisplayNameRequiredConflict" in schema["components"]["schemas"]
+    for path in (
+        "/api/v1/fountains/{fountain_id}/ratings",
+        "/api/v1/fountains/{fountain_id}/attributes",
+        "/api/v1/fountains/{fountain_id}/conditions",
+        "/api/v1/fountains/{fountain_id}/notes",
+    ):
+        ref = schema["paths"][path]["post"]["responses"]["409"]["content"]["application/json"][
+            "schema"
+        ]["$ref"]
+        assert ref == "#/components/schemas/DisplayNameRequiredConflict", path
+
+
 def test_openapi_exposes_admin_moderation_contract():
     schema = app.openapi()
     paths = schema["paths"]

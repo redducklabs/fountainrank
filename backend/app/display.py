@@ -24,9 +24,7 @@ def resolved_display_name(
     return None if name == logto_user_id else name
 
 
-def public_display_name(
-    display_name: str, logto_user_id: str, nickname: str | None = None
-) -> str:
+def public_display_name(display_name: str, logto_user_id: str, nickname: str | None = None) -> str:
     """Return a public-safe author name — never the raw Logto subject. Masks to a generic
     label when the account has no real name (no nickname and ``display_name`` fell back to the
     subject)."""

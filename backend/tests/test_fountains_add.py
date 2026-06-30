@@ -85,7 +85,7 @@ async def test_concurrent_add_same_point_dedupes_to_one():
                 return await ac.post(
                     "/api/v1/fountains",
                     json={"location": {"latitude": 37.7749, "longitude": -122.4194}},
-                    headers={"X-Dev-User": subject},
+                    headers={"X-Dev-User": subject, "X-Dev-Name": f"Name {subject}"},
                 )
 
             r_a, r_b = await asyncio.gather(add("adder-a"), add("adder-b"))
