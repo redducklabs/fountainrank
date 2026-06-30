@@ -127,9 +127,24 @@ rejection (`user_id` only) so a gated write is diagnosable.
 **Clients are the primary UX:**
 - After sign-in, fetch `/me`; when `needs_name` is true, route to a **required** name-capture screen
   (cannot be dismissed back into the authed surface without setting a name; sign-out is the only
-  escape). Public browsing remains available.
+  escape). Public browsing remains available. See §10 for the per-surface gate points (web sign-in
+  callback + header; mobile account tab + add-mode gate).
 - Also catch a `409 display_name_required` from any write and route to the same screen (covers a
   race where state changed mid-session).
+
+**OpenAPI contract (the 409 must not lie).** Add a `DisplayNameRequiredConflict { detail:
+Literal["display_name_required"] }` schema and document it on all five gated endpoints'
+`responses={409: …}`. `POST /fountains` already documents a 409 `DuplicateFountainConflict`; its 409
+becomes a **union** of the two shapes (both are reachable: the gate dependency runs before the
+duplicate check), so the regenerated client types both and the clients disambiguate by `detail`
+vs `fountain_id`. The other four endpoints document 409 = `DisplayNameRequiredConflict` only.
+
+**Client 409 handling — no `unwrap`/`ApiError` surgery needed.** The four detail writes
+(ratings/conditions/attributes/notes) have **only** the gate 409, so a bare status 409 →
+`needs_name` (the body is not needed; mobile's `unwrap` discarding it is fine here). `POST /fountains`
+has two 409 shapes, but the mobile add mutation (`(tabs)/index.tsx`) and the web add action both read
+the typed openapi-fetch `error` body directly, so they branch on `detail === "display_name_required"`
+vs a valid `fountain_id` there.
 
 ## 8. Mutation endpoint — `PATCH /api/v1/me` (`backend/app/routers/users.py`)
 
@@ -145,36 +160,59 @@ rejection (`user_id` only) so a gated write is diagnosable.
   **never** the value (treat as user-controlled PII).
 - **v1 is set/change only — no "clear back to IdP name."** YAGNI, and clearing would reopen the
   Anonymous hole for accounts whose IdP name is the subject. Documented out of scope (§13).
+- **Conflict schema:** add `DisplayNameRequiredConflict { detail: Literal["display_name_required"] }`
+  to `schemas.py`; wire it into the five gated endpoints' `responses={409: …}` (§7) so the OpenAPI /
+  generated client reflect the real 409 body.
 
 ## 9. Self-view `MeResponse` (`backend/app/schemas.py`)
 
 - `display_name` becomes the **resolved** self-view name: the nickname when set, else the IdP
-  `display_name` (a stored nickname is always validated non-empty, so this matches §6's resolution).
-  Backward-compatible improvement — existing clients reading `display_name` automatically pick up a
-  set nickname. When the account is Anonymous this equals the raw subject; clients **must** honor
-  `needs_name` and not render it in that case.
+  `display_name`. **When the account resolves to Anonymous (`needs_name` true), `display_name` is the
+  empty string `""` — never the raw Logto subject.** The subject is an internal identity key that
+  must never reach the client (a data-exposure rule); the only client use of `display_name` in the
+  Anonymous state is a blank field pre-fill, so `""` is exactly right. Otherwise it is a
+  backward-compatible improvement: existing clients reading `display_name` pick up a set nickname
+  automatically. Concretely the helper returns `resolved or ""` (not `resolved or user.display_name`).
 - Add **`needs_name: bool`** =
   `resolved_display_name(display_name, logto_user_id, nickname) is None` — drives the §7 client gate
   and the field pre-fill (pre-fill = current `display_name` when `needs_name` is false, else blank).
 - `MeResponse` is built via one small helper (`me_response(user)`) reused by `get_me`, `sync_me`, and
   the new `PATCH /me`, so the three stay consistent.
+- **Tests assert** `/me` and `/me/sync` never return the raw subject in `display_name` (it is `""`
+  when `needs_name`), including the real Logto-JWT path where the token carries no `name`/`username`.
 
 ## 10. Client UI
 
 ### 10.1 Web (`web/`)
-- A **name-capture** surface reached after sign-in when `needs_name` (a dedicated route, e.g.
-  `/account/name`, server-rendered to match the existing `/account` style; the post-sign-in callback
-  and `/account` redirect to it while `needs_name`). A single "Display name" form posting through a
-  BFF route to `PATCH /me`, then returns the user to where they were.
-- A **"Display name"** field on `/account` (`web/app/account/page.tsx`) for changing the name when
-  already named. Both go through one shared client form component + one BFF proxy route.
+The gate is enforced at three points so a nameless user is captured immediately and the raw subject
+never surfaces:
+1. **Sign-in callback** (`web/app/callback/route.ts`): after `syncProfileForRoute`, fetch `/me`; when
+   `needs_name`, redirect to the capture surface (`/account`) instead of the stored return path —
+   this is the "first-sign-in prompt". (Preserve the return path so the user lands back after naming.)
+2. **Header / viewer** (`web/lib/server/viewer.ts`, `web/components/AuthControl.tsx`): the `Viewer`
+   type gains `needsName: boolean`; `getViewer` reads it from `/me`. Because the API now sends
+   `display_name = ""` when `needs_name`, the header can never render the subject; additionally, when
+   `needsName`, `AuthControl` shows a "Finish setup — set your name" link to `/account` (defense +
+   persistent prompt). `viewer.test.ts` gains a case proving no subject leaks.
+3. **`/account`** (`web/app/account/page.tsx`): when `needs_name`, render **only** the required
+   `DisplayNameForm` (blank, no dismiss) as the gate; otherwise render the account body plus the form
+   pre-filled for changing the name. The form calls the `setDisplayName` server action (→ `PATCH /me`).
+- Contribution server actions already 409-gate (§7) and surface a "set a display name" prompt linking
+  to `/account` (covers a write attempt by a nameless user).
 
 ### 10.2 Mobile (`mobile/`)
-- A **name-capture** screen shown after sign-in when `needs_name` (gating the authed surface; the
-  account tab and any write attempt route to it). One "Display name" field calling `PATCH /me` via
-  the authed `useApi` client, invalidating `["me"]` on success.
-- A **"Display name"** edit affordance on the account tab (`mobile/app/(tabs)/account.tsx`) for the
-  already-named case.
+- **Account tab** (`mobile/app/(tabs)/account.tsx`): when `needs_name`, render **only** the required
+  `DisplayNameForm` (no dismiss) as the gate — and this is where sign-in happens, so it is the
+  first-sign-in capture point. Otherwise show the profile plus an "edit display name" affordance. The
+  form calls `PATCH /me` via the authed `useApi` client and invalidates `["me"]`.
+- **Add-fountain gate** (`mobile/app/(tabs)/index.tsx` + `mobile/lib/add-fountain/state.ts`): extend
+  the add gate so entering add-mode while `needs_name` shows "Set a display name first" routing to the
+  account tab; the add mutation also maps its 409 `display_name_required` body to that prompt.
+- **Detail writes** (`mobile/app/fountains/[id].tsx` + `mobile/lib/contributions/state.ts`): map a 409
+  on rate/condition/attribute/note (unambiguous → gate) to a `needs_name` outcome that routes to the
+  account tab.
+- A small pure helper (`mobile/lib/auth/display-name.ts`) holds the validation + gate decision so the
+  logic is unit-tested without rendering.
 
 ### 10.3 Style guide
 Document the **name-capture screen** and the **"Display name" form field** (states: default, saving,
@@ -210,16 +248,26 @@ owner may close it as folded-in once this ships and is device-verified together.
 - `display.py`: `resolved_display_name` / `public_display_name` with nickname set / blank /
   whitespace / equal-to-subject; "Anonymous" only when both empty and `display_name == subject`.
 - `PATCH /me`: happy path (sets nickname, `/me` reflects it, `needs_name` flips false); validation
-  matrix (empty, whitespace, >50, equal-to-subject); auth required (401 unauth).
+  matrix (empty, whitespace, **>80**, equal-to-subject); auth required (401 unauth).
 - `require_named_user`: a representative write (e.g. `POST /fountains/{id}/notes`) returns
   `409 display_name_required` for an Anonymous user and succeeds after a name is set; a named user is
   unaffected.
-- `/me` `needs_name` true/false; leaderboard + notes show the nickname once set (masking interaction).
-- OpenAPI: `PATCH /me` present with the documented schema (mirror `test_openapi.py`).
+- `/me` `needs_name` true/false; **`display_name == "" when needs_name` (no subject leak)**, including
+  the real Logto-JWT path (`test_logto_auth.py`) where the token carries no `name`/`username`.
+- `/me/sync`: still returns a nickname-resolved response (extend `test_logto_auth.py`).
+- leaderboard + notes show the nickname once set (masking interaction).
+- OpenAPI: `PATCH /me` present with `UpdateMeRequest`; `POST /fountains` 409 documents both
+  `DuplicateFountainConflict` and `DisplayNameRequiredConflict`; the four other gated endpoints
+  document the 409 conflict schema (extend `test_openapi.py` + `test_add_fountain_conflict.py`).
 
-**Web / mobile:** pure-logic helpers (pre-fill + gate decision: `needs_name` → capture) unit-tested
-locally; render/route/gate-integration tests are **CI-only** per the env note. Regenerate the
-api-client (`export_openapi` → `openapi-typescript`) so `PATCH /me` + `needs_name` are typed.
+**Web / mobile (pure-logic local; render/route CI-/owner-verified):**
+- Pure helpers unit-tested locally: name validation (trim/1..80), the gate decision (`needs_name` →
+  capture), web `setDisplayName` action status mapping, web `getViewer` never exposing a subject when
+  `needs_name`, mobile add/detail 409 → `needs_name` error mapping (`add-fountain/state.ts`,
+  `contributions/state.ts`).
+- Render/route/gate-integration tests are CI-only per the env note. Regenerate the api-client
+  (`export_openapi` → `openapi-typescript`) so `PATCH /me`, `needs_name`, and the 409 conflict schema
+  are typed.
 
 ## 15. Logging & observability
 

@@ -19,6 +19,10 @@
 - Validation for the name: trim; **min 1, max 80**; **≠ the Logto subject**; **not unique**. Never log the value.
 - Backend write-gate rejection: HTTP **409** with `detail: "display_name_required"`.
 - Never log secrets/PII/tokens; the chosen name is user-controlled text → never logged.
+- `MeResponse.display_name` is `""` (never the raw Logto subject) when `needs_name` is true.
+- **Command paths in this plan target the Windows Git Bash executor (this session): `/d/repos/...`.**
+  Codex's WSL adapter sees the same files at `/mnt/d/repos/...`; translate if running there. All
+  source paths are repo-relative regardless.
 
 ---
 
@@ -29,27 +33,29 @@
 - `app/models.py` — add `User.nickname`.
 - `app/display.py` — add `resolved_display_name`; extend `public_display_name` with `nickname`.
 - `app/routers/leaderboard.py`, `app/routers/fountains.py`, `app/routers/admin.py` — pass `nickname` to `public_display_name`.
-- `app/schemas.py` — `MeResponse` (resolved `display_name` + `needs_name`); new `UpdateMeRequest`.
-- `app/routers/users.py` — `me_response()` helper; `PATCH /me`; use helper in `get_me`/`sync_me`.
+- `app/schemas.py` — `MeResponse` (resolved `display_name` + `needs_name`); new `UpdateMeRequest`; new `DisplayNameRequiredConflict`.
+- `app/routers/users.py` — `me_response()` helper (`display_name = resolved or ""`); `PATCH /me`; use helper in `get_me`/`sync_me`.
 - `app/auth.py` — `require_named_user` dependency.
-- `app/routers/fountains.py` — swap the 5 write endpoints to `require_named_user`.
-- `tests/test_display.py` (new), `tests/test_me.py`, `tests/test_gamification_api.py`, `tests/test_notes_api.py`, `tests/test_openapi.py` — tests.
+- `app/routers/fountains.py` — swap the 5 write endpoints to `require_named_user` + document their 409 `responses`.
+- `tests/test_display.py` (new), `tests/test_me.py`, `tests/test_gamification_api.py`, `tests/test_notes_api.py`, `tests/test_openapi.py`, `tests/test_add_fountain_conflict.py`, `tests/test_logto_auth.py` — tests.
 
 **Shared client (`packages/api-client/`)**
-- `openapi.json`, `src/schema.d.ts` — regenerated.
+- `openapi.json`, `src/schema.d.ts` — regenerated (PATCH /me, `needs_name`, the 409 conflict schema).
 
 **Web (`web/`)**
 - `app/actions/profile.ts` (new) + `app/actions/profile.test.ts` (new) — `setDisplayName`.
 - `lib/display-name.ts` (new) + `lib/display-name.test.ts` (new) — pure validation/gate helpers.
-- `app/actions/contribute.ts`, `lib/add-fountain.ts`, `app/actions/add-fountain.ts` — map 409 `display_name_required` → `needs_name`.
+- `app/actions/contribute.ts`, `lib/add-fountain.ts`, `app/actions/add-fountain.ts` (+ their tests) — map 409 `display_name_required` → `needs_name` (add-fountain branches on `detail` vs `fountain_id`).
 - `components/account/DisplayNameForm.tsx` (new), `app/account/page.tsx` — field + gate.
+- `lib/server/viewer.ts` (+ `viewer.test.ts`), `components/AuthControl.tsx`, `app/callback/route.ts` — viewer/header never expose the subject; sign-in callback routes to the gate (Task 10b).
 - `components/map/AddFountainPanel.tsx` + rating/note UIs — surface the `needs_name` prompt.
 
 **Mobile (`mobile/`)**
 - `lib/auth/display-name.ts` (new) + `lib/auth/display-name.test.ts` (new) — pure validation/gate helpers.
-- `lib/auth/profile.ts` — `needs_name` is part of `MeProfile` (regenerated type; add a `needsName` selector if helpful).
+- `lib/auth/profile.ts` — `needs_name` is part of `MeProfile` (regenerated type).
 - `app/(tabs)/account.tsx` + `components/account/DisplayNameForm.tsx` (new) — field + capture gate.
-- contribution call sites (`app/(tabs)/add.tsx`, rating UI) — map 409 → "set a name" routing.
+- `lib/add-fountain/state.ts` (+ test), `app/(tabs)/index.tsx`, `components/add-fountain/AddFountainForm.tsx` — add-fountain 409 classify + route (the real add POST is `(tabs)/index.tsx`, **not** `(tabs)/add.tsx`).
+- `lib/contributions/state.ts` (+ test), `app/fountains/[id].tsx` — detail-write 409 → `needs_name` route.
 
 **Docs**
 - `docs/style-guide.md` — name-capture screen + Display name field.
@@ -296,12 +302,15 @@ async def test_me_includes_needs_name_false_for_named(client, test_user):
 
 
 async def test_me_needs_name_true_when_anonymous(client, test_user, session):
-    # display_name fell back to the subject and no nickname -> needs_name.
+    # display_name fell back to the subject and no nickname -> needs_name; the subject must NOT leak.
     test_user.display_name = test_user.logto_user_id
     test_user.nickname = None
     await session.commit()
     resp = await client.get("/api/v1/me")
-    assert resp.json()["needs_name"] is True
+    body = resp.json()
+    assert body["needs_name"] is True
+    assert body["display_name"] == ""  # never the raw Logto subject
+    assert test_user.logto_user_id not in str(body)  # belt-and-suspenders: subject nowhere in /me
 
 
 async def test_me_display_name_prefers_nickname(client, test_user, session):
@@ -340,7 +349,9 @@ def me_response(user: User) -> MeResponse:
     resolved = resolved_display_name(user.display_name, user.logto_user_id, user.nickname)
     return MeResponse(
         id=user.id,
-        display_name=resolved or user.display_name,
+        # "" (never the raw subject) when the account resolves to Anonymous — the client pre-fill in
+        # that state is blank, and the subject must never reach the client (data-exposure rule).
+        display_name=resolved or "",
         email=user.email,
         avatar_url=user.avatar_url,
         is_admin=user.is_admin,
@@ -360,10 +371,21 @@ cd /d/repos/fountainrank/backend && uv run pytest tests/test_me.py -v
 
 Expected: PASS (existing + 3 new). The pre-existing `test_me_returns_profile` still passes (`display_name == "Dev One"`, `needs_name` absent from its assertions).
 
-- [ ] **Step 6: Commit.**
+- [ ] **Step 6: Regression-test the real Logto path + /me/sync (no subject leak).** In `backend/tests/test_logto_auth.py` (which already exercises the real bearer path and `/me/sync`), add assertions that:
+  - a `/me` (or `/me/sync`) response for a token carrying **no** `name`/`username` has `needs_name is True` and `display_name == ""` (the subject must not appear anywhere in the body — `assert sub not in str(body)`);
+  - after a `/me/sync` that resolves a real name (existing test), `needs_name is False` and `display_name` equals that name.
+  Match the file's existing fixtures/fake-userinfo helpers — do not invent new auth scaffolding. Run:
 
 ```bash
-git add backend/app/schemas.py backend/app/routers/users.py backend/tests/test_me.py
+cd /d/repos/fountainrank/backend && uv run pytest tests/test_logto_auth.py -v
+```
+
+Expected: PASS.
+
+- [ ] **Step 7: Commit.**
+
+```bash
+git add backend/app/schemas.py backend/app/routers/users.py backend/tests/test_me.py backend/tests/test_logto_auth.py
 git commit -m "feat(backend): /me returns resolved display_name + needs_name"
 ```
 
@@ -485,11 +507,15 @@ git commit -m "feat(backend): PATCH /me to set display name (nickname override)"
 
 **Files:**
 - Modify: `backend/app/auth.py` (`require_named_user`)
-- Modify: `backend/app/routers/fountains.py` (5 write endpoints)
-- Create/modify: `backend/tests/test_name_gate.py` (new)
+- Modify: `backend/app/schemas.py` (`DisplayNameRequiredConflict`)
+- Modify: `backend/app/routers/fountains.py` (5 write endpoints + their `responses={409: …}`)
+- Create: `backend/tests/test_name_gate.py`
+- Modify: `backend/tests/test_add_fountain_conflict.py`, `backend/tests/test_openapi.py`
 
 **Interfaces:**
-- Produces: `require_named_user(user: User = Depends(get_current_user)) -> User` — 409 `display_name_required` when the user resolves to Anonymous, else the user.
+- Produces:
+  - `require_named_user(user: User = Depends(get_current_user)) -> User` — 409 `display_name_required` when the user resolves to Anonymous, else the user.
+  - `DisplayNameRequiredConflict { detail: Literal["display_name_required"] }` — the documented 409 body for all five gated endpoints.
 
 - [ ] **Step 1: Write failing test.** Create `backend/tests/test_name_gate.py`:
 
@@ -565,17 +591,52 @@ async def require_named_user(user: User = Depends(get_current_user)) -> User:
     return user
 ```
 
-- [ ] **Step 4: Apply to the 5 write endpoints.** In `backend/app/routers/fountains.py`, change `user: User = Depends(get_current_user)` → `user: User = Depends(require_named_user)` in: `add_fountain`, `submit_ratings`, `submit_attributes`, `submit_condition`, `submit_note`. Add `require_named_user` to the `from app.auth import ...` line.
+- [ ] **Step 4: Add the documented 409 conflict schema.** In `backend/app/schemas.py`, near `DuplicateFountainConflict`, add:
 
-- [ ] **Step 5: Run to verify pass.**
-
-```bash
-cd /d/repos/fountainrank/backend && uv run pytest tests/test_name_gate.py -v
+```python
+class DisplayNameRequiredConflict(BaseModel):
+    detail: Literal["display_name_required"] = "display_name_required"
 ```
 
-Expected: PASS (both).
+(`Literal` is already imported in `schemas.py`.)
 
-- [ ] **Step 6: Guard against regressions in existing write tests.** The existing fountains/ratings/notes/conditions/attributes API tests authenticate as the named `test_user` ("Dev One"), so they remain unaffected. Run the broad suite:
+- [ ] **Step 5: Apply the gate + document the 409 on the 5 write endpoints.** In `backend/app/routers/fountains.py`:
+  - Add `require_named_user` to the `from app.auth import (...)` line; add `DisplayNameRequiredConflict` to the `from app.schemas import (...)` line.
+  - Change `user: User = Depends(get_current_user)` → `user: User = Depends(require_named_user)` in `add_fountain`, `submit_ratings`, `submit_attributes`, `submit_condition`, `submit_note`.
+  - **Document the 409 so the OpenAPI/client don't lie:**
+    - `add_fountain`'s decorator already has `responses={status.HTTP_409_CONFLICT: {"model": DuplicateFountainConflict}}`. Change it to a union so both 409 shapes are typed:
+
+```python
+    responses={
+        status.HTTP_409_CONFLICT: {"model": DuplicateFountainConflict | DisplayNameRequiredConflict}
+    },
+```
+
+    - `submit_ratings`, `submit_attributes`, `submit_condition`, `submit_note` have no `responses=`; add one to each decorator:
+
+```python
+@router.post(
+    "/fountains/{fountain_id}/ratings",
+    response_model=FountainDetail,
+    responses={status.HTTP_409_CONFLICT: {"model": DisplayNameRequiredConflict}},
+)
+```
+
+  (Apply the same `responses=` to the attributes/conditions/notes decorators, keeping each existing `response_model`.)
+
+- [ ] **Step 6: Update the contract tests.**
+  - `backend/tests/test_add_fountain_conflict.py`: assert the OpenAPI 409 for `POST /api/v1/fountains` now references **both** `DuplicateFountainConflict` and `DisplayNameRequiredConflict` (an `anyOf`/`oneOf` of the two component schemas). Match the file's existing assertion style.
+  - `backend/tests/test_openapi.py`: assert a gated endpoint (e.g. `/api/v1/fountains/{fountain_id}/notes` `post`) documents a 409 with `DisplayNameRequiredConflict`.
+
+- [ ] **Step 7: Run to verify pass.**
+
+```bash
+cd /d/repos/fountainrank/backend && uv run pytest tests/test_name_gate.py tests/test_add_fountain_conflict.py tests/test_openapi.py -v
+```
+
+Expected: PASS.
+
+- [ ] **Step 8: Guard against regressions in existing write tests.** The existing fountains/ratings/notes/conditions/attributes API tests authenticate as the named `test_user` ("Dev One"), so they remain unaffected. Run the broad suite:
 
 ```bash
 cd /d/repos/fountainrank/backend && uv run pytest -q
@@ -583,10 +644,10 @@ cd /d/repos/fountainrank/backend && uv run pytest -q
 
 Expected: all green.
 
-- [ ] **Step 7: Commit.**
+- [ ] **Step 9: Commit.**
 
 ```bash
-git add backend/app/auth.py backend/app/routers/fountains.py backend/tests/test_name_gate.py
+git add backend/app/auth.py backend/app/schemas.py backend/app/routers/fountains.py backend/tests/test_name_gate.py backend/tests/test_add_fountain_conflict.py backend/tests/test_openapi.py
 git commit -m "feat(backend): gate contribution writes behind require_named_user (409 display_name_required)"
 ```
 
@@ -836,6 +897,47 @@ git commit -m "feat(web): display-name field + first-sign-in name-capture gate o
 
 ---
 
+### Task 10b: Web viewer/header never leak the subject + sign-in callback gate
+
+**Files:**
+- Modify: `web/lib/server/viewer.ts`, `web/lib/server/viewer.test.ts`
+- Modify: `web/components/AuthControl.tsx`
+- Modify: `web/app/callback/route.ts`
+
+**Interfaces:**
+- `Viewer` authed state gains `needsName: boolean`.
+
+> Why: `getViewer()` feeds `SiteHeader`/`AuthControl` on **every** page. Without this, a signed-in
+> Anonymous-name account would render whatever `/me` sends. The backend now returns `display_name=""`
+> when `needs_name` (Task 4), so the subject can't leak; this task additionally surfaces the gate in
+> the header and forces the capture screen right after sign-in.
+
+- [ ] **Step 1: `getViewer` carries `needsName`.** In `web/lib/server/viewer.ts`, add `needsName: boolean` to the authed `Viewer` variant and set it from `data.needs_name` in the `if (data)` branch (keep `displayName: data.display_name`, which is now `""` when `needs_name`).
+
+- [ ] **Step 2: Test no-leak.** In `web/lib/server/viewer.test.ts`, add a case: a `/me` mock with `needs_name: true, display_name: ""` → `getViewer` returns `state: "authed", needsName: true, displayName: ""` and the result JSON contains no subject. Run:
+
+```bash
+cd /d/repos/fountainrank/web && node node_modules/vitest/vitest.mjs run lib/server/viewer.test.ts
+```
+
+Expected: PASS.
+
+- [ ] **Step 3: Header prompt.** In `web/components/AuthControl.tsx`, when `viewer.state === "authed" && viewer.needsName`, render a small "Finish setup — set your name" link to `/account` (reuse the existing button/menu styling). The `UserMenu` already falls back to initial `"?"` when `name` is empty, so an empty name renders no subject.
+
+- [ ] **Step 4: Sign-in callback forces capture.** In `web/app/callback/route.ts`, after `syncProfileForRoute(requestId)` and before computing the return redirect, fetch the viewer (`getViewer(requestId)`); when `state === "authed" && needsName`, `redirect("/account")` (the gate) instead of the stored return path. Keep the existing return-path logic for the named case. Never log the name.
+
+- [ ] **Step 5: Type-check + format + commit.**
+
+```bash
+cd /d/repos/fountainrank/web && node node_modules/typescript/bin/tsc --noEmit && node node_modules/prettier/bin/prettier.cjs --write lib/server/viewer.ts lib/server/viewer.test.ts components/AuthControl.tsx app/callback/route.ts
+git add web/lib/server/viewer.ts web/lib/server/viewer.test.ts web/components/AuthControl.tsx web/app/callback/route.ts
+git commit -m "feat(web): viewer/header hide subject + sign-in callback routes to name gate"
+```
+
+> Header render + the post-sign-in redirect are CI-/owner-verified in the browser (Task 14 checklist).
+
+---
+
 ## Phase C — Mobile (type-check/lint CI; device visual owner-verified)
 
 ### Task 11: Display name field + capture gate on the account tab
@@ -882,26 +984,74 @@ git commit -m "feat(mobile): display-name field + first-sign-in capture gate on 
 
 ### Task 12: surface the write-gate (409) on mobile contributions
 
-**Files:**
-- Modify: contribution call sites (`mobile/app/(tabs)/add.tsx` and the rating/note submit handlers)
-- Possibly: `mobile/lib/api.ts` (a shared `isDisplayNameRequired(error)` helper)
+**Files (correct targets — `(tabs)/add.tsx` is only a `<Redirect href="/" />`; the real add POST lives in `(tabs)/index.tsx`):**
+- Modify: `mobile/lib/add-fountain/state.ts`, `mobile/lib/add-fountain/state.test.ts` (add-fountain 409 classification + error text)
+- Modify: `mobile/app/(tabs)/index.tsx` (add mutation 409 branch + add-mode `needs_name` guard)
+- Modify: `mobile/components/add-fountain/AddFountainForm.tsx` (route to account on `needs_name`)
+- Modify: `mobile/lib/contributions/state.ts`, `mobile/lib/contributions/state.test.ts` (detail-write 409 → `needs_name`)
+- Modify: `mobile/app/fountains/[id].tsx` (route to account on `needs_name`)
+
+**Why no `unwrap`/`ApiError` change:** the four detail writes have **only** the gate 409 (unambiguous → status alone suffices, even though `unwrap` drops the body). `POST /fountains` has two 409 shapes, but its mutation in `(tabs)/index.tsx` reads the openapi-fetch `result.error` body directly, so it can branch on `detail`.
 
 **Interfaces:**
-- Consumes: `apiErrorStatus(error)` (existing) + the 409 `display_name_required` detail.
+- `AddFountainError` gains `"needs_name"`. `classifyAddConflict(errorBody): { kind: "needs_name" } | { kind: "duplicate"; fountainId: string } | { kind: "server" }` (pure, in `state.ts`).
+- `ContributionError` gains `"needs_name"`.
 
-- [ ] **Step 1: Add a detection helper.** In `mobile/lib/api.ts` (or alongside `apiErrorStatus`), add `isDisplayNameRequired(error): boolean` → true when status is 409 and the error body `detail === "display_name_required"`. Unit-test it if the file has a test (`mobile/lib/api.test.ts`); otherwise add a small `display-name`-scoped test.
+- [ ] **Step 1: Add-fountain — pure 409 classifier (TDD).** In `mobile/lib/add-fountain/state.test.ts` add:
 
-- [ ] **Step 2: Handle it at the write call sites.** Where a contribution write can run (add fountain, rate, note), catch the error; if `isDisplayNameRequired(error)`, show an alert/toast "Add a display name on the Account tab to contribute" and route to the account tab (`router.navigate("/account")` or the equivalent). Otherwise keep the existing error handling.
-
-- [ ] **Step 3: Type-check + format + commit.**
-
-```bash
-cd /d/repos/fountainrank/mobile && node node_modules/typescript/bin/tsc --noEmit && node node_modules/prettier/bin/prettier.cjs --write lib/api.ts "app/(tabs)/add.tsx"
-git add mobile/lib/api.ts "mobile/app/(tabs)/add.tsx"
-git commit -m "feat(mobile): route to account when a write is blocked (display_name_required)"
+```ts
+it("classifies a display_name_required 409 body", () => {
+  expect(classifyAddConflict({ detail: "display_name_required" })).toEqual({ kind: "needs_name" });
+});
+it("classifies a duplicate 409 body", () => {
+  expect(classifyAddConflict({ fountain_id: UUID })).toEqual({ kind: "duplicate", fountainId: UUID });
+});
+it("classifies an unrecognized 409 body as server", () => {
+  expect(classifyAddConflict({})).toEqual({ kind: "server" });
+});
 ```
 
-> Device-verified by the owner.
+  Then in `mobile/lib/add-fountain/state.ts`: add `"needs_name"` to `AddFountainError`; add a `case "needs_name": return "Add a display name on the Account tab to contribute.";` to `addFountainErrorText`; and implement:
+
+```ts
+export function classifyAddConflict(
+  errorBody: unknown,
+): { kind: "needs_name" } | { kind: "duplicate"; fountainId: string } | { kind: "server" } {
+  if ((errorBody as { detail?: unknown })?.detail === "display_name_required") {
+    return { kind: "needs_name" };
+  }
+  const fountainId = duplicateFountainId(errorBody as DuplicateConflict | undefined);
+  return fountainId ? { kind: "duplicate", fountainId } : { kind: "server" };
+}
+```
+
+  Run: `cd /d/repos/fountainrank/mobile && node node_modules/vitest/vitest.mjs run lib/add-fountain/state.test.ts` → PASS.
+
+- [ ] **Step 2: Wire the classifier into the add mutation.** In `mobile/app/(tabs)/index.tsx`, replace the `if (result.response.status === 409) { ... }` body of `addMutation.mutationFn` to use `classifyAddConflict(result.error)`: `needs_name` → `{ ok: false, error: "needs_name" }`; `duplicate` → `{ ok: false, error: "duplicate", fountainId }`; `server` → `{ ok: false, error: "server" }`. (`AddFountainResult` already allows `{ ok: false; error: AddFountainError }`, and `"needs_name"` is now in `AddFountainError`.)
+
+- [ ] **Step 3: Add-mode entry guard + form routing.** In `mobile/app/(tabs)/index.tsx`, when the `["me"]` profile has `needs_name` (the screen already has a `client.GET("/api/v1/me/contributions")` query — add or reuse a `/me` read for `needs_name`), block entering add mode and show "Set a display name on the Account tab first" with a tap that routes to `/account`. In `mobile/components/add-fountain/AddFountainForm.tsx`, when a submit returns `error === "needs_name"`, route to the account tab (add an `onNeedsName` prop or `router.navigate("/account")`) instead of the generic error toast.
+
+- [ ] **Step 4: Detail writes — pure 409 → needs_name (TDD).** In `mobile/lib/contributions/state.ts`: add `"needs_name"` to `ContributionError` and map a 409 to it in the existing error mapper (read the file for the mapper's real name — it is consumed via `handleMutationError` in `mobile/app/fountains/[id].tsx`). Add a test in `mobile/lib/contributions/state.test.ts`:
+
+```ts
+it("maps a 409 to needs_name", () => {
+  expect(mapContributionError(new ApiError(409))).toBe("needs_name"); // use the real mapper name
+});
+```
+
+  Run the file via vitest → PASS.
+
+- [ ] **Step 5: Route detail writes to the account tab.** In `mobile/app/fountains/[id].tsx`, where a write outcome is `needs_name`, show "Add a display name on the Account tab to contribute" and route to `/account` (reuse the existing toast/message + an `expo-router` navigate). Keep all other error handling unchanged.
+
+- [ ] **Step 6: Type-check + format + commit.**
+
+```bash
+cd /d/repos/fountainrank/mobile && node node_modules/typescript/bin/tsc --noEmit && node node_modules/prettier/bin/prettier.cjs --write lib/add-fountain/state.ts lib/add-fountain/state.test.ts "app/(tabs)/index.tsx" components/add-fountain/AddFountainForm.tsx lib/contributions/state.ts lib/contributions/state.test.ts "app/fountains/[id].tsx"
+git add mobile/lib/add-fountain/state.ts mobile/lib/add-fountain/state.test.ts "mobile/app/(tabs)/index.tsx" mobile/components/add-fountain/AddFountainForm.tsx mobile/lib/contributions/state.ts mobile/lib/contributions/state.test.ts "mobile/app/fountains/[id].tsx"
+git commit -m "feat(mobile): route to account when a contribution is blocked (display_name_required)"
+```
+
+> The routing + add-mode guard render are **owner device-verified**; the pure classifiers/mappers are unit-tested locally.
 
 ---
 
@@ -951,12 +1101,17 @@ cd /d/repos/fountainrank/mobile && node node_modules/typescript/bin/tsc --noEmit
 
 Expected: clean. (`expo-doctor` + render run in CI.)
 
-- [ ] **Step 4: Push the branch + open the PR** (see CLAUDE.md / `claude_help/github-cli.md`). PR body must include: a summary, the link to the spec + plan, the #103 relationship (see spec §11), and an **owner verification checklist** (web browser: first-sign-in gate + change name reflected on leaderboard; mobile device: capture screen on Apple sign-in + write-gate routing). Then run the Codex PR review loop and address CI + every PR comment until `VERDICT: APPROVED` and green.
+- [ ] **Step 4: Push the branch + open the PR** (see CLAUDE.md / `claude_help/github-cli.md`). PR body must include: a summary, the link to the spec + plan, the #103 relationship (see spec §11), and an **owner verification checklist**:
+  - **Web (browser):** sign in as an account with a real IdP name → no gate, name shows; the existing `4zsznfwtd8cx`-style account (or a name-less test account) → after sign-in you land on the `/account` name gate, the header never shows a raw id, setting a name reflects on `/leaderboard` and notes; a contribution attempt while name-less prompts to set a name.
+  - **Mobile (device):** Apple sign-in with no name → account tab shows the required capture screen; setting a name unblocks add/rate and shows on the leaderboard; attempting add/rate while name-less routes to the Account tab.
+
+  Then run the Codex PR review loop and address CI + every PR comment until `VERDICT: APPROVED` and green.
 
 ---
 
 ## Self-review (plan vs. spec)
 
-- **Spec §5 (column/migration)** → Task 1. **§6 (resolution/masking + callers)** → Tasks 2–3. **§7 (gate)** → Task 6 (backend) + Tasks 9/12 (client surfacing). **§8 (PATCH /me)** → Task 5. **§9 (MeResponse)** → Task 4. **§10 (web/mobile UI)** → Tasks 10–11. **§10.3 (style guide)** → Task 13. **§11 (#103)** → Task 14 PR body. **§12 (validation)** → Tasks 5/8/11. **§14 (tests)** → Tasks 2–6, 8–9, 11. **§15 (logging)** → Tasks 5–6. **§16 (delivery)** → Tasks 7, 14. **§17 (acceptance)** → Task 14 checklist.
-- **Type consistency:** `resolved_display_name`/`public_display_name(…, nickname)` signatures identical across Tasks 2/3/4/6. `needs_name` (snake_case) on the wire; web/mobile read `profile.needs_name`. `setDisplayName`/`SetNameResult` consistent across Tasks 8/10. `"needs_name"` error variant added in both `ContributeError` and `AddFountainResult` (Task 9).
-- **Placeholders:** backend steps carry full code; client render tasks intentionally specify code + contract with verification deferred to CI/owner per the env constraint (called out explicitly, not hidden).
+- **Spec §5 (column/migration)** → Task 1. **§6 (resolution/masking + callers)** → Tasks 2–3. **§7 (gate + OpenAPI 409 contract)** → Task 6 (backend dependency + `DisplayNameRequiredConflict` + 409 docs) + Tasks 9/10b/12 (client surfacing). **§8 (PATCH /me + conflict schema)** → Tasks 5–6. **§9 (MeResponse, `display_name=""` when `needs_name`)** → Task 4. **§10.1 (web UI + viewer/header/callback gate)** → Tasks 10 + 10b. **§10.2 (mobile UI + gate)** → Tasks 11–12. **§10.3 (style guide)** → Task 13. **§11 (#103)** → Task 14 PR body. **§12 (validation, max 80)** → Tasks 5/8/11. **§14 (tests, incl. no-subject-leak on the Logto path + 409 contract)** → Tasks 2–6, 8–12. **§15 (logging)** → Tasks 5–6. **§16 (delivery)** → Tasks 7, 14. **§17 (acceptance)** → Task 14 checklist.
+- **Type consistency:** `resolved_display_name`/`public_display_name(…, nickname)` identical across Tasks 2/3/4/6. `me_response` returns `display_name = resolved or ""` (Task 4). `needs_name` (snake_case) on the wire; web/mobile read `profile.needs_name`; web `Viewer.needsName` (camelCase) is internal (Task 10b). `setDisplayName`/`SetNameResult` consistent (Tasks 8/10). `"needs_name"` variant added to web `ContributeError` + `AddFountainResult` error union (Task 9) and mobile `AddFountainError` + `ContributionError` (Task 12); `classifyAddConflict` is the single add-fountain 409 brancher.
+- **Blocker fixes from Codex review-1 folded in:** no raw-subject leak (Task 4 `""` + Task 10b viewer/header + Logto-path test in Task 6/4); app-wide first-sign-in gate (web callback Task 10b, mobile account tab + add guard Tasks 11–12); mobile 409 without `unwrap` surgery (unambiguous detail 409 + add-body branch, Task 12); correct mobile file targets (`(tabs)/index.tsx`, not `add.tsx`, Task 12); OpenAPI 409 truthful (Task 6).
+- **Placeholders:** backend steps carry full code; client render tasks specify code + contract with render/route verification deferred to CI/owner per the env constraint (called out explicitly).
