@@ -407,10 +407,10 @@ async def test_hard_delete_reverses_creator_points(raw_client, session):
         params={"near_lat": 41.0, "near_lng": -71.0},
     )
     assert local.status_code == 200
-    assert local.json() == []
+    assert local.json()["rows"] == []  # #117: response is {rows, you}; anonymous -> you null
     glob = await raw_client.get("/api/v1/leaderboard/contributors")
     assert glob.status_code == 200
-    assert glob.json() == []
+    assert glob.json()["rows"] == []
 
     # The reversed events must also disappear from the creator's own contribution feed
     # (every other read already excludes reversed; the profile feed must too).

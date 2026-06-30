@@ -200,12 +200,29 @@ class BadgeOut(BaseModel):
 
 
 class ContributorRow(BaseModel):
-    display_name: str
+    rank: int  # 1-based ordinal position in the active board
+    display_name: str  # via public_display_name (never the raw subject)
+    points: int  # total points in scope: global total_points, or the in-area sum
+    # The sorted category's count when sort=<category>; null for sort=total.
+    category_count: int | None = None
+    is_you: bool = False  # the caller's own row — set only when it appears in `rows`
+
+
+class YourStanding(BaseModel):
+    """The signed-in caller's standing on the active board (#117).
+
+    Null on the response when the caller is anonymous. `rank` is null when the caller is
+    signed in but unranked in this scope/category (e.g. all points reversed, or zero in the
+    selected category); `points`/`category_count` still reflect their real values."""
+
+    rank: int | None = None
     points: int
-    # Populated for the global leaderboard; null for the local (in-area) leaderboard,
-    # where these global counters would be misleading.
-    fountains_added: int | None = None
-    ratings_count: int | None = None
+    category_count: int | None = None
+
+
+class LeaderboardOut(BaseModel):
+    rows: list[ContributorRow]
+    you: YourStanding | None = None  # null when the caller is anonymous
 
 
 class AddNoteRequest(BaseModel):

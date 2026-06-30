@@ -116,3 +116,7 @@ def test_openapi_exposes_gamification_read_apis():
     assert "/api/v1/me/badges" in schema["paths"]
     components = schema["components"]["schemas"]
     assert "BadgeOut" in components and "ContributorRow" in components
+    # #117: the leaderboard now returns an object (rows + caller standing), not a bare list.
+    assert "LeaderboardOut" in components and "YourStanding" in components
+    resp = schema["paths"]["/api/v1/leaderboard/contributors"]["get"]["responses"]["200"]
+    assert resp["content"]["application/json"]["schema"]["$ref"].endswith("/LeaderboardOut")
