@@ -5,7 +5,12 @@ import { getAuthedApiClientForAction } from "../../lib/server/api";
 import { log } from "../../lib/server/log";
 
 type ConditionStatus = components["schemas"]["ConditionReportRequest"]["status"];
-export type ContributeError = "unauthenticated" | "validation" | "not_found" | "server";
+export type ContributeError =
+  | "unauthenticated"
+  | "validation"
+  | "not_found"
+  | "needs_name"
+  | "server";
 export type ActionResult = { ok: true } | { ok: false; error: ContributeError };
 
 const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
@@ -28,6 +33,9 @@ function mapStatus(status: number): ActionResult {
   if (status === 401) return fail("unauthenticated");
   if (status === 404) return fail("not_found");
   if (status === 422) return fail("validation");
+  // These endpoints have only ONE 409 shape — the name gate (require_named_user). The user must
+  // set a display name before contributing; the UI routes them to /account.
+  if (status === 409) return fail("needs_name");
   return fail("server");
 }
 

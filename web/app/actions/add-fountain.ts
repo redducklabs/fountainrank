@@ -37,10 +37,20 @@ export async function addFountain(input: AddFountainInput): Promise<AddFountainR
       return { ok: true, fountainId };
     }
     if (status === 409) {
-      const dup = error as components["schemas"]["DuplicateFountainConflict"] | undefined;
+      // add_fountain has TWO 409 shapes: the duplicate-proximity conflict (carries a fountain_id)
+      // and the name gate (detail === "display_name_required"). Branch on the typed body.
+      const body = error as
+        | components["schemas"]["DuplicateFountainConflict"]
+        | components["schemas"]["DisplayNameRequiredConflict"]
+        | undefined;
+      const dup = body as components["schemas"]["DuplicateFountainConflict"] | undefined;
       if (dup && isUuid(dup.fountain_id)) {
         log("info", "add-fountain", { requestId, outcome: "duplicate", status });
         return { ok: false, error: "duplicate", fountainId: dup.fountain_id };
+      }
+      if ((body as { detail?: string } | undefined)?.detail === "display_name_required") {
+        log("info", "add-fountain", { requestId, outcome: "needs_name", status });
+        return { ok: false, error: "needs_name" };
       }
       log("warn", "add-fountain", { requestId, outcome: "malformed-409", status });
       return { ok: false, error: "server" };

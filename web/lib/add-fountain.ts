@@ -8,7 +8,7 @@ export type AddFountainInput = {
   observations?: { attribute_type_id: number; value: string }[];
 };
 
-export type AddFountainError = "unauthenticated" | "validation" | "server";
+export type AddFountainError = "unauthenticated" | "validation" | "needs_name" | "server";
 export type AddFountainResult =
   | { ok: true; fountainId: string }
   | { ok: false; error: "duplicate"; fountainId: string }
