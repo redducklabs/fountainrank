@@ -361,7 +361,19 @@ export default function MapScreen() {
       </View>
 
       {auth.status === "authenticated" ? (
-        <PointsChip total={contributionsQuery.data?.stats.total_points ?? 0} />
+        <PointsChip
+          total={contributionsQuery.data?.stats.total_points ?? 0}
+          onPress={() => {
+            // #117: open the leaderboard, passing the current map center so "Near here" ranks
+            // around where the user is looking; with no region yet, open the global board.
+            const c = region ? centerOfViewport(region.bounds) : null;
+            router.push(
+              c
+                ? { pathname: "/leaderboard", params: { lat: String(c.lat), lng: String(c.lng) } }
+                : "/leaderboard",
+            );
+          }}
+        />
       ) : null}
 
       {location.coords ? (
@@ -517,7 +529,7 @@ export default function MapScreen() {
   );
 }
 
-function PointsChip({ total }: { total: number }) {
+function PointsChip({ total, onPress }: { total: number; onPress: () => void }) {
   const [scale] = useState(() => new Animated.Value(0.94));
   const [display, setDisplay] = useState(total);
 
@@ -558,10 +570,17 @@ function PointsChip({ total }: { total: number }) {
   }, [scale, total]);
 
   return (
-    <Animated.View style={[styles.pointsChip, { transform: [{ scale }] }]}>
-      <Text style={styles.pointsLabel}>Points</Text>
-      <Text style={styles.pointsText}>{display}</Text>
-    </Animated.View>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`View leaderboard — ${total} points`}
+      onPress={onPress}
+      style={styles.pointsChipWrap}
+    >
+      <Animated.View style={[styles.pointsChip, { transform: [{ scale }] }]}>
+        <Text style={styles.pointsLabel}>Points</Text>
+        <Text style={styles.pointsText}>{display}</Text>
+      </Animated.View>
+    </Pressable>
   );
 }
 
@@ -936,10 +955,8 @@ const styles = StyleSheet.create({
   fill: { flex: 1, backgroundColor: colors.background },
   centered: { flex: 1, alignItems: "center", justifyContent: "center", gap: spacing.sm },
   filterBar: { position: "absolute", top: spacing.sm, left: 0, right: 0 },
+  pointsChipWrap: { position: "absolute", top: spacing.lg + 44, right: spacing.md },
   pointsChip: {
-    position: "absolute",
-    top: spacing.lg + 44,
-    right: spacing.md,
     backgroundColor: colors.brandBlue,
     borderColor: colors.brandYellow,
     borderWidth: 2,
