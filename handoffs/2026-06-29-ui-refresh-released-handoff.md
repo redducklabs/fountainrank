@@ -45,6 +45,45 @@ conversation. Everything below is grounded in shipped code/commits and real run 
 
 ---
 
+## 📋 Suggested priority backlog (open issues, 2026-06-29)
+
+Suggested order by severity (abuse/blockers → UX polish → verify-and-close → features → infra). Re-order to taste. `★` = filed in this session.
+
+**P1 — correctness / abuse / blockers**
+
+- **★ #119** `bug,moderation` — admin hard-delete of a fountain must **reverse the contributors' points** (anti-gaming). Owner-flagged. Backend only, **no migration** (the `status='reversed'` value + `user_contribution_stats` counters already exist; `admin_delete_fountain` + a new `reverse_contributions()` in `contributions.py` is the fix). Full plan in the issue.
+- **#97** `bug` — iOS: user **cannot add a fountain at all** (placement silently blocked below zoom 16 when location isn't precise/granted). Blocks a core action.
+- **#102** `bug` — Android: freshly-added pin **can't be tapped** (an inert draft pin is left on top after a successful add).
+- **#103** `bug` — Apple/SSO account shows an **opaque id instead of the user's name** (mobile never calls `/me/sync`). User-facing identity; also feeds leaderboard display names (#117).
+
+**P2 — mobile add-fountain + map-chrome polish (one coherent batch)**
+
+- **#100** `bug` — "Use current location" must recenter; placement target must stay above the bottom sheet.
+- **#101** `bug` — hide the "No fountains in this area" empty-state badge while adding.
+- **#104** `bug` — iOS: the "+" add button overlaps the MapLibre attribution control.
+- **#105** `bug` — map compass hidden under the top filter chips.
+- **#99** `enh` — draft/placement pin must be visually distinct from saved pins. (The new `pin-unrated` asset from #118 is a candidate base for a greyed draft variant.)
+- **#98** `enh` — drop a starter draft pin at the user's location on entering add mode.
+- **★ #120** `bug` — iOS app icon shows the pin on **black** (`icon.png` transparent → iOS flattens alpha). Asset-only sibling of the #118 splash fix; reuse `scripts/assets/gen_splash_icon.py` approach.
+
+**P3 — verify-and-close (released, pending on-device confirmation)**
+
+- **#65** `enh` — show a user's existing rating (released in v0.10.0). Confirm on device → close.
+- **#85** `bug` — map pins flicker / clustering (resolved on emulator per memory `fountainrank-mobile-85-newarch-mandatory`). Confirm on device → close.
+
+**P4 — features**
+
+- **★ #117** `enh` — leaderboard (tap the on-map points display → rankings). Backend `GET /api/v1/leaderboard/contributors` already exists; needs the UI + a category-sort backend extension.
+- **#43** filters (map/list) · **#19** place search/geocoding · **#18** dark mode.
+- **#10–#13** `moderation` — moderation roadmap (user blocking, report-to-queue, moderation queue, bans). Admin-moderation MVP already shipped; these are the next phases.
+
+**P5 — infra / triage**
+
+- **#48** OSM PBF large-scale import · **#95** pnpm 11 audit hang workaround.
+- **#38–#42, #44** — older rating/attribute/access-context/bathrooms umbrella issues; much is already implemented — triage and close or re-scope.
+
+---
+
 ## What shipped — PR #118 (web + mobile, except splash = mobile-only)
 
 1. **Mobile splash** — `mobile/assets/splash-icon.png` regenerated as the pin on **opaque white** (the old
@@ -89,12 +128,12 @@ plan `docs/plans/2026-06-29-ui-refresh-pins-ratings-splash.md`.
   Prettier clean; both generated PNGs visually confirmed. Web **component-render** tests run **CI-only** here
   (WSL pnpm store doesn't link React).
 
-## Known follow-ups (not blockers, not filed)
+## Known follow-ups
 
-- **iOS app icon**: `mobile/assets/icon.png` is a *transparent* pin; iOS flattens icon alpha to black, so the
-  iOS app icon likely shows the pin on black. Pre-existing, out of scope for #118. Fix = same approach as the
-  splash (pin on opaque white). **Not yet ticketed** — offer to file + fix.
+- **iOS app icon on black** — now filed as **#120** (P2 above). `mobile/assets/icon.png` is a transparent pin;
+  iOS flattens icon alpha to black. Same fix as the #118 splash (pin on opaque white).
 - Optional `v0.11.0` version tag (see RESUME HERE).
+- See the **Suggested priority backlog** above for the full open-issue worklist.
 
 ## Environment notes (cost real time — see memory)
 
