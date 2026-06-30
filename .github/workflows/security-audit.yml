@@ -19,7 +19,7 @@ jobs:
   pip-audit:
     runs-on: redducklabs-runners
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v8.2.0
       - name: Export locked backend deps (no hashes; pip-audit --no-deps audits the pinned set)
         working-directory: backend
@@ -34,7 +34,7 @@ jobs:
   pnpm-audit:
     runs-on: redducklabs-runners
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version: "22"
@@ -53,7 +53,7 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Trivy filesystem scan (report -> SARIF)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
@@ -91,7 +91,7 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version: "22"

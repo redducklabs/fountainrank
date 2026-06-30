@@ -30,7 +30,7 @@ jobs:
       body: ${{ steps.notes.outputs.body }}
       range: ${{ steps.notes.outputs.range }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           fetch-tags: true
@@ -112,7 +112,7 @@ jobs:
       EAS_BUILD_NO_EXPO_GO_WARNING: "true"
       PLAY_RELEASE_NOTES: ${{ needs.release-notes.outputs.body }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version: "22"
@@ -167,7 +167,7 @@ jobs:
       # the app does not need EAS to modify entitlements during CI store builds.
       EXPO_NO_CAPABILITY_SYNC: "1"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version: "22"
