@@ -182,6 +182,20 @@ async def test_global_leaderboard_masks_subject(session):
 
 
 @pytest.mark.asyncio
+async def test_global_leaderboard_uses_nickname(session):
+    # A user whose display_name fell back to the subject but who set a nickname shows the nickname,
+    # never the subject or "Anonymous".
+    sub = "auth0|nick-sub"
+    u = await _user(session, sub, display=sub)  # would otherwise mask
+    u.nickname = "Hydration Hero"
+    session.add(UserContributionStats(user_id=u.id, total_points=10))
+    await session.commit()
+    names = {r["display_name"] for r in (await _leaderboard(_LB)).json()["rows"]}
+    assert "Hydration Hero" in names
+    assert sub not in names and "Anonymous" not in names
+
+
+@pytest.mark.asyncio
 async def test_global_category_leaderboard(session):
     a = await _user(session, "cat-a")
     b = await _user(session, "cat-b")

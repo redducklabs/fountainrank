@@ -48,6 +48,17 @@ async def test_create_edit_and_read(client, test_user, session):
 
 
 @pytest.mark.asyncio
+async def test_note_author_uses_nickname(client, test_user, session):
+    # A set nickname overrides the IdP display_name on the public note author name.
+    test_user.nickname = "Fountain Fan"
+    await session.commit()
+    fid = await _add_fountain(client)
+    await client.post(f"/api/v1/fountains/{fid}/notes", json={"body": "Cold and clean"})
+    notes = (await client.get(f"/api/v1/fountains/{fid}/notes")).json()
+    assert notes[0]["author_display_name"] == "Fountain Fan"
+
+
+@pytest.mark.asyncio
 async def test_two_users_two_notes_newest_first(client, test_user, session):
     fid = await _add_fountain(client)
     await client.post(f"/api/v1/fountains/{fid}/notes", json={"body": "first user"})

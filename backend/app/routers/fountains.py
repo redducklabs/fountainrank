@@ -859,7 +859,7 @@ async def submit_note(
     return NoteOut(
         id=note.id,
         body=payload.body,
-        author_display_name=public_display_name(user.display_name, user.logto_user_id),
+        author_display_name=public_display_name(user.display_name, user.logto_user_id, user.nickname),
         created_at=note.created_at,
         updated_at=note.updated_at,
     )
@@ -885,6 +885,7 @@ async def list_notes(
                 FountainNote.body,
                 User.display_name,
                 User.logto_user_id,
+                User.nickname,
                 FountainNote.created_at,
                 FountainNote.updated_at,
             )
@@ -901,7 +902,7 @@ async def list_notes(
         NoteOut(
             id=r.id,
             body=r.body,
-            author_display_name=public_display_name(r.display_name, r.logto_user_id),
+            author_display_name=public_display_name(r.display_name, r.logto_user_id, r.nickname),
             created_at=r.created_at,
             updated_at=r.updated_at,
         )
