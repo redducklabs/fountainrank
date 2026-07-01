@@ -89,3 +89,21 @@ async def test_invalid_created_source_rejected(session):
     with pytest.raises(IntegrityError):
         await session.execute(text(_insert_fountain_sql("bogus", "NULL")))
         await session.flush()
+
+
+@pytest.mark.asyncio
+async def test_scope_bounds_is_multipolygon(session):
+    # Migration 0013 widened osm_fountain_import_runs.scope_bounds Polygon -> MultiPolygon so real
+    # Geofabrik extents (e.g. California = mainland + Channel Islands) fit. The column-level typmod
+    # (checked here via the geography_columns catalog) is what rejected a MultiPolygon before the
+    # fix; a bare `::geography(MultiPolygon,4326)` cast does NOT enforce the subtype, only an insert
+    # into the typmod'd column does.
+    subtype = (
+        await session.execute(
+            text(
+                "SELECT type FROM geography_columns WHERE f_table_name='osm_fountain_import_runs' "
+                "AND f_geography_column='scope_bounds'"
+            )
+        )
+    ).scalar_one()
+    assert subtype == "MultiPolygon"

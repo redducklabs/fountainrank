@@ -8,7 +8,7 @@ from app.models import Fountain, OsmImportRun
 
 FIX = Path(__file__).parent / "fixtures"
 SCOPE = RunScope("osm", "test:sf", "b1", "SF test", "test:sf", None)
-SF_WKT = "POLYGON((-123 37, -121 37, -121 39, -123 39, -123 37))"
+SF_WKT = "MULTIPOLYGON(((-123 37, -121 37, -121 39, -123 39, -123 37)))"
 
 
 @pytest.mark.asyncio
