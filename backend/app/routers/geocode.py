@@ -39,11 +39,19 @@ def _cache_status(
     `_cache` attribute `CachedGeocodeProvider` exposes so per-request logging can report
     `cache: hit|miss` without widening the `GeocodeProvider` protocol or touching the
     throttle. A provider that doesn't expose one (e.g. a test fake) reports "miss" -- a
-    safe default meaning "not confirmed cached", never a crash."""
-    cache = getattr(provider, "_cache", None)
-    if cache is None:
+    safe default meaning "not confirmed cached", never a crash.
+
+    This is observability only, so it must never be able to break the response path:
+    any failure inside the peek (a future provider exposing a differently-shaped
+    `_cache`, a `GeocodeCache.get` signature change, etc.) degrades to "miss" rather
+    than propagating as an unhandled 500."""
+    try:
+        cache = getattr(provider, "_cache", None)
+        if cache is None:
+            return "miss"
+        return "hit" if cache.get(q, limit, bias) is not None else "miss"
+    except Exception:
         return "miss"
-    return "hit" if cache.get(q, limit, bias) is not None else "miss"
 
 
 @router.get(

@@ -696,3 +696,34 @@ async def test_geocode_no_log_leak_and_info_carries_length_and_count(fake_provid
     assert record.query_length == len(query)
     assert record.result_count == 1
     assert record.cache in {"hit", "miss"}
+
+
+async def test_geocode_second_identical_request_logs_cache_hit(caplog):
+    """Exercises the real `_cache_status` "hit" branch (spec §9) end-to-end: a genuine
+    `CachedGeocodeProvider` (not the no-`_cache` `_FakeProvider` every other endpoint
+    test uses) wraps a fixed-result inner provider, so the second identical request is
+    served from the cache and the endpoint's INFO log must report `cache: "hit"`."""
+    clock = _FakeClock()
+    inner = _CountingProvider()
+    provider = CachedGeocodeProvider(
+        inner,
+        cache=GeocodeCache(60, 10, now=clock),
+        throttle=GeocodeThrottle(10, 60, now=clock),
+    )
+    app.dependency_overrides[get_geocode_provider] = lambda: provider
+    try:
+        with caplog.at_level(logging.INFO):
+            first = await _get({"q": "main st"})
+            caplog.clear()
+            second = await _get({"q": "main st"})
+    finally:
+        app.dependency_overrides.pop(get_geocode_provider, None)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    # Second request must be served from the cache, never reaching the inner provider.
+    assert len(inner.calls) == 1
+
+    info_records = [r for r in caplog.records if hasattr(r, "cache")]
+    assert len(info_records) == 1
+    assert info_records[0].cache == "hit"
