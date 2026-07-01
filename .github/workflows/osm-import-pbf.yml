@@ -105,15 +105,18 @@ jobs:
           BASE="https://download.geofabrik.de/${GEOFABRIK_PATH}"
           PBF_URL="${BASE}-latest.osm.pbf"
 
-          # Robust download flags: bounded connect time, a hard ceiling, stall detection (abort if
-          # throughput stays under 1 KB/s for 120s — catches a half-open/throttled connection that
-          # would otherwise hang), and retries with backoff. Matters for the many #131 downloads.
-          DL=(--fail --location --connect-timeout 30 --max-time 1800 --speed-limit 1024
-              --speed-time 120 --retry 5 --retry-delay 15 --retry-all-errors -A "$UA")
+          # Robust download flags: bounded connect time, per-attempt ceiling (--max-time), stall
+          # detection (abort if throughput stays under 1 KB/s for 120s — catches a half-open/
+          # throttled connection that would otherwise hang), and retries with backoff. --max-time
+          # is PER ATTEMPT and resets on each retry, so --retry-max-time bounds the WHOLE sequence
+          # (the true ceiling). Matters for the many #131 downloads.
+          DL=(--fail --location --connect-timeout 30 --max-time 900 --speed-limit 1024
+              --speed-time 120 --retry 5 --retry-delay 15 --retry-max-time 1800
+              --retry-all-errors -A "$UA")
 
           # Size preflight (fail-closed): abort before filling the runner.
           LEN="$(curl -sSIL --connect-timeout 30 --max-time 120 --retry 3 --retry-delay 5 \
-            --retry-all-errors -A "$UA" "$PBF_URL" \
+            --retry-max-time 300 --retry-all-errors -A "$UA" "$PBF_URL" \
             | awk 'BEGIN{IGNORECASE=1} /^content-length:/{v=$2} END{gsub(/\r/,"",v); print v}')"
           [ -n "$LEN" ] || { echo "::error::no Content-Length for $PBF_URL (preflight)"; exit 1; }
           LEN_MB=$(( (LEN + 1048575) / 1048576 ))
