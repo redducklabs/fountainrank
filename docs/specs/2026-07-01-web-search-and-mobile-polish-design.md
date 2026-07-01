@@ -48,6 +48,12 @@ pattern than the original and renders by construction (same as the three working
 pass. **On-device verification is owner/emulator-confirmed on the next build** (the emulator could not be
 driven from this Windows/WSL environment — `adb` unreachable). Add keeps its custom `tabBarButton` (it needs
 the special lifted-FAB visual, which a standard `tabBarIcon` can't produce).
+- **Style-guide update required (the old pattern is documented and can regress):** `docs/style-guide.md`
+  (the bottom-navigation section, ~lines 1340-1365) still describes Search as a **custom `tabBarButton`**
+  that renders its own glyph/label and tracks `TAB_INACTIVE_COLOR` — i.e. the exact pattern that caused this
+  device-visible bug. Update that section so it states **Search is now a standard tab (`tabBarIcon` +
+  a `listeners.tabPress` preventDefault → navigate/`requestMapSearch`)**, and **Add is the only custom
+  lifted-FAB `tabBarButton`**, so the guidance can't reintroduce the regression.
 
 ## 4. Web header search (`web/`)
 ### 4.1 UI — `web/components/HeaderSearch.tsx` (new, client component)
@@ -89,8 +95,12 @@ page** (mirroring mobile's Search). **Exactly one wire format — no alternative
     `FOUNTAIN_ZOOM`.
   - **no bbox** → `{ kind:"fly", center:[lng,lat], zoom: NEIGHBORHOOD_ZOOM }` → `map.flyTo(...)`.
     `NEIGHBORHOOD_ZOOM` is the **existing** constant (14).
-- Then **clear only `flyto`/`bbox`** per §4.2 (`router.replace(..., { scroll:false })`), recording the consumed
-  raw param in a ref so the effect can't re-fire on the `replace` or hijack a later manual pan.
+- **Clearing is unconditional when a param is present:** if either raw `flyto` **or** raw `bbox` is present,
+  the effect clears **both** (per §4.2, `router.replace(..., { scroll:false })`) after parsing — **even when
+  `parseFlyToParam` returns `null`** (invalid params), so bad user-controlled params can't linger in the URL
+  or keep the effect alive. If neither param is present, the effect does nothing. It records the consumed raw
+  param in a ref so it can't re-fire on the `replace` or hijack a later manual pan. (A valid parse also
+  applies the camera action before clearing; an invalid one clears without moving the map.)
 - Reuse the existing `mapRef`; do not disturb the existing `moveend`/geolocation/`add`-mode logic.
 
 ## 5. Testing
