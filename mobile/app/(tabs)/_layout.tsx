@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Tabs, router, usePathname } from "expo-router";
 import { useEffect } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ProfileTabIcon } from "../../components/nav/ProfileTabIcon";
 import { unwrap } from "../../lib/api";
@@ -10,9 +11,20 @@ import { shouldRouteToNameGate } from "../../lib/auth/display-name";
 import { type MeProfile } from "../../lib/auth/profile";
 import { shouldEnableProfileQuery, shouldRetryProfileQuery } from "../../lib/auth/state";
 import { requestMapAddMode } from "../../lib/navigation/add-tab";
+import { requestMapSearch } from "../../lib/navigation/map-search";
 import { useApi } from "../../providers/api-provider";
 import { useAuth } from "../../providers/auth-provider";
 import { colors, spacing } from "../../theme";
+
+// Safe-area contract (spec 5.2): fixed bar content height + a bottom pad that is the larger of the
+// device's real bottom inset and a floor, so Android 3-button nav (which often reports
+// insets.bottom === 0) never jams the bar against the system chrome.
+const BAR_CONTENT_H = 56;
+const ANDROID_MIN_PAD = 8;
+// Matches `tabBarInactiveTintColor` below - the custom Search button renders its own glyph/label
+// (it isn't a native tabBarIcon, so it doesn't receive the inactive tint via props) and must stay
+// in sync with it.
+const TAB_INACTIVE_COLOR = "#64748B";
 
 // Root name-gate (kill Anonymous): sign-in can start from the map, not just the account tab, so a
 // mounted watcher forces the account capture screen once authenticated and still name-less. Shares
@@ -39,15 +51,21 @@ function NameGate() {
 }
 
 export default function TabsLayout() {
+  const insets = useSafeAreaInsets();
+  const bottomPad = Math.max(insets.bottom, ANDROID_MIN_PAD);
   return (
     <>
       <NameGate />
       <Tabs
         screenOptions={{
           tabBarActiveTintColor: colors.brandBlue,
-          tabBarInactiveTintColor: "#64748B",
+          tabBarInactiveTintColor: TAB_INACTIVE_COLOR,
           headerShown: true,
-          tabBarStyle: styles.tabBar,
+          tabBarStyle: [
+            styles.tabBar,
+            { height: BAR_CONTENT_H + bottomPad, paddingBottom: bottomPad },
+          ],
+          tabBarLabelStyle: styles.tabBarLabel,
         }}
       >
         <Tabs.Screen
@@ -59,11 +77,22 @@ export default function TabsLayout() {
           }}
         />
         <Tabs.Screen
-          name="leaderboard"
+          name="search"
           options={{
-            title: "Rankings",
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name="trophy-outline" color={color} size={size} />
+            title: "Search",
+            tabBarButton: () => (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Search for a location"
+                onPress={() => {
+                  router.navigate("/");
+                  requestMapSearch();
+                }}
+                style={[styles.searchTabButton, { paddingBottom: bottomPad }]}
+              >
+                <Ionicons name="search" color={TAB_INACTIVE_COLOR} size={24} />
+                <Text style={styles.searchTabLabel}>Search</Text>
+              </Pressable>
             ),
           }}
         />
@@ -79,7 +108,7 @@ export default function TabsLayout() {
                   router.navigate("/");
                   requestMapAddMode();
                 }}
-                style={styles.addTabButton}
+                style={[styles.addTabButton, { paddingBottom: bottomPad }]}
               >
                 <View style={styles.addTabCircle}>
                   <Ionicons name="add" color={colors.brandBlue} size={30} />
@@ -89,6 +118,15 @@ export default function TabsLayout() {
             ),
             tabBarIcon: ({ color, size }) => (
               <Ionicons name="add-circle" color={color} size={size} />
+            ),
+          }}
+        />
+        <Tabs.Screen
+          name="leaderboard"
+          options={{
+            title: "Rankings",
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="trophy-outline" color={color} size={size} />
             ),
           }}
         />
@@ -106,9 +144,22 @@ export default function TabsLayout() {
 
 const styles = StyleSheet.create({
   tabBar: {
-    minHeight: 64,
     paddingTop: spacing.xs,
     borderTopColor: colors.border,
+  },
+  tabBarLabel: {
+    fontSize: 10,
+  },
+  searchTabButton: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingTop: spacing.xs,
+  },
+  searchTabLabel: {
+    marginTop: 2,
+    color: TAB_INACTIVE_COLOR,
+    fontSize: 10,
   },
   addTabButton: {
     flex: 1,
