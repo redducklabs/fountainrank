@@ -65,6 +65,7 @@ import {
   fountainsQueryKey,
 } from "../../lib/map/filters";
 import { pinsToFeatureCollection } from "../../lib/map/pins";
+import { shouldClearSearchMarker } from "../../lib/map-search/marker";
 import {
   deriveDebounceKey,
   initialSearchState,
@@ -131,6 +132,12 @@ export default function MapScreen() {
   const regionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchState, searchDispatch] = useReducer(searchReducer, initialSearchState);
+  // The transient "searched location" marker (spec §7.1) - set on result select,
+  // cleared via `shouldClearSearchMarker` (see setRegionDebounced/openSearch/
+  // onMapPress/onPinPress below).
+  const [searchMarker, setSearchMarker] = useState<{ latitude: number; longitude: number } | null>(
+    null,
+  );
   // Mirrors the latest render's value into a ref (in an effect - not during render,
   // react-hooks/refs) so the debounce effect below (which only re-runs when the
   // debounce KEY changes, not on every keystroke/response) can still read the current
@@ -290,10 +297,20 @@ export default function MapScreen() {
     [clusterIndex, region],
   );
 
-  const setRegionDebounced = useCallback((bounds: RawBounds, z: number) => {
-    if (regionTimerRef.current) clearTimeout(regionTimerRef.current);
-    regionTimerRef.current = setTimeout(() => setRegion({ bounds, zoom: z }), 250);
-  }, []);
+  const setRegionDebounced = useCallback(
+    (bounds: RawBounds, z: number, userInteraction: boolean) => {
+      if (regionTimerRef.current) clearTimeout(regionTimerRef.current);
+      regionTimerRef.current = setTimeout(() => setRegion({ bounds, zoom: z }), 250);
+      // Spec §7.1: a region change only clears the search-result marker when it was a
+      // user gesture (pan/zoom) - NOT the programmatic `setFlyTo` that placed it.
+      // Checked immediately (not debounced) so the marker disappears as soon as the
+      // user starts panning, same as the native region-change event itself.
+      if (shouldClearSearchMarker({ userInteraction, cause: "region" })) {
+        setSearchMarker(null);
+      }
+    },
+    [],
+  );
 
   const enterAddMode = useCallback(() => {
     resetAddDraft();
@@ -343,6 +360,10 @@ export default function MapScreen() {
   const openSearch = useCallback(() => {
     searchDispatch({ type: "reset" });
     setSearchOpen(true);
+    // Spec §7.1: starting a new search clears any marker left by a previous one.
+    if (shouldClearSearchMarker({ userInteraction: true, cause: "newSearch" })) {
+      setSearchMarker(null);
+    }
   }, []);
 
   useEffect(() => {
@@ -368,8 +389,12 @@ export default function MapScreen() {
   const handleSearchSelect = useCallback(
     (result: SearchResultItem) => {
       closeSearch();
-      // Recenter only (spec §7.1) - the search-result marker is Task 12.
       setFlyTo({ center: { lat: result.latitude, lng: result.longitude }, zoom: PLACE_MIN_ZOOM });
+      // Spec §7.1: drop the transient marker at the selected location. The
+      // immediately-following region change from this same `setFlyTo` is
+      // programmatic (`userInteraction: false`), so it will NOT clear the marker
+      // we just set (see setRegionDebounced) - only a subsequent user gesture will.
+      setSearchMarker({ latitude: result.latitude, longitude: result.longitude });
     },
     [closeSearch],
   );
@@ -457,7 +482,13 @@ export default function MapScreen() {
         compassPosition={compassPosition}
         showUserLocation={location.status === "granted"}
         onRegionChange={setRegionDebounced}
-        onPinPress={(id) => router.push(`/fountains/${id}`)}
+        onPinPress={(id) => {
+          // Spec §7.1: selecting a fountain pin clears the search-result marker.
+          if (shouldClearSearchMarker({ userInteraction: true, cause: "pinSelect" })) {
+            setSearchMarker(null);
+          }
+          router.push(`/fountains/${id}`);
+        }}
         // Tapping a cluster flies to the zoom that breaks it apart. supercluster's
         // getClusterExpansionZoom is synchronous (unlike the native Promise) and
         // operates on the same JS index that produced the cluster.
@@ -467,6 +498,14 @@ export default function MapScreen() {
         // #102: only render the draft layer in add mode, so after a successful add
         // its no-onPress layer can't sit over the new real pin and swallow taps.
         draftPin={addMode ? addState.pin : null}
+        searchMarker={searchMarker}
+        // Fires on every plain map press (independent of add-mode placement below) -
+        // clears the search-result marker on a tap (spec §7.1).
+        onMapPress={() => {
+          if (shouldClearSearchMarker({ userInteraction: true, cause: "press" })) {
+            setSearchMarker(null);
+          }
+        }}
         onMapPressForPlacement={
           gate.state === "ready" && addMode && addState.phase === "placing"
             ? (point) => {
@@ -692,7 +731,11 @@ function MapTopBar({
     <View style={[styles.mapTopBar, { paddingTop: topInset + spacing.sm }]}>
       <View style={styles.brandLockup}>
         <View style={styles.brandMark}>
-          <Image source={require("../../assets/icon.png")} style={{ width: 24, height: 24 }} resizeMode="contain" />
+          <Image
+            source={require("../../assets/icon.png")}
+            style={{ width: 24, height: 24 }}
+            resizeMode="contain"
+          />
         </View>
         <View>
           <Text style={styles.brandName}>FountainRank</Text>
