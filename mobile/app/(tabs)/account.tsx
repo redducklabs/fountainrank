@@ -81,7 +81,7 @@ export default function AccountScreen() {
   return (
     <ScreenContainer>
       <View style={styles.body}>
-        <Text style={styles.title}>Account</Text>
+        <Text style={styles.title}>Profile</Text>
         {auth.status === "unconfigured" ? (
           <Text style={styles.note}>
             Browsing FountainRank in public mode. Sign-in is not yet available in this build; rating
@@ -195,7 +195,7 @@ function SignedInProfile({
           <View
             style={styles.avatarFallback}
             accessible
-            accessibilityLabel={`Account initial ${profileInitial(profile.display_name)}`}
+            accessibilityLabel={`Profile initial ${profileInitial(profile.display_name)}`}
           >
             <Text style={styles.avatarText}>{profileInitial(profile.display_name)}</Text>
           </View>

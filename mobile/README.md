@@ -11,7 +11,7 @@ Release builds target the deployed production services
 app/
   _layout.tsx          providers (SafeArea + QueryClient + AuthProvider + ApiProvider) + config guard
   (tabs)/index.tsx     Map tab — MapLibre map + bbox pins + filters (slice 6e-3)
-  (tabs)/              bottom tabs: Map · Add · Account
+  (tabs)/              bottom tabs: Map · Rankings · Add · Profile
   fountains/[id].tsx   fountain detail (stack-pushed)
   diagnostics.tsx      backend reachability + version/build
 components/            ScreenContainer + loading/empty/error/offline states
@@ -53,7 +53,7 @@ but a lone app-id env var is deliberately inert. `app.config.ts` only surfaces
 set, and that flag must only be set after `docs/setup/06-logto.md` records the
 owner-confirmed Native app type, public app id variable name, and exact
 `com.redducklabs.fountainrank://callback` redirect URI. Until then
-`isAuthConfigured` is false and the Account tab stays in public-read mode.
+`isAuthConfigured` is false and the Profile tab stays in public-read mode.
 
 The map basemap style URL is `EXPO_PUBLIC_BASEMAP_STYLE_URL` (public, non-secret;
 defaults to the same DigitalOcean-Spaces Protomaps "light" style the web client

@@ -2,14 +2,16 @@ import { Ionicons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
 import { Tabs, router, usePathname } from "expo-router";
 import { useEffect } from "react";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { unwrap } from "../../lib/api";
 import { shouldRouteToNameGate } from "../../lib/auth/display-name";
 import { type MeProfile } from "../../lib/auth/profile";
 import { shouldEnableProfileQuery, shouldRetryProfileQuery } from "../../lib/auth/state";
+import { requestMapAddMode } from "../../lib/navigation/add-tab";
 import { useApi } from "../../providers/api-provider";
 import { useAuth } from "../../providers/auth-provider";
-import { colors } from "../../theme";
+import { colors, spacing } from "../../theme";
 
 // Root name-gate (kill Anonymous): sign-in can start from the map, not just the account tab, so a
 // mounted watcher forces the account capture screen once authenticated and still name-less. Shares
@@ -39,19 +41,51 @@ export default function TabsLayout() {
   return (
     <>
       <NameGate />
-      <Tabs screenOptions={{ tabBarActiveTintColor: colors.brandBlue, headerShown: true }}>
+      <Tabs
+        screenOptions={{
+          tabBarActiveTintColor: colors.brandBlue,
+          tabBarInactiveTintColor: "#64748B",
+          headerShown: true,
+          tabBarStyle: styles.tabBar,
+        }}
+      >
         <Tabs.Screen
           name="index"
           options={{
             title: "Map",
+            headerShown: false,
             tabBarIcon: ({ color, size }) => <Ionicons name="map" color={color} size={size} />,
+          }}
+        />
+        <Tabs.Screen
+          name="leaderboard"
+          options={{
+            title: "Rankings",
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="trophy-outline" color={color} size={size} />
+            ),
           }}
         />
         <Tabs.Screen
           name="add"
           options={{
             title: "Add",
-            href: null,
+            tabBarButton: () => (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Add a fountain"
+                onPress={() => {
+                  router.navigate("/");
+                  requestMapAddMode();
+                }}
+                style={styles.addTabButton}
+              >
+                <View style={styles.addTabCircle}>
+                  <Ionicons name="add" color={colors.brandBlue} size={30} />
+                </View>
+                <Text style={styles.addTabLabel}>Add</Text>
+              </Pressable>
+            ),
             tabBarIcon: ({ color, size }) => (
               <Ionicons name="add-circle" color={color} size={size} />
             ),
@@ -60,7 +94,7 @@ export default function TabsLayout() {
         <Tabs.Screen
           name="account"
           options={{
-            title: "Account",
+            title: "Profile",
             tabBarIcon: ({ color, size }) => (
               <Ionicons name="person-circle" color={color} size={size} />
             ),
@@ -70,3 +104,39 @@ export default function TabsLayout() {
     </>
   );
 }
+
+const styles = StyleSheet.create({
+  tabBar: {
+    minHeight: 64,
+    paddingTop: spacing.xs,
+    borderTopColor: colors.border,
+  },
+  addTabButton: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingTop: spacing.xs,
+  },
+  addTabCircle: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.brandYellow,
+    borderColor: colors.brandBlue,
+    borderWidth: 2,
+    marginTop: -18,
+    shadowColor: "#000",
+    shadowOpacity: 0.18,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 5,
+  },
+  addTabLabel: {
+    marginTop: 2,
+    color: colors.brandBlue,
+    fontSize: 11,
+    fontWeight: "700",
+  },
+});

@@ -1,4 +1,5 @@
 import type { components } from "@fountainrank/api-client";
+import { CONTRIBUTION_POINTS } from "@fountainrank/contributions";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Stack, router, useLocalSearchParams } from "expo-router";
 import { useState } from "react";
@@ -61,6 +62,7 @@ export default function FountainDetailScreen() {
   const queryClient = useQueryClient();
   const [showMoreDetails, setShowMoreDetails] = useState(false);
   const [celebrationKey, setCelebrationKey] = useState(0);
+  const [celebrationPoints, setCelebrationPoints] = useState<number | null>(null);
   const { id } = useLocalSearchParams<{ id: string | string[] }>();
   // Reject absent/array/malformed (non-UUID) ids client-side — the backend route
   // param is a uuid.UUID, so a bad value would 422; show the honest not-found state.
@@ -127,7 +129,7 @@ export default function FountainDetailScreen() {
       unwrap(await client.GET("/api/v1/attribute-types")),
   });
 
-  const refreshDetailAfterWrite = (detail?: FountainDetailT) => {
+  const refreshDetailAfterWrite = (detail?: FountainDetailT, points?: number) => {
     if (fountainId == null) return;
     if (detail) {
       queryClient.setQueryData(
@@ -139,6 +141,7 @@ export default function FountainDetailScreen() {
     }
     void queryClient.invalidateQueries({ queryKey: ["fountains", "bbox"] });
     void queryClient.invalidateQueries({ queryKey: ["me", "contributions"] });
+    setCelebrationPoints(points ?? null);
     setCelebrationKey((key) => key + 1);
   };
 
@@ -171,7 +174,8 @@ export default function FountainDetailScreen() {
         }),
       );
     },
-    onSuccess: refreshDetailAfterWrite,
+    onSuccess: (detail, body) =>
+      refreshDetailAfterWrite(detail, body.ratings.length * CONTRIBUTION_POINTS.rate),
   });
 
   const conditionMutation = useMutation({
@@ -184,7 +188,13 @@ export default function FountainDetailScreen() {
         }),
       );
     },
-    onSuccess: refreshDetailAfterWrite,
+    onSuccess: (detail, body) =>
+      refreshDetailAfterWrite(
+        detail,
+        body.status === "working"
+          ? CONTRIBUTION_POINTS.verify_working
+          : CONTRIBUTION_POINTS.report_condition,
+      ),
   });
 
   const attributeMutation = useMutation({
@@ -197,7 +207,11 @@ export default function FountainDetailScreen() {
         }),
       );
     },
-    onSuccess: refreshDetailAfterWrite,
+    onSuccess: (detail, body) =>
+      refreshDetailAfterWrite(
+        detail,
+        body.observations.length * CONTRIBUTION_POINTS.observe_attribute,
+      ),
   });
 
   const noteMutation = useMutation({
@@ -214,6 +228,7 @@ export default function FountainDetailScreen() {
       void notesQuery.refetch();
       void detailQuery.refetch();
       void queryClient.invalidateQueries({ queryKey: ["me", "contributions"] });
+      setCelebrationPoints(CONTRIBUTION_POINTS.add_note);
       setCelebrationKey((key) => key + 1);
     },
   });
@@ -401,7 +416,7 @@ export default function FountainDetailScreen() {
             />
           ) : null}
         </ScrollView>
-        <WaterCelebration triggerKey={celebrationKey} />
+        <WaterCelebration triggerKey={celebrationKey} points={celebrationPoints} />
       </QueryStateView>
     </ScreenContainer>
   );

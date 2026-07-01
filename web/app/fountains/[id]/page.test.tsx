@@ -7,7 +7,6 @@ const getDetail = vi.fn();
 const getAdminDetail = vi.fn();
 const getNotes = vi.fn();
 const getViewerFn = vi.fn();
-const getViewerTotalPointsFn = vi.fn();
 const getTokenFn = vi.fn();
 const logFn = vi.fn();
 const notFoundFn = vi.fn(() => {
@@ -23,7 +22,6 @@ vi.mock("../../../lib/server/admin", () => ({
 }));
 vi.mock("../../../lib/server/viewer", () => ({
   getViewer: (...a: unknown[]) => getViewerFn(...a),
-  getViewerTotalPoints: (...a: unknown[]) => getViewerTotalPointsFn(...a),
 }));
 vi.mock("../../../lib/server/api", () => ({
   getViewerAccessToken: (...a: unknown[]) => getTokenFn(...a),
@@ -55,9 +53,7 @@ vi.mock("../../../components/fountain/FountainDetail", () => ({
   ),
 }));
 vi.mock("../../../components/contributions/ContributionStatusOverlay", () => ({
-  ContributionStatusOverlay: ({ initialTotalPoints }: { initialTotalPoints: number }) => (
-    <div data-testid="contribution-status">points:{initialTotalPoints}</div>
-  ),
+  ContributionStatusOverlay: () => <div data-testid="contribution-status" />,
 }));
 vi.mock("../../../components/SiteHeader", () => ({
   SiteHeader: () => <div data-testid="site-header" />,
@@ -72,12 +68,10 @@ beforeEach(() => {
   getAdminDetail.mockReset();
   getNotes.mockReset();
   getViewerFn.mockReset();
-  getViewerTotalPointsFn.mockReset();
   getTokenFn.mockReset();
   logFn.mockReset();
   notFoundFn.mockClear();
   getViewerFn.mockResolvedValue({ state: "anonymous" });
-  getViewerTotalPointsFn.mockResolvedValue(0);
   getTokenFn.mockResolvedValue(null);
 });
 
@@ -133,9 +127,8 @@ describe("FountainPage route (standalone)", () => {
       avatarUrl: null,
       isAdmin: false,
     });
-    getViewerTotalPointsFn.mockResolvedValue(31);
     render(await FountainPage({ params }));
-    expect(await screen.findByTestId("contribution-status")).toHaveTextContent("points:31");
+    expect(await screen.findByTestId("contribution-status")).toBeInTheDocument();
   });
   it("passes isAuthenticated=false when viewer.state is anonymous", async () => {
     getDetail.mockResolvedValue({ data: { id: "f1" }, status: 200 });

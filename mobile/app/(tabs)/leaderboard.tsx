@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Stack, useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams } from "expo-router";
 import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -11,7 +11,7 @@ import {
   View,
 } from "react-native";
 
-import { unwrap } from "../lib/api";
+import { unwrap } from "../../lib/api";
 import {
   buildLeaderboardQuery,
   LEADERBOARD_SORTS,
@@ -24,9 +24,9 @@ import {
   type LeaderboardScope,
   type LeaderboardSort,
   type YourStanding,
-} from "../lib/leaderboard/query";
-import { useApi } from "../providers/api-provider";
-import { colors, spacing, typography } from "../theme";
+} from "../../lib/leaderboard/query";
+import { useApi } from "../../providers/api-provider";
+import { colors, spacing, typography } from "../../theme";
 
 export default function LeaderboardScreen() {
   const { client } = useApi();
@@ -52,7 +52,6 @@ export default function LeaderboardScreen() {
 
   return (
     <View style={styles.fill}>
-      <Stack.Screen options={{ headerShown: true, title: "Leaderboard" }} />
       <Controls
         scope={scope}
         sort={sort}

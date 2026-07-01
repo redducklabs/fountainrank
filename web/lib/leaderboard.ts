@@ -86,14 +86,6 @@ export function toApiQuery(q: LeaderboardQuery): Record<string, string | number>
   return q.near ? { sort: q.sort, near_lat: q.near.lat, near_lng: q.near.lng } : { sort: q.sort };
 }
 
-// Pure: the PointsBadge link target. A null center (map not ready / WebGL absent) → the global
-// board. Kept here so it can be unit-tested and stays consistent with parseLeaderboardParams.
-export function leaderboardHref(center: LatLng | null): string {
-  if (!center) return "/leaderboard";
-  const p = new URLSearchParams({ lat: String(center.lat), lng: String(center.lng) });
-  return `/leaderboard?${p.toString()}`;
-}
-
 // Pure: a control link that preserves the current center + applies one override (sort or scope).
 // Default sort=total / global scope omit their params so the canonical URL stays clean.
 export function leaderboardControlHref(

@@ -4,7 +4,7 @@ import { getFountainDetailServer, getFountainNotesServer } from "../../../lib/fo
 import { getAdminFountainDetailServer } from "../../../lib/server/admin";
 import { getViewerAccessToken } from "../../../lib/server/api";
 import { log } from "../../../lib/server/log";
-import { getViewer, getViewerTotalPoints } from "../../../lib/server/viewer";
+import { getViewer } from "../../../lib/server/viewer";
 import { FountainAdminControls } from "../../../components/admin/FountainAdminControls";
 import { ContributionStatusOverlay } from "../../../components/contributions/ContributionStatusOverlay";
 import { FountainDetail } from "../../../components/fountain/FountainDetail";
@@ -59,13 +59,10 @@ export default async function FountainPage({ params }: { params: Promise<{ id: s
     log("warn", "failed to load fountain notes", { requestId, id, status: notesRes.status });
   }
   const notes = notesOk && notesRes.data ? notesRes.data : [];
-  const initialTotalPoints = isAuthenticated ? await getViewerTotalPoints(requestId) : 0;
   return (
     <>
       <SiteHeader variant="bar" />
-      {isAuthenticated ? (
-        <ContributionStatusOverlay initialTotalPoints={initialTotalPoints} />
-      ) : null}
+      {isAuthenticated ? <ContributionStatusOverlay /> : null}
       <main className={shell}>
         <Link href="/" className="text-sm text-[#0C44A0] underline">
           ← Back to the map
