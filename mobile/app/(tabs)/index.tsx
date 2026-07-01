@@ -6,6 +6,7 @@ import {
   AccessibilityInfo,
   Animated,
   ActivityIndicator,
+  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -572,7 +573,7 @@ function MapTopBar({
     <View style={[styles.mapTopBar, { paddingTop: topInset + spacing.sm }]}>
       <View style={styles.brandLockup}>
         <View style={styles.brandMark}>
-          <Ionicons name="water" color={colors.onBrand} size={18} />
+          <Image source={require("../../assets/icon.png")} style={{ width: 24, height: 24 }} resizeMode="contain" />
         </View>
         <View>
           <Text style={styles.brandName}>FountainRank</Text>
