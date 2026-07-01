@@ -378,10 +378,9 @@ displays a small, persistently-visible attribution line in the results area:
 - `lib/map-search/state.ts` — normalization/min-length gate, debounce-key derivation, API-result/error →
   view-state mapping, **and stale-response dropping** (an older seq id never overwrites a newer result).
 - `lib/map-search/query.ts` — params building + typed-response → list-model mapping.
-- `profileTabIcon(avatarUrl, focused)` decision helper (§5.3): image when present, glyph otherwise.
+- `profileTabIcon(avatarUrl, focused)` decision helper (§5.3): image when present, glyph otherwise — one
+  helper, one test (no rendering).
 - `lib/navigation/map-search.ts` — pub/sub deliver/pending semantics (mirror `add-tab` tests).
-- A pure helper for the **profile tab icon** decision (`avatar_url` present → image, else glyph), unit-tested
-  without rendering.
 - Regenerate the api-client (`export_openapi` → `openapi-typescript`) so `/api/v1/geocode` is typed.
 - Render/overlay/nav-integration and on-device map recentering are CI-/owner-verified (native map + camera
   can't run in the JS unit env) — see `claude_help/testing-ci.md` and the Windows/WSL note.
@@ -392,16 +391,27 @@ One branch (`feat/mobile-map-ux-search-nav`) → PR: backend (geocode router/pro
 tests) + mobile (nav, header logo, profile tab icon, search overlay + libs + tests) + OpenAPI regen +
 style-guide. Codex **spec/plan** review before code and Codex **PR** review before merge (bypass mode, WSL
 `cwd` derived from the repo root, repo-relative paths, loop to `VERDICT: APPROVED`); CI green + every PR
-comment addressed → **squash-merge**. Owner adds `GEOCODING_API_KEY` to the backend environment before the
-search path works in production. Then `gh workflow run deploy.yml --ref main` (backend) and the mobile store
-release workflow. No AI attribution; no time estimates.
+comment addressed → **squash-merge**. `GEOCODING_API_KEY` is already set in the `production` environment
+(§15), so once the §8.4 wiring merges, `gh workflow run deploy.yml --ref main` (backend) activates the
+search path; then the mobile store release workflow. No AI attribution; no time estimates.
 
-## 15. Owner dependency (external registration)
+## 15. Owner dependency (external registration) + no-overage invariant
 
 Register a geocoding account (**LocationIQ** recommended; MapTiler acceptable), obtain an API key, and add
-it as `GEOCODING_API_KEY` to the backend environment secrets (per `docs/setup/README.md` +
+it as `GEOCODING_API_KEY` to the backend `production` environment secret (per `docs/setup/README.md` +
 `claude_help/github-environments.md`). Until the key is set, the endpoint returns `503 geocoding_disabled`
 and the search UI shows "unavailable" — everything else in this work ships and functions without it.
+
+**Status:** the LocationIQ key is already provisioned as the `GEOCODING_API_KEY` secret in the `production`
+environment (owner-supplied 2026-07-01). It does nothing until the §8.4 code wiring lands in the PR.
+
+**No-overage operational invariant (§8.3 depends on this — make it a setup/plan checklist item):**
+- Verify the LocationIQ account has **no overage/pay-as-you-go billing enabled** — the free tier hard-caps
+  at 5k/day and `429`s beyond it (never bills), which is exactly what makes the provider quota the spend
+  guard. An overage-billed plan would break that model.
+- **Document the quota + no-overage behavior in `docs/setup/README.md`** alongside the secret inventory.
+- Treat any future upgrade to a paid/overage tier as a **new design change** that first requires a
+  shared/distributed limiter (§11) — not a config tweak.
 
 ## 16. Acceptance criteria
 
