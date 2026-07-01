@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   leaderboardControlHref,
-  leaderboardHref,
   parseLeaderboardParams,
   rowMetricCaption,
   rowPrimaryValue,
@@ -61,15 +60,6 @@ describe("toApiQuery", () => {
       near_lat: 1.5,
       near_lng: 2.5,
     });
-  });
-});
-
-describe("leaderboardHref", () => {
-  it("falls back to the global board when no center is known", () => {
-    expect(leaderboardHref(null)).toBe("/leaderboard");
-  });
-  it("encodes the center as query params", () => {
-    expect(leaderboardHref({ lat: 40.5, lng: -74.1 })).toBe("/leaderboard?lat=40.5&lng=-74.1");
   });
 });
 

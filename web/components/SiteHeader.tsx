@@ -27,7 +27,7 @@ export async function SiteHeader({ variant }: { variant: "hero" | "bar" }) {
         </div>
       </div>
       {variant === "hero" && (
-        <p className="mx-auto mt-2 max-w-6xl text-sm font-semibold sm:text-base">
+        <p className="mt-2 text-sm font-semibold sm:text-base">
           Find a drinking fountain near you.
         </p>
       )}

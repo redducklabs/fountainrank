@@ -11,9 +11,13 @@ export function requestMapAddMode() {
 
 export function subscribeMapAddMode(listener: () => void): () => void {
   listeners.add(listener);
+  let pendingTimer: ReturnType<typeof setTimeout> | null = null;
   if (pendingRequests > 0) {
     pendingRequests = 0;
-    setTimeout(listener, 0);
+    pendingTimer = setTimeout(listener, 0);
   }
-  return () => listeners.delete(listener);
+  return () => {
+    listeners.delete(listener);
+    if (pendingTimer) clearTimeout(pendingTimer);
+  };
 }

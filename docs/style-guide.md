@@ -348,8 +348,8 @@ narrow brand bar on every full-page route and an optional one-line tagline on th
   left.
 - The points badge is part of the header chrome, not a map overlay, so it never collides with
   MapLibre's top-right zoom/geolocate controls.
-- On narrow web widths the points badge may collapse away before the auth/profile control; signed-out
-  users do not get an empty points shell.
+- On narrow web widths authenticated users still get a compact visible points badge so the
+  leaderboard remains reachable; signed-out users do not get an empty points shell.
 
 ### Points badge
 
