@@ -21,9 +21,6 @@ import { colors, spacing } from "../../theme";
 // insets.bottom === 0) never jams the bar against the system chrome.
 const BAR_CONTENT_H = 56;
 const ANDROID_MIN_PAD = 8;
-// Matches `tabBarInactiveTintColor` below - the custom Search button renders its own glyph/label
-// (it isn't a native tabBarIcon, so it doesn't receive the inactive tint via props) and must stay
-// in sync with it.
 const TAB_INACTIVE_COLOR = "#64748B";
 
 // Root name-gate (kill Anonymous): sign-in can start from the map, not just the account tab, so a
@@ -78,21 +75,17 @@ export default function TabsLayout() {
         />
         <Tabs.Screen
           name="search"
+          listeners={{
+            tabPress: (event) => {
+              event.preventDefault();
+              router.navigate("/");
+              requestMapSearch();
+            },
+          }}
           options={{
             title: "Search",
-            tabBarButton: () => (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Search for a location"
-                onPress={() => {
-                  router.navigate("/");
-                  requestMapSearch();
-                }}
-                style={[styles.searchTabButton, { paddingBottom: bottomPad }]}
-              >
-                <Ionicons name="search" color={TAB_INACTIVE_COLOR} size={24} />
-                <Text style={styles.searchTabLabel}>Search</Text>
-              </Pressable>
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="search" color={color} size={size} />
             ),
           }}
         />
@@ -148,17 +141,6 @@ const styles = StyleSheet.create({
     borderTopColor: colors.border,
   },
   tabBarLabel: {
-    fontSize: 10,
-  },
-  searchTabButton: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingTop: spacing.xs,
-  },
-  searchTabLabel: {
-    marginTop: 2,
-    color: TAB_INACTIVE_COLOR,
     fontSize: 10,
   },
   addTabButton: {
