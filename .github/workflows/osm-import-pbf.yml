@@ -81,7 +81,9 @@ jobs:
           esac
           printf '%s' "$GEOFABRIK_PATH" | grep -Eq '^[a-z0-9-]+(/[a-z0-9-]+)*$' \
             || { echo "::error::geofabrik_path failed syntax check"; exit 1; }
-          python3 -m pip install --quiet "pyyaml==6.0.3"
+          # Ubuntu runners are PEP-668 externally-managed, so `pip install` fails; use the distro
+          # PyYAML package (regions.py only needs yaml.safe_load).
+          sudo apt-get update && sudo apt-get install -y python3-yaml
           python3 backend/app/imports/regions.py \
             --registry .github/osm-import-regions.yml \
             --source pbf --key "$GEOFABRIK_PATH" --scope-id "$SCOPE_ID" --dataset "$DATASET"

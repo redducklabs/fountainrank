@@ -85,7 +85,9 @@ jobs:
           # scope_bounds rectangle from that registry bbox — the merge removes across the WHOLE
           # scope_id with NO spatial guard when scope_bounds is absent (merge.py:307-333), so this
           # bounds removal to the registered area. $BBOX is the SANITIZED value from the prior step.
-          python3 -m pip install --quiet "pyyaml==6.0.3"
+          # Ubuntu runners are PEP-668 externally-managed, so `pip install` fails; use the distro
+          # PyYAML package (regions.py only needs yaml.safe_load).
+          sudo apt-get update && sudo apt-get install -y python3-yaml
           python3 backend/app/imports/regions.py \
             --registry .github/osm-import-regions.yml \
             --source overpass --scope-id "$SCOPE_ID" --dataset "$DATASET" \
