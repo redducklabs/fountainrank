@@ -7,7 +7,7 @@ import logging
 import httpx
 import pytest
 
-from app.config import Settings
+from app.config import Settings, get_settings
 from app.geocoding import (
     LOCATIONIQ_URL,
     CachedGeocodeProvider,
@@ -19,6 +19,7 @@ from app.geocoding import (
     LocationIQProvider,
     get_geocode_provider,
 )
+from app.main import app
 from app.schemas import GeocodeResponse, GeocodeResult
 
 
@@ -492,3 +493,206 @@ def test_get_geocode_provider_reuses_singleton_across_calls():
     second = get_geocode_provider(settings)
 
     assert first is second
+
+
+# --- GET /api/v1/geocode endpoint (spec §8.1, §9, Task 5) ---
+
+
+class _FakeProvider:
+    def __init__(
+        self,
+        results: list[GeocodeResult] | None = None,
+        raise_exc: Exception | None = None,
+    ):
+        self.calls: list[tuple[str, int, tuple[float, float] | None]] = []
+        self._results = results if results is not None else []
+        self._raise_exc = raise_exc
+
+    async def search(
+        self, q: str, limit: int, bias: tuple[float, float] | None
+    ) -> list[GeocodeResult]:
+        self.calls.append((q, limit, bias))
+        if self._raise_exc is not None:
+            raise self._raise_exc
+        return self._results
+
+
+@pytest.fixture
+def fake_provider():
+    fake = _FakeProvider(
+        results=[GeocodeResult(label="123 Main St, Springfield", latitude=40.0, longitude=-74.0)]
+    )
+    app.dependency_overrides[get_geocode_provider] = lambda: fake
+    yield fake
+    app.dependency_overrides.pop(get_geocode_provider, None)
+
+
+async def _get(params: dict):
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+        return await ac.get("/api/v1/geocode", params=params)
+
+
+async def test_geocode_happy_path_returns_200_with_results(fake_provider):
+    resp = await _get({"q": "main st"})
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "results": [{"label": "123 Main St, Springfield", "latitude": 40.0, "longitude": -74.0}]
+    }
+    assert fake_provider.calls == [("main st", 5, None)]
+
+
+async def test_geocode_limit_zero_is_clamped_to_one(fake_provider):
+    resp = await _get({"q": "main st", "limit": 0})
+
+    assert resp.status_code == 200
+    assert fake_provider.calls[0][1] == 1
+
+
+async def test_geocode_limit_over_max_is_clamped_to_ten(fake_provider):
+    resp = await _get({"q": "main st", "limit": 999})
+
+    assert resp.status_code == 200
+    assert fake_provider.calls[0][1] == 10
+
+
+async def test_geocode_non_integer_limit_is_422(fake_provider):
+    resp = await _get({"q": "main st", "limit": "abc"})
+
+    assert resp.status_code == 422
+    assert fake_provider.calls == []
+
+
+async def test_geocode_query_missing_is_422(fake_provider):
+    resp = await _get({})
+
+    assert resp.status_code == 422
+    assert fake_provider.calls == []
+
+
+async def test_geocode_query_empty_is_422(fake_provider):
+    resp = await _get({"q": ""})
+
+    assert resp.status_code == 422
+
+
+async def test_geocode_query_too_short_is_422(fake_provider):
+    resp = await _get({"q": "ab"})
+
+    assert resp.status_code == 422
+
+
+async def test_geocode_query_too_long_is_422(fake_provider):
+    resp = await _get({"q": "x" * 121})
+
+    assert resp.status_code == 422
+
+
+async def test_geocode_out_of_range_lat_alone_is_422(fake_provider):
+    resp = await _get({"q": "main st", "lat": 999})
+
+    assert resp.status_code == 422
+    assert fake_provider.calls == []
+
+
+async def test_geocode_out_of_range_lng_alone_is_422(fake_provider):
+    resp = await _get({"q": "main st", "lng": -200})
+
+    assert resp.status_code == 422
+    assert fake_provider.calls == []
+
+
+async def test_geocode_single_valid_coordinate_without_pair_ignores_bias(fake_provider):
+    resp = await _get({"q": "main st", "lat": 40.0})
+
+    assert resp.status_code == 200
+    assert fake_provider.calls[-1][2] is None
+
+    resp = await _get({"q": "main st", "lng": -74.0})
+
+    assert resp.status_code == 200
+    assert fake_provider.calls[-1][2] is None
+
+
+async def test_geocode_both_valid_coordinates_apply_bias(fake_provider):
+    resp = await _get({"q": "main st", "lat": 40.0, "lng": -74.0})
+
+    assert resp.status_code == 200
+    assert fake_provider.calls[-1][2] == (40.0, -74.0)
+
+
+async def test_geocode_disabled_without_api_key_is_503():
+    app.dependency_overrides[get_settings] = lambda: Settings(geocoding_api_key=None)
+    try:
+        resp = await _get({"q": "main st"})
+        assert resp.status_code == 503
+        assert resp.json()["detail"] == "geocoding_disabled"
+    finally:
+        app.dependency_overrides.pop(get_settings, None)
+
+
+async def test_geocode_unknown_provider_is_503_not_500():
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        geocoding_api_key="key-123", geocoding_provider="maptiler-typo"
+    )
+    try:
+        resp = await _get({"q": "main st"})
+        assert resp.status_code == 503
+        assert resp.json()["detail"] == "geocoding_disabled"
+    finally:
+        app.dependency_overrides.pop(get_settings, None)
+
+
+async def test_geocode_upstream_error_is_502_not_500(fake_provider):
+    fake_provider._raise_exc = GeocodeUpstreamError("geocode_status")
+
+    resp = await _get({"q": "main st"})
+
+    assert resp.status_code == 502
+    assert resp.json()["detail"] == "geocoding_upstream"
+
+
+async def test_geocode_quota_error_fails_closed_to_503_unavailable(fake_provider):
+    fake_provider._raise_exc = GeocodeQuotaError()
+
+    resp = await _get({"q": "main st"})
+
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == "geocoding_unavailable"
+
+
+async def test_geocode_throttled_is_429_with_retry_after(fake_provider):
+    fake_provider._raise_exc = GeocodeThrottled()
+
+    resp = await _get({"q": "main st"})
+
+    assert resp.status_code == 429
+    assert "Retry-After" in resp.headers
+
+
+async def test_geocode_no_log_leak_and_info_carries_length_and_count(fake_provider, caplog):
+    secret = "top-secret-locationiq-key-should-never-leak"
+    query = "1600 Pennsylvania Avenue NW"
+    app.dependency_overrides[get_settings] = lambda: Settings(geocoding_api_key=secret)
+    try:
+        with caplog.at_level(logging.INFO):
+            resp = await _get({"q": query})
+    finally:
+        app.dependency_overrides.pop(get_settings, None)
+
+    assert resp.status_code == 200
+    assert caplog.records
+    for rec in caplog.records:
+        assert query not in rec.getMessage()
+        assert secret not in rec.getMessage()
+        for value in rec.__dict__.values():
+            assert query not in str(value)
+            assert secret not in str(value)
+
+    info_records = [r for r in caplog.records if hasattr(r, "result_count")]
+    assert len(info_records) == 1
+    record = info_records[0]
+    assert record.query_length == len(query)
+    assert record.result_count == 1
+    assert record.cache in {"hit", "miss"}
