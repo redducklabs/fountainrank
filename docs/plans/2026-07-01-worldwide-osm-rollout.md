@@ -3,7 +3,7 @@
 **Date:** 2026-07-01
 **Depends on:** #48 (merged + deployed; California dry-run→apply verified live). Design:
 `docs/specs/2026-06-21-osm-pbf-large-scale-import-design.md`.
-**Status:** Draft — Codex Loop A pending.
+**Status:** Reviewed + approved via PR #141 (combined plan + change review).
 
 #131 is the operational rollout of the #48 PBF pipeline to the rest of the world. It adds no new
 pipeline code — it (a) registers worldwide scopes, (b) documents the rollout, and (c) runs staged
@@ -54,6 +54,11 @@ Per scope, in order:
 2. Read the CLI summary. **Anomaly gates** (else PAUSE + notify, do NOT apply):
    - workflow step failure (404 path, poly/ST_Area fail, disk/size preflight, md5) → diagnose/skip.
    - `candidate_count == 0` → likely wrong path/filter → investigate.
+   - **dry-run shape check** — the insert/match/skip *distribution* must be plausible for the region,
+     not just non-zero. PAUSE on: near-zero candidates for a populous country (parser/filter
+     regression), an abnormally large skip bucket, or an all-insert / no-match shape where existing
+     OSM matches are expected. Inspect the `osm_fountain_import_candidates` action + `skip_reason`
+     counts for the run (runbook §1) before apply.
    - (on refresh) `removed_count` disproportionate to prior candidates → investigate.
 3. If clean → apply (`-f dry_run=false`). Idempotent + reversible (`rollback_run`).
 4. **Live-verify** the representative city for that region via

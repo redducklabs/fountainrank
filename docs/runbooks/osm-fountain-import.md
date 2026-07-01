@@ -85,6 +85,9 @@ don't apply, if any trips), then apply, then live-verify:
 - workflow step failure — a 404 (wrong Geofabrik path), a `.poly`/`ST_Area` validation fail
   (often an **antimeridian**-crossing extract — excluded on purpose), or a size/disk/md5 failure;
 - `candidate_count == 0` — likely a wrong path or filter;
+- **implausible dry-run shape** — inspect the action / `skip_reason` distribution (the SQL in §1),
+  not just the totals: near-zero candidates for a populous country, an abnormally large skip bucket,
+  or an all-insert/no-match shape where existing OSM matches are expected all warrant a pause;
 - on a **refresh**, a `removed_count` out of proportion to prior candidates.
 
 **Antimeridian:** do not register extracts whose `.poly` crosses ±180° (Fiji, NZ Chathams, far-east
