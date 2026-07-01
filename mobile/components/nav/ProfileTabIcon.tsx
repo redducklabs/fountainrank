@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useQuery } from "@tanstack/react-query";
+import { skipToken, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Image, StyleSheet, View } from "react-native";
 
@@ -18,15 +18,22 @@ const INACTIVE_COLOR = "#64748B";
  * The Profile tab-bar icon: the signed-in user's avatar photo when one is available, otherwise
  * the generic `person-circle` glyph (spec section 5.3).
  *
- * Data access is a **cache-only, fetch-disabled read**: `useQuery({ queryKey: ["me"], enabled:
- * false })` still subscribes this component to the shared `["me"]` query cache and re-renders
+ * Data access is a **cache-only, fetch-disabled read**: `useQuery({ queryKey: ["me"], queryFn:
+ * skipToken })` still subscribes this component to the shared `["me"]` query cache and re-renders
  * when `NameGate` (mobile/app/(tabs)/_layout.tsx) populates or updates it, but never triggers a
  * fetch of its own. That matters because the root `QueryClient` has no `staleTime` - an
  * `enabled: true` observer here would refetch on every mount, and a one-shot
- * `queryClient.getQueryData` read would not react once `NameGate`'s fetch resolves.
+ * `queryClient.getQueryData` read would not react once `NameGate`'s fetch resolves. `skipToken`
+ * (rather than `enabled: false`) is the official v5 idiom for a conditionally-disabled query: a
+ * `queryFn` of `skipToken` forces `enabled` to `false` internally (see
+ * `QueryClient.defaultQueryOptions`), so behavior is identical, but it also gives
+ * `defaultedOptions.queryFn` a truthy value - `enabled: false` alone leaves `queryFn` `undefined`,
+ * which trips react-query's every-render dev-mode `console.error` ("No queryFn was passed...") in
+ * `useBaseQuery` since this component lives in the persistent tab bar and re-renders on every
+ * navigation.
  */
 export function ProfileTabIcon({ focused }: { focused: boolean }) {
-  const me = useQuery<MeProfile>({ queryKey: ["me"], enabled: false });
+  const me = useQuery<MeProfile>({ queryKey: ["me"], queryFn: skipToken });
   const avatarUrl = me.data?.avatar_url;
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const imageErrored = failedUrl !== null && failedUrl === avatarUrl;

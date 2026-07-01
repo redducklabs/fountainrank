@@ -1,4 +1,4 @@
-import { QueryClient, QueryObserver } from "@tanstack/react-query";
+import { QueryClient, QueryObserver, skipToken } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 
 import { profileTabIcon } from "../../lib/auth/profile-tab-icon";
@@ -15,9 +15,9 @@ const PROFILE: MeProfile = {
 };
 
 /**
- * `ProfileTabIcon` reads the `["me"]` query via `useQuery({ queryKey: ["me"], enabled: false })`.
- * `useQuery` is a thin React wrapper over `@tanstack/query-core`'s `QueryObserver`, so these tests
- * exercise the exact same cache-subscription mechanics the component relies on directly against
+ * `ProfileTabIcon` reads the `["me"]` query via `useQuery({ queryKey: ["me"], queryFn: skipToken
+ * })`. `useQuery` is a thin React wrapper over `@tanstack/query-core`'s `QueryObserver`, so these
+ * tests exercise the exact same cache-subscription mechanics the component relies on directly against
  * `QueryObserver`, without a React Native renderer. A full component-render version of this test
  * (mounting `<ProfileTabIcon />` with `@testing-library/react-native`) was written during
  * implementation but could not be committed: this repo has no React Native component-render test
@@ -48,7 +48,7 @@ describe('["me"] cache subscription contract behind ProfileTabIcon', () => {
     const client = new QueryClient();
     const observer = new QueryObserver<MeProfile>(client, {
       queryKey: ["me"],
-      enabled: false,
+      queryFn: skipToken,
     });
     const seen: ("image" | "glyph")[] = [];
     const unsubscribe = observer.subscribe((result) => {
@@ -83,7 +83,7 @@ describe('["me"] cache subscription contract behind ProfileTabIcon', () => {
     client.setQueryData(["me"], PROFILE);
     const observer = new QueryObserver<MeProfile>(client, {
       queryKey: ["me"],
-      enabled: false,
+      queryFn: skipToken,
     });
     expect(profileTabIcon(observer.getCurrentResult().data?.avatar_url, false)).toBe("image");
 
