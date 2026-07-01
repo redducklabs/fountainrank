@@ -30,10 +30,14 @@ export type SearchState = {
   query: string;
   /**
    * The seq of the latest request dispatched via `requestStarted` (0 = none
-   * yet). Also bumped (without a `requestStarted`) when `queryChanged` forces
-   * an idle transition below the minimum length, so a response still in
-   * flight for the just-abandoned query can no longer match and is dropped -
-   * see the stale-response guard in `resultsReceived`/`requestFailed`.
+   * yet). Also bumped (without a `requestStarted`) by `queryChanged` whenever
+   * the EFFECTIVE (normalized) query changes - not only when it drops below
+   * the minimum length - so a response still in flight for the
+   * just-abandoned query can no longer match and is dropped - see the
+   * stale-response guard in `resultsReceived`/`requestFailed`. A keystroke
+   * that doesn't change the normalized query (e.g. a trailing space typed
+   * then removed) does NOT bump `seq`, to avoid needlessly invalidating a
+   * request that is still relevant.
    */
   seq: number;
   results: SearchResultItem[];
@@ -91,21 +95,27 @@ export function nextRequestSeq(state: SearchState): number {
 export function searchReducer(state: SearchState, action: SearchAction): SearchState {
   switch (action.type) {
     case "queryChanged": {
+      // Bump `seq` whenever the EFFECTIVE (normalized) query changes - not only
+      // when it drops below the minimum length - so a response still in flight
+      // for the now-abandoned query can no longer match the current seq and is
+      // dropped by the stale-response guard in `resultsReceived`/`requestFailed`
+      // below. A keystroke that doesn't change the normalized query (e.g. a
+      // trailing space typed then removed) leaves seq untouched, so a request
+      // still relevant to the (unchanged) effective query isn't invalidated.
+      const effectiveQueryChanged =
+        normalizeSearchQuery(action.query) !== normalizeSearchQuery(state.query);
+      const seq = effectiveQueryChanged ? state.seq + 1 : state.seq;
       if (!meetsMinLength(action.query)) {
-        // Bump `seq` so a still-in-flight response for the abandoned query
-        // (matching the old seq) is dropped by the stale-response guard in
-        // `resultsReceived`/`requestFailed` below, instead of reviving stale
-        // content after this idle transition.
         return {
           ...state,
           query: action.query,
           status: "idle",
           results: [],
           errorReason: null,
-          seq: state.seq + 1,
+          seq,
         };
       }
-      return { ...state, query: action.query };
+      return { ...state, query: action.query, seq };
     }
     case "requestStarted":
       return { ...state, seq: action.seq, status: "loading", errorReason: null };

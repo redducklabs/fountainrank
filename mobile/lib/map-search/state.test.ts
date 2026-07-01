@@ -193,6 +193,92 @@ describe("searchReducer - stale response dropped after abandoning the query belo
   });
 });
 
+describe("searchReducer - stale-response race on a valid-to-valid query change (Codex finding)", () => {
+  const staleItem: SearchResultItem = { id: "1,2,0", label: "Main St", latitude: 1, longitude: 2 };
+  const freshItem: SearchResultItem = {
+    id: "3,4,0",
+    label: "Main St, Suite 2",
+    latitude: 3,
+    longitude: 4,
+  };
+
+  it("bumps seq on a valid-to-valid query change, dropping a stale in-flight response for the old query", () => {
+    const typedMain = searchReducer(initialSearchState, { type: "queryChanged", query: "main" });
+    const loading = searchReducer(typedMain, { type: "requestStarted", seq: 1 });
+    expect(loading.status).toBe("loading");
+
+    // The user keeps typing while "main"'s request is still in flight - the query
+    // stays >= MIN_QUERY_LENGTH the whole time, so the below-min branch never runs
+    // and (pre-fix) seq would NOT have been bumped here, leaving the stale response
+    // still matching state.seq below.
+    const retyped = searchReducer(loading, { type: "queryChanged", query: "main st" });
+    expect(retyped.status).toBe("loading");
+    expect(retyped.query).toBe("main st");
+    expect(retyped.seq).not.toBe(loading.seq);
+
+    // The abandoned "main" request's response finally arrives, racing the abort -
+    // it must be dropped, not rendered as if it were "main st"'s results.
+    const afterStaleResult = searchReducer(retyped, {
+      type: "resultsReceived",
+      seq: 1,
+      results: [staleItem],
+    });
+    expect(afterStaleResult).toBe(retyped);
+    expect(afterStaleResult.status).toBe("loading");
+    expect(afterStaleResult.results).toEqual([]);
+
+    // A fresh request for "main st" is then dispatched and resolves normally.
+    const freshLoading = searchReducer(afterStaleResult, {
+      type: "requestStarted",
+      seq: retyped.seq + 1,
+    });
+    const applied = searchReducer(freshLoading, {
+      type: "resultsReceived",
+      seq: retyped.seq + 1,
+      results: [freshItem],
+    });
+    expect(applied.status).toBe("results");
+    expect(applied.results).toEqual([freshItem]);
+  });
+
+  it("mirrors the drop for a stale requestFailed on a valid-to-valid query change", () => {
+    const typedMain = searchReducer(initialSearchState, { type: "queryChanged", query: "main" });
+    const loading = searchReducer(typedMain, { type: "requestStarted", seq: 1 });
+    const retyped = searchReducer(loading, { type: "queryChanged", query: "main st" });
+
+    const afterStaleError = searchReducer(retyped, {
+      type: "requestFailed",
+      seq: 1,
+      reason: "unavailable",
+    });
+    expect(afterStaleError).toBe(retyped);
+    expect(afterStaleError.status).toBe("loading");
+    expect(afterStaleError.errorReason).toBeNull();
+  });
+
+  it("does not bump seq for a keystroke that doesn't change the normalized query (trailing space)", () => {
+    const typedMain = searchReducer(initialSearchState, {
+      type: "queryChanged",
+      query: "main st",
+    });
+    const loading = searchReducer(typedMain, { type: "requestStarted", seq: 1 });
+
+    const trailingSpace = searchReducer(loading, { type: "queryChanged", query: "main st " });
+    expect(trailingSpace.seq).toBe(loading.seq);
+    expect(trailingSpace.status).toBe("loading");
+
+    // The still-in-flight response for the (effectively unchanged) query is NOT
+    // stale and must still apply - no needless invalidation.
+    const applied = searchReducer(trailingSpace, {
+      type: "resultsReceived",
+      seq: 1,
+      results: [staleItem],
+    });
+    expect(applied.status).toBe("results");
+    expect(applied.results).toEqual([staleItem]);
+  });
+});
+
 describe("searchReducer - reset", () => {
   it("returns to the initial idle state", () => {
     const started = searchReducer(initialSearchState, { type: "requestStarted", seq: 1 });

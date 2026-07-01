@@ -5,7 +5,16 @@
 // `AbortController`, and the `setFlyTo` recenter - this component has no
 // network/state logic of its own.
 
-import { Alert, FlatList, Linking, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import {
+  Alert,
+  FlatList,
+  Linking,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 
 import type { SearchResultItem, SearchState } from "../../lib/map-search/state";
 import { colors, spacing, typography } from "../../theme";

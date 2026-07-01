@@ -41,7 +41,12 @@ describe("searchGeocode", () => {
     })) as unknown as MobileApiClient["GET"];
     const client = fakeClient(get);
 
-    const results = await searchGeocode(client, { q: "amphitheatre", limit: 5, lat: 37, lng: -122 });
+    const results = await searchGeocode(client, {
+      q: "amphitheatre",
+      limit: 5,
+      lat: 37,
+      lng: -122,
+    });
 
     expect(get).toHaveBeenCalledWith("/api/v1/geocode", {
       params: { query: { q: "amphitheatre", limit: 5, lat: 37, lng: -122 } },
@@ -61,7 +66,9 @@ describe("searchGeocode", () => {
     await searchGeocode(client, { q: "main st" });
 
     expect(get).toHaveBeenCalledWith("/api/v1/geocode", {
-      params: { query: { q: "main st", limit: DEFAULT_GEOCODE_LIMIT, lat: undefined, lng: undefined } },
+      params: {
+        query: { q: "main st", limit: DEFAULT_GEOCODE_LIMIT, lat: undefined, lng: undefined },
+      },
     });
   });
 
