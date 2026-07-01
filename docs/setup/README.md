@@ -77,6 +77,7 @@ Names match `claude_help/github-environments.md`; some are finalized in plan 0f
 | `GOOGLE_DELEGATED_USER`                                             | `03-google-cloud.md`                               | GitHub Env **variable**                                       | Ready to create                                                          |
 | `FROM_EMAIL`                                                        | `02-dns.md` / `03-google-cloud.md`                 | GitHub Env **variable**                                       | Ready to create                                                          |
 | `LOGTO_EMAIL_WEBHOOK_TOKEN`                                         | self-generated random (≥32 chars)                  | GitHub Env **secret** + Logto HTTP email connector auth token | Ready to create                                                          |
+| `GEOCODING_API_KEY`                                                 | LocationIQ account (mobile map UX search)          | GitHub Env secret → `fountainrank-secrets.geocoding-api-key`   | ✅ set (`production`, owner-supplied 2026-07-01)                         |
 | `BASE_URL`                                                          | decided per environment                            | GitHub Env **variable**                                       | TBD-0f                                                                   |
 | Google OAuth client id/secret (web/iOS/Android)                     | `03-google-cloud.md`                               | **Logto** Google connector                                    | Ready to create                                                          |
 | Apple Services ID / Team ID / Key ID / `.p8` key                    | `04-apple-and-app-stores.md`                       | **Logto** Apple connector                                     | Ready to create                                                          |
@@ -292,6 +293,40 @@ data exists).
 **Pin assets** are already committed (`web/public/pins/*.png`, derived from
 `docs/logos/512-pin.png` via `scripts/gen-pin-assets.py`) — swap for bespoke art anytime
 (referenced by name in `web/lib/map/style.ts`, no code change).
+
+---
+
+## Geocoding proxy (LocationIQ) — mobile map UX search, no-overage invariant
+
+The backend's `/api/v1/geocode` endpoint proxies address/city search to **LocationIQ**
+(`backend/app/config.py::geocoding_api_key`, the only secret; everything else — provider
+host, cache TTL, throttle — is a code default). Design:
+`docs/specs/2026-07-01-mobile-map-ux-search-and-nav-design.md` §8.3/§8.4/§15.
+
+**Status:** the `GEOCODING_API_KEY` secret is **already set** in the GitHub `production`
+environment (owner-supplied 2026-07-01). It does nothing until the §8.4 deploy wiring
+(`.github/workflows/deploy.yml` + `infra/k8s/backend.yaml`) is merged and deployed — before
+that, and whenever the key is absent/misconfigured, the endpoint fails closed to
+`503 geocoding_disabled` (never a crash).
+
+**Quota + no-overage behavior (the actual spend guard):** LocationIQ's free tier is a
+**hard cap of 5,000 requests/day with no overage billing** — requests beyond the quota are
+`429`'d by the provider, never billed. Because DOKS runs multiple backend replicas (each
+with its own per-pod, in-process throttle/cache — never a global counter), the *provider's*
+no-overage quota is what actually bounds worst-case spend, not anything in-process. When
+the provider returns quota-exhausted, the endpoint fails closed to `503 geocoding_unavailable`
+(never a retry storm).
+
+**Owner-confirmed invariant — do not violate without a design change:**
+
+- **Verify the LocationIQ account has no overage/pay-as-you-go billing enabled.** The
+  free-tier hard cap is the spend guard; an overage-billed plan would silently remove it.
+- **Never move `GEOCODING_API_KEY` onto a paid/overage-billed tier** without first (a)
+  rotating the key and (b) adding a shared/distributed rate limiter (spec §11) — this is a
+  new design change, not a config tweak.
+- If the LocationIQ key is ever rotated or replaced, update only the `production`
+  environment secret value — never the repo (the repo references the secret **name** only;
+  see the golden rules above).
 
 ---
 

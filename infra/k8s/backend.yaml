@@ -64,6 +64,13 @@ spec:
                 secretKeyRef:
                   name: fountainrank-secrets
                   key: logto-email-webhook-token
+            # Geocoding proxy (LocationIQ) — the only secret; missing key -> 503 geocoding_disabled
+            # (backend/app/config.py::geocoding_enabled). See §8.4/§15 of the mobile map UX design.
+            - name: GEOCODING_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: fountainrank-secrets
+                  key: geocoding-api-key
             - name: GOOGLE_DELEGATED_USER
               value: "${GOOGLE_DELEGATED_USER}"
             - name: FROM_EMAIL
