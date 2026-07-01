@@ -155,6 +155,44 @@ describe("searchReducer - error", () => {
   });
 });
 
+describe("searchReducer - stale response dropped after abandoning the query below the minimum", () => {
+  const item: SearchResultItem = { id: "1,2,0", label: "Main St", latitude: 1, longitude: 2 };
+
+  it("ignores a resultsReceived for the seq that was in flight when the query was abandoned", () => {
+    const loading = searchReducer(initialSearchState, { type: "requestStarted", seq: 1 });
+    expect(loading.status).toBe("loading");
+
+    // The user deletes back down below the minimum before the request resolves.
+    const abandoned = searchReducer(loading, { type: "queryChanged", query: "ab" });
+    expect(abandoned.status).toBe("idle");
+    expect(abandoned.results).toEqual([]);
+
+    // The in-flight seq=1 response finally arrives - it must NOT revive the
+    // abandoned query's results, even though seq=1 was the latest dispatched.
+    const afterLateResult = searchReducer(abandoned, {
+      type: "resultsReceived",
+      seq: 1,
+      results: [item],
+    });
+    expect(afterLateResult.status).toBe("idle");
+    expect(afterLateResult.results).toEqual([]);
+  });
+
+  it("ignores a requestFailed for the seq that was in flight when the query was abandoned", () => {
+    const loading = searchReducer(initialSearchState, { type: "requestStarted", seq: 1 });
+    const abandoned = searchReducer(loading, { type: "queryChanged", query: "ab" });
+
+    const afterLateError = searchReducer(abandoned, {
+      type: "requestFailed",
+      seq: 1,
+      reason: "unavailable",
+    });
+    expect(afterLateError.status).toBe("idle");
+    expect(afterLateError.errorReason).toBeNull();
+    expect(afterLateError.results).toEqual([]);
+  });
+});
+
 describe("searchReducer - reset", () => {
   it("returns to the initial idle state", () => {
     const started = searchReducer(initialSearchState, { type: "requestStarted", seq: 1 });

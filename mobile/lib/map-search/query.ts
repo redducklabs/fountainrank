@@ -6,7 +6,7 @@
 
 import type { components } from "@fountainrank/api-client";
 
-import { ApiError, unwrap, type MobileApiClient } from "../api";
+import { unwrap, type MobileApiClient } from "../api";
 import type { SearchErrorReason, SearchResultItem } from "./state";
 
 export type GeocodeResult = components["schemas"]["GeocodeResult"];
@@ -46,13 +46,9 @@ export function mapGeocodeResults(results: GeocodeResult[]): SearchResultItem[] 
  * change here rather than a scattered set of status checks in the overlay.
  */
 export function mapGeocodeError(error: unknown): SearchErrorReason {
-  if (error instanceof ApiError) {
-    // 503 (disabled/quota-exhausted), 502 (upstream), 429 (throttled) all
-    // degrade to the same "unavailable" UI (spec §7.1) - there is no
-    // differentiated messaging in v1.
-    return "unavailable";
-  }
-  // No HTTP status at all - a network/offline failure - same UI as above.
+  // Every case - ApiError (503/502/429) and network/offline failures with no
+  // HTTP status - degrades to the same "unavailable" UI (spec §7.1); there is
+  // no differentiated messaging in v1.
   return "unavailable";
 }
 

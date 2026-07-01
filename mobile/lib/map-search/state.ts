@@ -28,7 +28,13 @@ export type SearchState = {
   status: SearchStatus;
   /** The raw (un-normalized) text currently in the input. */
   query: string;
-  /** The seq of the latest request dispatched via `requestStarted` (0 = none yet). */
+  /**
+   * The seq of the latest request dispatched via `requestStarted` (0 = none
+   * yet). Also bumped (without a `requestStarted`) when `queryChanged` forces
+   * an idle transition below the minimum length, so a response still in
+   * flight for the just-abandoned query can no longer match and is dropped -
+   * see the stale-response guard in `resultsReceived`/`requestFailed`.
+   */
   seq: number;
   results: SearchResultItem[];
   errorReason: SearchErrorReason | null;
@@ -86,7 +92,18 @@ export function searchReducer(state: SearchState, action: SearchAction): SearchS
   switch (action.type) {
     case "queryChanged": {
       if (!meetsMinLength(action.query)) {
-        return { ...state, query: action.query, status: "idle", results: [], errorReason: null };
+        // Bump `seq` so a still-in-flight response for the abandoned query
+        // (matching the old seq) is dropped by the stale-response guard in
+        // `resultsReceived`/`requestFailed` below, instead of reviving stale
+        // content after this idle transition.
+        return {
+          ...state,
+          query: action.query,
+          status: "idle",
+          results: [],
+          errorReason: null,
+          seq: state.seq + 1,
+        };
       }
       return { ...state, query: action.query };
     }
