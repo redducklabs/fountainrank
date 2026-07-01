@@ -5,6 +5,7 @@ import {
   AccessibilityInfo,
   Animated,
   ActivityIndicator,
+  BackHandler,
   Image,
   Pressable,
   ScrollView,
@@ -21,6 +22,7 @@ import { AttributeFields } from "../../components/add-fountain/AttributeFields";
 import { WaterCelebration } from "../../components/feedback/WaterCelebration";
 import { FountainMap, type MapFlyTo } from "../../components/map/FountainMap";
 import { MapFilters } from "../../components/map/MapFilters";
+import { SearchOverlay } from "../../components/map/SearchOverlay";
 import { RatingFields } from "../../components/add-fountain/RatingFields";
 import { ScreenContainer } from "../../components/ScreenContainer";
 import { useForegroundLocation } from "../../hooks/useForegroundLocation";
@@ -63,7 +65,16 @@ import {
   fountainsQueryKey,
 } from "../../lib/map/filters";
 import { pinsToFeatureCollection } from "../../lib/map/pins";
+import {
+  deriveDebounceKey,
+  initialSearchState,
+  nextRequestSeq,
+  searchReducer,
+  type SearchResultItem,
+} from "../../lib/map-search/state";
+import { mapGeocodeError, searchGeocode } from "../../lib/map-search/query";
 import { subscribeMapAddMode } from "../../lib/navigation/add-tab";
+import { subscribeMapSearch } from "../../lib/navigation/map-search";
 import { resolveViewState, type ViewState } from "../../lib/view-state";
 import { useApi } from "../../providers/api-provider";
 import { useAuth } from "../../providers/auth-provider";
@@ -79,6 +90,8 @@ type BboxResult = { pins: FountainPin[]; truncated: boolean };
 // it so it isn't hidden behind the chips (#105).
 const FILTER_BAR_HEIGHT = 44;
 const MAP_HEADER_HEIGHT = 72;
+// Spec §7.1: debounce the geocode call ~300ms after the user stops typing.
+const SEARCH_DEBOUNCE_MS = 300;
 
 export default function MapScreen() {
   const { client, config } = useApi();
@@ -116,6 +129,23 @@ export default function MapScreen() {
   const [celebrationKey, setCelebrationKey] = useState(0);
   const [celebrationPoints, setCelebrationPoints] = useState<number | null>(null);
   const regionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchState, searchDispatch] = useReducer(searchReducer, initialSearchState);
+  // Mirrors the latest render's value into a ref (in an effect - not during render,
+  // react-hooks/refs) so the debounce effect below (which only re-runs when the
+  // debounce KEY changes, not on every keystroke/response) can still read the current
+  // seq/region without those unrelated changes tearing down and restarting its own
+  // in-flight request (see that effect's comment). Declared with no dependency array
+  // so it runs after every render, and - because effects run in declaration order -
+  // always before the debounce effect further down on the same commit.
+  const searchStateRef = useRef(searchState);
+  useEffect(() => {
+    searchStateRef.current = searchState;
+  });
+  const regionRef = useRef(region);
+  useEffect(() => {
+    regionRef.current = region;
+  });
   const gate = addFountainGate(auth.status);
 
   const norm = region ? normalizeBounds(region.bounds) : null;
@@ -304,6 +334,86 @@ export default function MapScreen() {
   useEffect(() => {
     return subscribeMapAddMode(handleAddTabRequest);
   }, [handleAddTabRequest]);
+
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false);
+    searchDispatch({ type: "reset" });
+  }, []);
+
+  const openSearch = useCallback(() => {
+    searchDispatch({ type: "reset" });
+    setSearchOpen(true);
+  }, []);
+
+  useEffect(() => {
+    return subscribeMapSearch(openSearch);
+  }, [openSearch]);
+
+  // Android hardware-back dismisses the overlay (and, via the debounce effect's
+  // cleanup below reacting to `searchOpen` flipping to false, aborts any in-flight
+  // request) instead of leaving the app/falling through to the default back behavior.
+  useEffect(() => {
+    if (!searchOpen) return;
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      closeSearch();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [searchOpen, closeSearch]);
+
+  const handleSearchQueryChange = useCallback((text: string) => {
+    searchDispatch({ type: "queryChanged", query: text });
+  }, []);
+
+  const handleSearchSelect = useCallback(
+    (result: SearchResultItem) => {
+      closeSearch();
+      // Recenter only (spec §7.1) - the search-result marker is Task 12.
+      setFlyTo({ center: { lat: result.latitude, lng: result.longitude }, zoom: PLACE_MIN_ZOOM });
+    },
+    [closeSearch],
+  );
+
+  // Debounced, abortable geocode request (spec §7.1). Keyed off `deriveDebounceKey`
+  // (not the raw query) so an edit that normalizes to the same trimmed text - e.g. a
+  // trailing space typed then removed - doesn't restart the timer/cancel the in-flight
+  // request for an unchanged effective query. Deliberately does NOT depend on
+  // `searchState`/`region` directly: both change as a *result* of this very effect
+  // (dispatching requestStarted/resultsReceived, or the map panning while a search is
+  // open) and including them would tear down and restart the debounce/abort purely
+  // because of the response it just received. `searchStateRef`/`regionRef` (updated
+  // every render, above) give this effect the current seq/bias without that.
+  const searchDebounceKey = deriveDebounceKey(searchState.query);
+  useEffect(() => {
+    if (!searchOpen) return;
+    if (searchDebounceKey == null) return;
+    const controller = new AbortController();
+    const seq = nextRequestSeq(searchStateRef.current);
+    const timer = setTimeout(() => {
+      searchDispatch({ type: "requestStarted", seq });
+      const bias = regionRef.current ? centerOfViewport(regionRef.current.bounds) : null;
+      searchGeocode(client, {
+        q: searchDebounceKey,
+        lat: bias?.lat,
+        lng: bias?.lng,
+        signal: controller.signal,
+      })
+        .then((results) => {
+          searchDispatch({ type: "resultsReceived", seq, results });
+        })
+        .catch((error: unknown) => {
+          // An aborted request's rejection carries no useful reason - the request was
+          // superseded/cancelled, not "failed"; the stale-seq guard in the reducer
+          // would drop it anyway, but skip the dispatch entirely for clarity.
+          if (controller.signal.aborted) return;
+          searchDispatch({ type: "requestFailed", seq, reason: mapGeocodeError(error) });
+        });
+    }, SEARCH_DEBOUNCE_MS);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [client, searchDebounceKey, searchOpen]);
 
   // Honest "map unavailable" state when no basemap style URL is configured.
   if (!isMapConfigured(config)) {
@@ -555,6 +665,16 @@ export default function MapScreen() {
       )}
       <MobileToast toast={toast} onDismiss={() => setToast(null)} />
       <WaterCelebration triggerKey={celebrationKey} points={celebrationPoints} />
+
+      {searchOpen ? (
+        <SearchOverlay
+          state={searchState}
+          topInset={insets.top}
+          onQueryChange={handleSearchQueryChange}
+          onSelect={handleSearchSelect}
+          onClose={closeSearch}
+        />
+      ) : null}
     </View>
   );
 }

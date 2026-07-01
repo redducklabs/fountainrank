@@ -20,6 +20,14 @@ export type GeocodeSearchParams = {
   /** Optional viewport-bias hint (spec §7.1) - only applied server-side when both are present. */
   lat?: number;
   lng?: number;
+  /**
+   * Optional abort signal (Task 11): the overlay creates one `AbortController` per
+   * debounced request and aborts it on query change/close, so a superseded request is
+   * actually cancelled at the network layer - not just ignored via the `state.ts`
+   * seq-guard. `openapi-fetch`'s `FetchOptions` extends `RequestInit`, so `signal` is a
+   * valid sibling of `params` on `client.GET`.
+   */
+  signal?: AbortSignal;
 };
 
 /**
@@ -73,6 +81,7 @@ export async function searchGeocode(
         lng: params.lng,
       },
     },
+    signal: params.signal,
   });
   const data = unwrap(result);
   return mapGeocodeResults(data.results);
