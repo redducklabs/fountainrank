@@ -5,6 +5,7 @@ import { Image, StyleSheet, View } from "react-native";
 
 import { profileTabIcon } from "../../lib/auth/profile-tab-icon";
 import type { MeProfile } from "../../lib/auth/profile";
+import { useAuth } from "../../providers/auth-provider";
 import { colors } from "../../theme";
 
 const ICON_SIZE = 24;
@@ -31,10 +32,18 @@ const INACTIVE_COLOR = "#64748B";
  * which trips react-query's every-render dev-mode `console.error` ("No queryFn was passed...") in
  * `useBaseQuery` since this component lives in the persistent tab bar and re-renders on every
  * navigation.
+ *
+ * The `avatarUrl` derivation below also gates on `auth.status`: `account.tsx`'s sign-out clears the
+ * `["me"]` cache via `removeQueries`, which does not itself notify this already-mounted (disabled)
+ * observer, so a stale `avatar_url` from the previous session can otherwise linger until the next
+ * sign-in. Since `auth.status` flips to a non-`"authenticated"` value synchronously on sign-out,
+ * gating on it (rather than on the cached data alone) avoids showing the previous user's photo on a
+ * shared device.
  */
 export function ProfileTabIcon({ focused }: { focused: boolean }) {
+  const auth = useAuth();
   const me = useQuery<MeProfile>({ queryKey: ["me"], queryFn: skipToken });
-  const avatarUrl = me.data?.avatar_url;
+  const avatarUrl = auth.status === "authenticated" ? me.data?.avatar_url : undefined;
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const imageErrored = failedUrl !== null && failedUrl === avatarUrl;
   const showImage = !imageErrored && profileTabIcon(avatarUrl, focused) === "image";
