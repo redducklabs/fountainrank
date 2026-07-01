@@ -106,8 +106,9 @@ Keep component files focused; if a planned component stays tiny, keep it local t
   - Cache key normalization: whitespace/case-insensitive `q`, `limit` included, bias rounded to a coarse grid so nearby viewports share a key.
   - Throttle: N calls within the window succeed, the N+1 raises a throttle signal; after the window resets, calls succeed again. Deterministic time via an injected clock (no wall-clock/`Date.now`).
   - Privacy: the cache exposes no accessor that returns raw keys/queries (no `.keys()`-style diagnostic leak path).
+  - **Unsupported provider is deterministic (no crash):** `get_geocode_provider` with `geocoding_provider="maptiler"` (or a typo) while a key is set returns a "disabled" marker (endpoint → `503 geocoding_disabled`) and logs a **redacted** config warning (provider name only, never the key) — it does not raise/`500`. A known-providers set gates this; only `"locationiq"` is wired in this PR.
 - [ ] Run tests; confirm they fail.
-- [ ] Implement a bounded TTL/LRU cache and a token-bucket throttle in `geocoding.py`, both taking an injected `now()` for testability. Wire a `get_geocode_provider(settings=Depends(get_settings))` factory that returns a provider wrapped with cache+throttle when `geocoding_enabled`, mirroring `get_userinfo_fetcher`/`get_gmail_sender`.
+- [ ] Implement a bounded TTL/LRU cache and a token-bucket throttle in `geocoding.py`, both taking an injected `now()` for testability. Wire a `get_geocode_provider(settings=Depends(get_settings))` factory that returns a cache+throttle-wrapped provider when `geocoding_enabled` **and** `geocoding_provider` is a known value; otherwise returns the "disabled" marker (unset key) or logs the redacted unsupported-provider warning and returns disabled. Mirror `get_userinfo_fetcher`/`get_gmail_sender`.
 - [ ] Run tests; confirm pass. Commit (`feat(geocode): bounded TTL cache + coarse throttle`).
 
 ---
@@ -117,14 +118,15 @@ Keep component files focused; if a planned component stays tiny, keep it local t
 **Files:** create `backend/app/routers/geocode.py`; modify `backend/app/main.py`; test `backend/tests/test_geocode.py`, `backend/tests/test_openapi.py`.
 
 - [ ] **Write failing endpoint tests** (fake provider via `app.dependency_overrides[get_geocode_provider]`, like `test_email_webhook.py`):
-  - happy path → `200` `{ results: [...] }`; `limit` clamped to `1..10`.
+  - happy path → `200` `{ results: [...] }`.
+  - **`limit` is clamped, not rejected (spec §8.1):** `limit=0` and `limit=999` both → `200` with the fake provider receiving `limit == 1` and `limit == 10` respectively; a non-integer `limit` (e.g. `abc`) → `422`.
   - validation: `q` empty/<3/>120 → `422`; **bias rule (spec §8.1):** out-of-range `lat` or `lng` → `422` even without its pair; exactly one valid coordinate (no pair) → `200` with bias ignored; both valid → bias applied (assert the fake received the bias).
-  - `geocoding_enabled` false (no key) → `503 geocoding_disabled`.
+  - `geocoding_enabled` false (no key) → `503 geocoding_disabled`; **unsupported `geocoding_provider` (e.g. a typo) → `503 geocoding_disabled`** (deterministic, no `500` — see Task 4).
   - fake raises `GeocodeUpstreamError` → `502 geocoding_upstream`; raises `GeocodeQuotaError` (upstream 429) → fail-closed `503 geocoding_unavailable`; no `500`.
   - throttle tripped → `429` + `Retry-After`.
   - **no log leak:** capture logs and assert neither the raw `q` nor the key appears; INFO log carries query **length**, `result_count`, `cache: hit|miss`.
 - [ ] Run tests; confirm they fail.
-- [ ] Implement `geocode.py`: `router = APIRouter(prefix="/api/v1", tags=["geocode"])`; `@router.get("/geocode", response_model=GeocodeResponse, responses={503:..., 502:..., 429:...})`; params `q: Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=120)]`, `limit: int = Query(5, ge=1, le=10)`, `lat: float | None = Query(None, ge=-90, le=90)`, `lng: float | None = Query(None, ge=-180, le=180)`; provider via `Depends(get_geocode_provider)`; map disabled/errors to the documented statuses; structured logging per the constraints. Add `app.include_router(geocode.router)` in `main.py`.
+- [ ] Implement `geocode.py`: `router = APIRouter(prefix="/api/v1", tags=["geocode"])`; `@router.get("/geocode", response_model=GeocodeResponse, responses={503:..., 502:..., 429:...})`; params `q: Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=120)]`, `limit: int = Query(5)` (**unconstrained integer — clamp in the handler with `limit = max(1, min(10, limit))` before calling the provider; do NOT use `ge=/le=`, which would reject rather than clamp**), `lat: float | None = Query(None, ge=-90, le=90)`, `lng: float | None = Query(None, ge=-180, le=180)`; provider via `Depends(get_geocode_provider)`; map disabled/unsupported-provider/errors to the documented statuses; structured logging per the constraints. Add `app.include_router(geocode.router)` in `main.py`.
 - [ ] Run tests; confirm pass.
 - [ ] Regenerate OpenAPI + assert: run the backend `export_openapi` path; extend `test_openapi.py` to assert `GET /api/v1/geocode` with its params + `GeocodeResponse`. Commit (`feat(geocode): public geocode proxy endpoint + OpenAPI`).
 
@@ -137,7 +139,7 @@ Keep component files focused; if a planned component stays tiny, keep it local t
 - [ ] `deploy.yml`: add `GEOCODING_API_KEY: ${{ secrets.GEOCODING_API_KEY }}` to the deploy job env, and `--from-literal=geocoding-api-key="$GEOCODING_API_KEY"` to the `kubectl create secret generic fountainrank-secrets …` block (same path as `logto-email-webhook-token`).
 - [ ] `backend.yaml`: add an `env` entry mapping `GEOCODING_API_KEY` → `secretKeyRef { name: fountainrank-secrets, key: geocoding-api-key }` (mirror `LOGTO_EMAIL_WEBHOOK_TOKEN`).
 - [ ] `docs/setup/README.md`: add `GEOCODING_API_KEY` to the secret inventory, note LocationIQ, the **5k/day no-overage** quota behavior, and the "verify no overage billing" check (spec §15). Note it is already set in the `production` environment.
-- [ ] Verify no secret value appears in any diff (`git grep` for the token returns nothing). Commit (`build(geocode): wire GEOCODING_API_KEY through deploy + k8s`). (No local apply — CI only.)
+- [ ] Verify the diff carries only **secret names, never a value**: `git diff --check`, review the diff, and `git grep -n "GEOCODING_API_KEY\|geocoding-api-key"` to confirm only the env-var/secret-key **names** appear (no literal token anywhere — the real value lives only in the GitHub `production` environment and is never typed, pasted, or searched-for here). Commit (`build(geocode): wire GEOCODING_API_KEY through deploy + k8s`). (No local apply — CI only.)
 
 ---
 
@@ -147,7 +149,8 @@ Keep component files focused; if a planned component stays tiny, keep it local t
 
 - [ ] **Write failing test** for `profileTabIcon(avatarUrl: string | null | undefined, focused: boolean)` → returns `"image"` when a non-empty `avatarUrl` is present, else `"glyph"`.
 - [ ] Run; fails. Implement the pure helper. Run; passes.
-- [ ] Implement `ProfileTabIcon`: reads the `["me"]` query **cache-only**, using the same `enabled: shouldEnableProfileQuery(auth.status)` + retry policy as `NameGate` (no fetch while signed out/settling). Renders a circular `<Image>` of `avatar_url` (brand-blue ring when `focused`) or the `person-circle` Ionicon; image load error falls back to the glyph. Reuse the avatar styling from `account.tsx`.
+- [ ] Implement `ProfileTabIcon` as a **true cache-only read** (spec §5.3 "no stray request"): read with `useQueryClient().getQueryData<MeProfile>(["me"])` — a plain cache lookup, **not** a second `useQuery` (the root `QueryClient` has no `staleTime`, so a second observer would refetch on mount). It renders whatever `NameGate` has already cached; if nothing is cached (anonymous/settling) it renders the `person-circle` glyph. Circular `<Image>` of `avatar_url` (brand-blue ring when `focused`), image-load error falls back to the glyph. Reuse the avatar styling from `account.tsx`.
+- [ ] **Add a mocked-client test** asserting that rendering `ProfileTabIcon` (or invoking its data hook) issues **no** `client.GET` call — proving cache-only. (Pure `profileTabIcon` already covers the image-vs-glyph decision.)
 - [ ] Swap the `account` tab's `tabBarIcon` to `<ProfileTabIcon focused={...} />`. Commit (`feat(mobile-nav): show user avatar in the Profile tab`).
 
 ---
@@ -180,22 +183,34 @@ Keep component files focused; if a planned component stays tiny, keep it local t
 - [ ] **Write failing tests** for `state.ts`: trim + min-length (3) gate (below → `idle`, no request); debounce-key derivation; **monotonic sequence: an older-seq response is dropped, a newer one applied**; API result set → `results`/`empty`; error → `error`.
 - [ ] Run; fails. Implement `state.ts` (pure reducer/helpers; carries a `seq` counter). Run; passes.
 - [ ] **Write failing tests** for `query.ts`: builds `client.GET("/api/v1/geocode", { params: { query: { q, limit, lat?, lng? } } })` and maps the typed response to `{ id, label, latitude, longitude }[]`; maps a `503`/`502`/`429`/network error to the `error` view-state reason. Mock the client (as existing mobile tests do).
+- [ ] **Add a test that `GET /api/v1/geocode` is treated as unauthenticated** — assert `isAuthenticatedApiRequest`/`createApiClient` (`mobile/lib/api.ts`) attaches **no** `Authorization` header for the geocode path (the endpoint is public; this guards against a future classifier change silently leaking a bearer token to LocationIQ searches).
 - [ ] Run; fails. Implement `query.ts`. Run; passes. Commit (`feat(mobile-search): pure search state + typed geocode query`).
 
 ---
 
-### Task 11 — Mobile: search overlay + map integration
+### Task 11 — Mobile: search overlay + request wiring (no map marker yet)
 
-**Files:** create `mobile/components/map/SearchOverlay.tsx`; modify `mobile/app/(tabs)/index.tsx`, and `mobile/components/map/FountainMap.tsx` if the marker layer must live there.
+**Files:** create `mobile/components/map/SearchOverlay.tsx`; modify `mobile/app/(tabs)/index.tsx`.
 
 - [ ] In `index.tsx`: `subscribeMapSearch` opens the overlay; render `SearchOverlay` above the map with a scrim; Android hardware-back + a close control dismiss it; autofocus input, debounced (~300 ms) calls through `map-search/query` with an `AbortController` cancelling the in-flight request on query change/close.
 - [ ] `SearchOverlay` renders the view-states (idle/loading/results/empty/error) reusing `components/states/*` where they fit, plus the **persistent attribution line** "Search by LocationIQ · © OpenStreetMap contributors" (link to `https://locationiq.com/attribution`) whenever results show (spec §12).
-- [ ] On result select: dismiss overlay, `setFlyTo({ center: { lat, lng }, zoom: PLACE_MIN_ZOOM })`, and set a **`search-result`** marker in its own GeoJSON source/layer (distinct from `fountains`/`draft-fountain`; never clustered/tappable-to-detail). Marker lifecycle per spec §7.1: not cleared by the programmatic fly that places it (guard on our own `flyTo` dispatch); cleared by a user pan/zoom/`onPress`, a new search, or selecting a fountain pin.
-- [ ] Pure logic already tested in Task 10; overlay render + native map recentering/marker are owner/CI-verified. Type-check + lint pass. Commit (`feat(mobile-search): search overlay + recenter + result marker`).
+- [ ] On result select (this task): dismiss overlay + `setFlyTo({ center: { lat, lng }, zoom: PLACE_MIN_ZOOM })` (recenter only — the marker is Task 12). Pure state/query logic is already tested (Task 10); overlay render is owner/CI-verified. Type-check + lint pass. Commit (`feat(mobile-search): search overlay + recenter`).
 
 ---
 
-### Task 12 — Docs: style guide + mobile README
+### Task 12 — Mobile: `search-result` marker + `FountainMap` user-vs-programmatic seam
+
+**Files:** modify `mobile/components/map/FountainMap.tsx`, `mobile/app/(tabs)/index.tsx`; create `mobile/lib/map-search/marker.ts` (+ `.test.ts`).
+
+- [ ] **Widen the region-change seam** so the screen can tell a user gesture from a programmatic fly. Today `FountainMap` `onRegionChange: (bounds: RawBounds, zoom: number) => void` (FountainMap.tsx:51) is called from `onRegionDidChange` (≈:110) and **discards** `e.nativeEvent.userInteraction`. Change the signature to `onRegionChange: (bounds: RawBounds, zoom: number, userInteraction: boolean) => void`, forward `e.nativeEvent.userInteraction`, and update the `index.tsx` call site (and the debounced region handler) to accept the third arg.
+- [ ] **Write failing test** for a pure helper `mobile/lib/map-search/marker.ts` → `shouldClearSearchMarker({ userInteraction, cause })`: `true` for a user gesture (`userInteraction === true`) or an explicit `onPress`/new-search/pin-select cause; `false` for a programmatic region change (`userInteraction === false`, e.g. the `setFlyTo` that placed the marker).
+- [ ] Run; fails. Implement `marker.ts`. Run; passes.
+- [ ] In `index.tsx`: on result select set a **`search-result`** marker in its **own** GeoJSON source/layer (distinct from `fountains`/`draft-fountain`; never clustered, never tappable-to-detail). Clear it via `shouldClearSearchMarker` on region change, map `onPress`, a new search, or a fountain-pin selection — so the placing fly (programmatic, `userInteraction=false`) does not clear it, but the next user pan/zoom does (spec §7.1).
+- [ ] Pure marker logic unit-tested; native marker render/lifecycle owner/CI-verified. Type-check + lint pass. Commit (`feat(mobile-search): search-result marker with user-gesture-aware lifecycle`).
+
+---
+
+### Task 13 — Docs: style guide + mobile README
 
 **Files:** modify `docs/style-guide.md`, `mobile/README.md`.
 
@@ -205,7 +220,7 @@ Keep component files focused; if a planned component stays tiny, keep it local t
 
 ---
 
-### Task 13 — Local CI mirror, PR, Codex PR review loop
+### Task 14 — Local CI mirror, PR, Codex PR review loop
 
 - [ ] Run the full local CI mirror (`claude_help/testing-ci.md`): backend ruff + format + pytest (isolated `UV_PROJECT_ENVIRONMENT`); mobile type-check + lint + Vitest; OpenAPI/client-regen check. Everything green locally.
 - [ ] Open the PR (`gh pr create`), monitor CI to green.
@@ -216,6 +231,6 @@ Keep component files focused; if a planned component stays tiny, keep it local t
 
 ## Self-Review (against the spec)
 
-- **Logo** → Task 9. **5-item nav / centered Add / safe-area** → Task 8. **Profile avatar tab** → Task 7. **Search overlay/recenter/marker** → Tasks 10–11. **Geocode proxy** (endpoint, provider, cache/throttle, config, schemas, OpenAPI) → Tasks 2–5. **Secret wiring** → Task 6. **Attribution** → Task 11 + style guide Task 12. **Style guide/README** → Task 12. **Points→Rankings** → already done (no task, per spec). **No-overage invariant** → Task 6 (docs) + carried operationally.
-- **Type consistency:** `GeocodeResult{label,latitude,longitude}` (backend) → mapped to `{id,label,latitude,longitude}` (mobile `query.ts`); `map-search/state.ts` seq/stale-drop consumed by the overlay in Task 11; `profileTabIcon` (Task 7) is the only tab-icon helper. Query params `q,limit,lat,lng`; endpoint statuses `503 geocoding_disabled` / `503 geocoding_unavailable` / `502 geocoding_upstream` / `429` used consistently across Tasks 5, 10, 11.
+- **Logo** → Task 9. **5-item nav / centered Add / safe-area** → Task 8. **Profile avatar tab** → Task 7. **Search overlay/recenter** → Task 11; **result marker + user-gesture lifecycle** → Task 12. **Geocode proxy** (endpoint, provider, cache/throttle, config, schemas, OpenAPI, unsupported-provider) → Tasks 2–5. **Secret wiring** → Task 6. **Attribution** → Task 11 + style guide Task 13. **Style guide/README** → Task 13. **Points→Rankings** → already done (no task, per spec). **No-overage invariant** → Task 6 (docs) + carried operationally.
+- **Type consistency:** `GeocodeResult{label,latitude,longitude}` (backend) → mapped to `{id,label,latitude,longitude}` (mobile `query.ts`); `map-search/state.ts` seq/stale-drop consumed by the overlay in Task 11; `shouldClearSearchMarker` (Task 12) consumes the widened `onRegionChange(bounds,zoom,userInteraction)` seam; `profileTabIcon` (Task 7) is the only tab-icon helper. `limit` is **clamped** (not `ge/le`-rejected) in Task 5. Query params `q,limit,lat,lng`; endpoint statuses `503 geocoding_disabled` / `503 geocoding_unavailable` / `502 geocoding_upstream` / `429` used consistently across Tasks 5, 10, 11, 12.
 - **No placeholders:** each task names exact files, concrete test cases, and a commit. Native-render/map behavior is explicitly owner/CI-verified, not faked in unit tests (per the Windows/WSL constraint).
