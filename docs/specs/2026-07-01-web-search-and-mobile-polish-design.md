@@ -21,9 +21,9 @@ fountain-visible level; a country stays wide). That requires the result's boundi
 currently drops.
 
 - **`backend/app/schemas.py`:** add `class BoundingBox(BaseModel) { south: float; west: float; north: float; east: float }` and `GeocodeResult.bounding_box: BoundingBox | None = None` (optional — not every provider hit has one; existing clients ignore it).
-- **`backend/app/geocoding.py` `_normalize_hits`:** LocationIQ returns `boundingbox: [south, north, west, east]` (strings). Parse into `BoundingBox(south, west, north, east)` as floats; on missing/malformed (wrong length, non-numeric) set `bounding_box=None` and still return the result (never drop a result for a bad bbox). Coordinate house convention unchanged (`latitude`/`longitude`; bias stays `(lat, lng)`).
+- **`backend/app/geocoding.py` `_normalize_hits`:** LocationIQ returns `boundingbox: [south, north, west, east]` (strings). Parse into `BoundingBox(south, west, north, east)` as floats. **The provider is untrusted input — validate geographically before exposing it:** `bounding_box=None` (and still return the result — never drop a result for a bad bbox) when the value is missing, wrong length, non-numeric, **non-finite (NaN/±inf), out of range (`south`/`north` ∉ [-90,90], `west`/`east` ∉ [-180,180]), inverted (`south >= north` or `west >= east`), or zero-area**. Only a fully valid, positive-area box is emitted. Coordinate house convention unchanged (`latitude`/`longitude`; bias stays `(lat, lng)`).
 - **OpenAPI regen** so `schema.d.ts` carries the optional field; mobile `query.ts` is unaffected (ignores it); web consumes it (§4).
-- Tests (extend `backend/tests/test_geocode.py`): a hit with a valid `boundingbox` → parsed `BoundingBox`; a hit with missing/short/non-numeric `boundingbox` → `bounding_box is None` **and the result is still returned**.
+- Tests (extend `backend/tests/test_geocode.py`): valid `boundingbox` → parsed `BoundingBox`; each invalid case (missing / short / non-numeric / NaN / out-of-range / inverted / zero-area) → `bounding_box is None` **and the result is still returned**.
 
 ## 3. Mobile polish (`mobile/`)
 ### 3.1 Header logo (`app/(tabs)/index.tsx` `MapHeader` + `styles.brandMark`)
@@ -33,38 +33,70 @@ currently drops.
 ### 3.2 Locate button (`app/(tabs)/index.tsx` ~line 566 + `styles.locateGlyph`)
 - Replace the faint `<Text>◎</Text>` glyph with a **standard blue location mark** inside the existing white circle (`styles.locate`): an `Ionicons name="locate"` (the conventional crosshair) at `color={colors.brandBlue}`, size ~22. Keep the white-circle button container as-is. (Drop `styles.locateGlyph` if unused.)
 
-### 3.3 Search tab hardening (`app/(tabs)/_layout.tsx`)
-The Search tab **is** shipped in #143 (`_layout.tsx:79-98`, 2nd tab, custom `tabBarButton`), and `search.tsx`
-exists. The owner's device didn't show it — most likely the new store build wasn't installed yet, but to
-rule out a render quirk we align the Search tab's structure with the working Add tab: add a `tabBarIcon`
-(`Ionicons name="search"`) alongside the custom `tabBarButton` (Add already carries both; this is the only
-structural difference between the two). No behavior change. On-device visibility is owner/CI-verified via the
-new build. If it is still missing after installing the new build, that is a device render bug to investigate
-separately (cannot be reproduced headless here).
+### 3.3 Search tab render bug — root-caused + fixed (`app/(tabs)/_layout.tsx`)
+**Confirmed a real bug** (owner verified the Search tab is absent on the LATEST installed build — not a stale
+build). Root cause (Codex, against the installed expo-router 56.2.11 vendored bottom-tabs source): the Search
+tab used a **custom zero-argument `tabBarButton: () => (…)`** that replaced the standard tab renderer and
+discarded the computed tab-button props/children the renderer supplies (`BottomTabItem.js:99`,
+`BottomTabBar.js:288`) — so the Search slot rendered nothing. (The Add tab "works" because its custom
+`tabBarButton` draws a large lifted FAB that shows regardless; Search's small flex-dependent content
+collapsed.) **Fix (already committed `cb5bd5a`):** make Search a **standard tab** — a normal
+`tabBarIcon: ({color,size}) => <Ionicons name="search" …>` (identical pattern to Map/Rankings/Profile, which
+all render) plus a `listeners.tabPress` handler that `event.preventDefault()` then `router.navigate("/") +
+requestMapSearch()` — preserving the search-trigger behavior without a custom button. This is a cleaner
+pattern than the original and renders by construction (same as the three working standard tabs). tsc + eslint
+pass. **On-device verification is owner/emulator-confirmed on the next build** (the emulator could not be
+driven from this Windows/WSL environment — `adb` unreachable). Add keeps its custom `tabBarButton` (it needs
+the special lifted-FAB visual, which a standard `tabBarIcon` can't produce).
 
 ## 4. Web header search (`web/`)
 ### 4.1 UI — `web/components/HeaderSearch.tsx` (new, client component)
 - Rendered inside `web/components/SiteHeader.tsx` (a server component) between the logo and the points/auth cluster, **ever-present** (both `hero` and `bar` variants). An input ("Search address or city") + a results dropdown.
-- Debounced (~300 ms, min 3 chars) call to the **public** `GET /api/v1/geocode` via a browser client built from `web/lib/api.ts` `resolveApiBaseUrl()` (`NEXT_PUBLIC_API_BASE_URL`) — no auth (public endpoint). Reuse a small pure state/query module mirroring mobile's `lib/map-search` (normalize, min-length, stale-drop, map response→list model incl. `bounding_box`).
+- Debounced (~300 ms, min 3 chars) call to the **public** `GET /api/v1/geocode` via a browser client built from `web/lib/api.ts` `resolveApiBaseUrl()` (`NEXT_PUBLIC_API_BASE_URL`). Reuse a small pure state/query module mirroring mobile's `lib/map-search` (normalize, min-length, stale-drop, map response→list model incl. `bounding_box`).
+- **Public-client boundary (no auth leak):** the browser call uses the generated client with **no `Authorization` header and no token provider** — the header area already has server auth plumbing, so the geocode call must be explicitly unauthenticated (the endpoint is public; the provider key stays server-side in the proxy). A small `geocodeClient` helper isolates this, and a test asserts no auth header is attached (mirrors mobile's `api.test.ts` guard). `NEXT_PUBLIC_API_BASE_URL` is the only browser-exposed config.
 - Dropdown rows show the `label`; a persistent **attribution line** "Search by LocationIQ · © OpenStreetMap contributors" (link `https://locationiq.com/attribution`) whenever results show (same requirement as mobile, spec §12). Escape / click-away / blur dismiss.
+- **Responsive layout:** `SiteHeader` is one flex row (logo left; points/auth right; hero adds a subtitle). The search sits in the **center with a bounded width** (e.g. `max-w-md flex-1`), and on **small screens wraps to its own full-width row below** the logo/points row (so it never squeezes out points/auth or the hero subtitle). Desktop: inline center; mobile: second row. Define exact breakpoints/classes in the style guide (below).
+- **Style guide (`docs/style-guide.md`) — required before/with the UI:** document the **web header search** element (input, results dropdown rows, loading/empty/no-results/unavailable states, the attribution line, keyboard/click-away behavior, and the desktop-inline vs mobile-second-row responsive layout), per the mandatory style-guide rule in `CLAUDE.md`.
 
-### 4.2 Handoff to the map — URL param (works cross-page + shareable)
+### 4.2 Handoff to the map — one canonical URL contract (works cross-page + shareable)
 The header is global (a non-map page has no map). On select, `HeaderSearch` navigates to the map with the
-target encoded in the URL: `router.push("/?flyto=" + encodeURIComponent(JSON.stringify({lng,lat,bbox})))`
-(or a compact `?flyto=lng,lat` + `?bbox=w,s,e,n`). This both **recenters on the map page** and **navigates
-there from any other page**, mirroring mobile's Search (which navigates to `/` then recenters).
+target encoded in the URL, so it both **recenters on the map page** and **navigates there from any other
+page** (mirroring mobile's Search). **Exactly one wire format — no alternatives:**
+- **`flyto=lng,lat`** (required) and **`bbox=west,south,east,north`** (optional) — all **finite decimal
+  numbers** (comma-separated, no JSON).
+- **Validation (identical on the writer and the reader):** `lng ∈ [-180,180]`, `lat ∈ [-90,90]`; for bbox
+  `west,east ∈ [-180,180]`, `south,north ∈ [-90,90]`, `south < north`, `west < east`. A **pure
+  `parseFlyToParam(searchParams)`** helper returns `{ center:[lng,lat], bbox?:[w,s,e,n] } | null`: an invalid
+  **bbox** is dropped (fall back to a center fly); an invalid/absent **center** yields `null` (do nothing but
+  clear). URL params are user-controllable, so this validation is a security boundary, not just UX.
+- **Writer** (`HeaderSearch`): `router.push("/?flyto=" + lng+","+lat + (bbox ? "&bbox="+w+","+s+","+e+","+n : ""))`
+  (the map-relative path `/` so it works from any page).
+- **Reader/clear** (`MapBrowser`, §4.3): after consuming, **remove only `flyto` and `bbox`** from the current
+  query string via `router.replace(urlWithoutThoseTwoParams, { scroll: false })` — preserving any unrelated
+  params (e.g. `add`, `debug`) — and record the consumed raw param string in a ref so the effect **cannot
+  re-fire during the `replace`** or hijack a subsequent manual pan.
 
 ### 4.3 Map consumes it — `web/components/map/MapBrowser.tsx`
-- Read the `flyto`/`bbox` param via `useSearchParams()` in an effect keyed on the param. When present:
-  - If a **`bounding_box`** is available → `map.fitBounds([[west,south],[east,north]], { maxZoom: FOUNTAIN_ZOOM, padding: 48, duration })`. `FOUNTAIN_ZOOM` is a cap (~15–16, the level where the "Zoom in to see fountains" threshold is satisfied) so an **address zooms in to fountains** while a **country's huge bbox stays wide** — exactly the owner's rule.
-  - Else (no bbox) → `map.flyTo({ center: [lng, lat], zoom: NEIGHBORHOOD_ZOOM })` (fallback).
-  - Then **clear the param** (`router.replace("/")`, preserving other params) so a manual pan isn't re-hijacked and the fly isn't re-fired on re-render. Guard against re-firing on the same param value.
+- Read the params via `useSearchParams()` in an effect keyed on the raw `flyto`/`bbox` strings; parse with the
+  shared `parseFlyToParam` (§4.2). When it returns non-null, apply a **pure `deriveCameraAction(parsed)`**
+  helper that chooses between two camera moves (and is the unit-tested seam — it decides the action, MapBrowser
+  just executes it on `mapRef`):
+  - **bbox present** → `{ kind:"fit", bounds:[[west,south],[east,north]], maxZoom: PLACE_MIN_ZOOM, padding: 48 }`
+    → `map.fitBounds(bounds, { maxZoom, padding, duration })`. `PLACE_MIN_ZOOM` is the **existing**
+    `web/lib/map/constants.ts` constant (16 — the add/fountain-precision threshold); using it as the `maxZoom`
+    cap means an **address zooms in to the fountain-visible level** while a **country's huge bbox stays wide**
+    (fitBounds naturally won't exceed the cap) — exactly the owner's rule. Do **not** introduce a new
+    `FOUNTAIN_ZOOM`.
+  - **no bbox** → `{ kind:"fly", center:[lng,lat], zoom: NEIGHBORHOOD_ZOOM }` → `map.flyTo(...)`.
+    `NEIGHBORHOOD_ZOOM` is the **existing** constant (14).
+- Then **clear only `flyto`/`bbox`** per §4.2 (`router.replace(..., { scroll:false })`), recording the consumed
+  raw param in a ref so the effect can't re-fire on the `replace` or hijack a later manual pan.
 - Reuse the existing `mapRef`; do not disturb the existing `moveend`/geolocation/`add`-mode logic.
 
 ## 5. Testing
 - **Backend (local):** `bounding_box` parse/None cases in `test_geocode.py`; OpenAPI check that `GeocodeResult.bounding_box` is present + optional.
-- **Web (local, pure + jsdom where infra allows):** the pure search state/query module (normalize, min-length, stale-drop, `bounding_box` mapping); a `deriveFlyToParam`/`parseFlyToParam` round-trip; a `chooseZoom(bbox|null, caps)` helper (bbox present → fitBounds path; absent → fallback zoom). Web has vitest (some render tests are CI-verified; keep the new logic pure + covered). `next build` + tsc via CI.
-- **Mobile (local):** tsc + eslint + prettier; existing pure suites still green after the client regen. Logo/locate/nav render = CI/owner-verified (no RN render infra).
+- **Web (local, pure + jsdom where infra allows):** the pure search state/query module (normalize, min-length, stale-drop, `bounding_box` mapping); **`parseFlyToParam`** — round-trip + every rejection case (missing/partial/non-finite/out-of-range center → null; invalid/inverted/zero-area/out-of-range bbox dropped to a center fly); **`deriveCameraAction(parsed)`** — bbox present → `{kind:"fit", maxZoom: PLACE_MIN_ZOOM, padding}`; absent → `{kind:"fly", zoom: NEIGHBORHOOD_ZOOM}`; and the **no-auth-header** test on the geocode client helper. Web has vitest (some render tests are CI-verified; keep the new logic pure + covered). `next build` + tsc via CI.
+- **Mobile (local):** tsc + eslint + prettier; existing pure suites still green after the client regen. The Search-tab fix (§3.3, committed `cb5bd5a`) passes tsc/eslint; its on-device render is **owner/emulator-verified on the next build**. Logo/locate render = CI/owner-verified (no RN render infra).
 - Regenerate the api-client so web + mobile typecheck against the new `bounding_box` field.
 
 ## 6. Security / cost
@@ -75,10 +107,10 @@ No new endpoint; web reuses the existing public `/api/v1/geocode` (same provider
 - Search history / reverse geocoding / POI search. Gating the mobile SearchOverlay against add-mode (separate polish).
 
 ## 8. Delivery
-One branch (`fix/web-search-and-mobile-polish`) → PR: backend (bbox + tests + OpenAPI) + mobile (logo asset, locate glyph, nav hardening) + web (HeaderSearch, MapBrowser fly-to, pure libs) + client regen. Codex spec review (this doc) before code; Codex PR review before merge; CI green + comments addressed → squash-merge → deploy web+backend (`deploy.yml`) and a mobile store release. No AI attribution; no time estimates.
+One branch (`fix/web-search-and-mobile-polish`) → PR: backend (bbox + tests + OpenAPI) + mobile (logo asset, locate glyph, Search-tab fix already committed) + web (HeaderSearch, MapBrowser camera, pure libs, style guide) + client regen. Codex spec review (this doc) before code; Codex PR review before merge; **all required CI checks green** + every comment addressed → squash-merge → **trigger the CI deploy workflow** (`deploy.yml`, web+backend) and **run the mobile store-release workflow** (both are CI/workflow-driven; never a local deploy). No AI attribution; no time estimates.
 
 ## 9. Acceptance criteria
 - Mobile header shows the transparent pin (no circle/box); locate button shows a standard blue location mark in the white circle; the Search tab is present in the nav (new build).
 - Web header has an ever-present search box; typing shows geocode results with attribution; selecting a result recenters the web map and **zooms to fit the result's extent, capped so an address reaches the fountain-visible zoom while a country stays wide**.
-- Geocode API key never reaches the browser; endpoint stays public; provider no-overage spend model intact.
-- Backend + web + mobile CI green (except the pre-existing mobile-doctor Expo time-drift); Codex `VERDICT: APPROVED`.
+- Geocode API key never reaches the browser (no `Authorization` header on the web geocode call); endpoint stays public; provider no-overage spend model intact.
+- **All required CI checks green** and Codex `VERDICT: APPROVED`. (The `mobile-doctor` Expo-patch check is a known, pre-existing supply-chain-policy time-drift affecting `main`; it is handled through the normal project process — it self-resolves as the patches age past the `minimumReleaseAge` window, and merging while it is red remains an explicit owner decision, not an acceptance-criterion carve-out here.)
