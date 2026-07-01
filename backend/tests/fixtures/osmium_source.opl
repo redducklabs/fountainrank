@@ -5,5 +5,11 @@ n12 v1 x-117.29 y32.81
 n13 v1 x-117.30 y32.81
 n20 v1 x-117.20 y32.70
 n21 v1 x-117.19 y32.71
+n30 v1 x-117.40 y32.90
+n31 v1 x-117.39 y32.90
+n32 v1 x-117.39 y32.91
+n33 v1 x-117.40 y32.91
 w100 v1 Tamenity=drinking_water,area=yes Nn10,n11,n12,n13,n10
 w200 v1 Thighway=footway Nn20,n21
+w300 v1 Nn30,n31,n32,n33,n30
+r400 v1 Ttype=multipolygon,amenity=drinking_water Mw300@outer

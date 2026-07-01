@@ -5,9 +5,9 @@ decodes REAL osmium output (spec §9 pre-merge proof). Deliberately NOT a ``test
 pytest never collects it and it never triggers conftest's DB-backed autouse fixtures — it needs
 only python3 + osmium-tool (no DB, no third-party deps).
 
-Odd-parity (relation-area ``a<odd>`` -> relation) is proven deterministically by the unit test
-``tests/test_osmium_geojson.py`` (minimal multipolygon assembly via ``osmium export`` is finicky);
-this check proves node + way + way-area (``a<even>``) decoding on genuine osmium output.
+The committed OPL yields a node, an open way, a way-area (closed way -> ``a<even>``), and a
+multipolygon relation-area (``a<odd>``) on real ``osmium export`` output, so this check proves BOTH
+area-id parities decode, alongside node/way ids and dedup.
 """
 
 from __future__ import annotations
@@ -42,6 +42,7 @@ def main() -> int:
     assert stats["nodes"] >= 1, stats
     assert stats["ways"] >= 1, stats
     assert stats["areas"] >= 1, stats  # way-area 'a<even>' decoded from real osmium output
+    assert stats["relations"] >= 1, stats  # relation-area 'a<odd>' decoded from real osmium output
     ids = [f["id"] for f in gj["features"]]
     assert ids and all(CANON.match(i) for i in ids), ids
     print(f"OK: normalized {len(gj['features'])} features from real osmium export")
