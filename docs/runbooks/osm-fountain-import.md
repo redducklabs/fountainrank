@@ -19,6 +19,59 @@ ODbL); `source_tags` is **internal/admin-only** until a display surface filters 
 - Start **bounded** (a launch region / state / country), not the whole planet.
 - A reachable database (`DATABASE_URL`). The importer uses the same config as the backend.
 
+## PBF mode — large-scale imports (state → country → continent)
+
+For anything bigger than a metro, use **Geofabrik `.osm.pbf` extracts** via the
+`osm-import-pbf.yml` workflow, not Overpass. Overpass (the `osm-import.yml` workflow) caps the bbox
+at 6°/side and times out on large extents; the PBF path scales and derives an **exact scope
+boundary** from the extract polygon. Both paths feed the same importer, provenance, dedup, and
+scope-limited-removal engine (§4–§6 below apply unchanged).
+
+**Region registry — the one-owner control (`.github/osm-import-regions.yml`).** Exactly one
+`active` row may own a given area. Both workflows validate their dispatched inputs against it
+**before any download**; unknown, retired, or aggregate scopes fail closed. Each row is
+`{ key, scope_id, dataset, source: pbf|overpass, status: active|retired }`:
+
+- `source: pbf` — `key` is the Geofabrik path (e.g. `north-america/us/california`). Validated as the
+  exact `(key, scope_id, dataset)` triple.
+- `source: overpass` — `key` is the canonical bbox `"S,W,N,E"`. Validated as `(scope_id, dataset)`
+  and the dispatched bbox must equal the registry bbox; the Overpass workflow derives a fail-closed
+  `scope_bounds` rectangle from it.
+
+**Adding a scope:** open a PR adding an `active` row (per-state / per-country, never an aggregate
+like `us-latest` that would overlap sub-scopes). To stop importing a scope, set its `status` to
+`retired` (rejected for both dry-run and apply). Never leave two `active` rows owning overlapping
+areas.
+
+**`scope_bounds` is mandatory and fail-closed (PBF).** The workflow converts the extract `.poly` to
+a WKT `MULTIPOLYGON` (`backend/app/imports/poly_to_wkt.py`), validates it in a `postgis/postgis`
+service container (`ST_IsValid` + a half-Earth area sanity check), and passes it to the importer
+with `--require-scope-bounds`. There is **no bbox / removal-disabled fallback**: without a validated
+polygon the run fails before touching the cluster (a missing `scope_bounds` would otherwise broaden
+removal to the whole `scope_id` with no spatial guard).
+
+**Dispatch (dry-run first, always):**
+
+```
+gh workflow run osm-import-pbf.yml \
+  -f geofabrik_path=north-america/us/california \
+  -f scope_id=geofabrik:us/california \
+  -f dataset=geofabrik:us/california \
+  -f label="California" \
+  -f dry_run=true
+```
+
+Review the dry-run summary (candidate / insert / match / skip / removal counts) as in §1, then
+re-dispatch with `-f dry_run=false`. The workflow runs Class B on `ubuntu-latest`, gates on the
+`production` environment, size/disk-preflights the download, verifies the Geofabrik `.md5`
+(transport integrity only — the PBF stays untrusted), and sets `source_build_id` from the extract's
+data timestamp (`osmium fileinfo`), never the wall clock.
+
+**San Diego bootstrap → California.** The original `us/ca/san-diego` Overpass scope is **retired** in
+the registry (it can no longer be dispatched). The first California PBF apply **re-owns** those rows
+automatically — the provenance ids (`osm:<type>:<id>`) match, so their `scope_id` is rewritten to
+`geofabrik:us/california`. After that, refresh San Diego only via the California scope.
+
 ## 1. Dry-run first (no production mutation)
 
 ```

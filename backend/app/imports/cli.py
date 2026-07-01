@@ -53,8 +53,31 @@ def _validate_source_identity(scope: RunScope) -> None:
             )
 
 
-async def run_import(path: str, *, scope: RunScope, dry_run: bool) -> RunSummary:
+def _resolve_scope_bounds_wkt(inline: str | None, file_path: str | None) -> str | None:
+    # A large (country/continent) polygon can exceed `kubectl exec` ARG_MAX as a CLI arg, so the
+    # PBF path streams the WKT into a file and passes --scope-bounds-wkt-file. The two are mutually
+    # exclusive.
+    if inline is not None and file_path is not None:
+        raise ValueError("pass only one of --scope-bounds-wkt / --scope-bounds-wkt-file")
+    if file_path is not None:
+        with open(file_path, encoding="utf-8") as fh:
+            return fh.read().strip() or None
+    return inline
+
+
+async def run_import(
+    path: str, *, scope: RunScope, dry_run: bool, require_scope_bounds: bool = False
+) -> RunSummary:
     _validate_source_identity(scope)
+    # Fail-closed guard (spec §5): merge._mark_scope_removals removes across the WHOLE scope_id with
+    # NO spatial guard when scope_bounds is absent. A non-dry-run without a validated polygon must
+    # never reach the DB — refuse before any write. Callers that don't require it (existing small
+    # bbox imports/tests) are unaffected.
+    if require_scope_bounds and not dry_run and not (scope.scope_bounds_wkt or "").strip():
+        raise ValueError(
+            "scope_bounds is required for a non-dry-run import but none was provided "
+            "(--require-scope-bounds)"
+        )
     # Parse on a worker thread — blocking file IO must not run on the event loop.
     parsed = await asyncio.to_thread(_parse_file, path)
     maker = get_sessionmaker()
@@ -80,6 +103,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--label", required=True)
     p.add_argument("--system", default="osm")
     p.add_argument("--scope-bounds-wkt", default=None)
+    p.add_argument("--scope-bounds-wkt-file", default=None)
+    p.add_argument("--require-scope-bounds", action="store_true")
     p.add_argument("--dry-run", action="store_true")
     a = p.parse_args(argv)
     scope = RunScope(
@@ -88,9 +113,13 @@ def main(argv: list[str] | None = None) -> int:
         source_build_id=a.build_id,
         source_label=a.label,
         scope_id=a.scope_id,
-        scope_bounds_wkt=a.scope_bounds_wkt,
+        scope_bounds_wkt=_resolve_scope_bounds_wkt(a.scope_bounds_wkt, a.scope_bounds_wkt_file),
     )
-    summary = asyncio.run(run_import(a.path, scope=scope, dry_run=a.dry_run))
+    summary = asyncio.run(
+        run_import(
+            a.path, scope=scope, dry_run=a.dry_run, require_scope_bounds=a.require_scope_bounds
+        )
+    )
     # Diagnostics already went through structured logging (merge_candidates emits the run
     # summary). This ONE stdout line is the CLI's machine-readable RESULT contract for
     # operators/CI — intentionally not a diagnostic print.

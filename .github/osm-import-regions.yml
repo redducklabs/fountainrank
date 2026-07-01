@@ -1,0 +1,33 @@
+# Canonical OSM import scopes (the one-owner control — see
+# docs/specs/2026-06-21-osm-pbf-large-scale-import-design.md and
+# docs/plans/2026-06-30-osm-pbf-large-scale-import.md). Both import workflows validate their
+# dispatched inputs against this file BEFORE any download.
+#
+# Exactly ONE `active` row may own a given geographic area. Overlapping/aggregate paths (e.g.
+# north-america/us-latest) are simply absent -> rejected as unknown. Retired rows are rejected for
+# BOTH dry-run and apply.
+#
+# Fields (all required):
+#   key      - source locator. source=pbf: a Geofabrik path (…-latest.osm.pbf). source=overpass:
+#              the canonical bbox "S,W,N,E" (the dispatched bbox must equal it numerically).
+#   scope_id - stable removal-ownership key stored on fountain_provenances.
+#   dataset  - non-secret dataset identity (never a URL).
+#   source   - pbf | overpass
+#   status   - active | retired
+regions:
+  # Bootstrap San Diego import (Overpass/bbox). Superseded by the California PBF scope, which
+  # re-owns these rows on its first apply. Retired here so it can never be re-dispatched, which
+  # guarantees no overlap window with California on `main` (Codex plan-review-1 [MAJOR]).
+  - key: "32.5342,-117.611,33.5052,-116.0846"
+    scope_id: us/ca/san-diego
+    dataset: overpass:san-diego
+    source: overpass
+    status: retired
+
+  # California — the first PBF scope (covers San Diego). Per-state extract is canonical; never
+  # import an aggregate us-latest that would overlap every state.
+  - key: north-america/us/california
+    scope_id: geofabrik:us/california
+    dataset: geofabrik:us/california
+    source: pbf
+    status: active

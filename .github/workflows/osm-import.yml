@@ -75,6 +75,23 @@ jobs:
           }' || { echo "::error::bbox failed range/order/extent (each side <= 6 deg; use a Geofabrik/PBF source for larger extents)"; exit 1; }
           echo "BBOX=$S,$W,$N,$E" >> "$GITHUB_ENV"
 
+      - name: Validate registry + derive scope bounds
+        env:
+          SCOPE_ID: ${{ github.event.inputs.scope_id }}
+          DATASET: ${{ github.event.inputs.dataset }}
+        run: |
+          # One-owner control (spec §4): reject unknown/retired/aggregate scopes BEFORE any Overpass
+          # fetch, and require the dispatched bbox to equal the registry bbox. Emit a fail-closed
+          # scope_bounds rectangle from that registry bbox — the merge removes across the WHOLE
+          # scope_id with NO spatial guard when scope_bounds is absent (merge.py:307-333), so this
+          # bounds removal to the registered area. $BBOX is the SANITIZED value from the prior step.
+          python3 -m pip install --quiet "pyyaml==6.0.3"
+          python3 backend/app/imports/regions.py \
+            --registry .github/osm-import-regions.yml \
+            --source overpass --scope-id "$SCOPE_ID" --dataset "$DATASET" \
+            --bbox "$BBOX" --emit-scope-bounds-wkt scope.wkt
+          test -s scope.wkt || { echo "::error::scope bounds WKT not emitted"; exit 1; }
+
       - name: Fetch Overpass extract
         run: |
           # $BBOX is the SANITIZED value from the previous step (via GITHUB_ENV), not the raw input.
@@ -123,8 +140,13 @@ jobs:
             -o jsonpath='{.items[0].metadata.name}')"
           if [ -z "$POD" ]; then echo "::error::no Running backend pod found"; exit 1; fi
           echo "backend pod: $POD"
-          # Stream the GeoJSON into the pod (avoids `kubectl cp`'s tar dependency).
+          # Stream the GeoJSON + the fail-closed scope-bounds WKT into the pod (avoids `kubectl cp`'s
+          # tar dependency).
           kubectl -n "$NAMESPACE" exec -i "$POD" -- sh -c 'cat > /tmp/osm-import.geojson' < import.geojson
+          kubectl -n "$NAMESPACE" exec -i "$POD" -- sh -c 'cat > /tmp/osm-scope.wkt' < scope.wkt
+          if ! kubectl -n "$NAMESPACE" exec "$POD" -- test -s /tmp/osm-scope.wkt; then
+            echo "::error::scope bounds WKT missing/empty in pod"; exit 1
+          fi
           DRY=""
           if [ "$DRY_RUN" = "true" ]; then DRY="--dry-run"; fi
           BUILD_ID="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
@@ -132,6 +154,6 @@ jobs:
           kubectl -n "$NAMESPACE" exec "$POD" -- \
             python -m app.imports.cli --path /tmp/osm-import.geojson \
             --scope-id "$SCOPE_ID" --dataset "$DATASET" --build-id "$BUILD_ID" \
-            --label "$LABEL" $DRY
+            --label "$LABEL" --scope-bounds-wkt-file /tmp/osm-scope.wkt --require-scope-bounds $DRY
           echo "::endgroup::"
-          kubectl -n "$NAMESPACE" exec "$POD" -- rm -f /tmp/osm-import.geojson
+          kubectl -n "$NAMESPACE" exec "$POD" -- rm -f /tmp/osm-import.geojson /tmp/osm-scope.wkt
