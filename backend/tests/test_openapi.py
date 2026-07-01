@@ -155,7 +155,18 @@ def test_openapi_exposes_geocode_endpoint():
     components = schema["components"]["schemas"]
     assert "GeocodeResponse" in components
     assert "GeocodeResult" in components
-    assert set(components["GeocodeResult"]["properties"]) == {"label", "latitude", "longitude"}
+    assert set(components["GeocodeResult"]["properties"]) == {
+        "label",
+        "latitude",
+        "longitude",
+        "bounding_box",
+    }
+    # bounding_box (spec 2026-07-01 §2) is optional -- not every provider hit has one --
+    # so it must be absent from the required list and typed as a nullable BoundingBox ref.
+    assert "bounding_box" not in components["GeocodeResult"].get("required", [])
+    assert "BoundingBox" in components
+    assert set(components["BoundingBox"]["properties"]) == {"south", "west", "north", "east"}
+    assert set(components["BoundingBox"]["required"]) == {"south", "west", "north", "east"}
 
 
 def test_openapi_exposes_gamification_read_apis():

@@ -13,6 +13,7 @@ own query param; it is never placed in a log message or any other constructed st
 
 import json
 import logging
+import math
 import time
 from collections import OrderedDict
 from collections.abc import Callable
@@ -22,7 +23,7 @@ import httpx
 from fastapi import Depends
 
 from app.config import Settings, get_settings
-from app.schemas import GeocodeResult
+from app.schemas import BoundingBox, GeocodeResult
 
 logger = logging.getLogger(__name__)
 
@@ -82,9 +83,38 @@ class GeocodeProvider(Protocol):
         ...
 
 
+def _parse_bounding_box(raw: object) -> BoundingBox | None:
+    """Parse LocationIQ's `boundingbox: [south, north, west, east]` (strings) into a
+    `BoundingBox`, or `None` when the value fails validation (spec 2026-07-01 §2).
+
+    The provider is untrusted input, so this validates geographically before ever
+    exposing a box: missing / wrong length (!= 4) / non-numeric / non-finite (NaN/±inf)
+    / out of range (`south`/`north` outside [-90, 90], `west`/`east` outside
+    [-180, 180]) / inverted or zero-area (`south >= north` or `west >= east`) all yield
+    `None`. This never affects whether the result itself is returned -- only whether its
+    `bounding_box` is populated."""
+    if not isinstance(raw, list) or len(raw) != 4:
+        return None
+    try:
+        south, north, west, east = (float(v) for v in raw)
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(v) for v in (south, north, west, east)):
+        return None
+    if not (-90.0 <= south <= 90.0 and -90.0 <= north <= 90.0):
+        return None
+    if not (-180.0 <= west <= 180.0 and -180.0 <= east <= 180.0):
+        return None
+    if south >= north or west >= east:
+        return None
+    return BoundingBox(south=south, west=west, north=north, east=east)
+
+
 def _normalize_hits(data: object) -> list[GeocodeResult]:
     """Map raw provider hits to GeocodeResult, silently skipping malformed/incomplete
-    entries (missing/blank display_name, missing/non-numeric lat or lon, spec §8.2)."""
+    entries (missing/blank display_name, missing/non-numeric lat or lon, spec §8.2). A
+    bad/absent `boundingbox` never drops the result -- it only leaves `bounding_box`
+    unset (spec 2026-07-01 §2; see `_parse_bounding_box`)."""
     if not isinstance(data, list):
         return []
     results: list[GeocodeResult] = []
@@ -99,7 +129,12 @@ def _normalize_hits(data: object) -> list[GeocodeResult]:
             longitude = float(hit["lon"])
         except (KeyError, TypeError, ValueError):
             continue
-        results.append(GeocodeResult(label=label, latitude=latitude, longitude=longitude))
+        bounding_box = _parse_bounding_box(hit.get("boundingbox"))
+        results.append(
+            GeocodeResult(
+                label=label, latitude=latitude, longitude=longitude, bounding_box=bounding_box
+            )
+        )
     return results
 
 

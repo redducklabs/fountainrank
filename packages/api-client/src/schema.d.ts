@@ -514,6 +514,17 @@ export interface components {
             /** Description */
             description: string;
         };
+        /** BoundingBox */
+        BoundingBox: {
+            /** South */
+            south: number;
+            /** West */
+            west: number;
+            /** North */
+            north: number;
+            /** East */
+            east: number;
+        };
         /** ConditionReportRequest */
         ConditionReportRequest: {
             /**
@@ -695,6 +706,7 @@ export interface components {
             latitude: number;
             /** Longitude */
             longitude: number;
+            bounding_box?: components["schemas"]["BoundingBox"] | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
