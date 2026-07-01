@@ -1,16 +1,24 @@
 """Geocode-proxy tests. Config + response-schema coverage lands here first (spec §8.4, §8.1);
-the provider is added here (spec §8.2); the router/endpoint tests are added in a later task
-as this file grows."""
+the provider is added here (spec §8.2); the cache/throttle/factory are added here (spec §8.3,
+§8.4, Task 4); the router/endpoint tests are added in a later task as this file grows."""
+
+import logging
 
 import httpx
 import pytest
 
+import app.geocoding as geocoding
 from app.config import Settings
 from app.geocoding import (
     LOCATIONIQ_URL,
+    CachedGeocodeProvider,
+    GeocodeCache,
     GeocodeQuotaError,
+    GeocodeThrottle,
+    GeocodeThrottled,
     GeocodeUpstreamError,
     LocationIQProvider,
+    get_geocode_provider,
 )
 from app.schemas import GeocodeResponse, GeocodeResult
 
@@ -233,3 +241,261 @@ async def test_locationiq_errors_never_leak_the_api_key():
 
 def test_locationiq_url_constant_is_https_and_fixed():
     assert LOCATIONIQ_URL == "https://us1.locationiq.com/v1/autocomplete"
+
+
+# --- GeocodeCache: bounded TTL/LRU cache (spec §8.3) ---
+
+
+class _FakeClock:
+    """A manually-advanced fake clock (a `Callable[[], float]`) so cache/throttle tests
+    are deterministic — never a real sleep/wall-clock call."""
+
+    def __init__(self, start: float = 0.0):
+        self._t = start
+
+    def __call__(self) -> float:
+        return self._t
+
+    def advance(self, seconds: float) -> None:
+        self._t += seconds
+
+
+_RESULT = [GeocodeResult(label="123 Main St", latitude=1.0, longitude=2.0)]
+
+
+def test_cache_miss_then_hit_within_ttl_returns_cached_value():
+    clock = _FakeClock()
+    cache = GeocodeCache(60, 10, now=clock)
+
+    assert cache.get("main st", 5, None) is None
+    cache.set("main st", 5, None, _RESULT)
+    clock.advance(59)
+    assert cache.get("main st", 5, None) == _RESULT
+
+
+def test_cache_entry_expires_after_ttl():
+    clock = _FakeClock()
+    cache = GeocodeCache(60, 10, now=clock)
+    cache.set("main st", 5, None, _RESULT)
+
+    clock.advance(60)  # exactly at TTL: must be treated as expired, not one tick early
+
+    assert cache.get("main st", 5, None) is None
+
+
+def test_cache_key_normalizes_whitespace_and_case():
+    clock = _FakeClock()
+    cache = GeocodeCache(60, 10, now=clock)
+    cache.set("  Main St  ", 5, None, _RESULT)
+
+    assert cache.get("main st", 5, None) == _RESULT
+    assert cache.get("MAIN ST", 5, None) == _RESULT
+    assert cache.get("Main St", 5, None) == _RESULT
+
+
+def test_cache_key_includes_limit():
+    clock = _FakeClock()
+    cache = GeocodeCache(60, 10, now=clock)
+    cache.set("main st", 5, None, _RESULT)
+
+    assert cache.get("main st", 7, None) is None
+    assert cache.get("main st", 5, None) == _RESULT
+
+
+def test_cache_key_rounds_bias_to_a_coarse_shared_grid():
+    clock = _FakeClock()
+    cache = GeocodeCache(60, 10, now=clock)
+    cache.set("main st", 5, (40.7128, -74.0060), _RESULT)
+
+    # A viewport a few hundred meters away rounds into the same coarse grid cell.
+    assert cache.get("main st", 5, (40.7130, -74.0062)) == _RESULT
+    # A viewport far enough away lands in a different cell -> miss.
+    assert cache.get("main st", 5, (41.5, -74.0060)) is None
+
+
+def test_cache_bounded_lru_evicts_oldest_on_overflow():
+    clock = _FakeClock()
+    cache = GeocodeCache(60, 2, now=clock)
+    cache.set("first", 5, None, _RESULT)
+    cache.set("second", 5, None, _RESULT)
+    cache.set("third", 5, None, _RESULT)  # capacity 2 -> evicts "first"
+
+    assert cache.get("first", 5, None) is None
+    assert cache.get("second", 5, None) == _RESULT
+    assert cache.get("third", 5, None) == _RESULT
+
+
+def test_cache_exposes_no_raw_key_or_query_accessor():
+    """Privacy (spec §8.3, §9): the cache key embeds the normalized query (PII), so
+    there must be no `.keys()`/`.items()`/`.values()`-style diagnostic leak path, and
+    the default repr must not surface stored query text."""
+    cache = GeocodeCache(60, 10)
+    assert not hasattr(cache, "keys")
+    assert not hasattr(cache, "items")
+    assert not hasattr(cache, "values")
+
+    cache.set("a very identifying secret address 221b baker st", 5, None, _RESULT)
+    assert "baker st" not in repr(cache)
+    assert "baker st" not in str(cache)
+
+
+# --- GeocodeThrottle: coarse per-pod token bucket (spec §8.3) ---
+
+
+def test_throttle_allows_up_to_capacity_then_blocks():
+    clock = _FakeClock()
+    throttle = GeocodeThrottle(3, 60, now=clock)
+
+    assert throttle.allow() is True
+    assert throttle.allow() is True
+    assert throttle.allow() is True
+    assert throttle.allow() is False  # 4th call within the window is blocked
+
+
+def test_throttle_resets_after_window_elapses():
+    clock = _FakeClock()
+    throttle = GeocodeThrottle(2, 60, now=clock)
+
+    assert throttle.allow() is True
+    assert throttle.allow() is True
+    assert throttle.allow() is False
+
+    clock.advance(60)
+
+    assert throttle.allow() is True
+    assert throttle.allow() is True
+    assert throttle.allow() is False
+
+
+# --- CachedGeocodeProvider: cache + throttle wrapping (spec §8.3) ---
+
+
+class _CountingProvider:
+    def __init__(self, results: list[GeocodeResult] | None = None):
+        self.calls: list[tuple[str, int, tuple[float, float] | None]] = []
+        self._results = results if results is not None else _RESULT
+
+    async def search(
+        self, q: str, limit: int, bias: tuple[float, float] | None
+    ) -> list[GeocodeResult]:
+        self.calls.append((q, limit, bias))
+        return self._results
+
+
+async def test_cached_provider_collapses_identical_lookups_into_one_upstream_call():
+    clock = _FakeClock()
+    inner = _CountingProvider()
+    provider = CachedGeocodeProvider(
+        inner,
+        cache=GeocodeCache(60, 10, now=clock),
+        throttle=GeocodeThrottle(10, 60, now=clock),
+    )
+
+    first = await provider.search("main st", 5, None)
+    second = await provider.search("main st", 5, None)
+
+    assert first == second == inner._results
+    assert len(inner.calls) == 1
+
+
+async def test_cached_provider_recalls_upstream_after_ttl_expiry():
+    clock = _FakeClock()
+    inner = _CountingProvider()
+    provider = CachedGeocodeProvider(
+        inner,
+        cache=GeocodeCache(60, 10, now=clock),
+        throttle=GeocodeThrottle(10, 60, now=clock),
+    )
+
+    await provider.search("main st", 5, None)
+    clock.advance(60)
+    await provider.search("main st", 5, None)
+
+    assert len(inner.calls) == 2
+
+
+async def test_cached_provider_raises_throttled_when_bucket_exhausted():
+    clock = _FakeClock()
+    inner = _CountingProvider()
+    provider = CachedGeocodeProvider(
+        inner,
+        cache=GeocodeCache(60, 10, now=clock),
+        throttle=GeocodeThrottle(1, 60, now=clock),
+    )
+
+    await provider.search("first query", 5, None)
+    with pytest.raises(GeocodeThrottled):
+        await provider.search("second query", 5, None)
+
+    assert len(inner.calls) == 1
+
+
+async def test_cached_provider_cache_hit_does_not_consume_throttle_budget():
+    clock = _FakeClock()
+    inner = _CountingProvider()
+    provider = CachedGeocodeProvider(
+        inner,
+        cache=GeocodeCache(60, 10, now=clock),
+        throttle=GeocodeThrottle(1, 60, now=clock),
+    )
+
+    await provider.search("main st", 5, None)  # consumes the only token, populates cache
+    result = await provider.search("main st", 5, None)  # cache hit: must not touch throttle
+
+    assert result == inner._results
+    assert len(inner.calls) == 1
+
+
+# --- get_geocode_provider factory (spec §8.4) ---
+
+
+@pytest.fixture(autouse=True)
+def _reset_geocode_provider_singleton():
+    yield
+    geocoding._provider = None
+
+
+def test_get_geocode_provider_disabled_without_api_key_logs_nothing(caplog):
+    settings = Settings(geocoding_api_key=None)
+
+    with caplog.at_level(logging.WARNING):
+        provider = get_geocode_provider(settings)
+
+    assert provider is None
+    # The ordinary unconfigured-local-dev state is not a misconfiguration -> no warning.
+    assert caplog.records == []
+
+
+def test_get_geocode_provider_disabled_for_unknown_provider_logs_redacted_warning(caplog):
+    secret = "top-secret-locationiq-key-should-never-leak"
+    settings = Settings(geocoding_api_key=secret, geocoding_provider="maptiler-typo")
+
+    with caplog.at_level(logging.WARNING):
+        provider = get_geocode_provider(settings)
+
+    assert provider is None
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    assert record.levelname == "WARNING"
+    assert record.provider == "maptiler-typo"
+    # Redacted: the provider NAME is logged, the API key never is.
+    assert secret not in record.getMessage()
+    assert secret not in str(record.__dict__)
+
+
+def test_get_geocode_provider_enabled_with_known_provider_returns_wrapped_provider():
+    settings = Settings(geocoding_api_key="key-123", geocoding_provider="locationiq")
+
+    provider = get_geocode_provider(settings)
+
+    assert provider is not None
+    assert isinstance(provider, CachedGeocodeProvider)
+
+
+def test_get_geocode_provider_reuses_singleton_across_calls():
+    settings = Settings(geocoding_api_key="key-123", geocoding_provider="locationiq")
+
+    first = get_geocode_provider(settings)
+    second = get_geocode_provider(settings)
+
+    assert first is second
