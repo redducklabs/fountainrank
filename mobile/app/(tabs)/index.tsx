@@ -1,4 +1,3 @@
-import { Ionicons } from "@expo/vector-icons";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
