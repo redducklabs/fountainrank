@@ -230,7 +230,10 @@ class OsmImportRun(Base):
     source_label: Mapped[str] = mapped_column(String, nullable=False)
     scope_id: Mapped[str] = mapped_column(String, nullable=False)
     scope_bounds: Mapped[WKBElement | None] = mapped_column(
-        Geography(geometry_type="POLYGON", srid=4326, spatial_index=False), nullable=True
+        # MultiPolygon: real Geofabrik extract boundaries (e.g. California = mainland + Channel
+        # Islands) are multipolygons; the Overpass bbox rectangle is emitted as a 1-part multi.
+        Geography(geometry_type="MULTIPOLYGON", srid=4326, spatial_index=False),
+        nullable=True,
     )
     candidate_count: Mapped[int] = mapped_column(nullable=False, server_default=text("0"))
     inserted_count: Mapped[int] = mapped_column(nullable=False, server_default=text("0"))

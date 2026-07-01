@@ -145,9 +145,10 @@ def test_ambiguous_registry_rejected():
 
 
 def test_bbox_to_rectangle_wkt():
-    # bbox is S,W,N,E -> CCW rectangle (W S, E S, E N, W N, W S)
+    # bbox is S,W,N,E -> CCW 1-part MultiPolygon rectangle (W S, E S, E N, W N, W S)
     wkt = bbox_to_rectangle_wkt("32.0,-117.0,33.0,-116.0")
-    assert wkt == "POLYGON((-117.0 32.0, -116.0 32.0, -116.0 33.0, -117.0 33.0, -117.0 32.0))"
+    expected = "MULTIPOLYGON(((-117.0 32.0, -116.0 32.0, -116.0 33.0, -117.0 33.0, -117.0 32.0)))"
+    assert wkt == expected
 
 
 def test_real_registry_loads_and_has_no_duplicate_active_scope():

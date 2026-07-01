@@ -90,9 +90,13 @@ def validate_region(
 
 
 def bbox_to_rectangle_wkt(bbox: str) -> str:
-    """Build a CCW rectangle WKT POLYGON from an ``S,W,N,E`` bbox (fail-closed scope_bounds)."""
+    """Build a CCW rectangle WKT MULTIPOLYGON from an ``S,W,N,E`` bbox (fail-closed scope_bounds).
+
+    A 1-part MultiPolygon so it matches the ``osm_fountain_import_runs.scope_bounds`` column type
+    (MultiPolygon), consistent with the PBF path's extract polygons.
+    """
     s, w, n, e = _parse_bbox(bbox)
-    return f"POLYGON(({w} {s}, {e} {s}, {e} {n}, {w} {n}, {w} {s}))"
+    return f"MULTIPOLYGON((({w} {s}, {e} {s}, {e} {n}, {w} {n}, {w} {s})))"
 
 
 def load_registry(path: str) -> list[dict]:
