@@ -55,6 +55,22 @@ the special lifted-FAB visual, which a standard `tabBarIcon` can't produce).
   a `listeners.tabPress` preventDefault → navigate/`requestMapSearch`)**, and **Add is the only custom
   lifted-FAB `tabBarButton`**, so the guidance can't reintroduce the regression.
 
+### 3.4 Locate button flies to a STALE position — fix (`mobile/hooks/useForegroundLocation.ts` + `app/(tabs)/index.tsx`)
+**Bug (owner-reported):** the locate button always flies to the *first* fix, not the current location.
+Root cause: `useForegroundLocation` fetches a **single** `getCurrentPositionAsync` **once on mount**
+(`useEffect(…, [])`) and never refreshes; the locate `onPress` reuses that frozen `location.coords`.
+**Fix:** the button must re-fetch on each press.
+- Extend the hook to expose a `refresh(): Promise<coords | null>` that (when permission is granted) re-runs
+  `getCurrentPositionAsync` and updates state, returning the fresh coords (or `null` on denied/unavailable/
+  error — never throws, never logs coordinates, still non-blocking per spec §20). Keep the mount-time initial
+  fix.
+- The locate `onPress` becomes async: `const c = await location.refresh(); if (c) setFlyTo({ center: {lng,lat},
+  zoom: INITIAL_USER_ZOOM })`. Disable/no-op while a refresh is in flight (avoid overlapping fetches); if it
+  returns null, leave the map as-is (optionally the existing "location unavailable" affordance).
+- Coordinates are never logged. A tiny pure helper (or the hook's state machine) is unit-tested where
+  possible; the actual GPS re-fetch is owner/CI-verified. This is a behavior fix independent of §3.2 (the
+  glyph), applied in the same locate-button area after the §3.1/§3.2 polish commit.
+
 ## 4. Web header search (`web/`)
 ### 4.1 UI — `web/components/HeaderSearch.tsx` (new, client component)
 - Rendered inside `web/components/SiteHeader.tsx` (a server component) between the logo and the points/auth cluster, **ever-present** (both `hero` and `bar` variants). An input ("Search address or city") + a results dropdown.
