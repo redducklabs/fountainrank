@@ -7,7 +7,6 @@ import logging
 import httpx
 import pytest
 
-import app.geocoding as geocoding
 from app.config import Settings
 from app.geocoding import (
     LOCATIONIQ_URL,
@@ -447,12 +446,6 @@ async def test_cached_provider_cache_hit_does_not_consume_throttle_budget():
 
 
 # --- get_geocode_provider factory (spec §8.4) ---
-
-
-@pytest.fixture(autouse=True)
-def _reset_geocode_provider_singleton():
-    yield
-    geocoding._provider = None
 
 
 def test_get_geocode_provider_disabled_without_api_key_logs_nothing(caplog):
