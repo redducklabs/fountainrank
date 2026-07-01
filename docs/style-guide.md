@@ -1337,34 +1337,41 @@ Sign-in affordances stay hidden/disabled until `isAuthConfigured` is true (auth-
 mode, spec §21).
 
 - **Map tab:** the native tab screen (`index`), icon `map`.
-- **Search tab:** an action button (`tabBarButton`, not a native screen) that navigates to `/`
-  and fires `requestMapSearch()` (`mobile/lib/navigation/map-search.ts`), which opens the
-  **search overlay** on the map screen (see below). Renders its own glyph (`search`) + label —
-  it is not a native `tabBarIcon`, so it must track `TAB_INACTIVE_COLOR` (`#64748B`) manually to
-  stay in sync with `tabBarInactiveTintColor`.
+- **Search tab:** a **standard tab** — a normal `tabBarIcon: ({color,size}) => <Ionicons
+name="search" …>` (identical pattern to Map/Rankings/Profile) plus a
+  `listeners.tabPress` handler that calls `event.preventDefault()` then navigates to `/` and
+  fires `requestMapSearch()` (`mobile/lib/navigation/map-search.ts`), which opens the
+  **search overlay** on the map screen (see below) instead of switching to a placeholder
+  screen. Because it is a native `tabBarIcon`, it receives `color`/`size` from the tab bar and
+  tracks `tabBarActiveTintColor`/`tabBarInactiveTintColor` automatically — no manual color
+  tracking needed. (A prior custom-`tabBarButton` version of this tab discarded the renderer's
+  computed props and silently failed to render on-device; do not reintroduce a custom
+  `tabBarButton` for Search.)
 - **Add tab:** the centered FAB — literal middle of 5 items, so it is centered by construction.
-  A differentiated circular `+` action (54px circle, gold fill `colors.brandYellow`, 2px navy
-  border, `marginTop: -18` lift above the bar) that dispatches into the map add flow
-  (`requestMapAddMode()`) instead of navigating to a placeholder screen. Same `tabBarButton`
-  pattern as Search.
+  It is the **only custom `tabBarButton`** in this tab bar: a differentiated circular `+` action
+  (54px circle, gold fill `colors.brandYellow`, 2px navy border, `marginTop: -18` lift above the
+  bar) that dispatches into the map add flow (`requestMapAddMode()`) instead of navigating to a
+  placeholder screen. It renders its own glyph (`add`, fixed `colors.brandBlue`) and label
+  rather than receiving `color` via a native `tabBarIcon` prop.
 - **Rankings tab:** opens the `/leaderboard` tab route, icon `trophy-outline`.
 - **Profile tab:** the user-facing label for the existing account/profile route; icon is the
   **avatar tab icon** (see below), not a static glyph.
 
 **Active / inactive tints:** `tabBarActiveTintColor: colors.brandBlue`,
-`tabBarInactiveTintColor: TAB_INACTIVE_COLOR` (`#64748B`). Because the Search and Add buttons
-render their own icon/label instead of receiving `color` via a native `tabBarIcon` prop, both
-custom buttons hardcode the same `TAB_INACTIVE_COLOR` constant so they read as visually
-consistent with the three native tabs.
+`tabBarInactiveTintColor: TAB_INACTIVE_COLOR` (`#64748B`). Map, Search, Rankings, and Profile
+are all native `tabBarIcon`s, so they pick up these tints automatically. The Add tab is the sole
+exception: its custom `tabBarButton` renders a fixed-color FAB (gold circle, navy `+` and label)
+that does not vary with focus/tint state, by design (it must stay visually prominent as a
+lifted action button, not read as just another tab).
 
 **Safe-area contract (spec §5.2):** the tab bar reads `useSafeAreaInsets()` and computes
 `bottomPad = Math.max(insets.bottom, ANDROID_MIN_PAD)` (`ANDROID_MIN_PAD = 8`) so Android
 3-button nav — which often reports `insets.bottom === 0` — never jams the bar against the
 system chrome. The bar uses a **fixed `height = BAR_CONTENT_H (56) + bottomPad`** (not
-`minHeight`) and `paddingBottom: bottomPad`. The custom Search/Add `tabBarButton` containers
-receive the **same** `paddingBottom: bottomPad` so their content sits on the same baseline as
-the three native tab icons/labels; the Add FAB's `marginTop: -18` lift is preserved relative to
-that shared baseline. With five labeled items, `tabBarLabelStyle` drops to `fontSize: 10` so
+`minHeight`) and `paddingBottom: bottomPad`. The custom Add `tabBarButton` container receives
+the **same** `paddingBottom: bottomPad` so its content sits on the same baseline as the native
+tab icons/labels; the Add FAB's `marginTop: -18` lift is preserved relative to that shared
+baseline. With five labeled items, `tabBarLabelStyle` drops to `fontSize: 10` so
 "Rankings"/"Profile" render single-line without truncating.
 
 #### Avatar tab icon (`mobile/components/nav/ProfileTabIcon.tsx`)

@@ -1,3 +1,4 @@
+import { Ionicons } from "@expo/vector-icons";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
@@ -563,7 +564,7 @@ export default function MapScreen() {
           }}
           style={[styles.locate, { bottom: insets.bottom + spacing.lg + 56 }]}
         >
-          <Text style={styles.locateGlyph}>◎</Text>
+          <Ionicons name="locate" color={colors.brandBlue} size={22} />
         </Pressable>
       ) : null}
 
@@ -732,8 +733,8 @@ function MapTopBar({
       <View style={styles.brandLockup}>
         <View style={styles.brandMark}>
           <Image
-            source={require("../../assets/icon.png")}
-            style={{ width: 24, height: 24 }}
+            source={require("../../assets/logo-pin.png")}
+            style={{ width: 34, height: 34 }}
             resizeMode="contain"
           />
         </View>
@@ -1192,12 +1193,8 @@ const styles = StyleSheet.create({
   brandMark: {
     width: 34,
     height: 34,
-    borderRadius: 17,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#0E4DA4",
-    borderColor: colors.brandYellow,
-    borderWidth: 1,
   },
   brandName: { ...typography.heading, color: colors.onBrand, fontWeight: "800" },
   brandSubline: { ...typography.meta, color: "#BFDBFE", fontWeight: "700" },
@@ -1228,7 +1225,6 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderWidth: 1,
   },
-  locateGlyph: { ...typography.heading, color: colors.brandBlue },
   addPanel: {
     position: "absolute",
     left: spacing.md,
