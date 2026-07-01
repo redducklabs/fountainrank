@@ -31,3 +31,96 @@ regions:
     dataset: geofabrik:us/california
     source: pbf
     status: active
+
+  # ---- #131 worldwide rollout (v1): per-country/region scopes across all six continents,
+  # smaller-first. Paths HEAD-verified against download.geofabrik.de. Antimeridian-crossing
+  # extracts (Fiji, NZ Chathams, far-east Russia) are intentionally excluded — the planar
+  # poly orientation + the PostGIS ST_Area guard would fail closed on them. The long tail is
+  # added by appending rows here (the workflow reads this file from the checkout at dispatch).
+
+  # North America (Central America)
+  - key: central-america/belize
+    scope_id: geofabrik:belize
+    dataset: geofabrik:belize
+    source: pbf
+    status: active
+
+  # Europe
+  - key: europe/monaco
+    scope_id: geofabrik:monaco
+    dataset: geofabrik:monaco
+    source: pbf
+    status: active
+  - key: europe/luxembourg
+    scope_id: geofabrik:luxembourg
+    dataset: geofabrik:luxembourg
+    source: pbf
+    status: active
+  - key: europe/malta
+    scope_id: geofabrik:malta
+    dataset: geofabrik:malta
+    source: pbf
+    status: active
+  - key: europe/netherlands
+    scope_id: geofabrik:netherlands
+    dataset: geofabrik:netherlands
+    source: pbf
+    status: active
+  - key: europe/portugal
+    scope_id: geofabrik:portugal
+    dataset: geofabrik:portugal
+    source: pbf
+    status: active
+
+  # Asia
+  - key: asia/malaysia-singapore-brunei
+    scope_id: geofabrik:malaysia-singapore-brunei
+    dataset: geofabrik:malaysia-singapore-brunei
+    source: pbf
+    status: active
+  - key: asia/south-korea
+    scope_id: geofabrik:south-korea
+    dataset: geofabrik:south-korea
+    source: pbf
+    status: active
+
+  # Africa
+  - key: africa/mauritius
+    scope_id: geofabrik:mauritius
+    dataset: geofabrik:mauritius
+    source: pbf
+    status: active
+  - key: africa/kenya
+    scope_id: geofabrik:kenya
+    dataset: geofabrik:kenya
+    source: pbf
+    status: active
+  - key: africa/south-africa
+    scope_id: geofabrik:south-africa
+    dataset: geofabrik:south-africa
+    source: pbf
+    status: active
+
+  # South America
+  - key: south-america/uruguay
+    scope_id: geofabrik:uruguay
+    dataset: geofabrik:uruguay
+    source: pbf
+    status: active
+  - key: south-america/chile
+    scope_id: geofabrik:chile
+    dataset: geofabrik:chile
+    source: pbf
+    status: active
+
+  # Oceania (non-antimeridian)
+  - key: australia-oceania/new-caledonia
+    scope_id: geofabrik:new-caledonia
+    dataset: geofabrik:new-caledonia
+    source: pbf
+    status: active
+  - key: australia-oceania/australia
+    scope_id: geofabrik:australia
+    dataset: geofabrik:australia
+    source: pbf
+    status: active

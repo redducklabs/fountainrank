@@ -72,6 +72,30 @@ the registry (it can no longer be dispatched). The first California PBF apply **
 automatically — the provenance ids (`osm:<type>:<id>`) match, so their `scope_id` is rewritten to
 `geofabrik:us/california`. After that, refresh San Diego only via the California scope.
 
+### Worldwide rollout (#131)
+
+Roll the pipeline out to the world by importing **per-country/region** scopes, **smaller-first**.
+Each is an `active` `source: pbf` row in `.github/osm-import-regions.yml`; to expand coverage, append
+rows and dispatch — the workflow reads the registry from its checkout, so a **merge to `main` is
+enough (no deploy)** and the importer image is already deployed.
+
+Per scope: **dry-run first**, check the summary against these **anomaly gates** (pause + investigate,
+don't apply, if any trips), then apply, then live-verify:
+
+- workflow step failure — a 404 (wrong Geofabrik path), a `.poly`/`ST_Area` validation fail
+  (often an **antimeridian**-crossing extract — excluded on purpose), or a size/disk/md5 failure;
+- `candidate_count == 0` — likely a wrong path or filter;
+- on a **refresh**, a `removed_count` out of proportion to prior candidates.
+
+**Antimeridian:** do not register extracts whose `.poly` crosses ±180° (Fiji, NZ Chathams, far-east
+Russia) — `poly_to_wkt.py`'s planar orientation + the PostGIS half-Earth `ST_Area` guard fail closed
+on them. Split further or handle specially instead.
+
+**Live-verify** one city per continent after its apply, via
+`GET https://api.fountainrank.com/api/v1/fountains/bbox?min_lat=&min_lng=&max_lat=&max_lng=`
+(San Diego/SF for N. America, Monaco for Europe, Singapore/Seoul for Asia, Nairobi for Africa,
+Montevideo for S. America, Nouméa/Sydney for Oceania).
+
 ## 1. Dry-run first (no production mutation)
 
 ```
