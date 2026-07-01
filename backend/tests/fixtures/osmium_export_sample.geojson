@@ -1,0 +1,61 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "n1001",
+      "properties": { "amenity": "drinking_water" },
+      "geometry": { "type": "Point", "coordinates": [-117.16, 32.72] }
+    },
+    {
+      "type": "Feature",
+      "id": "w2002",
+      "properties": { "man_made": "water_tap", "drinking_water": "yes" },
+      "geometry": { "type": "LineString", "coordinates": [[-117.2, 32.7], [-117.19, 32.71]] }
+    },
+    {
+      "type": "Feature",
+      "id": "a6006",
+      "properties": { "amenity": "drinking_water" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-117.3, 32.8], [-117.29, 32.8], [-117.29, 32.81], [-117.3, 32.81], [-117.3, 32.8]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "a8009",
+      "properties": { "amenity": "drinking_water" },
+      "geometry": {
+        "type": "MultiPolygon",
+        "coordinates": [[[[-117.4, 32.9], [-117.39, 32.9], [-117.39, 32.91], [-117.4, 32.91], [-117.4, 32.9]]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "w5005",
+      "properties": { "amenity": "drinking_water" },
+      "geometry": { "type": "LineString", "coordinates": [[-117.5, 33.0], [-117.49, 33.0], [-117.49, 33.01], [-117.5, 33.01], [-117.5, 33.0]] }
+    },
+    {
+      "type": "Feature",
+      "id": "a10010",
+      "properties": { "amenity": "drinking_water" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-117.5, 33.0], [-117.49, 33.0], [-117.49, 33.01], [-117.5, 33.01], [-117.5, 33.0]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "x9",
+      "properties": { "amenity": "drinking_water" },
+      "geometry": { "type": "Point", "coordinates": [-117.0, 32.0] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "amenity": "drinking_water" },
+      "geometry": { "type": "Point", "coordinates": [-116.9, 32.1] }
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+name: OSM Normalizer Check
+
+# Pre-merge proof that osmium_geojson decodes REAL `osmium export -u type_id` output (spec §9),
+# since the dev host has no osmium. Installs osmium-tool, exports a committed OPL sample, and runs
+# the normalizer through backend/tests/osmium_real_check.py (no DB, no third-party deps).
+
+on:
+  pull_request:
+    paths:
+      - "backend/app/imports/**"
+      - "backend/tests/osmium_real_check.py"
+      - "backend/tests/fixtures/osmium_source.opl"
+      - ".github/workflows/osm-normalizer-check.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  normalizer:
+    name: real-osmium normalizer
+    # Class A (no secrets) but needs the osmium-tool apt package (absent from the self-hosted
+    # fleet), so ubuntu-latest is the explicit choice (see claude_help/testing-ci.md runner policy).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install osmium-tool
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y osmium-tool
+          osmium --version # fail here if missing, so the check below can never silently skip
+
+      - name: Verify normalizer on real osmium export
+        working-directory: backend
+        run: python3 tests/osmium_real_check.py

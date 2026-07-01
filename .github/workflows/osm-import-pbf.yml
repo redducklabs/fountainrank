@@ -1,0 +1,221 @@
+name: OSM Import (PBF)
+
+# Operator-triggered large-scale OSM drinking-water import from a Geofabrik `.osm.pbf` extract
+# (spec: docs/specs/2026-06-21-osm-pbf-large-scale-import-design.md,
+# plan: docs/plans/2026-06-30-osm-pbf-large-scale-import.md,
+# runbook: docs/runbooks/osm-fountain-import.md). Downloads a Geofabrik regional extract, coarse-
+# filters it with osmium, exports GeoJSON, normalizes the osmium `-u type_id` ids, derives a
+# MANDATORY PostGIS-validated scope_bounds polygon from the extract `.poly`, then streams both into
+# the running backend pod and runs the already-deployed importer CLI there (same pod-exec pattern as
+# osm-import.yml). dry_run defaults TRUE. Use this for state/country scales; the Overpass
+# osm-import.yml stays for new metros not yet covered by a PBF scope.
+
+on:
+  workflow_dispatch:
+    inputs:
+      geofabrik_path:
+        description: "Geofabrik path, e.g. north-america/us/california (no -latest/.osm.pbf suffix)"
+        required: true
+      scope_id:
+        description: "Canonical scope id, e.g. geofabrik:us/california (must match the registry)"
+        required: true
+      dataset:
+        description: "Non-secret dataset id, e.g. geofabrik:us/california (NEVER a URL)"
+        required: true
+      label:
+        description: "Human label, e.g. California"
+        required: true
+      dry_run:
+        description: "Dry run (no writes to fountains; only staging run + candidates)"
+        type: boolean
+        default: true
+
+concurrency:
+  # Share the group with osm-import.yml — both mutate the same production DB; never run concurrently.
+  group: osm-import-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CLUSTER_NAME: fountainrank-production-cluster
+  NAMESPACE: fountainrank
+  MAX_EXTRACT_MB: "6000"
+
+jobs:
+  import:
+    name: OSM PBF import (operator)
+    runs-on: ubuntu-latest # Class B: handles cluster credentials
+    environment: production
+    services:
+      # Validate the derived scope_bounds against the SAME PostGIS major the merge uses, before any
+      # cluster access. The postgis image enables the postgis extension in POSTGRES_DB on init.
+      postgis:
+        image: postgis/postgis:17-3.5
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Validate registry + geofabrik path
+        env:
+          GEOFABRIK_PATH: ${{ github.event.inputs.geofabrik_path }}
+          SCOPE_ID: ${{ github.event.inputs.scope_id }}
+          DATASET: ${{ github.event.inputs.dataset }}
+        run: |
+          # One-owner control (spec §4): reject unknown/retired/aggregate scopes BEFORE any download.
+          # Reject newline/CR (workflow_dispatch is API-callable), then allow-list the path syntax as
+          # defense-in-depth (lowercase, single slashes, no `..`, no control chars).
+          case "$GEOFABRIK_PATH" in
+            *$'\n'* | *$'\r'*) echo "::error::geofabrik_path must be a single line"; exit 1 ;;
+          esac
+          printf '%s' "$GEOFABRIK_PATH" | grep -Eq '^[a-z0-9-]+(/[a-z0-9-]+)*$' \
+            || { echo "::error::geofabrik_path failed syntax check"; exit 1; }
+          # Ubuntu runners are PEP-668 externally-managed, so `pip install` fails; use the distro
+          # PyYAML package (regions.py only needs yaml.safe_load).
+          sudo apt-get update && sudo apt-get install -y python3-yaml
+          python3 backend/app/imports/regions.py \
+            --registry .github/osm-import-regions.yml \
+            --source pbf --key "$GEOFABRIK_PATH" --scope-id "$SCOPE_ID" --dataset "$DATASET"
+
+      - name: Install osmium + postgresql-client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y osmium-tool postgresql-client
+          osmium --version
+
+      - name: Preflight + download extract
+        env:
+          GEOFABRIK_PATH: ${{ github.event.inputs.geofabrik_path }}
+        run: |
+          set -euo pipefail
+          WORKDIR="$RUNNER_TEMP/osm"; mkdir -p "$WORKDIR"
+          echo "WORKDIR=$WORKDIR" >> "$GITHUB_ENV"
+          UA="fountainrank-osm-import/1.0 (https://fountainrank.com)"
+          BASE="https://download.geofabrik.de/${GEOFABRIK_PATH}"
+          PBF_URL="${BASE}-latest.osm.pbf"
+
+          # Size preflight (fail-closed): abort before filling the runner.
+          LEN="$(curl -sSIL -A "$UA" "$PBF_URL" \
+            | awk 'BEGIN{IGNORECASE=1} /^content-length:/{v=$2} END{gsub(/\r/,"",v); print v}')"
+          [ -n "$LEN" ] || { echo "::error::no Content-Length for $PBF_URL (preflight)"; exit 1; }
+          LEN_MB=$(( (LEN + 1048575) / 1048576 ))
+          if [ "$LEN_MB" -gt "$MAX_EXTRACT_MB" ]; then
+            echo "::error::extract ${LEN_MB}MB exceeds MAX_EXTRACT_MB=${MAX_EXTRACT_MB} (raise cap or split)"; exit 1
+          fi
+          NEED_MB=$(( LEN_MB * 12 + 3000 ))   # pbf + filtered + osmium index/temp + output + headroom
+          FREE_MB="$(df -Pm "$WORKDIR" | awk 'NR==2{print $4}')"
+          if [ "$FREE_MB" -lt "$NEED_MB" ]; then
+            echo "::error::insufficient disk on $WORKDIR: need ${NEED_MB}MB, have ${FREE_MB}MB"; exit 1
+          fi
+          echo "preflight ok: extract=${LEN_MB}MB need=${NEED_MB}MB free=${FREE_MB}MB"
+
+          curl -sSL --fail -A "$UA" "$PBF_URL" -o "$WORKDIR/in.pbf"
+          curl -sSL --fail -A "$UA" "${PBF_URL}.md5" -o "$WORKDIR/in.pbf.md5"
+          curl -sSL --fail -A "$UA" "${BASE}.poly" -o "$WORKDIR/region.poly"
+
+          # md5 = transport/corruption check ONLY (same-origin HTTPS; not authenticity/trust). The
+          # Geofabrik .md5 references the remote filename, so compare hashes directly.
+          EXPECTED="$(awk '{print $1}' "$WORKDIR/in.pbf.md5")"
+          ACTUAL="$(md5sum "$WORKDIR/in.pbf" | awk '{print $1}')"
+          [ -n "$EXPECTED" ] && [ "$EXPECTED" = "$ACTUAL" ] \
+            || { echo "::error::md5 mismatch (transport corruption): $EXPECTED != $ACTUAL"; exit 1; }
+          echo "downloaded + md5-verified in.pbf ($LEN_MB MB)"
+
+      - name: Coarse filter + export + normalize
+        run: |
+          set -euo pipefail
+          # Coarse prefilter (keys/values only; the shipped parser narrows to the exact
+          # potable/public set). tags-filter keeps referenced nodes/members by default so
+          # ways/areas can build geometries.
+          osmium tags-filter "$WORKDIR/in.pbf" -o "$WORKDIR/filtered.pbf" \
+            nwr/amenity=drinking_water,fountain nwr/man_made=water_tap
+          osmium export "$WORKDIR/filtered.pbf" -u type_id -f geojson -o "$WORKDIR/osmium.geojson"
+          FEAT="$(python3 backend/app/imports/osmium_geojson.py \
+            "$WORKDIR/osmium.geojson" "$WORKDIR/import.geojson")"
+          echo "normalized features: $FEAT"
+          [ "$FEAT" -gt 0 ] || { echo "::error::no drinking-water features after normalize"; exit 1; }
+
+      - name: Derive + PostGIS-validate scope_bounds (mandatory, fail-closed)
+        run: |
+          set -euo pipefail
+          python3 backend/app/imports/poly_to_wkt.py "$WORKDIR/region.poly" "$WORKDIR/scope.wkt"
+          test -s "$WORKDIR/scope.wkt" || { echo "::error::scope.wkt not produced"; exit 1; }
+          # Build the check SQL from a file (WKT can exceed shell ARG_MAX for large regions).
+          python3 - "$WORKDIR/scope.wkt" > "$WORKDIR/check.sql" <<'PY'
+          import sys
+          wkt = open(sys.argv[1], encoding="utf-8").read().strip().replace("'", "''")
+          print(
+              "SELECT ST_IsValid(g::geometry) AND ST_Area(g) > 0 AND ST_Area(g) < 2.55e14 "
+              "FROM (SELECT ST_GeogFromText('" + wkt + "') AS g) s;"
+          )
+          PY
+          VAL="$(PGPASSWORD=postgres psql -h localhost -p 5432 -U postgres -d postgres \
+            -tAX -v ON_ERROR_STOP=1 -f "$WORKDIR/check.sql" | tr -d '[:space:]')"
+          [ "$VAL" = "t" ] \
+            || { echo "::error::scope_bounds failed PostGIS validation (result=$VAL)"; exit 1; }
+          echo "scope_bounds validated in PostGIS"
+
+      - name: Determine source_build_id (extract data timestamp)
+        run: |
+          set -euo pipefail
+          # From the ORIGINAL downloaded extract (not filtered.pbf). Geofabrik sets the replication
+          # timestamp header; try the generic header timestamp first, then the osmosis field.
+          # NEVER `date` (meaningless for a PBF; breaks audit/ODbL provenance). Fail-closed if absent.
+          TS="$(osmium fileinfo -g header.option.timestamp "$WORKDIR/in.pbf" 2>/dev/null || true)"
+          if [ -z "$TS" ]; then
+            TS="$(osmium fileinfo -g header.option.osmosis_replication_timestamp \
+              "$WORKDIR/in.pbf" 2>/dev/null || true)"
+          fi
+          [ -n "$TS" ] || { echo "::error::could not read extract timestamp for source_build_id"; exit 1; }
+          case "$TS" in *://*) echo "::error::build id looks like a URL"; exit 1 ;; esac
+          echo "BUILD_ID=$TS" >> "$GITHUB_ENV"
+          echo "source_build_id: $TS"
+
+      - uses: digitalocean/action-doctl@v2.5.2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: Save kubeconfig
+        run: doctl kubernetes cluster kubeconfig save "$CLUSTER_NAME"
+
+      - name: Run importer in backend pod
+        env:
+          SCOPE_ID: ${{ github.event.inputs.scope_id }}
+          DATASET: ${{ github.event.inputs.dataset }}
+          LABEL: ${{ github.event.inputs.label }}
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          POD="$(kubectl -n "$NAMESPACE" get pod -l app=fountainrank-backend \
+            --field-selector=status.phase=Running \
+            -o jsonpath='{.items[0].metadata.name}')"
+          if [ -z "$POD" ]; then echo "::error::no Running backend pod found"; exit 1; fi
+          echo "backend pod: $POD"
+          # Stream the normalized GeoJSON + the mandatory scope-bounds WKT into the pod.
+          kubectl -n "$NAMESPACE" exec -i "$POD" -- sh -c 'cat > /tmp/osm-import.geojson' \
+            < "$WORKDIR/import.geojson"
+          kubectl -n "$NAMESPACE" exec -i "$POD" -- sh -c 'cat > /tmp/osm-scope.wkt' \
+            < "$WORKDIR/scope.wkt"
+          if ! kubectl -n "$NAMESPACE" exec "$POD" -- test -s /tmp/osm-scope.wkt; then
+            echo "::error::scope bounds WKT missing/empty in pod"; exit 1
+          fi
+          DRY=""
+          if [ "$DRY_RUN" = "true" ]; then DRY="--dry-run"; fi
+          echo "::group::importer (dry_run=$DRY_RUN, build_id=$BUILD_ID)"
+          kubectl -n "$NAMESPACE" exec "$POD" -- \
+            python -m app.imports.cli --path /tmp/osm-import.geojson \
+            --scope-id "$SCOPE_ID" --dataset "$DATASET" --build-id "$BUILD_ID" \
+            --label "$LABEL" --scope-bounds-wkt-file /tmp/osm-scope.wkt --require-scope-bounds $DRY
+          echo "::endgroup::"
+          kubectl -n "$NAMESPACE" exec "$POD" -- rm -f /tmp/osm-import.geojson /tmp/osm-scope.wkt
