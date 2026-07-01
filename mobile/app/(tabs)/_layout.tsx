@@ -4,6 +4,7 @@ import { Tabs, router, usePathname } from "expo-router";
 import { useEffect } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
+import { ProfileTabIcon } from "../../components/nav/ProfileTabIcon";
 import { unwrap } from "../../lib/api";
 import { shouldRouteToNameGate } from "../../lib/auth/display-name";
 import { type MeProfile } from "../../lib/auth/profile";
@@ -95,9 +96,7 @@ export default function TabsLayout() {
           name="account"
           options={{
             title: "Profile",
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name="person-circle" color={color} size={size} />
-            ),
+            tabBarIcon: ({ focused }) => <ProfileTabIcon focused={focused} />,
           }}
         />
       </Tabs>
