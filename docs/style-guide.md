@@ -159,7 +159,7 @@ clients. It saves the user's chosen name (stored backend-side as a `nickname` ov
 - **Accessibility:** the input is label-associated ("Display name"); the button exposes a disabled
   state; status/error text is announced (`role="status"`, `aria-live="polite"` on web).
 - **Mobile root gate (`mobile/app/(tabs)/_layout.tsx`):** because sign-in can begin from the map, a
-  mounted watcher routes an authenticated, still-name-less user to the Account tab's gate variant.
+  mounted watcher routes an authenticated, still-name-less user to the Profile tab's gate variant.
 
 ### Admin moderation controls (`web/components/admin/FountainAdminControls.tsx`)
 
@@ -186,13 +186,19 @@ choice is still pending **and** the app is in production on the canonical host.
 **Placement & style:**
 
 ```tsx
-<div role="region" aria-label="Analytics consent"
-  className="fixed inset-x-0 bottom-0 z-50 border-t border-white/10 bg-[#0A357E] px-4 py-3 text-white shadow-[0_-4px_16px_rgba(0,0,0,0.25)]">
+<div
+  role="region"
+  aria-label="Analytics consent"
+  className="fixed inset-x-0 bottom-0 z-50 border-t border-white/10 bg-[#0A357E] px-4 py-3 text-white shadow-[0_-4px_16px_rgba(0,0,0,0.25)]"
+>
   <div className="mx-auto flex max-w-4xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-    <p className="text-sm leading-relaxed text-white/90"> …copy… <Link href="/privacy">Privacy Policy</Link>. </p>
+    <p className="text-sm leading-relaxed text-white/90">
+      {" "}
+      …copy… <Link href="/privacy">Privacy Policy</Link>.{" "}
+    </p>
     <div className="flex shrink-0 items-center gap-2">
-      <button type="button">Decline</button>   {/* white-outline secondary */}
-      <button type="button">Accept</button>     {/* crown-gold primary */}
+      <button type="button">Decline</button> {/* white-outline secondary */}
+      <button type="button">Accept</button> {/* crown-gold primary */}
     </div>
   </div>
 </div>
@@ -210,10 +216,10 @@ choice is still pending **and** the app is in production on the canonical host.
 **States** (the banner itself is stateless; visibility is controlled by `AnalyticsConsent`):
 
 | State           | Behaviour                                                                                                                          |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| Shown           | Choice is undecided (prod + canonical host). Banner visible; GA not loaded.                                                       |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Shown           | Choice is undecided (prod + canonical host). Banner visible; GA not loaded.                                                        |
 | Accepted→hidden | Accept persists `granted`; banner unmounts; GA loads. **Fail-closed:** if the write throws, the banner stays and GA does not load. |
-| Declined→hidden | Decline persists `denied`; banner unmounts; nothing loads, no GA cookies.                                                         |
+| Declined→hidden | Decline persists `denied`; banner unmounts; nothing loads, no GA cookies.                                                          |
 
 **Accessibility:** `role="region"` + `aria-label="Analytics consent"`; both actions are real
 `<button type="button">`s (keyboard-focusable with visible `focus-visible` rings); the bar does not
@@ -236,7 +242,7 @@ layout is a vertical flex column that fills the viewport (`flex min-h-dvh flex-c
 | Region     | Element                   | Notes                                                                             |
 | ---------- | ------------------------- | --------------------------------------------------------------------------------- |
 | `<header>` | Brand-gradient hero band  | `bg-gradient-to-b from-[#0A357E] via-[#0C44A0] to-[#0E4DA4]`, `px-6 py-6 sm:py-8` |
-| Top row    | Wordmark + Sign-in button | `max-w-6xl`, `flex items-center justify-between`                                  |
+| Top row    | Wordmark + points/profile | Full-width `flex items-center justify-between`; right controls align to page edge |
 | Hero copy  | `<h1>` + supporting `<p>` | `max-w-2xl`, `mt-5 sm:mt-6`                                                       |
 | `<main>`   | Map region                | `relative flex-1` — grows to fill remaining viewport                              |
 | `<footer>` | Reversed gradient footer  | `from-[#0E4DA4] to-[#0A357E]`, copyright + Privacy / Terms / Sign-in links        |
@@ -250,7 +256,7 @@ layout is a vertical flex column that fills the viewport (`flex min-h-dvh flex-c
 
 **Map region (`<main>`):** `relative flex-1` — the map canvas fills this area completely. `MapBrowserLoader` lazy-loads `MapBrowser` (no SSR) and renders a green-tinted placeholder (`bg-[#e9efe7]`) while the JS bundle loads.
 
-**Footer:** `text-xs text-white/60`; links have `hover:text-white hover:underline underline-offset-4`.
+**Footer:** `text-xs text-white/60`; links have `hover:text-white hover:underline underline-offset-4`. Optional mobile-store links render as compact black translucent badges when their public store URLs are configured.
 
 **Accessibility:** The hero `<header>`, map `<main>`, and `<footer>` are native landmark elements with no additional `role` needed. The Sign-in link has visible `focus-visible` styling.
 
@@ -337,6 +343,14 @@ When multiple fountains are close together at low zoom, they collapse into a clu
 Replaces the tall hero band introduced in Phase 3a. A shared **server component** that renders a
 narrow brand bar on every full-page route and an optional one-line tagline on the map page.
 
+- The header row is full-width, not a centered max-width container: the profile/avatar/auth control
+  sits at the far right edge of the header, with the authenticated points badge immediately to its
+  left.
+- The points badge is part of the header chrome, not a map overlay, so it never collides with
+  MapLibre's top-right zoom/geolocate controls.
+- On narrow web widths the points badge may collapse away before the auth/profile control; signed-out
+  users do not get an empty points shell.
+
 ### Points badge
 
 Used on the authenticated web and mobile map/home surfaces.
@@ -347,14 +361,14 @@ Used on the authenticated web and mobile map/home surfaces.
 - On entry/update, the badge may pulse or count up once. Respect reduced-motion preferences and
   keep the numeric value visible without animation.
 - **Interactive (link/button to the leaderboard, #117).** The badge navigates to the leaderboard
-  (web: a real `<Link>` whose href tracks the live map center → `/leaderboard?lat&lng`, falling
-  back to the global board; mobile: a `Pressable` that pushes `/leaderboard` with the map center).
+  (web: a real header `<Link>` to `/leaderboard`; mobile: a `Pressable` that pushes `/leaderboard`
+  with the map center).
   It is keyboard-focusable with a visible focus ring and a hover affordance, and exposes an
-  accessible label like *"View leaderboard — N points"*. When rendered inside a
+  accessible label like _"View leaderboard — N points"_. When rendered inside a
   `pointer-events-none` overlay (e.g. the contribution overlay), the badge re-enables pointer
   events on itself.
 
-### Leaderboard (`/leaderboard` — `web/app/leaderboard/page.tsx`, `mobile/app/leaderboard.tsx`)
+### Leaderboard (`/leaderboard` — `web/app/leaderboard/page.tsx`, `mobile/app/(tabs)/leaderboard.tsx`)
 
 The rankings screen reached from the points badge. Same model on web and mobile (#117).
 
@@ -374,7 +388,7 @@ The rankings screen reached from the points badge. Same model on web and mobile 
 - **You-highlight + pinned You row:** the signed-in caller's row gets a light-blue fill
   (`#EAF1FF`) + brand-blue ring/`You` tag. When the caller is below the visible cut, a **pinned
   "You — #N"** row is shown (web: dashed separator above it; mobile: as the list footer), reading
-  *Not yet ranked* when they have no qualifying points in the active scope/category.
+  _Not yet ranked_ when they have no qualifying points in the active scope/category.
 - **Empty state:** `No contributors yet.`
 
 ### Possible-points preview
@@ -539,29 +553,19 @@ dropdown user menu.
 - Error state (`viewer.state === "error"`) shows a degraded menu: name header omitted, amber
   "couldn't load" note shown, **no Admin item**, Account + Sign out remain.
 
-### Homepage footer (auth-aware)
+### Homepage footer + store links
 
-The map page `<footer>` is auth-aware. When signed out it shows a "Sign in" trigger (a form
-submitting `signInWithReturn` bound to `"/"`, styled as a plain text link). When signed in the
-item is hidden so the footer never shows a dead sign-in link.
-
-**Signed-out footer:**
+The map page `<footer>` carries the low-emphasis utility links plus optional mobile-store links.
 
 ```
-© {year} FountainRank · <a>Privacy</a> · <a>Terms</a> · <form><button>Sign in</button></form>
+© {year} FountainRank · <a>Privacy</a> · <a>Terms</a> · [store badges when configured]
 ```
 
-**Signed-in footer:**
-
-```
-© {year} FountainRank · <a>Privacy</a> · <a>Terms</a>
-```
-
-- Footer text: `text-xs text-white/60`; links and the sign-in button: `hover:text-white hover:underline underline-offset-4`.
-- The sign-in button carries no additional styling beyond the footer link treatment (plain text,
-  not a pill) — distinct from the header's gold pill Sign-in button.
-- The signed-in variant (three items only) and its spacing are pinned in tests so removal of the
-  item doesn't regress mobile wrapping.
+- Footer text: `text-xs text-white/60`; links use `hover:text-white hover:underline underline-offset-4`.
+- `MobileStoreLinks` reads `NEXT_PUBLIC_APP_STORE_URL` and `NEXT_PUBLIC_GOOGLE_PLAY_URL`; each missing
+  URL hides that store badge so the footer never renders dead placeholders before listings are live.
+- Store badges use official wording (`Download on the App Store`, `Get it on Google Play`) in compact
+  rounded dark badges with accessible external-link labels and `rel="noopener noreferrer"`.
 
 ### `/admin` placeholder page (`web/app/admin/page.tsx`)
 
@@ -1327,14 +1331,19 @@ Reusable async states, usable on small screens:
 
 ### Navigation
 
-Expo Router: a bottom-tab group (`(tabs)`: Map · Add · Account) with
+Expo Router: a bottom-tab group (`(tabs)`: Map · Rankings · Add · Profile) with
 stack-pushed detail (`fountains/[id]`) and `diagnostics`. Sign-in affordances
 stay hidden/disabled until `isAuthConfigured` is true (auth-unavailable mode,
 spec §21).
 
+- **Add tab:** a differentiated centered circular `+` action (gold fill, navy border/icon) that
+  dispatches into the map add flow instead of navigating to a placeholder screen.
+- **Rankings tab:** opens the `/leaderboard` tab route.
+- **Profile tab:** the user-facing label for the existing account/profile route.
+
 ### Account auth (slice 6e-5)
 
-The Account tab is a utility surface, not a marketing page. It uses
+The Profile tab is a utility surface, not a marketing page. It uses
 `ScreenContainer`, the shared typography scale, and compact full-width controls.
 
 - **Public-read mode:** when native auth is unconfigured, show one muted body
@@ -1383,6 +1392,10 @@ mapping, icon/pill selection, bounds, and filter→query logic are pure helpers 
   (toggles), and a minimum-rating chip cycling "Any rating" → "3★+" → "4★+".
   Active chip = brand-blue fill with `onBrand` text; inactive = `surface` fill
   with a `border` outline. `accessibilityRole="button"` + `selected` state.
+- **Map top bar** — the Map tab hides the default native header and renders an in-map brand bar
+  under the status bar. It uses brand blue with a gold bottom rule, the FountainRank name on the
+  left, and the signed-in points chip on the right. The filter chips sit below this bar, and the
+  native compass is offset below both pieces of top chrome.
 - **Locate button** — a 44×44 circular `surface` `Pressable` (◎ glyph,
   brand-blue) at the bottom-right, shown only once foreground location is
   granted; recenters the camera on the user. Denial hides it (non-blocking).
@@ -1463,6 +1476,10 @@ control is shown as usable unless `auth.status === "authenticated"`.
   loading/error/empty states are honest and non-submittable.
 - **Note form** — create-only note entry with `maxLength={1000}` and a character
   count. There is no edit/delete UI because the API is list/create only.
+- **Reward animation** — successful point-awarding writes use the shared full-screen
+  `WaterCelebration` overlay. It shows a brand-blue/gold burst with the known or derived `+N points`
+  amount, then clears without trapping touches. Reduced-motion users get a static success/points
+  confirmation with no droplet motion.
 - **Feedback and diagnostics** — every mutation shows pending/success/error
   state in the UI. Mobile contribution payloads, note bodies, tokens, and raw
   profile data are not logged; mobile diagnosability for this slice is through

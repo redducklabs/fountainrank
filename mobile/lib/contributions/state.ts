@@ -52,7 +52,7 @@ export function contributionErrorText(error: ContributionError): string {
     case "validation":
       return "Please check your input and try again.";
     case "needs_name":
-      return "Add a display name on the Account tab to contribute.";
+      return "Add a display name on the Profile tab to contribute.";
     case "network":
       return "Check your connection and try again.";
     case "server":

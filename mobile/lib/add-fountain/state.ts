@@ -125,7 +125,7 @@ export function addFountainErrorText(error: AddFountainError): string {
     case "validation":
       return "Please check the fountain details and try again.";
     case "needs_name":
-      return "Add a display name on the Account tab to contribute.";
+      return "Add a display name on the Profile tab to contribute.";
     case "network":
       return "Check your connection and try again.";
     case "server":

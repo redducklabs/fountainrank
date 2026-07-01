@@ -2,27 +2,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 
-const { getViewer, getViewerTotalPoints } = vi.hoisted(() => ({
+const { getViewer } = vi.hoisted(() => ({
   getViewer: vi.fn(),
-  getViewerTotalPoints: vi.fn(),
 }));
-vi.mock("../lib/server/viewer", () => ({ getViewer, getViewerTotalPoints }));
+vi.mock("../lib/server/viewer", () => ({ getViewer }));
 vi.mock("../components/SiteHeader", () => ({
   SiteHeader: () => <div data-testid="site-header" />,
 }));
 vi.mock("../components/map/MapBrowserLoader", () => ({
-  default: (p: {
-    isAuthenticated: boolean;
-    autoEnterAdd: boolean;
-    hadAddParam: boolean;
-    initialTotalPoints: number;
-  }) => (
+  default: (p: { isAuthenticated: boolean; autoEnterAdd: boolean; hadAddParam: boolean }) => (
     <div
       data-testid="map"
       data-auth={String(p.isAuthenticated)}
       data-auto={String(p.autoEnterAdd)}
       data-had={String(p.hadAddParam)}
-      data-points={String(p.initialTotalPoints)}
     />
   ),
 }));
@@ -41,12 +34,10 @@ it("auto-enters add when ?add=1 and authed", async () => {
     avatarUrl: null,
     isAdmin: false,
   });
-  getViewerTotalPoints.mockResolvedValue(27);
   render(await Home({ searchParams: Promise.resolve({ add: "1" }) }));
   const map = screen.getByTestId("map");
   expect(map.getAttribute("data-auto")).toBe("true");
   expect(map.getAttribute("data-had")).toBe("true");
-  expect(map.getAttribute("data-points")).toBe("27");
 });
 
 it("flags hadAddParam but does not auto-enter when anonymous", async () => {

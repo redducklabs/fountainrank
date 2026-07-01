@@ -1,3 +1,4 @@
+import { Ionicons } from "@expo/vector-icons";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
@@ -62,6 +63,7 @@ import {
   fountainsQueryKey,
 } from "../../lib/map/filters";
 import { pinsToFeatureCollection } from "../../lib/map/pins";
+import { subscribeMapAddMode } from "../../lib/navigation/add-tab";
 import { resolveViewState, type ViewState } from "../../lib/view-state";
 import { useApi } from "../../providers/api-provider";
 import { useAuth } from "../../providers/auth-provider";
@@ -76,6 +78,7 @@ type BboxResult = { pins: FountainPin[]; truncated: boolean };
 // Approx height of the top filter-chip bar; used to drop the native compass below
 // it so it isn't hidden behind the chips (#105).
 const FILTER_BAR_HEIGHT = 44;
+const MAP_HEADER_HEIGHT = 72;
 
 export default function MapScreen() {
   const { client, config } = useApi();
@@ -88,7 +91,11 @@ export default function MapScreen() {
   // The map View is full-bleed (not a SafeAreaView), so position the native map
   // ornaments to avoid our overlays and the device safe areas (#104, #105).
   const attributionPosition = { bottom: insets.bottom + spacing.sm, left: spacing.sm };
-  const compassPosition = { top: spacing.sm + FILTER_BAR_HEIGHT + spacing.md, left: spacing.sm };
+  const topChromeHeight = insets.top + MAP_HEADER_HEIGHT;
+  const compassPosition = {
+    top: topChromeHeight + spacing.sm + FILTER_BAR_HEIGHT + spacing.md,
+    left: spacing.sm,
+  };
 
   const [filters, setFilters] = useState<FountainFilters>(DEFAULT_FILTERS);
   const [region, setRegion] = useState<{ bounds: RawBounds; zoom: number } | null>(null);
@@ -107,6 +114,7 @@ export default function MapScreen() {
     null,
   );
   const [celebrationKey, setCelebrationKey] = useState(0);
+  const [celebrationPoints, setCelebrationPoints] = useState<number | null>(null);
   const regionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const gate = addFountainGate(auth.status);
 
@@ -181,7 +189,6 @@ export default function MapScreen() {
       void queryClient.invalidateQueries({ queryKey: ["me", "contributions"] });
       if (result.ok) {
         void queryClient.invalidateQueries({ queryKey: ["fountain", result.fountainId] });
-        setCelebrationKey((key) => key + 1);
       }
     },
   });
@@ -190,14 +197,14 @@ export default function MapScreen() {
     setToast({ tone, text, nonce: Date.now() });
   }, []);
 
-  const resetAddDraft = () => {
+  const resetAddDraft = useCallback(() => {
     addDispatch({ type: "reset" });
     setRatings({});
     setAttributes({});
     setComments("");
     setShowMoreDetails(false);
     setAddMessage(null);
-  };
+  }, []);
 
   useEffect(() => {
     if (!addMode) return;
@@ -258,6 +265,46 @@ export default function MapScreen() {
     regionTimerRef.current = setTimeout(() => setRegion({ bounds, zoom: z }), 250);
   }, []);
 
+  const enterAddMode = useCallback(() => {
+    resetAddDraft();
+    setAddMode(true);
+    // #97/#98: always zoom to placement zoom AND seed a draft pin, using the user's
+    // location when available and the viewport center otherwise — so a user with
+    // location denied/approximate can still place (previously they were stuck below
+    // PLACE_MIN_ZOOM and every tap was silently rejected).
+    if (region) {
+      const fix: GpsFix = location.coords
+        ? {
+            ok: true,
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude,
+            accuracy: location.coords.accuracy,
+          }
+        : { ok: false };
+      const target = placementEntryTarget(fix, region.bounds);
+      setFlyTo({ center: target, zoom: PLACE_MIN_ZOOM, framedAboveSheet: true });
+      addDispatch({ type: "dropPin", point: target });
+    }
+    if (!location.coords && (location.status === "denied" || location.status === "unavailable")) {
+      showToast(
+        "err",
+        "Location is unavailable — drop the pin on the map and adjust with the nudge buttons.",
+      );
+    }
+  }, [location.coords, location.status, region, resetAddDraft, showToast]);
+
+  const handleAddTabRequest = useCallback(() => {
+    if (gate.state === "ready") {
+      enterAddMode();
+    } else if (gate.state === "sign_in" || gate.state === "reauth") {
+      void auth.signIn();
+    }
+  }, [auth, enterAddMode, gate.state]);
+
+  useEffect(() => {
+    return subscribeMapAddMode(handleAddTabRequest);
+  }, [handleAddTabRequest]);
+
   // Honest "map unavailable" state when no basemap style URL is configured.
   if (!isMapConfigured(config)) {
     return (
@@ -285,34 +332,6 @@ export default function MapScreen() {
     error: pinsQuery.error,
     isEmpty: pinsQuery.isSuccess && (pinsQuery.data?.pins.length ?? 0) === 0,
   });
-
-  const enterAddMode = () => {
-    resetAddDraft();
-    setAddMode(true);
-    // #97/#98: always zoom to placement zoom AND seed a draft pin, using the user's
-    // location when available and the viewport center otherwise — so a user with
-    // location denied/approximate can still place (previously they were stuck below
-    // PLACE_MIN_ZOOM and every tap was silently rejected).
-    if (region) {
-      const fix: GpsFix = location.coords
-        ? {
-            ok: true,
-            latitude: location.coords.latitude,
-            longitude: location.coords.longitude,
-            accuracy: location.coords.accuracy,
-          }
-        : { ok: false };
-      const target = placementEntryTarget(fix, region.bounds);
-      setFlyTo({ center: target, zoom: PLACE_MIN_ZOOM, framedAboveSheet: true });
-      addDispatch({ type: "dropPin", point: target });
-    }
-    if (!location.coords && (location.status === "denied" || location.status === "unavailable")) {
-      showToast(
-        "err",
-        "Location is unavailable — drop the pin on the map and adjust with the nudge buttons.",
-      );
-    }
-  };
 
   const rejectOutOfArea = () => {
     showToast("err", "You can only add fountains near your current location.");
@@ -358,25 +377,29 @@ export default function MapScreen() {
         }
       />
 
-      <View style={styles.filterBar} pointerEvents="box-none">
+      <MapTopBar
+        topInset={insets.top}
+        totalPoints={
+          auth.status === "authenticated"
+            ? (contributionsQuery.data?.stats.total_points ?? 0)
+            : null
+        }
+        onPointsPress={() => {
+          const c = region ? centerOfViewport(region.bounds) : null;
+          router.push(
+            c
+              ? { pathname: "/leaderboard", params: { lat: String(c.lat), lng: String(c.lng) } }
+              : "/leaderboard",
+          );
+        }}
+      />
+
+      <View
+        style={[styles.filterBar, { top: topChromeHeight + spacing.sm }]}
+        pointerEvents="box-none"
+      >
         <MapFilters filters={filters} onChange={setFilters} />
       </View>
-
-      {auth.status === "authenticated" ? (
-        <PointsChip
-          total={contributionsQuery.data?.stats.total_points ?? 0}
-          onPress={() => {
-            // #117: open the leaderboard, passing the current map center so "Near here" ranks
-            // around where the user is looking; with no region yet, open the global board.
-            const c = region ? centerOfViewport(region.bounds) : null;
-            router.push(
-              c
-                ? { pathname: "/leaderboard", params: { lat: String(c.lat), lng: String(c.lng) } }
-                : "/leaderboard",
-            );
-          }}
-        />
-      ) : null}
 
       {location.coords ? (
         <Pressable
@@ -394,21 +417,6 @@ export default function MapScreen() {
           <Text style={styles.locateGlyph}>◎</Text>
         </Pressable>
       ) : null}
-
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Add a fountain"
-        onPress={() => {
-          if (gate.state === "ready") {
-            enterAddMode();
-          } else if (gate.state === "sign_in" || gate.state === "reauth") {
-            void auth.signIn();
-          }
-        }}
-        style={[styles.addButton, { bottom: insets.bottom + spacing.lg }]}
-      >
-        <Text style={styles.addButtonText}>＋</Text>
-      </Pressable>
 
       {gate.state === "ready" && addMode ? (
         <MapAddPanel
@@ -488,11 +496,23 @@ export default function MapScreen() {
               setAddMessage({ tone: "err", text: "Please check the fountain details." });
               return;
             }
+            const awardedPoints = totalPreviewPoints(
+              addFountainPointsPreview({
+                ratingsCount: buildRatingsFromStars(ratingTypesQuery.data ?? [], ratings).length,
+                observationsCount: buildObservationsFromValues(
+                  attributeTypesQuery.data ?? [],
+                  attributes,
+                ).length,
+                hasComment: comments.trim().length > 0,
+              }),
+            );
             addDispatch({ type: "submitStart" });
             try {
               const result = await addMutation.mutateAsync(payload.value);
               if (result.ok) {
                 addDispatch({ type: "created", fountainId: result.fountainId });
+                setCelebrationPoints(awardedPoints);
+                setCelebrationKey((key) => key + 1);
                 setAddMode(false);
                 router.push(`/fountains/${result.fountainId}`);
                 return;
@@ -534,7 +554,32 @@ export default function MapScreen() {
         />
       )}
       <MobileToast toast={toast} onDismiss={() => setToast(null)} />
-      <WaterCelebration triggerKey={celebrationKey} bottom={82} />
+      <WaterCelebration triggerKey={celebrationKey} points={celebrationPoints} />
+    </View>
+  );
+}
+
+function MapTopBar({
+  topInset,
+  totalPoints,
+  onPointsPress,
+}: {
+  topInset: number;
+  totalPoints: number | null;
+  onPointsPress: () => void;
+}) {
+  return (
+    <View style={[styles.mapTopBar, { paddingTop: topInset + spacing.sm }]}>
+      <View style={styles.brandLockup}>
+        <View style={styles.brandMark}>
+          <Ionicons name="water" color={colors.onBrand} size={18} />
+        </View>
+        <View>
+          <Text style={styles.brandName}>FountainRank</Text>
+          <Text style={styles.brandSubline}>Map</Text>
+        </View>
+      </View>
+      {totalPoints != null ? <PointsChip total={totalPoints} onPress={onPointsPress} /> : null}
     </View>
   );
 }
@@ -964,16 +1009,45 @@ function MapOverlay(props: {
 const styles = StyleSheet.create({
   fill: { flex: 1, backgroundColor: colors.background },
   centered: { flex: 1, alignItems: "center", justifyContent: "center", gap: spacing.sm },
-  filterBar: { position: "absolute", top: spacing.sm, left: 0, right: 0 },
-  pointsChipWrap: { position: "absolute", top: spacing.lg + 44, right: spacing.md },
-  pointsChip: {
+  mapTopBar: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    minHeight: MAP_HEADER_HEIGHT,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.sm,
     backgroundColor: colors.brandBlue,
+    borderBottomColor: colors.brandYellow,
+    borderBottomWidth: 2,
+  },
+  brandLockup: { flexDirection: "row", alignItems: "center", gap: spacing.sm, minWidth: 0 },
+  brandMark: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#0E4DA4",
+    borderColor: colors.brandYellow,
+    borderWidth: 1,
+  },
+  brandName: { ...typography.heading, color: colors.onBrand, fontWeight: "800" },
+  brandSubline: { ...typography.meta, color: "#BFDBFE", fontWeight: "700" },
+  filterBar: { position: "absolute", left: 0, right: 0 },
+  pointsChipWrap: {},
+  pointsChip: {
+    backgroundColor: "#06306F",
     borderColor: colors.brandYellow,
     borderWidth: 2,
     borderRadius: 8,
-    paddingHorizontal: spacing.md,
+    paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
-    minWidth: 86,
+    minWidth: 76,
     alignItems: "center",
   },
   pointsLabel: { ...typography.meta, color: colors.onBrand, fontWeight: "700" },
@@ -992,20 +1066,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   locateGlyph: { ...typography.heading, color: colors.brandBlue },
-  addButton: {
-    position: "absolute",
-    right: spacing.md,
-    bottom: spacing.lg,
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.brandYellow,
-    borderColor: colors.brandBlue,
-    borderWidth: 1,
-  },
-  addButtonText: { fontSize: 30, lineHeight: 32, fontWeight: "700", color: colors.brandBlue },
   addPanel: {
     position: "absolute",
     left: spacing.md,

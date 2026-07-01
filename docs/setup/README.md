@@ -244,6 +244,10 @@ CDN + CORS (gated behind `var.manage_basemap_spaces`); the upload runs via the
   into the web client bundle at _build_ time — Next bakes `NEXT_PUBLIC_*` during `next build`).
   The planet itself is **not** a build-arg: it's served as z/x/y tiles by the go-pmtiles **tile
   server** (`fountainrank.com/tiles`), referenced from inside `style.light.json`.
+- ⏳ **Mobile-store web links** — after the public store listings exist, set web build variables
+  `NEXT_PUBLIC_APP_STORE_URL` and/or `NEXT_PUBLIC_GOOGLE_PLAY_URL` in the deployment environment.
+  Missing values intentionally hide the corresponding footer badge so the website never renders a
+  dead store link.
 - ⏳ **Remaining: upload the basemap data** (below), then tag the release.
 
 **Serving.** The planet is served by a **go-pmtiles tile server** in DOKS (`infra/k8s/basemap-tiles.yaml`)

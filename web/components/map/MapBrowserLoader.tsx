@@ -8,19 +8,16 @@ export default function MapBrowserLoader({
   isAuthenticated,
   autoEnterAdd,
   hadAddParam,
-  initialTotalPoints,
 }: {
   isAuthenticated: boolean;
   autoEnterAdd: boolean;
   hadAddParam: boolean;
-  initialTotalPoints: number;
 }) {
   return (
     <MapBrowser
       isAuthenticated={isAuthenticated}
       autoEnterAdd={autoEnterAdd}
       hadAddParam={hadAddParam}
-      initialTotalPoints={initialTotalPoints}
     />
   );
 }
