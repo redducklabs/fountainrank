@@ -281,3 +281,13 @@ class AdminFountainPatch(BaseModel):
 class AdminFountainDetail(FountainDetail):
     is_hidden: bool
     notes: list[AdminNoteOut]
+
+
+class GeocodeResult(BaseModel):
+    label: str
+    latitude: float
+    longitude: float
+
+
+class GeocodeResponse(BaseModel):
+    results: list[GeocodeResult]
