@@ -10,16 +10,19 @@ Release builds target the deployed production services
 ```
 app/
   _layout.tsx          providers (SafeArea + QueryClient + AuthProvider + ApiProvider) + config guard
-  (tabs)/index.tsx     Map tab — MapLibre map + bbox pins + filters (slice 6e-3)
-  (tabs)/              bottom tabs: Map · Rankings · Add · Profile
+  (tabs)/index.tsx     Map tab — MapLibre map + bbox pins + filters (slice 6e-3) + search overlay
+  (tabs)/              bottom tabs: Map · Search · Add · Rankings · Profile
   fountains/[id].tsx   fountain detail (stack-pushed)
   diagnostics.tsx      backend reachability + version/build
 components/            ScreenContainer + loading/empty/error/offline states
-components/map/        FountainMap (MapLibre) + MapFilters
+components/nav/        ProfileTabIcon (avatar tab icon with glyph fallback)
+components/map/        FountainMap (MapLibre) + MapFilters + SearchOverlay
 components/add-fountain/ Add-fountain placement + details form (slice 6e-7)
 hooks/                 useForegroundLocation (non-blocking when-in-use location)
 lib/                   pure, unit-tested helpers (config, api, auth, view-state, build-info)
 lib/map/               pure, unit-tested map helpers (constants, bounds, pins, format, filters)
+lib/map-search/        pure, unit-tested search helpers (state reducer, geocode query builder)
+lib/navigation/        cross-tab dispatch helpers (map-search.ts, add-tab.ts)
 providers/             AuthProvider + ApiProvider (shared auth-aware API client)
 theme.ts               design tokens
 ```
@@ -83,6 +86,30 @@ detail navigation.
   Expo installs break config-plugin resolution under pnpm; from the repo root:
   `rm -rf node_modules web/node_modules mobile/node_modules packages/*/node_modules && CI=true pnpm install`,
   then verify `pnpm --filter mobile exec expo config --type prebuild` (exit 0).
+
+## Search (mobile map UX slice)
+
+The bottom nav's **Search** tab is an action button, not a screen: it navigates to the Map tab
+and opens a search overlay (`components/map/SearchOverlay.tsx`) for finding an address or city
+and recentering the map there. It is backed by a new **backend geocode proxy**,
+`GET /api/v1/geocode` (public, unauthenticated), which forwards to LocationIQ and returns a
+normalized `{ label, latitude, longitude }` result list — the provider is invisible to the app.
+Debounced input (~300 ms, 3-char minimum), stale-response guarding (a monotonic request sequence
+paired with an `AbortController`), and viewport-bias hints are handled by the pure, unit-tested
+`lib/map-search/state.ts` / `lib/map-search/query.ts` helpers; the overlay itself only renders
+the resulting view state. Selecting a result flies the map camera to that location and drops a
+transient (non-fountain) marker. Per provider ToS, the results area always shows a persistent
+"Search by LocationIQ · © OpenStreetMap contributors" attribution line (see
+`docs/style-guide.md`).
+
+As with the rest of the native map, **overlay render and native map behavior (the scrim/panel
+actually appearing over `FountainMap`, the camera fly-to, the transient marker lifecycle) are
+CI-/owner-verified, not locally verified** — this repo has no RN component-render-test
+infrastructure that exercises the real MapLibre native module (see _Map_ above). Locally this
+slice is limited to type-check, lint, and the pure-helper unit tests for `lib/map-search/*`; CI
+(`workspace-js`) additionally lints/type-checks/tests, and the on-device/owner pass is what
+confirms the overlay and map interaction actually work end to end. Do not claim the search
+overlay works in the running app until that on-device verification has actually happened.
 
 ## Contributions (slice 6e-6)
 

@@ -1,4 +1,3 @@
-import { Ionicons } from "@expo/vector-icons";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
@@ -6,6 +5,8 @@ import {
   AccessibilityInfo,
   Animated,
   ActivityIndicator,
+  BackHandler,
+  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -21,6 +22,7 @@ import { AttributeFields } from "../../components/add-fountain/AttributeFields";
 import { WaterCelebration } from "../../components/feedback/WaterCelebration";
 import { FountainMap, type MapFlyTo } from "../../components/map/FountainMap";
 import { MapFilters } from "../../components/map/MapFilters";
+import { SearchOverlay } from "../../components/map/SearchOverlay";
 import { RatingFields } from "../../components/add-fountain/RatingFields";
 import { ScreenContainer } from "../../components/ScreenContainer";
 import { useForegroundLocation } from "../../hooks/useForegroundLocation";
@@ -63,7 +65,17 @@ import {
   fountainsQueryKey,
 } from "../../lib/map/filters";
 import { pinsToFeatureCollection } from "../../lib/map/pins";
+import { shouldClearSearchMarker } from "../../lib/map-search/marker";
+import {
+  deriveDebounceKey,
+  initialSearchState,
+  nextRequestSeq,
+  searchReducer,
+  type SearchResultItem,
+} from "../../lib/map-search/state";
+import { mapGeocodeError, searchGeocode } from "../../lib/map-search/query";
 import { subscribeMapAddMode } from "../../lib/navigation/add-tab";
+import { subscribeMapSearch } from "../../lib/navigation/map-search";
 import { resolveViewState, type ViewState } from "../../lib/view-state";
 import { useApi } from "../../providers/api-provider";
 import { useAuth } from "../../providers/auth-provider";
@@ -79,6 +91,8 @@ type BboxResult = { pins: FountainPin[]; truncated: boolean };
 // it so it isn't hidden behind the chips (#105).
 const FILTER_BAR_HEIGHT = 44;
 const MAP_HEADER_HEIGHT = 72;
+// Spec §7.1: debounce the geocode call ~300ms after the user stops typing.
+const SEARCH_DEBOUNCE_MS = 300;
 
 export default function MapScreen() {
   const { client, config } = useApi();
@@ -116,6 +130,29 @@ export default function MapScreen() {
   const [celebrationKey, setCelebrationKey] = useState(0);
   const [celebrationPoints, setCelebrationPoints] = useState<number | null>(null);
   const regionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchState, searchDispatch] = useReducer(searchReducer, initialSearchState);
+  // The transient "searched location" marker (spec §7.1) - set on result select,
+  // cleared via `shouldClearSearchMarker` (see setRegionDebounced/openSearch/
+  // onMapPress/onPinPress below).
+  const [searchMarker, setSearchMarker] = useState<{ latitude: number; longitude: number } | null>(
+    null,
+  );
+  // Mirrors the latest render's value into a ref (in an effect - not during render,
+  // react-hooks/refs) so the debounce effect below (which only re-runs when the
+  // debounce KEY changes, not on every keystroke/response) can still read the current
+  // seq/region without those unrelated changes tearing down and restarting its own
+  // in-flight request (see that effect's comment). Declared with no dependency array
+  // so it runs after every render, and - because effects run in declaration order -
+  // always before the debounce effect further down on the same commit.
+  const searchStateRef = useRef(searchState);
+  useEffect(() => {
+    searchStateRef.current = searchState;
+  });
+  const regionRef = useRef(region);
+  useEffect(() => {
+    regionRef.current = region;
+  });
   const gate = addFountainGate(auth.status);
 
   const norm = region ? normalizeBounds(region.bounds) : null;
@@ -260,10 +297,20 @@ export default function MapScreen() {
     [clusterIndex, region],
   );
 
-  const setRegionDebounced = useCallback((bounds: RawBounds, z: number) => {
-    if (regionTimerRef.current) clearTimeout(regionTimerRef.current);
-    regionTimerRef.current = setTimeout(() => setRegion({ bounds, zoom: z }), 250);
-  }, []);
+  const setRegionDebounced = useCallback(
+    (bounds: RawBounds, z: number, userInteraction: boolean) => {
+      if (regionTimerRef.current) clearTimeout(regionTimerRef.current);
+      regionTimerRef.current = setTimeout(() => setRegion({ bounds, zoom: z }), 250);
+      // Spec §7.1: a region change only clears the search-result marker when it was a
+      // user gesture (pan/zoom) - NOT the programmatic `setFlyTo` that placed it.
+      // Checked immediately (not debounced) so the marker disappears as soon as the
+      // user starts panning, same as the native region-change event itself.
+      if (shouldClearSearchMarker({ userInteraction, cause: "region" })) {
+        setSearchMarker(null);
+      }
+    },
+    [],
+  );
 
   const enterAddMode = useCallback(() => {
     resetAddDraft();
@@ -304,6 +351,94 @@ export default function MapScreen() {
   useEffect(() => {
     return subscribeMapAddMode(handleAddTabRequest);
   }, [handleAddTabRequest]);
+
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false);
+    searchDispatch({ type: "reset" });
+  }, []);
+
+  const openSearch = useCallback(() => {
+    searchDispatch({ type: "reset" });
+    setSearchOpen(true);
+    // Spec §7.1: starting a new search clears any marker left by a previous one.
+    if (shouldClearSearchMarker({ userInteraction: true, cause: "newSearch" })) {
+      setSearchMarker(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    return subscribeMapSearch(openSearch);
+  }, [openSearch]);
+
+  // Android hardware-back dismisses the overlay (and, via the debounce effect's
+  // cleanup below reacting to `searchOpen` flipping to false, aborts any in-flight
+  // request) instead of leaving the app/falling through to the default back behavior.
+  useEffect(() => {
+    if (!searchOpen) return;
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      closeSearch();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [searchOpen, closeSearch]);
+
+  const handleSearchQueryChange = useCallback((text: string) => {
+    searchDispatch({ type: "queryChanged", query: text });
+  }, []);
+
+  const handleSearchSelect = useCallback(
+    (result: SearchResultItem) => {
+      closeSearch();
+      setFlyTo({ center: { lat: result.latitude, lng: result.longitude }, zoom: PLACE_MIN_ZOOM });
+      // Spec §7.1: drop the transient marker at the selected location. The
+      // immediately-following region change from this same `setFlyTo` is
+      // programmatic (`userInteraction: false`), so it will NOT clear the marker
+      // we just set (see setRegionDebounced) - only a subsequent user gesture will.
+      setSearchMarker({ latitude: result.latitude, longitude: result.longitude });
+    },
+    [closeSearch],
+  );
+
+  // Debounced, abortable geocode request (spec §7.1). Keyed off `deriveDebounceKey`
+  // (not the raw query) so an edit that normalizes to the same trimmed text - e.g. a
+  // trailing space typed then removed - doesn't restart the timer/cancel the in-flight
+  // request for an unchanged effective query. Deliberately does NOT depend on
+  // `searchState`/`region` directly: both change as a *result* of this very effect
+  // (dispatching requestStarted/resultsReceived, or the map panning while a search is
+  // open) and including them would tear down and restart the debounce/abort purely
+  // because of the response it just received. `searchStateRef`/`regionRef` (updated
+  // every render, above) give this effect the current seq/bias without that.
+  const searchDebounceKey = deriveDebounceKey(searchState.query);
+  useEffect(() => {
+    if (!searchOpen) return;
+    if (searchDebounceKey == null) return;
+    const controller = new AbortController();
+    const seq = nextRequestSeq(searchStateRef.current);
+    const timer = setTimeout(() => {
+      searchDispatch({ type: "requestStarted", seq });
+      const bias = regionRef.current ? centerOfViewport(regionRef.current.bounds) : null;
+      searchGeocode(client, {
+        q: searchDebounceKey,
+        lat: bias?.lat,
+        lng: bias?.lng,
+        signal: controller.signal,
+      })
+        .then((results) => {
+          searchDispatch({ type: "resultsReceived", seq, results });
+        })
+        .catch((error: unknown) => {
+          // An aborted request's rejection carries no useful reason - the request was
+          // superseded/cancelled, not "failed"; the stale-seq guard in the reducer
+          // would drop it anyway, but skip the dispatch entirely for clarity.
+          if (controller.signal.aborted) return;
+          searchDispatch({ type: "requestFailed", seq, reason: mapGeocodeError(error) });
+        });
+    }, SEARCH_DEBOUNCE_MS);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [client, searchDebounceKey, searchOpen]);
 
   // Honest "map unavailable" state when no basemap style URL is configured.
   if (!isMapConfigured(config)) {
@@ -347,7 +482,13 @@ export default function MapScreen() {
         compassPosition={compassPosition}
         showUserLocation={location.status === "granted"}
         onRegionChange={setRegionDebounced}
-        onPinPress={(id) => router.push(`/fountains/${id}`)}
+        onPinPress={(id) => {
+          // Spec §7.1: selecting a fountain pin clears the search-result marker.
+          if (shouldClearSearchMarker({ userInteraction: true, cause: "pinSelect" })) {
+            setSearchMarker(null);
+          }
+          router.push(`/fountains/${id}`);
+        }}
         // Tapping a cluster flies to the zoom that breaks it apart. supercluster's
         // getClusterExpansionZoom is synchronous (unlike the native Promise) and
         // operates on the same JS index that produced the cluster.
@@ -357,6 +498,14 @@ export default function MapScreen() {
         // #102: only render the draft layer in add mode, so after a successful add
         // its no-onPress layer can't sit over the new real pin and swallow taps.
         draftPin={addMode ? addState.pin : null}
+        searchMarker={searchMarker}
+        // Fires on every plain map press (independent of add-mode placement below) -
+        // clears the search-result marker on a tap (spec §7.1).
+        onMapPress={() => {
+          if (shouldClearSearchMarker({ userInteraction: true, cause: "press" })) {
+            setSearchMarker(null);
+          }
+        }}
         onMapPressForPlacement={
           gate.state === "ready" && addMode && addState.phase === "placing"
             ? (point) => {
@@ -555,6 +704,16 @@ export default function MapScreen() {
       )}
       <MobileToast toast={toast} onDismiss={() => setToast(null)} />
       <WaterCelebration triggerKey={celebrationKey} points={celebrationPoints} />
+
+      {searchOpen ? (
+        <SearchOverlay
+          state={searchState}
+          topInset={insets.top}
+          onQueryChange={handleSearchQueryChange}
+          onSelect={handleSearchSelect}
+          onClose={closeSearch}
+        />
+      ) : null}
     </View>
   );
 }
@@ -572,7 +731,11 @@ function MapTopBar({
     <View style={[styles.mapTopBar, { paddingTop: topInset + spacing.sm }]}>
       <View style={styles.brandLockup}>
         <View style={styles.brandMark}>
-          <Ionicons name="water" color={colors.onBrand} size={18} />
+          <Image
+            source={require("../../assets/icon.png")}
+            style={{ width: 24, height: 24 }}
+            resizeMode="contain"
+          />
         </View>
         <View>
           <Text style={styles.brandName}>FountainRank</Text>

@@ -140,6 +140,25 @@ class Settings(BaseSettings):
             and self.google_delegated_user
         )
 
+    # --- Geocoding (search proxy, spec §8) ---
+    # Selects the code-level provider impl (+ its hardcoded host, spec §8.2). No base-URL
+    # setting: the provider host is a per-provider code constant, never operator-configurable
+    # (removes the SSRF/misrouting footgun entirely).
+    geocoding_provider: str = "locationiq"
+    # The only secret. Default None -> feature disabled (never a crash), same as the email
+    # connector: the endpoint fails closed to 503 geocoding_disabled until a key is set.
+    geocoding_api_key: str | None = None
+    # Short-TTL, in-process response cache (per-pod, process-local only; spec §8.3).
+    geocoding_cache_ttl_seconds: int = 300
+    # Coarse in-process token-bucket throttle to smooth bursts (politeness/UX guard, not the
+    # spend boundary -- the provider's own no-overage quota is; spec §8.3).
+    geocoding_throttle_max_per_window: int = 30
+    geocoding_throttle_window_seconds: int = 60
+
+    @property
+    def geocoding_enabled(self) -> bool:
+        return bool(self.geocoding_api_key)
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -12,6 +12,7 @@ from app.routers import (
     attribute_types,
     email_webhook,
     fountains,
+    geocode,
     health,
     leaderboard,
     rating_types,
@@ -46,6 +47,7 @@ def create_app() -> FastAPI:
     app.include_router(leaderboard.router)
     app.include_router(users.router)
     app.include_router(email_webhook.router)
+    app.include_router(geocode.router)
 
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:

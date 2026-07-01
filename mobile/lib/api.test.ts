@@ -229,6 +229,17 @@ describe("createApiClient", () => {
     ).toBe(true);
   });
 
+  it("treats GET /api/v1/geocode as public/unauthenticated (spec section 8.1)", () => {
+    // The geocode proxy is a public, unauthenticated endpoint (browsing/search
+    // must not require sign-in). This guards against a future classifier
+    // change accidentally attaching a bearer token to LocationIQ searches.
+    expect(
+      isAuthenticatedApiRequest(
+        new Request("https://api.fountainrank.com/api/v1/geocode?q=main%20st"),
+      ),
+    ).toBe(false);
+  });
+
   it("does not over-match sibling paths that merely share the /me prefix", () => {
     // Boundary safety: only the exact /api/v1/me path or its /api/v1/me/ subtree
     // are the authenticated user's resources. A path like /api/v1/members must
@@ -305,6 +316,31 @@ describe("createApiClient", () => {
         },
       },
     });
+    expect(tokenCalls).toBe(0);
+    expect(authorization).toBeNull();
+  });
+
+  it("sends no Authorization header on GET /api/v1/geocode even when a token provider is configured", async () => {
+    // Guards spec section 8.1 (public geocode proxy): a signed-in user's
+    // bearer token must never leak to the LocationIQ search calls.
+    let authorization: string | null = "unexpected";
+    let tokenCalls = 0;
+    const fetchMock: typeof fetch = async (input) => {
+      const req = input instanceof Request ? input : new Request(String(input));
+      authorization = req.headers.get("authorization");
+      return new Response(JSON.stringify({ results: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+    const client = createApiClient("https://api.fountainrank.com", {
+      fetch: fetchMock,
+      getAccessToken: async () => {
+        tokenCalls += 1;
+        return "token123";
+      },
+    });
+    await client.GET("/api/v1/geocode", { params: { query: { q: "main st" } } });
     expect(tokenCalls).toBe(0);
     expect(authorization).toBeNull();
   });

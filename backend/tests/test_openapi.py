@@ -136,6 +136,28 @@ def test_openapi_add_fountain_has_placement_and_observations():
     assert "placement_note" in schema["components"]["schemas"]["FountainDetail"]["properties"]
 
 
+def test_openapi_exposes_geocode_endpoint():
+    schema = app.openapi()
+    assert "/api/v1/geocode" in schema["paths"]
+    op = schema["paths"]["/api/v1/geocode"]["get"]
+
+    params = {p["name"]: p for p in op.get("parameters", [])}
+    assert {"q", "limit", "lat", "lng"} <= set(params)
+    assert params["q"]["required"] is True
+    assert params["limit"]["required"] is False
+    assert params["lat"]["required"] is False
+    assert params["lng"]["required"] is False
+
+    resp_200 = op["responses"]["200"]["content"]["application/json"]["schema"]
+    assert resp_200["$ref"].endswith("/GeocodeResponse")
+    assert {"429", "502", "503"} <= set(op["responses"])
+
+    components = schema["components"]["schemas"]
+    assert "GeocodeResponse" in components
+    assert "GeocodeResult" in components
+    assert set(components["GeocodeResult"]["properties"]) == {"label", "latitude", "longitude"}
+
+
 def test_openapi_exposes_gamification_read_apis():
     schema = app.openapi()
     assert "/api/v1/leaderboard/contributors" in schema["paths"]

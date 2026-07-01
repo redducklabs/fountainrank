@@ -12,6 +12,7 @@ import { useEffect, useRef } from "react";
 import { StyleSheet } from "react-native";
 
 import { pinFeatureCollection, type LngLat } from "../../lib/add-fountain/placement";
+import { searchMarkerFeatureCollection } from "../../lib/map-search/marker";
 import type { RawBounds } from "../../lib/map/bounds";
 import {
   ADD_SHEET_CAMERA_PADDING,
@@ -48,13 +49,23 @@ type FountainMapProps = {
   featureCollection: GeoJSON.FeatureCollection;
   flyTo?: MapFlyTo | null;
   showUserLocation: boolean;
-  onRegionChange: (bounds: RawBounds, zoom: number) => void;
+  // `userInteraction` (forwarded from the native `onRegionDidChange` event) lets the
+  // screen tell a user pan/zoom apart from a programmatic camera fly (e.g. our own
+  // `setFlyTo`) - see the search-result marker lifecycle in index.tsx (spec §7.1).
+  onRegionChange: (bounds: RawBounds, zoom: number, userInteraction: boolean) => void;
   onPinPress: (id: string) => void;
   /** Cluster tapped: the screen owns the JS cluster index, so it resolves the
    *  expansion zoom and flies the camera (see index.tsx). */
   onClusterPress?: (clusterId: number, center: LngLat) => void;
   draftPin?: LngLat | null;
+  /** The transient "searched location" marker (spec §7.1) - its own dedicated,
+   *  non-clustered, non-tappable-to-detail source/layer (see index.tsx for the
+   *  clear lifecycle via `shouldClearSearchMarker`). */
+  searchMarker?: { latitude: number; longitude: number } | null;
   onMapPressForPlacement?: (point: LngLat) => void;
+  /** Fires on EVERY map press, independent of add-mode placement - used by the
+   *  screen to clear the search-result marker on a plain tap (spec §7.1). */
+  onMapPress?: () => void;
   // The screen owns overlay layout + safe-area insets, so it positions the native
   // ornaments to keep them clear of our chips/FAB (#104 attribution, #105 compass).
   attributionPosition?: OrnamentPosition;
@@ -70,7 +81,9 @@ export function FountainMap({
   onPinPress,
   onClusterPress,
   draftPin = null,
+  searchMarker = null,
   onMapPressForPlacement,
+  onMapPress,
   attributionPosition,
   compassPosition,
 }: FountainMapProps) {
@@ -103,14 +116,19 @@ export function FountainMap({
         if (__DEV__) console.warn("[map] basemap failed to load");
       }}
       onPress={(event) => {
+        // Fires on EVERY press (e.g. to clear the search-result marker),
+        // independent of - and always before - the add-mode placement below.
+        onMapPress?.();
         if (!onMapPressForPlacement) return;
         const [lng, lat] = event.nativeEvent.lngLat;
         onMapPressForPlacement({ lng, lat });
       }}
       onRegionDidChange={(e) => {
-        const { bounds, zoom } = e.nativeEvent;
+        const { bounds, zoom, userInteraction } = e.nativeEvent;
         const [west, south, east, north] = bounds;
-        onRegionChange({ west, south, east, north }, zoom);
+        // Default to `false` (programmatic) if the native event ever omits the
+        // field, so an unexpected gap fails toward NOT clearing the marker.
+        onRegionChange({ west, south, east, north }, zoom, userInteraction ?? false);
       }}
     >
       <Camera ref={cameraRef} initialViewState={{ center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM }} />
@@ -236,6 +254,26 @@ export function FountainMap({
             "icon-allow-overlap": true,
           }}
           paint={{ "icon-opacity": 0.6 }}
+        />
+      </GeoJSONSource>
+
+      {/* Transient "searched location" marker (spec §7.1). Its own dedicated,
+          non-clustered source/layer - distinct from `fountains`/`draft-fountain` - so
+          it's never mistaken for a fountain: no `onPress` here, so a tap on it falls
+          through to the Map-level `onPress` above (which clears it, see index.tsx)
+          instead of resolving to a fountain detail. A plain CircleLayer needs no new
+          image asset and reads clearly as "not a fountain pin". */}
+      <GeoJSONSource id="search-result" data={searchMarkerFeatureCollection(searchMarker)}>
+        <Layer
+          id="search-result-marker"
+          source="search-result"
+          type="circle"
+          paint={{
+            "circle-radius": 10,
+            "circle-color": colors.danger,
+            "circle-stroke-color": "#ffffff",
+            "circle-stroke-width": 3,
+          }}
         />
       </GeoJSONSource>
 

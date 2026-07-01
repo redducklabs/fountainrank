@@ -178,6 +178,7 @@ jobs:
           LOGTO_EMAIL_WEBHOOK_TOKEN: ${{ secrets.LOGTO_EMAIL_WEBHOOK_TOKEN }}
           LOGTO_APP_SECRET: ${{ secrets.LOGTO_APP_SECRET }}
           LOGTO_COOKIE_SECRET: ${{ secrets.LOGTO_COOKIE_SECRET }}
+          GEOCODING_API_KEY: ${{ secrets.GEOCODING_API_KEY }}
         run: |
           tmp="$(mktemp -d)"
           trap 'rm -rf "$tmp"' EXIT
@@ -190,6 +191,7 @@ jobs:
             --from-literal=logto-email-webhook-token="$LOGTO_EMAIL_WEBHOOK_TOKEN" \
             --from-literal=logto-app-secret="$LOGTO_APP_SECRET" \
             --from-literal=logto-cookie-secret="$LOGTO_COOKIE_SECRET" \
+            --from-literal=geocoding-api-key="$GEOCODING_API_KEY" \
             --from-file=database-ca.crt="$tmp/database-ca.crt" \
             --dry-run=client -o yaml | kubectl apply -f -
           doctl registry kubernetes-manifest "$DO_REGISTRY" \

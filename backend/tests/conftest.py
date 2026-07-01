@@ -95,3 +95,13 @@ def reset_email_sender():
     import app.routers.email_webhook as _ew
 
     _ew._sender = None
+
+
+@pytest.fixture(autouse=True)
+def reset_geocode_provider():
+    """Reset the process-singleton geocode provider after each test so a provider built
+    from one test's settings/key can't leak into the next (order-independence)."""
+    yield
+    import app.geocoding as _geocoding
+
+    _geocoding._provider = None

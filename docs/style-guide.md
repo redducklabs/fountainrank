@@ -1329,17 +1329,62 @@ Reusable async states, usable on small screens:
   children only in the `ready` state. "Offline" is a network failure with no HTTP
   status; "error" is an HTTP error (`ApiError`).
 
-### Navigation
+### Navigation (`mobile/app/(tabs)/_layout.tsx`)
 
-Expo Router: a bottom-tab group (`(tabs)`: Map · Rankings · Add · Profile) with
-stack-pushed detail (`fountains/[id]`) and `diagnostics`. Sign-in affordances
-stay hidden/disabled until `isAuthConfigured` is true (auth-unavailable mode,
-spec §21).
+Expo Router: a **5-item** bottom-tab group (`(tabs)`), in registration order **Map · Search ·
+Add · Rankings · Profile**, with stack-pushed detail (`fountains/[id]`) and `diagnostics`.
+Sign-in affordances stay hidden/disabled until `isAuthConfigured` is true (auth-unavailable
+mode, spec §21).
 
-- **Add tab:** a differentiated centered circular `+` action (gold fill, navy border/icon) that
-  dispatches into the map add flow instead of navigating to a placeholder screen.
-- **Rankings tab:** opens the `/leaderboard` tab route.
-- **Profile tab:** the user-facing label for the existing account/profile route.
+- **Map tab:** the native tab screen (`index`), icon `map`.
+- **Search tab:** an action button (`tabBarButton`, not a native screen) that navigates to `/`
+  and fires `requestMapSearch()` (`mobile/lib/navigation/map-search.ts`), which opens the
+  **search overlay** on the map screen (see below). Renders its own glyph (`search`) + label —
+  it is not a native `tabBarIcon`, so it must track `TAB_INACTIVE_COLOR` (`#64748B`) manually to
+  stay in sync with `tabBarInactiveTintColor`.
+- **Add tab:** the centered FAB — literal middle of 5 items, so it is centered by construction.
+  A differentiated circular `+` action (54px circle, gold fill `colors.brandYellow`, 2px navy
+  border, `marginTop: -18` lift above the bar) that dispatches into the map add flow
+  (`requestMapAddMode()`) instead of navigating to a placeholder screen. Same `tabBarButton`
+  pattern as Search.
+- **Rankings tab:** opens the `/leaderboard` tab route, icon `trophy-outline`.
+- **Profile tab:** the user-facing label for the existing account/profile route; icon is the
+  **avatar tab icon** (see below), not a static glyph.
+
+**Active / inactive tints:** `tabBarActiveTintColor: colors.brandBlue`,
+`tabBarInactiveTintColor: TAB_INACTIVE_COLOR` (`#64748B`). Because the Search and Add buttons
+render their own icon/label instead of receiving `color` via a native `tabBarIcon` prop, both
+custom buttons hardcode the same `TAB_INACTIVE_COLOR` constant so they read as visually
+consistent with the three native tabs.
+
+**Safe-area contract (spec §5.2):** the tab bar reads `useSafeAreaInsets()` and computes
+`bottomPad = Math.max(insets.bottom, ANDROID_MIN_PAD)` (`ANDROID_MIN_PAD = 8`) so Android
+3-button nav — which often reports `insets.bottom === 0` — never jams the bar against the
+system chrome. The bar uses a **fixed `height = BAR_CONTENT_H (56) + bottomPad`** (not
+`minHeight`) and `paddingBottom: bottomPad`. The custom Search/Add `tabBarButton` containers
+receive the **same** `paddingBottom: bottomPad` so their content sits on the same baseline as
+the three native tab icons/labels; the Add FAB's `marginTop: -18` lift is preserved relative to
+that shared baseline. With five labeled items, `tabBarLabelStyle` drops to `fontSize: 10` so
+"Rankings"/"Profile" render single-line without truncating.
+
+#### Avatar tab icon (`mobile/components/nav/ProfileTabIcon.tsx`)
+
+Replaces the static `person-circle` glyph on the Profile tab with the signed-in user's photo.
+
+- **With a photo:** a circular `<Image>` sized to the tab icon (24px), wrapped in a ring view
+  that gains a 2px brand-blue border only when `focused` — this is the tab's active-state
+  affordance in place of the usual tint color change.
+- **Fallback (`person-circle` Ionicon):** shown whenever there is no `avatar_url` (anonymous,
+  no photo, still loading, or query error) **and** whenever the image itself fails to load
+  (`onError` tracks the failed URL so a broken remote image never leaves a blank/broken box).
+  Tinted `colors.brandBlue` when focused, `TAB_INACTIVE_COLOR` otherwise — matching the native
+  tabs' tint behavior.
+- **Cache-only read, no stray network request:** the icon subscribes to the shared `["me"]`
+  React Query cache with `queryFn: skipToken` (the v5 idiom for a permanently-disabled query,
+  not `enabled: false`, so `useBaseQuery` doesn't dev-warn about a missing `queryFn` on every
+  re-render of this persistent tab-bar component). It never fetches on its own — it only
+  re-renders once `NameGate` (mounted alongside the tab navigator) populates or updates the same
+  cache entry.
 
 ### Account auth (slice 6e-5)
 
@@ -1528,3 +1573,60 @@ same honest gate pattern as existing-fountain contributions.
   the same non-Android explicit accessibility announcement pattern as
   existing-fountain contributions. Form state is preserved on validation,
   network, auth, and server errors.
+
+### Search overlay (`mobile/components/map/SearchOverlay.tsx`)
+
+Opened by the bottom nav's **Search** tab button (see Navigation above), which navigates to the
+map and fires `requestMapSearch()`; the map screen (`(tabs)/index.tsx`) subscribes and mounts the
+overlay on top of the map canvas. The component is purely presentational — it renders the view
+state produced by the pure `lib/map-search/state.ts` reducer and calls back into the screen for
+every effect (query edits, selecting a result, closing); it owns no network/debounce/abort logic
+itself.
+
+**Shell:**
+
+- A full-screen semi-transparent **scrim** (`rgba(15, 23, 42, 0.55)`) behind the panel.
+- A **panel** anchored to the top of the map, `paddingTop: topInset + spacing.sm` so the input
+  clears the status bar/notch, with rounded bottom corners (`borderBottomLeftRadius`/
+  `borderBottomRightRadius: 16`) on a `colors.background` fill.
+- **Header row:** a text input (`accessibilityLabel="Search address or city"`, placeholder
+  "Search address or city", `autoFocus`, `autoCorrect={false}`, `returnKeyType="search"`, 44px
+  min height) plus a 44×44 **close button** (`×` glyph, `accessibilityRole="button"`,
+  `accessibilityLabel="Close search"`). A bottom border separates the header from the results
+  body. Android hardware-back and the close button both dismiss the overlay (screen-owned).
+
+**States** (`SearchState.status` from `lib/map-search/state.ts`, rendered via the existing
+`components/states/*` primitives where they fit):
+
+| Status    | Rendering                                                                                                                                                          |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `idle`    | Nothing shown — no recent-search history in v1; empty until the query reaches the minimum length.                                                                  |
+| `loading` | `LoadingState label="Searching..."` — spinner + label, centered in the body.                                                                                       |
+| `empty`   | `EmptyState label="No matches"` — centered muted label (no-results case).                                                                                          |
+| `error`   | `ErrorState label="Search is unavailable right now"` — covers provider/network failures (§8 `503 geocoding_unavailable` / `geocoding_disabled`, throttling, etc.). |
+| `results` | A `FlatList` of tappable result rows, each ≥ 44px tall, showing the result's label (`numberOfLines={2}`), with the **attribution block** as `ListFooterComponent`. |
+
+**Result row:** `Pressable` (`accessibilityRole="button"`, bottom-border divider,
+`colors.surface` on press) showing the label in `typography.body`; selecting a row calls
+`onSelect`, which the screen uses to dismiss the overlay and fly the map camera to the chosen
+coordinate.
+
+**Attribution block (spec §12 — persistent, not deferred):** rendered as the results list's
+footer whenever the `results` state is shown, so it is visible any time actual geocoding results
+are on screen:
+
+> **Search by LocationIQ** · © OpenStreetMap contributors
+
+- "Search by LocationIQ" is a tappable link (`accessibilityRole="link"`, brand-blue, bold,
+  underlined) that opens `https://locationiq.com/attribution` via `Linking.openURL`, falling
+  back to an `Alert` ("Couldn't open link") if no browser handler is available — never a silent
+  failure.
+- "· © OpenStreetMap contributors" is plain muted text (`typography.meta`, `colors.textMuted`),
+  matching the ODbL credit convention already used for the map basemap.
+- If the geocoding provider is ever swapped to MapTiler, only this line's copy/link changes
+  (`© MapTiler · © OpenStreetMap contributors`); the placement/visibility contract stays fixed.
+
+**Accessibility:** the input, close button, result rows, and attribution link all carry explicit
+`accessibilityLabel`/`accessibilityRole` (never a bare icon-only control without a label); the
+list uses `keyboardShouldPersistTaps="handled"` so tapping a result while the keyboard is open
+does not require a second tap.
