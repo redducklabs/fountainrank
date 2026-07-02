@@ -1,8 +1,16 @@
 # Store screenshots
 
 This directory contains owner-reviewable screenshot assets for the first
-FountainRank store submissions. They are generated from the committed
-FountainRank logo/pin assets and current mobile app flows.
+FountainRank store submissions.
+
+- **`play-store/` (Android): real device captures.** Taken from the release-config
+  app running on an Android emulator (San Diego basemap, production API), status
+  bar in demo mode, at Google Play's `1080x1920` phone size. These reflect the
+  shipped native UI.
+- **`app-store-6-9/` and `app-store-6-5/` (iOS): generated mockups.** Still built
+  from the committed FountainRank logo/pin assets by
+  `scripts/generate-store-screenshots.mjs`, pending real iPhone captures (no macOS
+  in the build environment, so the iOS simulator cannot be driven here).
 
 ## App Store Connect
 
@@ -36,13 +44,13 @@ portrait size and `1242x2688` as an accepted 6.5" portrait size:
 
 Upload the PNGs in `play-store/` to the Phone screenshots section:
 
-| File                                    | Size              | Screen                  |
-| --------------------------------------- | ----------------- | ----------------------- |
-| `play-store/01-map-discovery.png`       | 1080x1920 RGB PNG | Map discovery           |
-| `play-store/02-fountain-detail.png`     | 1080x1920 RGB PNG | Fountain detail         |
-| `play-store/03-contribute.png`          | 1080x1920 RGB PNG | Contribution flow       |
-| `play-store/04-add-fountain.png`        | 1080x1920 RGB PNG | Add fountain            |
-| `play-store/05-account-diagnostics.png` | 1080x1920 RGB PNG | Account and diagnostics |
+| File                                | Size              | Screen                                             |
+| ----------------------------------- | ----------------- | -------------------------------------------------- |
+| `play-store/01-map-discovery.png`   | 1080x1920 RGB PNG | Map discovery (San Diego, pins + clusters)         |
+| `play-store/02-fountain-detail.png` | 1080x1920 RGB PNG | Fountain detail (ratings, features, accessibility) |
+| `play-store/03-search.png`          | 1080x1920 RGB PNG | Address/city search + geocode results              |
+| `play-store/04-rating-filter.png`   | 1080x1920 RGB PNG | Map filtered by rating (3★+)                       |
+| `play-store/05-rankings.png`        | 1080x1920 RGB PNG | Contributor rankings / leaderboard                 |
 
 Google Play accepts `1080x1920` phone screenshots as 24-bit RGB PNGs.
 
@@ -53,20 +61,58 @@ The committed store feature graphic is already cropped to Google's required
 
 ## Review note
 
-These are polished store screenshot mockups based on the current app flows. They
-must accurately match the shipped native build before final public submission.
-Replace them with physical-device captures if the native UI diverges, the store
-reviewer requires literal device screenshots, or owner policy requires captures.
+The `play-store/` PNGs are literal captures of the release-config app and match
+the shipped native UI. The `app-store-6-9/` and `app-store-6-5/` PNGs are still
+generated mockups and must be replaced with real iPhone captures before final
+public submission (see the Android capture recipe below for the equivalent iOS
+flow on a physical device).
+
+The map/search/detail-view/rankings screens are public-read, so the emulator
+captures are pixel-identical to the production store build for those screens.
+Rating and ranking values shown are from seed/test accounts, not organic user
+data.
 
 ## Regeneration
 
-The source generator is `scripts/generate-store-screenshots.mjs`. To regenerate:
+### iOS mockups (`app-store-6-9/`, `app-store-6-5/`)
+
+The source generator is `scripts/generate-store-screenshots.mjs`. Regenerate the
+iOS mockup sets only — **do not** regenerate `play-store/`, which now holds real
+device captures the generator would overwrite with mockups:
 
 ```bash
-rm -rf temp/store-screenshot-build/svg mobile/assets/store/screenshots/app-store-6-9 mobile/assets/store/screenshots/app-store-6-5 mobile/assets/store/screenshots/play-store
+rm -rf temp/store-screenshot-build/svg mobile/assets/store/screenshots/app-store-6-9 mobile/assets/store/screenshots/app-store-6-5
 node scripts/generate-store-screenshots.mjs
-mkdir -p mobile/assets/store/screenshots/app-store-6-9 mobile/assets/store/screenshots/app-store-6-5 mobile/assets/store/screenshots/play-store
+mkdir -p mobile/assets/store/screenshots/app-store-6-9 mobile/assets/store/screenshots/app-store-6-5
 pnpm dlx sharp-cli -i 'temp/store-screenshot-build/svg/app-store-6-9/*.svg' -o mobile/assets/store/screenshots/app-store-6-9 -f png --density 72 flatten '#ffffff' -- toColourspace srgb
 pnpm dlx sharp-cli -i 'temp/store-screenshot-build/svg/app-store-6-5/*.svg' -o mobile/assets/store/screenshots/app-store-6-5 -f png --density 72 flatten '#ffffff' -- toColourspace srgb
-pnpm dlx sharp-cli -i 'temp/store-screenshot-build/svg/play-store/*.svg' -o mobile/assets/store/screenshots/play-store -f png --density 72 flatten '#ffffff' -- toColourspace srgb
 ```
+
+### Android real captures (`play-store/`)
+
+Captured from a **release-config** build of the app installed on an Android
+emulator (the map is a native module, so a dev-client/release build is required —
+not Expo Go). With the app installed and `adb` on `PATH`:
+
+```bash
+# Play's phone size + GPS in a fountain-dense area (San Diego = 360+ fountains)
+adb shell wm size 1080x1920
+adb emu geo fix -117.162 32.715
+adb shell pm grant com.redducklabs.fountainrank android.permission.ACCESS_FINE_LOCATION
+
+# Clean status bar (demo mode: 12:00, full battery/wifi, no notifications)
+adb shell settings put global sysui_demo_allowed 1
+adb shell am broadcast -a com.android.systemui.demo -e command enter
+adb shell am broadcast -a com.android.systemui.demo -e command clock -e hhmm 1200
+adb shell am broadcast -a com.android.systemui.demo -e command battery -e level 100 -e plugged false
+adb shell am broadcast -a com.android.systemui.demo -e command network -e wifi show -e level 4 -e fully true
+adb shell am broadcast -a com.android.systemui.demo -e command notifications -e visible false
+
+# Navigate to each screen, then capture (repeat per screen)
+adb exec-out screencap -p > shot.png
+```
+
+Raw `screencap` PNGs are RGBA; flatten to 24-bit RGB (e.g. Pillow, white
+background) before committing. The same navigate-and-capture flow applies to a
+physical iPhone (use its native screenshot, then confirm the size matches an
+accepted App Store slot).
