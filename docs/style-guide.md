@@ -398,12 +398,14 @@ Decline button in the analytics consent banner) — legible on the header's blue
 competing with the gold primary actions.
 
 **Dropdown (`role="listbox"`, `id="header-search-listbox"`):** an absolutely-positioned panel
-(`absolute inset-x-0 top-full z-50 mt-2 rounded-lg border border-slate-200 bg-white shadow-lg`) —
-the same white-card-on-blue-header treatment as the `AuthControl` user menu. Each result row is a
-`role="option"` button (`block w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50`)
-showing the result's `label`. Only rendered while the dropdown is open **and** the search status is
-not `idle` (i.e. the query has reached the 3-character minimum) — mirrors mobile: nothing renders
-below the minimum length, not even an empty panel.
+(`absolute inset-x-0 top-full z-50 mt-2 max-h-80 overflow-auto rounded-lg border border-slate-200
+bg-white text-left shadow-lg`) — `max-h-80 overflow-auto` caps the panel height and scrolls a long
+result list — the same white-card-on-blue-header treatment as the `AuthControl` user menu. Each
+result row is a `role="option"` button (`block w-full px-4 py-2 text-left text-sm text-slate-700
+hover:bg-slate-50 focus-visible:bg-slate-50 focus-visible:outline-none`, plus a trailing `bg-slate-50`
+when it is the keyboard-highlighted option) showing the result's `label`. Only rendered while the
+dropdown is open **and** the search status is not `idle` (i.e. the query has reached the 3-character
+minimum) — mirrors mobile: nothing renders below the minimum length, not even an empty panel.
 
 **States** (driven by `lib/search/state.ts`'s `SearchStatus`, identical set to mobile's
 `SearchOverlay`):

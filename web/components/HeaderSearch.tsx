@@ -58,9 +58,16 @@ export function HeaderSearch() {
 
   // Debounced, abortable geocode request. Keyed off `deriveDebounceKey` (not the raw query) so
   // an edit that normalizes to the same trimmed text doesn't restart the timer/cancel the
-  // in-flight request for an unchanged effective query.
+  // in-flight request for an unchanged effective query. Also depends on `open` - unlike
+  // mobile's SearchOverlay, closing here does NOT reset the query/results (Escape must keep
+  // the typed text), so `open` has to be a real effect dependency rather than a ref-only
+  // check: it's the only way for closing (Escape/click-away/blur) to run this effect's
+  // cleanup and `controller.abort()` the in-flight request instead of letting it keep running
+  // and dispatching into hidden state (mirrors mobile/app/(tabs)/index.tsx's `searchOpen`
+  // dependency).
   const debounceKey = deriveDebounceKey(state.query);
   useEffect(() => {
+    if (!open) return;
     if (debounceKey == null) return;
     const controller = new AbortController();
     const seq = nextRequestSeq(stateRef.current);
@@ -82,7 +89,7 @@ export function HeaderSearch() {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [debounceKey]);
+  }, [debounceKey, open]);
 
   // Click-away: mirrors AuthControl.tsx's proven document-mousedown + Escape pattern.
   useEffect(() => {
