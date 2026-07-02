@@ -1,7 +1,7 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -71,6 +71,10 @@ export default function LeaderboardScreen() {
   // and, when it isn't (or they rank below the fetched rows and have no in-list row at all), show a
   // sticky bottom overlay (#147, #117). The handler must be ref-stable — FlatList rejects changing
   // it per render.
+  // The no-in-list case is derived from current data via `!youInList` in the render condition
+  // below, so it is correct regardless of viewability timing (the actual #147 bug). This flag only
+  // governs the in-list case; FlatList re-runs onViewableItemsChanged whenever `data` changes, so a
+  // board switch re-derives it from the new rows within the same layout pass.
   const [youRowVisible, setYouRowVisible] = useState(false);
   const onViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: ViewToken[] }) => {
@@ -78,13 +82,6 @@ export default function LeaderboardScreen() {
     },
     [],
   );
-  // Reset visibility on a board switch (scope/sort/location) so a previous board's on-screen row
-  // can't suppress — nor an off-screen one duplicate — the new board's standing before the next
-  // viewability callback fires. The `!youInList` guard below makes the no-in-list case correct
-  // regardless of viewability timing.
-  useEffect(() => {
-    setYouRowVisible(false);
-  }, [scope, sort, center]);
 
   return (
     <View style={styles.fill}>
