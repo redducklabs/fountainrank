@@ -4,6 +4,7 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: "Privacy Policy | FountainRank",
   description: "Privacy Policy for FountainRank.",
+  alternates: { canonical: "/privacy" },
 };
 
 const lastUpdated = "June 30, 2026";

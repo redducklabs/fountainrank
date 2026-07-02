@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import { AnalyticsConsent } from "../components/analytics/AnalyticsConsent";
+import { SITE_URL } from "../lib/seo/site";
 import "./globals.css";
 
 const title = "FountainRank — Find drinking fountains near you";
@@ -8,7 +9,7 @@ const description =
   "A free, community map of public drinking fountains. See what's nearby, what's working, and how people rate it.";
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://fountainrank.com"),
+  metadataBase: new URL(SITE_URL),
   title,
   description,
   icons: { icon: "/icon.png" },

@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { MobileStoreLinks } from "../components/MobileStoreLinks";
 import { SiteHeader } from "../components/SiteHeader";
@@ -5,6 +6,12 @@ import MapBrowserLoader from "../components/map/MapBrowserLoader";
 import { getViewer } from "../lib/server/viewer";
 
 export const dynamic = "force-dynamic";
+
+// Emit a self-referential canonical so the apex homepage is the one indexed
+// variant (see #126).
+export const metadata: Metadata = {
+  alternates: { canonical: "/" },
+};
 
 export default async function Home({ searchParams }: { searchParams: Promise<{ add?: string }> }) {
   const [{ add }, viewer] = await Promise.all([searchParams, getViewer(crypto.randomUUID())]);
