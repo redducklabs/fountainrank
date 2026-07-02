@@ -1,3 +1,4 @@
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
@@ -174,13 +175,26 @@ function Chip({ label, active, onPress }: { label: string; active: boolean; onPr
 }
 
 function Row({ row, sort }: { row: ContributorRow; sort: LeaderboardSort }) {
+  // Rank 1 is the leader of the active category/sort — mark it with a crown (#146).
+  const isLeader = row.rank === 1;
   return (
     <View style={[styles.row, row.is_you && styles.rowYou]}>
       <Text style={[styles.rank, row.is_you && styles.rankYou]}>{row.rank}</Text>
-      <Text style={styles.name} numberOfLines={1}>
-        {row.display_name}
-        {row.is_you ? "  (You)" : ""}
-      </Text>
+      <View style={styles.nameWrap}>
+        {isLeader ? (
+          <MaterialCommunityIcons
+            name="crown"
+            size={16}
+            color={colors.brandYellow}
+            accessibilityLabel="Category leader"
+            style={styles.crown}
+          />
+        ) : null}
+        <Text style={styles.name} numberOfLines={1}>
+          {row.display_name}
+          {row.is_you ? "  (You)" : ""}
+        </Text>
+      </View>
       <Metric
         value={rowPrimaryValue(row.points, row.category_count, sort)}
         caption={rowMetricCaption(row.points, sort)}
@@ -272,6 +286,8 @@ const styles = StyleSheet.create({
     textAlign: "right",
   },
   rankYou: { color: colors.brandBlue },
+  nameWrap: { flex: 1, flexDirection: "row", alignItems: "center" },
+  crown: { marginRight: spacing.xs },
   name: { ...typography.body, fontWeight: "600", color: colors.text, flex: 1 },
   metric: { alignItems: "flex-end" },
   metricValue: { ...typography.heading, fontWeight: "800", color: colors.brandBlue },

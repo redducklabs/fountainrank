@@ -488,6 +488,11 @@ The rankings screen reached from the points badge. Same model on web and mobile 
   The metric's big number is the **category count** in category mode (caption = the category noun +
   the user's total points, e.g. `fountains added · 1,234 pts`) or the **total points** on the
   Total board (caption `pts`). `points` is always labelled total points, never "category points".
+- **Category leader (crown):** the rank-1 row in the active category/sort is marked with a
+  crown-gold (`#F2C200`) crown immediately left of the display name — the MDI `crown` glyph on both
+  platforms (web: inline `<svg>`; mobile: `@expo/vector-icons` `MaterialCommunityIcons name="crown"`),
+  each carrying the accessible label `Category leader`. It moves with the sort, so only the current
+  view's #1 is crowned; ties that share rank 1 are each crowned.
 - **You-highlight + pinned You row:** the signed-in caller's row gets a light-blue fill
   (`#EAF1FF`) + brand-blue ring/`You` tag. When the caller is below the visible cut, a **pinned
   "You — #N"** row is shown (web: dashed separator above it; mobile: as the list footer), reading

@@ -39,6 +39,8 @@ export function LeaderboardRows({
 }
 
 function Row({ row, sort }: { row: ContributorRow; sort: LeaderboardSort }) {
+  // Rank 1 is the leader of the active category/sort — mark it with a crown (#146).
+  const isLeader = row.rank === 1;
   return (
     <li
       className={
@@ -48,6 +50,7 @@ function Row({ row, sort }: { row: ContributorRow; sort: LeaderboardSort }) {
     >
       <RankCell rank={`${row.rank}`} you={row.is_you} />
       <span className="min-w-0 flex-1 truncate font-semibold text-slate-800">
+        {isLeader ? <CrownIcon /> : null}
         {row.display_name}
         {row.is_you ? <YouTag /> : null}
       </span>
@@ -107,5 +110,25 @@ function YouTag() {
     <span className="ml-2 rounded bg-[#0A357E] px-1.5 py-0.5 text-[10px] font-bold uppercase text-white">
       You
     </span>
+  );
+}
+
+// MDI "crown" glyph in crown-gold, matching the mobile MaterialCommunityIcons
+// crown so the category-leader marker is visually consistent across platforms (#146).
+function CrownIcon() {
+  return (
+    <svg
+      role="img"
+      aria-label="Category leader"
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      className="mr-1 inline-block align-text-bottom"
+    >
+      <path
+        d="M5,16L3,5L8.5,12L12,4L15.5,12L21,5L19,16H5M19,19A1,1 0 0,1 18,20H6A1,1 0 0,1 5,19V18H19V19Z"
+        fill="#F2C200"
+      />
+    </svg>
   );
 }
