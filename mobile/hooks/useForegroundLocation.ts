@@ -2,11 +2,14 @@ import * as Location from "expo-location";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
 import {
+  CURRENT_POSITION_TIMEOUT_MS,
   fetchForegroundPosition,
   foregroundLocationReducer,
   initialForegroundLocationState,
+  resolveCurrentPosition,
   type Coords,
   type LocationStatus,
+  type RawPosition,
 } from "../lib/location";
 
 export type { LocationStatus } from "../lib/location";
@@ -33,8 +36,16 @@ function requestPermission() {
   return Location.requestForegroundPermissionsAsync();
 }
 
-function getCurrentPosition() {
-  return Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+// `getCurrentPositionAsync` has no timeout and can stall (Expo docs), which
+// bricked the locate button (#144 / spec §3.4). Bound it and fall back to the
+// last-known fix so this always settles - the hook's in-flight guard then always
+// clears and a press can't hang. Shared by the mount-time fix and the refresh.
+function getCurrentPosition(): Promise<RawPosition> {
+  return resolveCurrentPosition(
+    () => Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+    () => Location.getLastKnownPositionAsync(),
+    CURRENT_POSITION_TIMEOUT_MS,
+  );
 }
 
 /**

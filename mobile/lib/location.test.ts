@@ -5,11 +5,13 @@ import {
   foregroundLocationReducer,
   initialForegroundLocationState,
   pickCoords,
+  resolveCurrentPosition,
   type ForegroundLocationState,
 } from "./location";
 
 const COORDS = { latitude: 47.6062, longitude: -122.3321, accuracy: 5 };
 const RAW_POSITION = { coords: COORDS };
+const LAST_KNOWN = { coords: { latitude: 1, longitude: 2, accuracy: 9 } };
 
 describe("pickCoords", () => {
   it("maps a raw position into the Coords shape", () => {
@@ -124,6 +126,70 @@ describe("fetchForegroundPosition", () => {
     const getCurrentPosition = vi.fn().mockResolvedValue(RAW_POSITION);
 
     await fetchForegroundPosition(requestPermission, getCurrentPosition);
+
+    for (const spy of spies) {
+      expect(spy).not.toHaveBeenCalled();
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("resolveCurrentPosition", () => {
+  it("returns the fresh fix when it resolves before the timeout", async () => {
+    const getCurrentPosition = vi.fn().mockResolvedValue(RAW_POSITION);
+    const getLastKnownPosition = vi.fn();
+
+    await expect(
+      resolveCurrentPosition(getCurrentPosition, getLastKnownPosition, 8000),
+    ).resolves.toEqual(RAW_POSITION);
+    // Fresh fix won the race, so the last-known fallback is never consulted.
+    expect(getLastKnownPosition).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the last-known fix when the current fetch stalls past the timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      // Simulates the regressed case: getCurrentPositionAsync never resolves.
+      const getCurrentPosition = vi.fn(() => new Promise<typeof RAW_POSITION>(() => {}));
+      const getLastKnownPosition = vi.fn().mockResolvedValue(LAST_KNOWN);
+
+      const promise = resolveCurrentPosition(getCurrentPosition, getLastKnownPosition, 8000);
+      await vi.advanceTimersByTimeAsync(8000);
+
+      await expect(promise).resolves.toEqual(LAST_KNOWN);
+      expect(getLastKnownPosition).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("falls back to the last-known fix when the current fetch rejects", async () => {
+    const getCurrentPosition = vi.fn().mockRejectedValue(new Error("gps error"));
+    const getLastKnownPosition = vi.fn().mockResolvedValue(LAST_KNOWN);
+
+    await expect(
+      resolveCurrentPosition(getCurrentPosition, getLastKnownPosition, 8000),
+    ).resolves.toEqual(LAST_KNOWN);
+  });
+
+  it("throws (never hangs) when neither a fresh nor a last-known fix is available", async () => {
+    const getCurrentPosition = vi.fn().mockRejectedValue(new Error("gps error"));
+    const getLastKnownPosition = vi.fn().mockResolvedValue(null);
+
+    await expect(
+      resolveCurrentPosition(getCurrentPosition, getLastKnownPosition, 8000),
+    ).rejects.toThrow();
+  });
+
+  it("never logs coordinates", async () => {
+    const spies = [
+      vi.spyOn(console, "log").mockImplementation(() => {}),
+      vi.spyOn(console, "warn").mockImplementation(() => {}),
+      vi.spyOn(console, "error").mockImplementation(() => {}),
+    ];
+    const getCurrentPosition = vi.fn().mockResolvedValue(RAW_POSITION);
+
+    await resolveCurrentPosition(getCurrentPosition, vi.fn(), 8000);
 
     for (const spy of spies) {
       expect(spy).not.toHaveBeenCalled();

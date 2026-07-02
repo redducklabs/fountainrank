@@ -556,10 +556,19 @@ export default function MapScreen() {
           accessibilityRole="button"
           accessibilityLabel="Center on my location"
           onPress={async () => {
-            // #locate-stale: re-fetch the CURRENT position on every press instead
-            // of reusing the frozen mount-time fix (spec §3.4). No-ops (returns
-            // null) while a refresh is already in flight or on denial/failure -
-            // leave the map as-is in that case.
+            // Recenter on the best-known fix IMMEDIATELY so the button always
+            // responds. It regressed to a silent no-op in #144 when it became
+            // gated solely on `await location.refresh()` - a fresh GPS fetch that
+            // can be slow, stall, or fail. Then upgrade to the fresh fix if one
+            // resolves (#locate-stale / spec §3.4). `refresh()` is timeout-bounded
+            // in the hook, so it always settles and never bricks later presses.
+            const known = location.coords;
+            if (known) {
+              setFlyTo({
+                center: { lng: known.longitude, lat: known.latitude },
+                zoom: INITIAL_USER_ZOOM,
+              });
+            }
             const c = await location.refresh();
             if (c) {
               setFlyTo({ center: { lng: c.longitude, lat: c.latitude }, zoom: INITIAL_USER_ZOOM });
