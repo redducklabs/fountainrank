@@ -17,6 +17,7 @@ vi.mock("./HeaderPoints", () => ({
     <div data-testid="header-points">{initialTotalPoints}</div>
   ),
 }));
+vi.mock("./HeaderSearch", () => ({ HeaderSearch: () => <div data-testid="header-search" /> }));
 
 import { SiteHeader } from "./SiteHeader";
 
@@ -30,6 +31,14 @@ describe("SiteHeader", () => {
     render(await SiteHeader({ variant: "hero" }));
     expect(screen.getByText(/find a drinking fountain near you/i)).toBeTruthy();
     expect(screen.getByTestId("auth-control")).toBeTruthy();
+  });
+
+  it("renders the ever-present header search in both variants", async () => {
+    render(await SiteHeader({ variant: "hero" }));
+    expect(screen.getByTestId("header-search")).toBeTruthy();
+    cleanup();
+    render(await SiteHeader({ variant: "bar" }));
+    expect(screen.getByTestId("header-search")).toBeTruthy();
   });
 
   it("bar variant has no tagline", async () => {

@@ -2,6 +2,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { AuthControl } from "./AuthControl";
 import { HeaderPoints } from "./HeaderPoints";
+import { HeaderSearch } from "./HeaderSearch";
 import { getViewer, getViewerTotalPoints } from "../lib/server/viewer";
 
 export async function SiteHeader({ variant }: { variant: "hero" | "bar" }) {
@@ -10,8 +11,14 @@ export async function SiteHeader({ variant }: { variant: "hero" | "bar" }) {
   const totalPoints = viewer.state === "authed" ? await getViewerTotalPoints(requestId) : null;
   return (
     <header className="relative z-50 bg-gradient-to-b from-[#0A357E] to-[#0E4DA4] px-6 py-3 text-white">
-      <div className="flex w-full items-center justify-between gap-4">
-        <Link href="/" aria-label="FountainRank home">
+      {/* Ever-present header search (design doc §4.1): a single flex row that reads
+          logo - search - points/auth inline on md+ screens (search is `flex-1 max-w-md`
+          between the two fixed-width clusters), and wraps the search onto its own full-width
+          row below logo/points on narrower screens (`order-3 w-full` by default, reset to the
+          natural in-DOM order at `md:`) so it never squeezes out the points/auth cluster or
+          the hero subtitle below. */}
+      <div className="flex w-full flex-wrap items-center justify-between gap-3">
+        <Link href="/" aria-label="FountainRank home" className="shrink-0">
           <Image
             src="/fountainrank-logo.png"
             alt="FountainRank"
@@ -21,7 +28,10 @@ export async function SiteHeader({ variant }: { variant: "hero" | "bar" }) {
             className="h-9 w-auto"
           />
         </Link>
-        <div className="ml-auto flex items-center gap-3">
+        <div className="order-3 w-full md:order-none md:w-auto md:max-w-md md:flex-1">
+          <HeaderSearch />
+        </div>
+        <div className="ml-auto flex shrink-0 items-center gap-3">
           {totalPoints != null && <HeaderPoints initialTotalPoints={totalPoints} />}
           <AuthControl viewer={viewer} />
         </div>

@@ -350,6 +350,107 @@ narrow brand bar on every full-page route and an optional one-line tagline on th
   MapLibre's top-right zoom/geolocate controls.
 - On narrow web widths authenticated users still get a compact visible points badge so the
   leaderboard remains reachable; signed-out users do not get an empty points shell.
+- **`HeaderSearch` (see below) is ever-present** between the logo and the points/auth cluster, in
+  both the `hero` and `bar` variants — a non-map page has no map of its own, so selecting a result
+  always navigates to `/` with the recenter target encoded in the URL (design doc §4.2).
+
+**Responsive layout (design doc §4.1):** the header row is `flex flex-wrap items-center
+justify-between`. On `md:` and wider, all three clusters share one line — logo (fixed width, left),
+search (`md:flex-1 md:max-w-md`, grows to fill the middle, capped), points/auth (fixed width,
+`ml-auto`, right). Below `md:`, the search wrapper is `order-3 w-full` — it can never share a line
+with the other two (100% flex-basis), so it always wraps onto its **own full-width row below** the
+logo/points row, and it is ordered _after_ both (`order-3` vs their default `order-0`) so it never
+displaces or gets squeezed between them. The hero tagline `<p>` is a sibling block rendered after
+the whole row `<div>`, so it always sits below the row regardless of how many lines the row itself
+wraps to — the search row never pushes it out.
+
+### Header search (`web/components/HeaderSearch.tsx`)
+
+The always-visible address/city search box in `SiteHeader`, recentering/zooming the web map on
+select (design doc §4.1–§4.3). A client component: an input plus a results dropdown, debounced
+(~300 ms, min 3 characters) against the public `GET /api/v1/geocode` proxy via
+`lib/search/geocode-client.ts` (no `Authorization` header — the endpoint is public and the
+LocationIQ key stays server-side). Mirrors mobile's `SearchOverlay` (same states, same attribution,
+same pure `lib/search/state.ts` reducer) adapted from a full-screen overlay to an inline dropdown.
+
+**Input:**
+
+```tsx
+<label htmlFor="header-search-input" className="sr-only">
+  Search address or city
+</label>
+<input
+  id="header-search-input"
+  placeholder="Search address or city"
+  role="combobox"
+  aria-expanded={showDropdown}
+  aria-controls="header-search-listbox"
+  aria-autocomplete="list"
+  className="w-full rounded-full border border-white/30 bg-white/10 px-4 py-2 text-sm text-white placeholder-white/60 outline-none transition focus-visible:border-white focus-visible:bg-white/20 focus-visible:ring-2 focus-visible:ring-white/60"
+/>
+```
+
+The visible `placeholder` and the `sr-only`-labelled `<label>` carry the same "Search address or
+city" copy so the accessible name matches what sighted users see.
+
+Translucent-white pill on the brand gradient (same `border-white/40`-family treatment as the
+Decline button in the analytics consent banner) — legible on the header's blue background without
+competing with the gold primary actions.
+
+**Dropdown (`role="listbox"`, `id="header-search-listbox"`):** an absolutely-positioned panel
+(`absolute inset-x-0 top-full z-50 mt-2 rounded-lg border border-slate-200 bg-white shadow-lg`) —
+the same white-card-on-blue-header treatment as the `AuthControl` user menu. Each result row is a
+`role="option"` button (`block w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50`)
+showing the result's `label`. Only rendered while the dropdown is open **and** the search status is
+not `idle` (i.e. the query has reached the 3-character minimum) — mirrors mobile: nothing renders
+below the minimum length, not even an empty panel.
+
+**States** (driven by `lib/search/state.ts`'s `SearchStatus`, identical set to mobile's
+`SearchOverlay`):
+
+| State                  | Rendering                                                                                                                                                   |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `idle` (below 3 chars) | Dropdown not rendered at all.                                                                                                                               |
+| `loading`              | `role="status"` "Searching…", muted text.                                                                                                                   |
+| `empty` (no matches)   | "No matches", muted text.                                                                                                                                   |
+| `error`/`unavailable`  | `role="alert"` "Search is unavailable right now", red text — the single v1 error state, covering every documented failure mode (503/502/429/network) alike. |
+| `results`              | The result rows, followed by the persistent attribution line (below).                                                                                       |
+
+**Attribution:** shown as the last row whenever results render (never during loading/empty/error) —
+"Search by LocationIQ · © OpenStreetMap contributors", the link (`https://locationiq.com/attribution`)
+opens in a new tab. Identical copy and link target to mobile (design doc §12).
+
+```tsx
+<p className="border-t border-slate-100 px-4 py-2 text-xs text-slate-400">
+  <a
+    href="https://locationiq.com/attribution"
+    target="_blank"
+    rel="noopener noreferrer"
+    className="font-semibold text-[#0C44A0] underline"
+  >
+    Search by LocationIQ
+  </a>
+  {" · © OpenStreetMap contributors"}
+</p>
+```
+
+**Keyboard / dismissal:**
+
+- **Arrow Up/Down** moves a highlighted option (`aria-selected` + `aria-activedescendant` on the
+  input); **Enter** selects the highlighted option; **Escape** closes the dropdown without clearing
+  the typed query.
+- **Click-away:** a document-level `mousedown` listener (identical pattern to `AuthControl`'s user
+  menu) closes the dropdown when the click lands outside the search box.
+- **Blur/Tab-away:** an `onBlur` on the search box's container checks `relatedTarget` — if focus is
+  moving to an element still inside the box (e.g. a result row being clicked), the dropdown stays
+  open long enough for the click to register; otherwise it closes. This covers the keyboard-only
+  "Tab past the search box" case the mousedown listener can't see.
+- Selecting a result (click or Enter) closes the dropdown and calls
+  `router.push("/?" + buildFlyToQuery(...))` — see the URL contract in `lib/search/flyto.ts` and
+  design doc §4.2/§4.3.
+
+**Responsive layout:** see the "Responsive layout" note under Slim site header above — inline
+between logo and points/auth on `md:`+, its own full-width row below them on narrower screens.
 
 ### Points badge
 
@@ -432,16 +533,23 @@ Used for add-fountain placement errors, especially out-of-area taps.
 
 ```
 <header class="bg-gradient-to-b from-[#0A357E] to-[#0E4DA4] px-6 py-3 text-white">
-  <div class="mx-auto flex max-w-6xl items-center justify-between gap-4">
-    <!-- Wordmark link (left) -->
-    <a href="/" aria-label="FountainRank home">
+  <div class="flex w-full flex-wrap items-center justify-between gap-3">
+    <!-- Wordmark link (left, fixed width) -->
+    <a href="/" aria-label="FountainRank home" class="shrink-0">
       <img src="/fountainrank-logo.png" alt="FountainRank" class="h-9 w-auto" />
     </a>
-    <!-- AuthControl (right) -->
-    <AuthControl viewer={viewer} />
+    <!-- HeaderSearch (center on md:+, own row below on narrower screens) -->
+    <div class="order-3 w-full md:order-none md:w-auto md:max-w-md md:flex-1">
+      <HeaderSearch />
+    </div>
+    <!-- Points badge (when authenticated) + AuthControl (right, fixed width) -->
+    <div class="ml-auto flex shrink-0 items-center gap-3">
+      <HeaderPoints initialTotalPoints={totalPoints} />
+      <AuthControl viewer={viewer} />
+    </div>
   </div>
   <!-- hero variant only -->
-  <p class="mx-auto mt-2 max-w-6xl text-sm font-semibold sm:text-base">
+  <p class="mt-2 text-sm font-semibold sm:text-base">
     Find a drinking fountain near you.
   </p>
 </header>

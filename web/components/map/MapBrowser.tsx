@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import maplibregl, {
   type FilterSpecification,
   type MapLayerMouseEvent,
@@ -32,6 +32,7 @@ import {
   NEIGHBORHOOD_ZOOM,
 } from "../../lib/map/constants";
 import { logMapError } from "../../lib/map/log";
+import { deriveCameraAction, parseFlyToParam } from "../../lib/search/flyto";
 import { FountainsInViewList } from "./FountainsInViewList";
 import {
   CapHint,
@@ -92,6 +93,7 @@ export default function MapBrowser({
   const [placementMap, setPlacementMap] = useState<PlacementMap | null>(null);
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [pins, setPins] = useState<FountainPin[]>([]);
   const [status, setStatus] = useState<Status>("idle");
   const [celebrationKey, setCelebrationKey] = useState(0);
@@ -349,6 +351,58 @@ export default function MapBrowser({
     m.setFilter("selected-halo", flt);
     m.setFilter("selected-pin", flt);
   }, [activeId, status]);
+
+  // Header-search handoff (design doc §4.2/§4.3): consumes the `flyto`/`bbox` query params
+  // HeaderSearch writes on select, applies the resulting camera move, then strips ONLY those
+  // two params (preserving any others, e.g. `add`) via `router.replace`.
+  //
+  // Gated on `placementMap` - the same "the map finished loading and its layers/pins exist"
+  // signal `useAddFountainMode` already uses to defer its own `?add=1` strip until the map
+  // adapter exists (see its comment) - so a flyto that arrives before `load` has fired can't be
+  // silently dropped or applied against a not-yet-sized map. When WebGL isn't supported
+  // `placementMap` can never become non-null (the map is never created), so that branch is
+  // skipped entirely and the params are still cleared immediately - otherwise they'd linger in
+  // the URL forever with no map that could ever consume them.
+  //
+  // `consumedFlyToRef` remembers the raw `flyto`+`bbox` string this effect just consumed so a
+  // duplicate effect run against the SAME still-present params (e.g. while `router.replace`'s
+  // navigation is in flight) can't re-apply the camera move or double-fire the replace, and so
+  // it can never hijack a subsequent manual pan. It resets to `null` once the params are
+  // actually gone from the URL, so selecting the same result again later still works.
+  const consumedFlyToRef = useRef<string | null>(null);
+  useEffect(() => {
+    const flytoRaw = searchParams.get("flyto");
+    const bboxRaw = searchParams.get("bbox");
+    if (flytoRaw === null && bboxRaw === null) {
+      consumedFlyToRef.current = null;
+      return;
+    }
+    const rawKey = `${flytoRaw ?? ""} ${bboxRaw ?? ""}`;
+    if (consumedFlyToRef.current === rawKey) return; // already consumed this exact value
+    if (webglOk && !placementMap) return; // wait for the map to finish loading
+
+    consumedFlyToRef.current = rawKey;
+    const parsed = parseFlyToParam({ flyto: flytoRaw, bbox: bboxRaw });
+    const map = mapRef.current;
+    if (parsed && map) {
+      const action = deriveCameraAction(parsed);
+      if (action.kind === "fit") {
+        map.fitBounds(action.bounds, {
+          maxZoom: action.maxZoom,
+          padding: action.padding,
+          duration: 1000,
+        });
+      } else {
+        map.flyTo({ center: action.center, zoom: action.zoom });
+      }
+    }
+
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("flyto");
+    params.delete("bbox");
+    const qs = params.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  }, [searchParams, webglOk, placementMap, router, pathname]);
 
   const retry = () => mapRef.current?.fire("moveend");
 
