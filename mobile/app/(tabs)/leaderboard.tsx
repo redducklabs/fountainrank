@@ -1,10 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
-import { useLocalSearchParams } from "expo-router";
-import { useMemo, useState } from "react";
+import { useFocusEffect, useLocalSearchParams } from "expo-router";
+import { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -46,6 +47,16 @@ export default function LeaderboardScreen() {
       ),
   });
 
+  // Rankings change from the web app and from other contributors, so the mobile
+  // board must not go stale: refetch whenever this tab regains focus, and expose
+  // pull-to-refresh for a manual refresh (see #149).
+  const refetch = query.refetch;
+  useFocusEffect(
+    useCallback(() => {
+      void refetch();
+    }, [refetch]),
+  );
+
   const rows = query.data?.rows ?? [];
   const you = query.data?.you ?? null;
   const youInList = rows.some((r) => r.is_you);
@@ -64,6 +75,13 @@ export default function LeaderboardScreen() {
         keyExtractor={(r) => `${r.rank}-${r.display_name}`}
         renderItem={({ item }) => <Row row={item} sort={sort} />}
         contentContainerStyle={styles.listContent}
+        refreshControl={
+          <RefreshControl
+            refreshing={query.isRefetching}
+            onRefresh={() => void refetch()}
+            tintColor={colors.brandBlue}
+          />
+        }
         ListEmptyComponent={
           query.isLoading ? (
             <ActivityIndicator color={colors.brandBlue} style={styles.loading} />
