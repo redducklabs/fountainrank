@@ -3028,6 +3028,34 @@
         ],
         "title": "BadgeOut"
       },
+      "BoundingBox": {
+        "properties": {
+          "south": {
+            "type": "number",
+            "title": "South"
+          },
+          "west": {
+            "type": "number",
+            "title": "West"
+          },
+          "north": {
+            "type": "number",
+            "title": "North"
+          },
+          "east": {
+            "type": "number",
+            "title": "East"
+          }
+        },
+        "type": "object",
+        "required": [
+          "south",
+          "west",
+          "north",
+          "east"
+        ],
+        "title": "BoundingBox"
+      },
       "ConditionReportRequest": {
         "properties": {
           "status": {
@@ -3522,6 +3550,16 @@
           "longitude": {
             "type": "number",
             "title": "Longitude"
+          },
+          "bounding_box": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BoundingBox"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",

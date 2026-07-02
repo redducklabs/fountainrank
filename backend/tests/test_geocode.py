@@ -20,7 +20,7 @@ from app.geocoding import (
     get_geocode_provider,
 )
 from app.main import app
-from app.schemas import GeocodeResponse, GeocodeResult
+from app.schemas import BoundingBox, GeocodeResponse, GeocodeResult
 
 
 def test_geocoding_defaults_disabled():
@@ -53,12 +53,30 @@ def test_geocode_result_constructs_and_serializes_with_latlng():
         "label": "123 Main St",
         "latitude": 40.7128,
         "longitude": -74.0060,
+        "bounding_box": None,
+    }
+
+
+def test_geocode_result_constructs_and_serializes_with_bounding_box():
+    result = GeocodeResult(
+        label="123 Main St",
+        latitude=40.7128,
+        longitude=-74.0060,
+        bounding_box=BoundingBox(south=40.71, west=-74.01, north=40.72, east=-74.00),
+    )
+    assert result.model_dump() == {
+        "label": "123 Main St",
+        "latitude": 40.7128,
+        "longitude": -74.0060,
+        "bounding_box": {"south": 40.71, "west": -74.01, "north": 40.72, "east": -74.00},
     }
 
 
 def test_geocode_response_wraps_results_list():
     resp = GeocodeResponse(results=[GeocodeResult(label="A", latitude=1.0, longitude=2.0)])
-    assert resp.model_dump() == {"results": [{"label": "A", "latitude": 1.0, "longitude": 2.0}]}
+    assert resp.model_dump() == {
+        "results": [{"label": "A", "latitude": 1.0, "longitude": 2.0, "bounding_box": None}]
+    }
 
 
 def test_geocode_response_empty_results():
@@ -112,6 +130,74 @@ async def test_locationiq_search_skips_malformed_entries():
     results = await provider.search("q", 5, None)
 
     assert results == [GeocodeResult(label="Good One", latitude=1.0, longitude=2.0)]
+
+
+# --- bounding_box validation (spec 2026-07-01 §2): the provider is untrusted input, so
+# only a fully valid, positive-area box is ever exposed; a bad bbox must never drop the
+# result itself. ---
+
+
+async def test_locationiq_search_valid_boundingbox_is_parsed():
+    hit = {
+        "display_name": "123 Main St, Springfield",
+        "lat": "40.7128",
+        "lon": "-74.0060",
+        # LocationIQ order: [south, north, west, east], all strings.
+        "boundingbox": ["40.7127", "40.7129", "-74.0061", "-74.0059"],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[hit])
+
+    provider = LocationIQProvider("test-key", transport=_transport(handler))
+    results = await provider.search("main st", 5, None)
+
+    assert len(results) == 1
+    bbox = results[0].bounding_box
+    assert bbox is not None
+    assert bbox.south == 40.7127
+    assert bbox.west == -74.0061
+    assert bbox.north == 40.7129
+    assert bbox.east == -74.0059
+
+
+@pytest.mark.parametrize(
+    "boundingbox",
+    [
+        pytest.param(None, id="missing"),
+        pytest.param(["40.71", "40.72", "-74.01"], id="too_short"),
+        pytest.param(["40.71", "40.72", "-74.01", "-74.00", "1"], id="too_long"),
+        pytest.param(["40.71", "40.72", "-74.01", "not-a-number"], id="non_numeric"),
+        pytest.param(["40.71", "40.72", "-74.01", "nan"], id="non_finite_nan"),
+        pytest.param(["40.71", "40.72", "-74.01", "inf"], id="non_finite_inf"),
+        pytest.param(["-95", "40.72", "-74.01", "-74.00"], id="south_out_of_range"),
+        pytest.param(["40.71", "95", "-74.01", "-74.00"], id="north_out_of_range"),
+        pytest.param(["40.71", "40.72", "-200", "-74.00"], id="west_out_of_range"),
+        pytest.param(["40.71", "40.72", "-74.01", "200"], id="east_out_of_range"),
+        pytest.param(["40.72", "40.71", "-74.01", "-74.00"], id="inverted_south_north"),
+        pytest.param(["40.71", "40.71", "-74.01", "-74.00"], id="zero_area_lat"),
+        pytest.param(["40.71", "40.72", "-74.00", "-74.01"], id="inverted_west_east"),
+        pytest.param(["40.71", "40.72", "-74.01", "-74.01"], id="zero_area_lng"),
+    ],
+)
+async def test_locationiq_search_invalid_boundingbox_drops_bbox_but_keeps_result(boundingbox):
+    hit = {
+        "display_name": "123 Main St, Springfield",
+        "lat": "40.7128",
+        "lon": "-74.0060",
+    }
+    if boundingbox is not None:
+        hit["boundingbox"] = boundingbox
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[hit])
+
+    provider = LocationIQProvider("test-key", transport=_transport(handler))
+    results = await provider.search("main st", 5, None)
+
+    assert len(results) == 1
+    assert results[0].label == "123 Main St, Springfield"
+    assert results[0].bounding_box is None
 
 
 async def test_locationiq_search_query_and_bias_only_fill_query_params():
@@ -538,7 +624,14 @@ async def test_geocode_happy_path_returns_200_with_results(fake_provider):
 
     assert resp.status_code == 200
     assert resp.json() == {
-        "results": [{"label": "123 Main St, Springfield", "latitude": 40.0, "longitude": -74.0}]
+        "results": [
+            {
+                "label": "123 Main St, Springfield",
+                "latitude": 40.0,
+                "longitude": -74.0,
+                "bounding_box": None,
+            }
+        ]
     }
     assert fake_provider.calls == [("main st", 5, None)]
 

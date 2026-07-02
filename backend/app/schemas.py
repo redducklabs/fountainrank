@@ -283,10 +283,21 @@ class AdminFountainDetail(FountainDetail):
     notes: list[AdminNoteOut]
 
 
+class BoundingBox(BaseModel):
+    south: float
+    west: float
+    north: float
+    east: float
+
+
 class GeocodeResult(BaseModel):
     label: str
     latitude: float
     longitude: float
+    # Optional (spec 2026-07-01 §2): not every provider hit has one, and existing
+    # clients (mobile) ignore it — only a fully validated, positive-area box is ever
+    # populated (see geocoding.py's _parse_bounding_box).
+    bounding_box: BoundingBox | None = None
 
 
 class GeocodeResponse(BaseModel):
