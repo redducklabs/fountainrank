@@ -2,24 +2,25 @@
 
 ## Short Description
 
-Find, rate, and rank public drinking fountains near you.
+Find water fountains, rank them, and claim your crown
 
 ## Full Description
 
-FountainRank is a community-built map for finding public drinking fountains wherever you are.
+FountainRank turns public drinking fountains into a community-powered ranking game.
 
-Open the map to discover nearby fountains, check whether they are working, and see how other people rate them. Each fountain can be reviewed across the details that matter most when you need a drink: clarity, taste, pressure, and appearance.
+Open the map to discover nearby fountains, check whether they are working, and see how each one scores. Every fountain can be rated across the details that matter when you need a drink: clarity, taste, pressure, and appearance.
 
-When you find a fountain worth sharing, add it to the map so the next person can find it too. Rate fountains you have used, update existing entries, and help the best spots rise to the top through community rankings.
+Every rating, update, and new fountain helps shape the leaderboard. Find hidden gems, call out the best refill stops, and help top-rated fountains rise through the ranks. The more you contribute, the more you help your community discover the best public water nearby.
 
-FountainRank is built for quick, practical decisions:
+Play the map your way:
 
 - Find public drinking fountains near your current location
 - View working status, ratings, and community details
-- Rate fountains across clarity, taste, pressure, and appearance
+- Score fountains across clarity, taste, pressure, and appearance
 - Add new fountains you discover
-- Help build a more useful public water map for everyone
+- Push the best fountains up the rankings
+- Compete for your place on the community leaderboard
 
-Whether you are walking through a city, visiting a park, running errands, traveling, or just trying to refill a bottle, FountainRank helps you find public water and share what you know.
+Whether you are walking through a city, visiting a park, running errands, traveling, or just trying to refill a bottle, FountainRank helps you find public water and turn every stop into a chance to rate, rank, and claim your crown.
 
 FountainRank depends on community submissions, so fountain locations, availability, and ratings may change over time. Always use your own judgment before visiting or using a fountain.
