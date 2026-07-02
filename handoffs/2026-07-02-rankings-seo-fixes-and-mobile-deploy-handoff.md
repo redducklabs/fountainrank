@@ -42,29 +42,38 @@ now in the fresh TestFlight/Play build above):
 
 **Already done (owner said so this session):** **#98 / #99** (add-fountain starter/draft pin).
 
-## 🟡 #127 + #128 — SPEC written, NOT implemented (this is the "rest of the stuff")
+## 🟢 #127 + #128 — spec + plan **Codex-APPROVED**, ready to implement (this is the "rest of the stuff")
 
-**Spec:** `docs/specs/2026-07-02-crawlable-seo-pages-design.md` (committed to `main`).
-It is **not yet Codex-reviewed** and has **open owner decisions** — resolve those, then run the
-Codex spec→plan loop before writing code (`claude_help/codex-review-process.md`).
+**Design decided this session with the owner + reviewed to green:**
+- **Spec:** `docs/specs/2026-07-02-crawlable-seo-pages-design.md`
+- **Plan:** `docs/plans/2026-07-02-crawlable-seo-pages.md`
+- **Codex plan-review looped to `VERDICT: APPROVED`** (round 3) — artifacts in
+  `temp/codex-reviews/2026-07-02-crawlable-seo-pages-plan-review-{1,2,3}.md`. **Start at Slice 0.**
 
-Why there was no quick code slice: **fountains have no `name`/`address`/`city`** (the detail
-page hardcodes `<h1>Public drinking fountain</h1>`). So mass per-fountain pages would be thin,
-title-duplicate content that **hurts** SEO. The value is in **city/attribute landing pages**
-(targeting "drinking fountains in <city>", "bottle filler", "wheelchair accessible"), which need
-reverse-geocoding + backend geo-aggregation endpoints + a **dynamic sitemap index** — real
-feature work, hence the spec.
+**The approach (owner-decided): real SEO value via offline OSM admin boundaries, ZERO LocationIQ.**
+Fountains have no name/address/city (only a lat/lng point; the detail page hardcodes
+`<h1>Public drinking fountain</h1>`), so mass per-fountain pages would be thin duplicate content.
+Instead: load a **prebuilt, OSM-derived global admin-boundary dataset** (independent of the
+per-state fountain-import registry) once into a `place_boundaries` PostGIS table, and derive
+**country + city** landing pages by point-in-polygon (`ST_Covers`) — the boundary's `name` supplies
+the place name. Key design points Codex hardened: mandatory **precomputed** place membership (never
+live `ST_Covers` on the request path), a canonical `(country_code, slug)` URL identity, a corrected
+Next `generateSitemaps` **index** topology, a single public **indexing predicate** (public data
+only), and **vertical release slices** (Slice 0 spike → 1 data-only → 2 country → 3 city → 4
+attributes → 5 detail).
 
-**Open owner decisions (spec §8):**
-1. City derivation: reverse-geocode+persist (flexible, most work) vs OSM registry regions vs curated city seed.
-2. Index individual fountain pages at all (only-with-locality+content) or aggregate pages only?
-3. GA4 key events (§9) — add them (small privacy-design change, needs a spec addendum) or leave GA4 path-only?
+**Owner decisions — RESOLVED in the spec (§8):** (1) city derivation = offline OSM admin
+boundaries; (2) index fountains = yes, selectively (under the §7 predicate); (3) GA4 key events =
+**excluded** from this plan.
+
+**Two Slice-0 things to settle before Slice 1 code** (called out in the plan): pick the concrete
+boundary **dataset/source** (prebuilt vs osmium-from-planet) on a small area, and confirm the CI
+retains/re-fetches whatever input the boundary load needs.
 
 **#128 specifically:** GA4 is **already installed** (`web/lib/analytics.ts`, `G-BG3PYM6T43`,
-consent-gated, deliberately path-only). Organic landing-page/source data is already collected.
-The remainder is **owner-local, not repo code**: add the GA4 property id to the SEO agent's local
-registry (no secrets committed) and run `seo_health_check` until GA4 = `ok`. Optional key-events
-code is gated on decision #3.
+consent-gated, path-only). Organic landing-page/source data is already collected. The remainder is
+**owner-local, not repo code**: add the GA4 property id to the SEO agent's local registry (no
+secrets committed) and run `seo_health_check` until GA4 = `ok`.
 
 ## 🔵 Web deploy — PENDING (owner, next)
 
@@ -82,7 +91,7 @@ new from #127/#128 (spec only). After deploy:
 - [ ] On-device verify #149, #146, #147 (this build) → close them; also #102–105, #120.
 - [ ] Deploy web (manual) → verify robots/sitemap/redirect live → submit sitemap to GSC + Bing.
 - [ ] Add GA4 property id to the SEO agent registry; `seo_health_check` → GA4 `ok` (#128).
-- [ ] Decide spec §8 (#127 city-derivation, fountain indexing, GA4 events), then Codex-review the spec → plan → implement.
+- [ ] Implement #127 from the **Codex-approved** plan (`docs/plans/2026-07-02-crawlable-seo-pages.md`), starting at **Slice 0** (pick the boundary dataset/source). Spec §8 decisions are already resolved.
 
 ## 🔁 Process gate (unchanged — per `CLAUDE.md`)
 branch → PR → **CI green AND Codex `VERDICT: APPROVED` AND every PR comment addressed** →
