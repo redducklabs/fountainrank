@@ -1,152 +1,188 @@
 # Crawlable SEO pages + GA4 measurement — design spec (2026-07-02)
 
-Design for **#127 (crawlable public pages for organic search entry points)** and
-**#128 (configure GA4 for SEO performance analysis)**. This spec is the input to
-an implementation plan; it is **not yet Codex-reviewed** — review it before
-planning per `claude_help/codex-review-process.md`.
+Design for **#127 (crawlable public pages for organic search entry points)** and the
+owner-config tail of **#128 (GA4)**. Input to `docs/plans/2026-07-02-crawlable-seo-pages.md`.
+Revised after Codex plan-review-1.
 
-Prereqs already merged this session (do not redo): **#125** `robots.txt` + `sitemap.xml`
-route handlers and **#126** `www→apex` 308 redirect + self-referential canonical tags
-(PR #153, on `main`). `web/lib/seo/site.ts` centralizes the canonical origin;
-`web/app/sitemap.ts` currently lists only the static pages and explicitly defers
-per-fountain / dynamic URLs to this work.
+Prereqs already merged (do not redo): **#125** `robots.txt` + `sitemap.xml` route handlers,
+**#126** `www→apex` 308 redirect + canonical tags (PR #153). `web/lib/seo/site.ts` centralizes
+the canonical origin; `web/app/sitemap.ts` currently lists only static pages.
 
 ---
 
 ## 1. Problem
 
-GSC shows near-zero organic visibility (6 impressions / 0 clicks over 28 days).
-The only crawlable content is the homepage (a map app) plus `/privacy` and
-`/terms`. There are no pages that match the observed/expected intents
-("public drinking fountains near me", "drinking fountains in <city>", "bottle
+GSC shows near-zero organic visibility (6 impressions / 0 clicks over 28 days). The only
+crawlable content is the homepage (a map app) + `/privacy` + `/terms`. No pages match the
+real intents ("public drinking fountains near me", "drinking fountains in <city>", "bottle
 filler", "wheelchair accessible fountain").
 
-## 2. Critical finding that shapes the design — **fountains have no names**
+## 2. Critical finding — **fountains have no names**
 
-`FountainDetail` (`backend/app/schemas.py`) has **no `name`/`address`/`city`** —
-only `location` (lat/lng), `is_working`, ratings, `current_status`, attributes.
-The web detail page hardcodes `<h1>Public drinking fountain</h1>` for every
-fountain (`web/components/fountain/FountainDetail.tsx:31`).
-
-**Implication:** naively emitting one indexable page per fountain would create
-thousands of near-identical, title-duplicate, thin pages — which **hurts** SEO
-(Google demotes thin/duplicate content) rather than helping. Per-fountain pages
-are only worth indexing if each gets a **real location name** (reverse-geocoded
-locality) and enough content. This is the central design decision below.
+The persisted `Fountain` (`backend/app/models.py`) has **no name/address/city** and does not
+keep OSM tags (those stay on the staging `OsmImportCandidate`) — only `location` (lat/lng),
+`is_working`, ratings, `current_status`, attributes. The detail page hardcodes
+`<h1>Public drinking fountain</h1>`. So per-fountain pages, as-is, would be thin duplicate
+content; place names must come from geometry we own, **not a geocoding call**.
 
 ## 3. Goals / non-goals
 
-**Goals**
-- Ship server-rendered, publicly-readable pages that map to real query intents,
-  each with a unique title, meta description, canonical URL, and meaningful text.
-- Include the indexable pages in `sitemap.xml`; exclude/`noindex` thin ones.
-- Keep everything consistent with the existing canonical host + metadata setup.
+**Goals:** SSR, publicly-readable pages matching real intents (each unique title/description/
+canonical/text); **real city-level value**, not just countries; indexable pages in the sitemap,
+thin ones `noindex`; **zero additional LocationIQ / per-request geocoding calls**.
 
-**Non-goals**
-- Blog/editorial content. Auth-gated surfaces (`/account`, `/admin`) stay out of
-  the index (already disallowed in `robots.ts`).
-- Mass-indexing every fountain regardless of content quality (see §2).
+**Non-goals:** editorial content; indexing auth-gated surfaces (already disallowed in
+`robots.ts`); mass-indexing fountains/places regardless of place+content quality.
 
-## 4. Proposed page types (each an indexable, SSR route)
+## 4. Chosen approach — offline OSM admin boundaries (no LocationIQ)
 
-| Route (proposed) | Content | Indexable? |
-|---|---|---|
-| `/drinking-fountains/[city]` (city/locality landing) | Intro copy + count + a list/map of that locality's fountains, top-rated first | **Yes** — the primary organic play |
-| `/drinking-fountains/bottle-fillers`, `/wheelchair-accessible-drinking-fountains` (attribute landings) | Curated copy + fountains with that attribute (optionally per-city) | **Yes** |
-| `/drinking-fountains-near-me` (intent landing) | Explains near-me + deep-links to the map (geolocation) and top cities | **Yes** (static, no geo in URL — "near me" can't be a static URL) |
-| `/fountains/[id]` (existing detail) | Add reverse-geocoded locality to `<h1>`/title; add `generateMetadata` | **Selective** — index only when a locality resolves **and** the fountain has content (≥1 rating / working+verified); else `noindex` |
+**Decision (owner, 2026-07-02):** load OSM **administrative boundary polygons once, offline**,
+into PostGIS and do point-in-polygon (`ST_Covers`) against the fountain point. The boundary's
+`name` supplies the place name fountains lack (§2). Country + city pages.
 
-**Key decision — how to derive "city/locality" (fountains have no locality field). Options:**
-- **A. Reverse-geocode + persist.** Batch reverse-geocode each fountain to
-  `locality`/`admin_area` (extend `backend/app/geocoding.py`; LocationIQ is
-  already wired via the public `/api/v1/geocode`, but that is *forward* geocode —
-  reverse needs adding + rate-limit/caching). Store on the fountain; regenerate on
-  import. Enables both city pages and per-fountain titles. **Most flexible, most work.**
-- **B. Reuse OSM registry regions.** The OSM import already carries region
-  `scope_bounds` (`backend/app/models.py:232`). Use those polygons as the "areas"
-  and generate a landing per region. **Less granular (regions, not cities), but no
-  new geocoding.**
-- **C. Curated seed of top cities** with bounding boxes; query via the existing
-  `/fountains/bbox`. **Fast to ship, limited coverage, manual upkeep.**
+### 4.1 Boundary source & pipeline (resolves plan-review-1 [BLOCKER]; plan-review-2 [MAJOR] source + ids)
 
-Recommendation: **A** for the real product (reverse-geocoded locality unlocks both
-city pages and non-thin per-fountain titles), with **C** as an optional
-launch-fast subset. Confirm with owner (§8).
+Boundary data has its **own source, INDEPENDENT of the per-fountain OSM import registry**. That
+registry (`.github/osm-import-regions.yml`) is intentionally per-state for the US (aggregate
+`north-america/us` is rejected), so a fountain-import PBF is the **wrong unit for authoritative
+country polygons**. Instead:
 
-## 5. Backend work
+- **Primary: a prebuilt, OSM-derived global administrative-boundary dataset** (ODbL — carry the
+  attribution) providing admin_level 2 (country) + local levels + `place=*` polygons with **stable
+  OSM ids** and `name`/ISO tags. Loaded **once** (refreshed infrequently) via `ogr2ogr` into
+  `place_boundaries`, in a **dedicated CI workflow `osm-boundary-load.yml`** (manual dispatch) that
+  writes through the existing **CI-only production data-load path** (never local, never the backend
+  pod). Its scope is a **small boundary-source registry of its own**, not the fountain registry.
+- **Alternative (Slice 0 spike only):** generate boundaries from Geofabrik **planet/continent**
+  extracts via `osmium tags-filter`→`osmium export`. If chosen, it **MUST** apply osmium's area
+  `type_id` decode — relation areas are emitted as `a<2*relation_id+1>`; the existing import already
+  handles this — to recover a stable `osm_relation_id`, with a **round-trip test** proving a real
+  multipolygon relation maps back to its OSM relation id.
+- Repair geometry with `ST_MakeValid`; reject/flag still-invalid (logged). Store full OSM
+  provenance (`osm_type`, `osm_id`) so upsert identity + slug stickiness survive refresh.
 
-- Reverse-geocode support (Option A): a cached reverse-geocode in
-  `geocoding.py`; a migration adding `locality` / `admin_area` (+ index) to the
-  fountain; a backfill (one-off + on import). Respect LocationIQ rate limits.
-- Aggregation/enumeration endpoints (public, unauthenticated, cache-friendly):
-  - list localities with fountain counts (for city-page generation + sitemap);
-  - fountains in a locality (paginated, ranked) for the city page;
-  - fountains by attribute (+ optional locality);
-  - an enumeration of indexable fountain ids for the sitemap.
-- Follow existing patterns: PostGIS `(lon,lat)` via `app/geo.py`, structured logs,
-  `list[str]`-as-`str` settings rule, drift-free Alembic.
+### 4.2 Admin levels + fallback places (resolves [MAJOR] coverage; [MAJOR] non-admin places)
 
-## 6. Sitemap strategy
+Prefer `admin_level=8` (city); where sparse, fall back to the nearest populated local level (7/6)
+and/or named `place=city|town` polygons; country from `admin_level=2`; country-only where no usable
+local level exists. Because fallback places are **not** administrative relations, `place_boundaries`
+represents both kinds **without sentinels**: nullable `admin_level`, a `place_kind`
+(`admin` | `place`), `source_kind`, and full OSM provenance (`osm_type` node/way/relation + `osm_id`),
+with per-kind geometry validation. **Country pages come from `admin_level=2`, never the per-state
+import `scope_bounds`.** Only **polygonal** `place=*` features are eligible (relation/way, or a
+dataset-provided derived polygon) — raw place **nodes** are excluded, since membership is
+point-in-polygon and a node has no area. The loader test suite includes a polygonal `place=*`
+fixture, not only boundary-relation fixtures.
 
-- Move to a **dynamic** sitemap. With the worldwide OSM import (#131) the URL
-  count can exceed the 50k/sitemap limit, so use Next.js **`generateSitemaps`** to
-  emit a **sitemap index** with chunks (cities chunk, attribute chunk, fountains
-  chunks). `robots.txt` already points at `/sitemap.xml`.
-- Only include indexable URLs (§4). Set `lastModified` from real data
-  (`last_verified_at` / `last_rated_at`) where available.
+### 4.3 URL / API identity contract (resolves [MAJOR] identity ×2)
 
-## 7. Metadata & thin-content policy
+- **Country segment:** ISO-3166-1 alpha-2 (lowercased) — `/drinking-fountains/us`.
+- **City segment:** a slug **unique within its country across ALL place kinds**. Because the public
+  URL `/drinking-fountains/[country]/[city]` does **not** carry `admin_level`, the DB uniqueness is
+  **`(country_code, slug)`**, NOT `(admin_level, country_code, slug)`. Membership backfill selects
+  **one canonical SEO place per `(country_code, slug)`** (prefer admin_level 8, then 7/6, then
+  `place=*`; tie-break by `fountain_count`) via an `is_canonical` flag; non-canonical candidates are
+  retained but **excluded from the public namespace**.
+- `place_boundaries` stores an **immutable `id`** + the sticky `slug`; API lookup is by full
+  hierarchy `GET /api/v1/places/{country}/{city}/fountains` or immutable id — never a global slug.
+- **Renamed boundary:** slug is sticky (assigned once); a changed slug keeps the old route as a 301
+  to the new canonical; the canonical tag uses the current stored slug.
 
-- `generateMetadata` on every indexable route: unique title + description +
-  `alternates.canonical` (resolves against `metadataBase`, already set).
-- `noindex` (via `robots: { index: false }`) for: hidden fountains, fountains with
-  no resolved locality, and any page with no meaningful content.
-- Keep OG/Twitter absolute URLs (inherited from `metadataBase`).
-- New UI/pages → update `docs/style-guide.md` (project rule).
+### 4.4 Page types (each an indexable, SSR route)
 
-## 8. Open decisions for the owner
+| Route | Set from | Content | Indexable? |
+|---|---|---|---|
+| `/drinking-fountains/[country]` | admin_level=2 | Intro + count + top cities + top fountains | Yes |
+| `/drinking-fountains/[country]/[city]` | admin_level=8 (or fallback) | Intro + count + list/map, top-rated first | **Yes — primary** |
+| `/drinking-fountains/bottle-fillers`, `/wheelchair-accessible-drinking-fountains` | attribute filter (§4.5) | Curated copy + matching fountains | Yes (global; `noindex` below `K`) |
+| `/drinking-fountains-near-me` | static | Explains near-me + map deep-link + top cities | Yes |
+| `/fountains/[id]` | + containing city | `generateMetadata`, city in `<h1>`/title | **Selective** — §7 predicate; else `noindex` |
 
-1. **City derivation:** Option A (reverse-geocode + persist), B (OSM regions), or
-   C (curated cities) — or A-scoped-to-a-few-cities for launch?
-2. **Index individual fountains at all?** Only-with-locality+content, or
-   aggregate pages only (skip per-fountain indexing entirely)?
-3. **GA4 key events (see §9):** add them (small privacy-design change) or leave
-   GA4 path-only for now?
+### 4.5 Attribute pages (resolves [MINOR] attributes ×2)
 
-## 9. #128 — GA4 for SEO measurement
+Filter on the **existing seeded attribute keys `bottle_filler` and `wheelchair_reachable`**
+(`backend/migrations/versions/0006_seed_attribute_types.py`, `backend/app/filters.py`) — the route
+labels stay human-readable (`/drinking-fountains/bottle-fillers`,
+`/wheelchair-accessible-drinking-fountains`). Global pages with a **minimum fountain count
+`K_attr`**; per-city attribute variants are **out of scope for v1**. `noindex` below `K_attr`.
 
-Status: **GA4 is already installed** (`web/lib/analytics.ts`, id
-`G-BG3PYM6T43`; consent-gated; **deliberately path-only** — query strings
-stripped, no account identifiers — per `docs/specs/2026-06-30-ga4-web-analytics-design.md`).
-Organic landing-page + traffic-source data is therefore **already collected**
-automatically once traffic exists.
+## 5. Backend
 
-Remaining work is mostly **owner-local, not repo code**:
-- Add the FountainRank **GA4 property id** to the SEO agent's local registry
-  (no secrets committed); run `seo_health_check` until GA4 reports `ok`.
-- Verify GA4 Realtime shows traffic on the production apex.
+- **`place_boundaries`** (new): immutable `id`; `place_kind` (`admin`|`place`); nullable
+  `admin_level`; `source_kind`; OSM provenance (`osm_type`, `osm_id`); `name`; `country_code`;
+  `slug`; `parent_id` FK→self; **`is_canonical`** (the one SEO place per `(country_code, slug)`,
+  §4.3); `boundary` `Geography(MULTIPOLYGON,4326)` **GIST-indexed**; `source_label`; timestamps.
+  Public-namespace uniqueness: a **partial unique index on `(country_code, slug)` WHERE
+  `is_canonical`** (matches the public URL, which omits `admin_level`). Reversible Alembic; verify
+  index/constraint names in `pg_indexes`/`pg_constraint`.
+- **Precomputed membership is MANDATORY** (resolves [MAJOR] perf). Assign each fountain to its
+  country/city at boundary-load and at fountain create/import time (a `fountain_places` table or
+  `country_place_id`/`city_place_id` columns on `fountains`), plus **denormalized `fountain_count`
+  per place**. The **public request path uses the precomputed assignment**, never a live
+  `ST_Covers`. Live point-in-polygon is a backfill/operator path only. Define refresh triggers
+  (boundary load, OSM import, user add), staleness tolerance, and how counts are transactionally
+  updated or rebuilt.
+- **Public, unauthenticated, cache-friendly endpoints** — explicit pagination caps + cache
+  headers + hidden-row filters **in the contract**, not just tests; `(lon,lat)` via `app/geo.py`:
+  - `GET /api/v1/places` — countries / cities (by parent) with counts, only count ≥ `K`.
+  - `GET /api/v1/places/{country}/{city}/fountains` — ranked, paginated.
+  - `GET /api/v1/fountains/by-attribute` — attribute (± place).
+  - `GET /api/v1/fountains/{id}/place` + the **public indexing predicate** (§7).
 
-**Optional code (needs a spec addendum + Codex review):** define key events
-(`sign_in`, `add_fountain`, `rate_fountain`, `use_location`). This is a change to
-the intentionally minimal, privacy-first GA4 design, so it must stay
-consent-gated and carry **no PII / no identifiers / no query strings**. Recommend
-deciding in §8.3 before implementing.
+## 6. Sitemap (resolves [MAJOR] — Next `generateSitemaps` corrected)
+
+Next.js `generateSitemaps` emits **multiple files at `/.../sitemap/[id].xml`** — it does **not**
+turn `/sitemap.xml` into an index. Topology:
+- A **sitemap index** served at `/sitemap.xml` (explicit route handler) that references the chunk
+  sitemaps (the `generateSitemaps` `/sitemap/[id].xml` outputs and/or explicit chunk handlers).
+  `robots.ts` keeps pointing at `/sitemap.xml` (now the index). Keep each chunk < 50k URLs.
+- Chunks: countries, cities, attributes, and selectively fountains. `lastModified` from real data.
+- Handle Next 16's async `id` param. **Tests fetch/inspect the actual built routes**, not only the
+  returned arrays.
+
+## 7. Metadata & thin-content policy (resolves [MAJOR] predicate)
+
+- One **public indexing predicate** in a shared server helper / one backend response, computed
+  from **public, non-hidden, unauthenticated** data only — auth/admin data never influences
+  indexability or SEO copy. A fountain is indexable iff: a city resolves **AND** it is not hidden
+  **AND** (`rating_count ≥ 1` **OR** (`is_working` **AND** `current_status` not a negative state)).
+  Places/attribute pages indexable iff `fountain_count ≥ K`.
+- `generateMetadata` uses that predicate; `noindex` (`robots: { index: false }`) everything else.
+- `generateMetadata` on the dynamic `force-dynamic` detail page must fetch **public** data only
+  (not the viewer-aware/admin path). Tests: hidden vs visible, rated vs unrated, verified vs stale.
+- Unique title/description/`alternates.canonical` (resolves against `metadataBase`). New page
+  templates → `docs/style-guide.md`.
+
+## 8. Decisions
+
+1. **City derivation — RESOLVED:** offline OSM admin boundaries (level 2 + 8, with §4.2
+   fallback) from an **independent prebuilt boundary source** (§4.1), loaded once; PostGIS
+   point-in-polygon; **no LocationIQ**.
+2. **Index individual fountains — RESOLVED: yes, selectively**, under the §7 predicate.
+3. **GA4 key events — EXCLUDED from this plan.** #128's repo scope is nil (GA4 already
+   installed); events, if ever wanted, are a separate GA4-spec addendum + PR. #128's remaining
+   work is owner-local registry config (§9).
+
+## 9. #128 — GA4 (owner-local, not repo code)
+
+GA4 already installed (`web/lib/analytics.ts`, `G-BG3PYM6T43`, consent-gated, path-only per
+`docs/specs/2026-06-30-ga4-web-analytics-design.md`); organic landing-page/source data is already
+collected. Remaining: owner adds the GA4 property id to the SEO agent's local registry (no secrets
+committed) and runs `seo_health_check` until GA4 = `ok`; confirm GA4 Realtime on the apex.
 
 ## 10. Rollout / verification
 
-- `curl` representative pages → confirm meaningful HTML in the initial response.
-- Confirm indexable pages appear in `sitemap.xml`; thin/hidden ones are excluded
-  or `noindex`.
-- After deploy: resubmit the sitemap in GSC/Bing; watch impressions/clicks by
-  page+query over the next completed 28-day window; compare GSC clicks vs GA4
-  organic sessions by landing page.
+`curl` representative country/city/attribute pages → meaningful HTML in the initial response;
+validate the sitemap index + chunks fetch as real routes; excluded/thin pages are `noindex` and
+absent from the sitemap. After deploy: resubmit the sitemap in GSC + Bing; watch impressions/
+clicks by page+query over the next completed 28-day window; compare GSC clicks vs GA4 organic
+sessions by landing page.
 
 ---
 
 ## Process note
 
-This is a significant, multi-layer feature (backend geo + web routes + dynamic
-sitemap). Per `claude_help/development-process.md`: **Codex-review this spec →
-write a dated plan in `docs/plans/` → Codex-review the plan → implement
-task-by-task.** Do not start implementation code before the spec + plan are
-Codex-approved.
+Significant multi-layer feature. Per `claude_help/development-process.md`: this spec + the plan
+must be **Codex-approved** before implementation code; then implement task-by-task. The boundary
+load (production data-load writes) uses the **CI-only production data-load path** — never a local
+production DB write; local tests + Alembic use the normal local PostGIS container.
