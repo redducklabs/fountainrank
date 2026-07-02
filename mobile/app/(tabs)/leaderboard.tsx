@@ -1,6 +1,7 @@
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -10,6 +11,7 @@ import {
   StyleSheet,
   Text,
   View,
+  type ViewToken,
 } from "react-native";
 
 import { unwrap } from "../../lib/api";
@@ -28,6 +30,10 @@ import {
 } from "../../lib/leaderboard/query";
 import { useApi } from "../../providers/api-provider";
 import { colors, spacing, typography } from "../../theme";
+
+// A row counts as "on screen" once at least half of it is visible. Kept at module scope so the
+// reference is stable — FlatList does not support changing viewabilityConfig across renders.
+const VIEWABILITY_CONFIG = { itemVisiblePercentThreshold: 50 };
 
 export default function LeaderboardScreen() {
   const { client } = useApi();
@@ -61,6 +67,25 @@ export default function LeaderboardScreen() {
   const you = query.data?.you ?? null;
   const youInList = rows.some((r) => r.is_you);
 
+  // Keep the caller's rank visible while scrolling: track whether their in-list row is on screen
+  // and, when it isn't (or they rank below the fetched rows and have no in-list row at all), show a
+  // sticky bottom overlay (#147, #117). The handler must be ref-stable — FlatList rejects changing
+  // it per render.
+  const [youRowVisible, setYouRowVisible] = useState(false);
+  const onViewableItemsChanged = useCallback(
+    ({ viewableItems }: { viewableItems: ViewToken[] }) => {
+      setYouRowVisible(viewableItems.some((token) => (token.item as ContributorRow).is_you));
+    },
+    [],
+  );
+  // Reset visibility on a board switch (scope/sort/location) so a previous board's on-screen row
+  // can't suppress — nor an off-screen one duplicate — the new board's standing before the next
+  // viewability callback fires. The `!youInList` guard below makes the no-in-list case correct
+  // regardless of viewability timing.
+  useEffect(() => {
+    setYouRowVisible(false);
+  }, [scope, sort, center]);
+
   return (
     <View style={styles.fill}>
       <Controls
@@ -75,6 +100,8 @@ export default function LeaderboardScreen() {
         keyExtractor={(r) => `${r.rank}-${r.display_name}`}
         renderItem={({ item }) => <Row row={item} sort={sort} />}
         contentContainerStyle={styles.listContent}
+        onViewableItemsChanged={onViewableItemsChanged}
+        viewabilityConfig={VIEWABILITY_CONFIG}
         refreshControl={
           <RefreshControl
             refreshing={query.isRefetching}
@@ -91,8 +118,12 @@ export default function LeaderboardScreen() {
             <Text style={styles.empty}>No contributors yet.</Text>
           )
         }
-        ListFooterComponent={you && !youInList ? <YouRow you={you} sort={sort} /> : null}
       />
+      {you && (!youInList || !youRowVisible) ? (
+        <View style={styles.stickyYou}>
+          <YouRow you={you} sort={sort} />
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -174,13 +205,26 @@ function Chip({ label, active, onPress }: { label: string; active: boolean; onPr
 }
 
 function Row({ row, sort }: { row: ContributorRow; sort: LeaderboardSort }) {
+  // Rank 1 is the leader of the active category/sort — mark it with a crown (#146).
+  const isLeader = row.rank === 1;
   return (
     <View style={[styles.row, row.is_you && styles.rowYou]}>
       <Text style={[styles.rank, row.is_you && styles.rankYou]}>{row.rank}</Text>
-      <Text style={styles.name} numberOfLines={1}>
-        {row.display_name}
-        {row.is_you ? "  (You)" : ""}
-      </Text>
+      <View style={styles.nameWrap}>
+        {isLeader ? (
+          <MaterialCommunityIcons
+            name="crown"
+            size={16}
+            color={colors.brandYellow}
+            accessibilityLabel="Category leader"
+            style={styles.crown}
+          />
+        ) : null}
+        <Text style={styles.name} numberOfLines={1}>
+          {row.display_name}
+          {row.is_you ? "  (You)" : ""}
+        </Text>
+      </View>
       <Metric
         value={rowPrimaryValue(row.points, row.category_count, sort)}
         caption={rowMetricCaption(row.points, sort)}
@@ -192,7 +236,7 @@ function Row({ row, sort }: { row: ContributorRow; sort: LeaderboardSort }) {
 function YouRow({ you, sort }: { you: YourStanding; sort: LeaderboardSort }) {
   const ranked = you.rank != null;
   return (
-    <View style={[styles.row, styles.rowYou, styles.youPinned]}>
+    <View style={[styles.row, styles.rowYou]}>
       <Text style={[styles.rank, styles.rankYou]}>{ranked ? you.rank : "—"}</Text>
       <Text style={styles.name}>You{ranked ? "" : "  (not yet ranked)"}</Text>
       <Metric
@@ -245,7 +289,8 @@ const styles = StyleSheet.create({
   chipActive: { backgroundColor: colors.brandBlue, borderColor: colors.brandBlue },
   chipText: { ...typography.meta, color: colors.text },
   chipTextActive: { color: colors.onBrand },
-  listContent: { paddingBottom: spacing.xl },
+  // Extra bottom room so the last rows can scroll clear of the sticky "You" overlay.
+  listContent: { paddingBottom: spacing.xl * 2 + spacing.md },
   loading: { marginTop: spacing.xl },
   empty: {
     ...typography.body,
@@ -263,7 +308,22 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
   },
   rowYou: { backgroundColor: "#EAF1FF" },
-  youPinned: { borderTopWidth: 2, borderTopColor: colors.brandBlue, borderBottomWidth: 0 },
+  // Sticky overlay pinned to the bottom of the screen (above the tab bar) that keeps the caller's
+  // rank visible while their real row is scrolled out of view (#147).
+  stickyYou: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: colors.background,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 8,
+  },
   rank: {
     ...typography.body,
     fontWeight: "700",
@@ -272,6 +332,8 @@ const styles = StyleSheet.create({
     textAlign: "right",
   },
   rankYou: { color: colors.brandBlue },
+  nameWrap: { flex: 1, flexDirection: "row", alignItems: "center" },
+  crown: { marginRight: spacing.xs },
   name: { ...typography.body, fontWeight: "600", color: colors.text, flex: 1 },
   metric: { alignItems: "flex-end" },
   metricValue: { ...typography.heading, fontWeight: "800", color: colors.brandBlue },
