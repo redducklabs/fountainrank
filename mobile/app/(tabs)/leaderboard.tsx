@@ -1,7 +1,7 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -30,6 +30,10 @@ import {
 } from "../../lib/leaderboard/query";
 import { useApi } from "../../providers/api-provider";
 import { colors, spacing, typography } from "../../theme";
+
+// A row counts as "on screen" once at least half of it is visible. Kept at module scope so the
+// reference is stable — FlatList does not support changing viewabilityConfig across renders.
+const VIEWABILITY_CONFIG = { itemVisiblePercentThreshold: 50 };
 
 export default function LeaderboardScreen() {
   const { client } = useApi();
@@ -67,10 +71,12 @@ export default function LeaderboardScreen() {
   // sticky bottom overlay (#147, #117). The handler and config must be ref-stable — FlatList
   // rejects changing them per render.
   const [youRowVisible, setYouRowVisible] = useState(false);
-  const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
-    setYouRowVisible(viewableItems.some((token) => (token.item as ContributorRow).is_you));
-  }).current;
-  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
+  const onViewableItemsChanged = useCallback(
+    ({ viewableItems }: { viewableItems: ViewToken[] }) => {
+      setYouRowVisible(viewableItems.some((token) => (token.item as ContributorRow).is_you));
+    },
+    [],
+  );
 
   return (
     <View style={styles.fill}>
@@ -87,7 +93,7 @@ export default function LeaderboardScreen() {
         renderItem={({ item }) => <Row row={item} sort={sort} />}
         contentContainerStyle={styles.listContent}
         onViewableItemsChanged={onViewableItemsChanged}
-        viewabilityConfig={viewabilityConfig}
+        viewabilityConfig={VIEWABILITY_CONFIG}
         refreshControl={
           <RefreshControl
             refreshing={query.isRefetching}
