@@ -1,3 +1,7 @@
+"use client";
+
+import { useEffect, useRef, useState, type Ref } from "react";
+
 import {
   rowMetricCaption,
   rowPrimaryValue,
@@ -15,34 +19,72 @@ export function LeaderboardRows({
   you: YourStanding | null;
   sort: LeaderboardSort;
 }) {
-  // Render the empty state and the pinned "You" row together: the board can be empty (no one has a
-  // positive metric) while a signed-in caller still has a standing — "Your rank, always" (#117).
   const youInList = rows.some((r) => r.is_you);
+  const youRowRef = useRef<HTMLLIElement | null>(null);
+  // Assume an in-list "You" row is visible until the observer proves otherwise, so the sticky
+  // overlay never flashes for someone whose row is already on screen.
+  const [youRowVisible, setYouRowVisible] = useState(youInList);
+
+  // Keep the caller's rank visible: when their in-list row scrolls out of view — or they rank
+  // below the fetched rows and have no in-list row at all — show a sticky bottom overlay with
+  // their standing ("your rank, always"; #147, #117).
+  useEffect(() => {
+    const el = youRowRef.current;
+    if (!el) {
+      setYouRowVisible(false);
+      return;
+    }
+    const observer = new IntersectionObserver(([entry]) => setYouRowVisible(entry.isIntersecting), {
+      threshold: 0,
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [rows]);
+
   return (
-    <div className="mt-4">
+    <div className="mt-4 pb-24">
       {rows.length === 0 ? (
         <p className="text-center text-slate-500">No contributors yet.</p>
       ) : (
         <ol className="divide-y divide-slate-100">
           {rows.map((row) => (
-            <Row key={`${row.rank}-${row.display_name}`} row={row} sort={sort} />
+            <Row
+              key={`${row.rank}-${row.display_name}`}
+              row={row}
+              sort={sort}
+              innerRef={row.is_you ? youRowRef : undefined}
+            />
           ))}
         </ol>
       )}
-      {you && !youInList ? (
-        <div className="mt-3 border-t-2 border-dashed border-slate-200 pt-3">
-          <YouRow you={you} sort={sort} />
+      {you && !youRowVisible ? (
+        <div
+          className="fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white/95 shadow-[0_-2px_8px_rgba(0,0,0,0.06)] backdrop-blur"
+          aria-label="Your current ranking"
+        >
+          <div className="mx-auto max-w-2xl px-6 py-2">
+            <YouRow you={you} sort={sort} />
+          </div>
         </div>
       ) : null}
     </div>
   );
 }
 
-function Row({ row, sort }: { row: ContributorRow; sort: LeaderboardSort }) {
+function Row({
+  row,
+  sort,
+  innerRef,
+}: {
+  row: ContributorRow;
+  sort: LeaderboardSort;
+  innerRef?: Ref<HTMLLIElement>;
+}) {
   // Rank 1 is the leader of the active category/sort — mark it with a crown (#146).
   const isLeader = row.rank === 1;
   return (
     <li
+      ref={innerRef}
       className={
         "flex items-center gap-3 px-3 py-3 " +
         (row.is_you ? "rounded-lg bg-[#EAF1FF] ring-1 ring-[#0C44A0]" : "")

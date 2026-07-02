@@ -493,10 +493,15 @@ The rankings screen reached from the points badge. Same model on web and mobile 
   platforms (web: inline `<svg>`; mobile: `@expo/vector-icons` `MaterialCommunityIcons name="crown"`),
   each carrying the accessible label `Category leader`. It moves with the sort, so only the current
   view's #1 is crowned; ties that share rank 1 are each crowned.
-- **You-highlight + pinned You row:** the signed-in caller's row gets a light-blue fill
-  (`#EAF1FF`) + brand-blue ring/`You` tag. When the caller is below the visible cut, a **pinned
-  "You — #N"** row is shown (web: dashed separator above it; mobile: as the list footer), reading
-  _Not yet ranked_ when they have no qualifying points in the active scope/category.
+- **You-highlight + sticky "You" overlay:** the signed-in caller's in-list row gets a light-blue
+  fill (`#EAF1FF`) + `You` tag (web adds a brand-blue ring). Their rank stays visible even when that
+  row is scrolled off-screen — or when they rank below the fetched rows and have no in-list row at
+  all — via a **sticky bottom overlay** reading `You — #N` (or _Not yet ranked_ when they have no
+  qualifying points in the active scope/category). The overlay hides the moment their real row is on
+  screen, reflects the active scope/category, and is never shown to signed-out visitors. Web: a
+  `fixed` bottom bar toggled by an `IntersectionObserver` on the in-list row; mobile: an `absolute`
+  bottom overlay toggled by the `FlatList` viewability callback, with extra list bottom padding so
+  the last rows clear it.
 - **Empty state:** `No contributors yet.`
 
 ### Possible-points preview

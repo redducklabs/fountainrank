@@ -1,7 +1,7 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -11,6 +11,7 @@ import {
   StyleSheet,
   Text,
   View,
+  type ViewToken,
 } from "react-native";
 
 import { unwrap } from "../../lib/api";
@@ -60,7 +61,16 @@ export default function LeaderboardScreen() {
 
   const rows = query.data?.rows ?? [];
   const you = query.data?.you ?? null;
-  const youInList = rows.some((r) => r.is_you);
+
+  // Keep the caller's rank visible while scrolling: track whether their in-list row is on screen
+  // and, when it isn't (or they rank below the fetched rows and have no in-list row at all), show a
+  // sticky bottom overlay (#147, #117). The handler and config must be ref-stable — FlatList
+  // rejects changing them per render.
+  const [youRowVisible, setYouRowVisible] = useState(false);
+  const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
+    setYouRowVisible(viewableItems.some((token) => (token.item as ContributorRow).is_you));
+  }).current;
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
 
   return (
     <View style={styles.fill}>
@@ -76,6 +86,8 @@ export default function LeaderboardScreen() {
         keyExtractor={(r) => `${r.rank}-${r.display_name}`}
         renderItem={({ item }) => <Row row={item} sort={sort} />}
         contentContainerStyle={styles.listContent}
+        onViewableItemsChanged={onViewableItemsChanged}
+        viewabilityConfig={viewabilityConfig}
         refreshControl={
           <RefreshControl
             refreshing={query.isRefetching}
@@ -92,8 +104,12 @@ export default function LeaderboardScreen() {
             <Text style={styles.empty}>No contributors yet.</Text>
           )
         }
-        ListFooterComponent={you && !youInList ? <YouRow you={you} sort={sort} /> : null}
       />
+      {you && !youRowVisible ? (
+        <View style={styles.stickyYou}>
+          <YouRow you={you} sort={sort} />
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -206,7 +222,7 @@ function Row({ row, sort }: { row: ContributorRow; sort: LeaderboardSort }) {
 function YouRow({ you, sort }: { you: YourStanding; sort: LeaderboardSort }) {
   const ranked = you.rank != null;
   return (
-    <View style={[styles.row, styles.rowYou, styles.youPinned]}>
+    <View style={[styles.row, styles.rowYou]}>
       <Text style={[styles.rank, styles.rankYou]}>{ranked ? you.rank : "—"}</Text>
       <Text style={styles.name}>You{ranked ? "" : "  (not yet ranked)"}</Text>
       <Metric
@@ -259,7 +275,8 @@ const styles = StyleSheet.create({
   chipActive: { backgroundColor: colors.brandBlue, borderColor: colors.brandBlue },
   chipText: { ...typography.meta, color: colors.text },
   chipTextActive: { color: colors.onBrand },
-  listContent: { paddingBottom: spacing.xl },
+  // Extra bottom room so the last rows can scroll clear of the sticky "You" overlay.
+  listContent: { paddingBottom: spacing.xl * 2 + spacing.md },
   loading: { marginTop: spacing.xl },
   empty: {
     ...typography.body,
@@ -277,7 +294,22 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
   },
   rowYou: { backgroundColor: "#EAF1FF" },
-  youPinned: { borderTopWidth: 2, borderTopColor: colors.brandBlue, borderBottomWidth: 0 },
+  // Sticky overlay pinned to the bottom of the screen (above the tab bar) that keeps the caller's
+  // rank visible while their real row is scrolled out of view (#147).
+  stickyYou: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: colors.background,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 8,
+  },
   rank: {
     ...typography.body,
     fontWeight: "700",
