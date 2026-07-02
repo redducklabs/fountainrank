@@ -28,6 +28,14 @@ describe("sitemap", () => {
   it("does not expose auth-gated routes", () => {
     expect(urls.some((url) => url.includes("/account") || url.includes("/admin"))).toBe(false);
   });
+
+  it("dates the static legal pages and omits lastModified for data-driven pages", () => {
+    const entries = sitemap();
+    const find = (suffix: string) => entries.find((entry) => entry.url.endsWith(suffix));
+    expect(find("/privacy")?.lastModified).toEqual(new Date("2026-06-30"));
+    expect(find("/terms")?.lastModified).toEqual(new Date("2026-06-19"));
+    expect(find("/leaderboard")?.lastModified).toBeUndefined();
+  });
 });
 
 describe("robots", () => {
