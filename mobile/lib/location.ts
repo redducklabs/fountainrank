@@ -68,6 +68,50 @@ export function pickCoords(pos: RawPosition): Coords {
 export type PermissionResult = { status: string };
 export type RequestPermission = () => Promise<PermissionResult>;
 export type GetCurrentPosition = () => Promise<RawPosition>;
+/** Last-known fix lookup - resolves `null` when the platform has no cached fix. */
+export type GetLastKnownPosition = () => Promise<RawPosition | null>;
+
+/**
+ * How long a single current-position fetch may run before we fall back to the
+ * last-known fix (spec §3.4). expo-location's `getCurrentPositionAsync` has no
+ * timeout option and can take several seconds - or never resolve - when a fresh
+ * fix can't be acquired.
+ */
+export const CURRENT_POSITION_TIMEOUT_MS = 8000;
+
+/**
+ * Resolve a current position WITHOUT ever hanging. `getCurrentPositionAsync` can
+ * stall indefinitely (no timeout option; see Expo's own docs), which is exactly
+ * what left the locate button dead after the §3.4 change: its `onPress` awaited
+ * that fetch and only recentered on success, so a slow/stalled fetch produced a
+ * silent no-op (and, because the in-flight guard only clears once the promise
+ * settles, bricked every later press too). Here we race the fetch against
+ * `timeoutMs` and, if it is too slow or rejects, fall back to the last-known fix so
+ * a press still yields a usable position. Throws only when neither a fresh nor a
+ * last-known fix is available - `fetchForegroundPosition` maps that to
+ * `{ kind: "failed" }`. Both inputs are swallowed on rejection so a late rejection
+ * can't surface as an unhandled promise rejection. Never logs coordinates.
+ */
+export async function resolveCurrentPosition(
+  getCurrentPosition: GetCurrentPosition,
+  getLastKnownPosition: GetLastKnownPosition,
+  timeoutMs: number,
+): Promise<RawPosition> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const current = getCurrentPosition().catch(() => null);
+  const timeout = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), timeoutMs);
+  });
+  try {
+    const fix = await Promise.race([current, timeout]);
+    if (fix) return fix;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+  const lastKnown = await getLastKnownPosition().catch(() => null);
+  if (lastKnown) return lastKnown;
+  throw new Error("current position unavailable");
+}
 
 export type FetchOutcome =
   | { kind: "granted"; coords: Coords }
