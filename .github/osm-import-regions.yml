@@ -32,6 +32,269 @@ regions:
     source: pbf
     status: active
 
+  # United States — per-state/per-territory PBF scopes. These complete US coverage without using
+  # the overlapping north-america/us aggregate, preserving the one-owner rule.
+  - key: north-america/us/alabama
+    scope_id: geofabrik:us/alabama
+    dataset: geofabrik:us/alabama
+    source: pbf
+    status: active
+  - key: north-america/us/alaska
+    scope_id: geofabrik:us/alaska
+    dataset: geofabrik:us/alaska
+    source: pbf
+    status: active
+  - key: north-america/us/arizona
+    scope_id: geofabrik:us/arizona
+    dataset: geofabrik:us/arizona
+    source: pbf
+    status: active
+  - key: north-america/us/arkansas
+    scope_id: geofabrik:us/arkansas
+    dataset: geofabrik:us/arkansas
+    source: pbf
+    status: active
+  - key: north-america/us/colorado
+    scope_id: geofabrik:us/colorado
+    dataset: geofabrik:us/colorado
+    source: pbf
+    status: active
+  - key: north-america/us/connecticut
+    scope_id: geofabrik:us/connecticut
+    dataset: geofabrik:us/connecticut
+    source: pbf
+    status: active
+  - key: north-america/us/delaware
+    scope_id: geofabrik:us/delaware
+    dataset: geofabrik:us/delaware
+    source: pbf
+    status: active
+  - key: north-america/us/district-of-columbia
+    scope_id: geofabrik:us/district-of-columbia
+    dataset: geofabrik:us/district-of-columbia
+    source: pbf
+    status: active
+  - key: north-america/us/florida
+    scope_id: geofabrik:us/florida
+    dataset: geofabrik:us/florida
+    source: pbf
+    status: active
+  - key: north-america/us/georgia
+    scope_id: geofabrik:us/georgia
+    dataset: geofabrik:us/georgia
+    source: pbf
+    status: active
+  - key: north-america/us/hawaii
+    scope_id: geofabrik:us/hawaii
+    dataset: geofabrik:us/hawaii
+    source: pbf
+    status: active
+  - key: north-america/us/idaho
+    scope_id: geofabrik:us/idaho
+    dataset: geofabrik:us/idaho
+    source: pbf
+    status: active
+  - key: north-america/us/illinois
+    scope_id: geofabrik:us/illinois
+    dataset: geofabrik:us/illinois
+    source: pbf
+    status: active
+  - key: north-america/us/indiana
+    scope_id: geofabrik:us/indiana
+    dataset: geofabrik:us/indiana
+    source: pbf
+    status: active
+  - key: north-america/us/iowa
+    scope_id: geofabrik:us/iowa
+    dataset: geofabrik:us/iowa
+    source: pbf
+    status: active
+  - key: north-america/us/kansas
+    scope_id: geofabrik:us/kansas
+    dataset: geofabrik:us/kansas
+    source: pbf
+    status: active
+  - key: north-america/us/kentucky
+    scope_id: geofabrik:us/kentucky
+    dataset: geofabrik:us/kentucky
+    source: pbf
+    status: active
+  - key: north-america/us/louisiana
+    scope_id: geofabrik:us/louisiana
+    dataset: geofabrik:us/louisiana
+    source: pbf
+    status: active
+  - key: north-america/us/maine
+    scope_id: geofabrik:us/maine
+    dataset: geofabrik:us/maine
+    source: pbf
+    status: active
+  - key: north-america/us/maryland
+    scope_id: geofabrik:us/maryland
+    dataset: geofabrik:us/maryland
+    source: pbf
+    status: active
+  - key: north-america/us/massachusetts
+    scope_id: geofabrik:us/massachusetts
+    dataset: geofabrik:us/massachusetts
+    source: pbf
+    status: active
+  - key: north-america/us/michigan
+    scope_id: geofabrik:us/michigan
+    dataset: geofabrik:us/michigan
+    source: pbf
+    status: active
+  - key: north-america/us/minnesota
+    scope_id: geofabrik:us/minnesota
+    dataset: geofabrik:us/minnesota
+    source: pbf
+    status: active
+  - key: north-america/us/mississippi
+    scope_id: geofabrik:us/mississippi
+    dataset: geofabrik:us/mississippi
+    source: pbf
+    status: active
+  - key: north-america/us/missouri
+    scope_id: geofabrik:us/missouri
+    dataset: geofabrik:us/missouri
+    source: pbf
+    status: active
+  - key: north-america/us/montana
+    scope_id: geofabrik:us/montana
+    dataset: geofabrik:us/montana
+    source: pbf
+    status: active
+  - key: north-america/us/nebraska
+    scope_id: geofabrik:us/nebraska
+    dataset: geofabrik:us/nebraska
+    source: pbf
+    status: active
+  - key: north-america/us/nevada
+    scope_id: geofabrik:us/nevada
+    dataset: geofabrik:us/nevada
+    source: pbf
+    status: active
+  - key: north-america/us/new-hampshire
+    scope_id: geofabrik:us/new-hampshire
+    dataset: geofabrik:us/new-hampshire
+    source: pbf
+    status: active
+  - key: north-america/us/new-jersey
+    scope_id: geofabrik:us/new-jersey
+    dataset: geofabrik:us/new-jersey
+    source: pbf
+    status: active
+  - key: north-america/us/new-mexico
+    scope_id: geofabrik:us/new-mexico
+    dataset: geofabrik:us/new-mexico
+    source: pbf
+    status: active
+  - key: north-america/us/new-york
+    scope_id: geofabrik:us/new-york
+    dataset: geofabrik:us/new-york
+    source: pbf
+    status: active
+  - key: north-america/us/north-carolina
+    scope_id: geofabrik:us/north-carolina
+    dataset: geofabrik:us/north-carolina
+    source: pbf
+    status: active
+  - key: north-america/us/north-dakota
+    scope_id: geofabrik:us/north-dakota
+    dataset: geofabrik:us/north-dakota
+    source: pbf
+    status: active
+  - key: north-america/us/ohio
+    scope_id: geofabrik:us/ohio
+    dataset: geofabrik:us/ohio
+    source: pbf
+    status: active
+  - key: north-america/us/oklahoma
+    scope_id: geofabrik:us/oklahoma
+    dataset: geofabrik:us/oklahoma
+    source: pbf
+    status: active
+  - key: north-america/us/oregon
+    scope_id: geofabrik:us/oregon
+    dataset: geofabrik:us/oregon
+    source: pbf
+    status: active
+  - key: north-america/us/pennsylvania
+    scope_id: geofabrik:us/pennsylvania
+    dataset: geofabrik:us/pennsylvania
+    source: pbf
+    status: active
+  - key: north-america/us/puerto-rico
+    scope_id: geofabrik:us/puerto-rico
+    dataset: geofabrik:us/puerto-rico
+    source: pbf
+    status: active
+  - key: north-america/us/rhode-island
+    scope_id: geofabrik:us/rhode-island
+    dataset: geofabrik:us/rhode-island
+    source: pbf
+    status: active
+  - key: north-america/us/south-carolina
+    scope_id: geofabrik:us/south-carolina
+    dataset: geofabrik:us/south-carolina
+    source: pbf
+    status: active
+  - key: north-america/us/south-dakota
+    scope_id: geofabrik:us/south-dakota
+    dataset: geofabrik:us/south-dakota
+    source: pbf
+    status: active
+  - key: north-america/us/tennessee
+    scope_id: geofabrik:us/tennessee
+    dataset: geofabrik:us/tennessee
+    source: pbf
+    status: active
+  - key: north-america/us/texas
+    scope_id: geofabrik:us/texas
+    dataset: geofabrik:us/texas
+    source: pbf
+    status: active
+  - key: north-america/us/us-virgin-islands
+    scope_id: geofabrik:us/us-virgin-islands
+    dataset: geofabrik:us/us-virgin-islands
+    source: pbf
+    status: active
+  - key: north-america/us/utah
+    scope_id: geofabrik:us/utah
+    dataset: geofabrik:us/utah
+    source: pbf
+    status: active
+  - key: north-america/us/vermont
+    scope_id: geofabrik:us/vermont
+    dataset: geofabrik:us/vermont
+    source: pbf
+    status: active
+  - key: north-america/us/virginia
+    scope_id: geofabrik:us/virginia
+    dataset: geofabrik:us/virginia
+    source: pbf
+    status: active
+  - key: north-america/us/washington
+    scope_id: geofabrik:us/washington
+    dataset: geofabrik:us/washington
+    source: pbf
+    status: active
+  - key: north-america/us/west-virginia
+    scope_id: geofabrik:us/west-virginia
+    dataset: geofabrik:us/west-virginia
+    source: pbf
+    status: active
+  - key: north-america/us/wisconsin
+    scope_id: geofabrik:us/wisconsin
+    dataset: geofabrik:us/wisconsin
+    source: pbf
+    status: active
+  - key: north-america/us/wyoming
+    scope_id: geofabrik:us/wyoming
+    dataset: geofabrik:us/wyoming
+    source: pbf
+    status: active
+
   # ---- #131 worldwide rollout (v1): per-country/region scopes across all six continents,
   # smaller-first. Paths HEAD-verified against download.geofabrik.de. Antimeridian-crossing
   # extracts (Fiji, NZ Chathams, far-east Russia) are intentionally excluded — the planar

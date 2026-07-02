@@ -72,6 +72,24 @@ the registry (it can no longer be dispatched). The first California PBF apply **
 automatically — the provenance ids (`osm:<type>:<id>`) match, so their `scope_id` is rewritten to
 `geofabrik:us/california`. After that, refresh San Diego only via the California scope.
 
+### United States coverage
+
+US coverage uses the Geofabrik per-state/per-territory extracts under `north-america/us/*`, not the
+overlapping `north-america/us` aggregate. The registry includes all 50 states plus District of
+Columbia, Puerto Rico, and the US Virgin Islands as independent `source: pbf` scopes. Dispatch them
+state-by-state with the same dry-run → anomaly-check → apply protocol:
+
+```
+gh workflow run osm-import-pbf.yml \
+  -f geofabrik_path=north-america/us/texas \
+  -f scope_id=geofabrik:us/texas \
+  -f dataset=geofabrik:us/texas \
+  -f label="Texas" \
+  -f dry_run=true
+```
+
+Then re-dispatch the same inputs with `-f dry_run=false` only after the dry-run shape is plausible.
+
 ### Worldwide rollout (#131)
 
 Roll the pipeline out to the world by importing **per-country/region** scopes, **smaller-first**.
