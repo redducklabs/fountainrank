@@ -1,8 +1,10 @@
 # Rankings + SEO bug-fixes, mobile store deploy, SEO-pages spec — handoff (2026-07-02)
 
 **Source:** the session that pulled a batch of filed issues off the backlog, shipped
-them as three PRs, **deployed both mobile apps** to internal testing, and wrote a
-design spec for the larger SEO-pages work so a fresh session can pick it up.
+them as three PRs, **deployed both mobile apps** to internal testing, and produced a
+**Codex-approved spec + implementation plan** for the larger SEO-pages work (#127) so a
+fresh session can pick it up. **Implementation of #127 was intentionally not started** — the
+deliverable is the approved plan.
 
 ---
 
@@ -14,7 +16,8 @@ design spec for the larger SEO-pages work so a fresh session can pick it up.
 | **#153** | #125, #126 | `142fff3` | **Web SEO discovery** — `app/robots.ts` (`/robots.txt`), `app/sitemap.ts` (`/sitemap.xml`, static pages only), `middleware.ts` 308 `www→apex`, self-referential `alternates.canonical` on public pages, `lib/seo/site.ts`. |
 | **#154** | #146, #147 | `d51fea7` | **Rankings polish** — crown on the rank-1 (category-leader) row; sticky "You" overlay when the caller's row is off-screen. Web (IntersectionObserver) + mobile (FlatList viewability). |
 
-Docs commit `de42051`: the SEO-pages spec (see §4).
+Docs (direct to `main`): the **Codex-approved** SEO-pages spec + plan for #127 (`8d6e910`;
+initial draft `de42051`) — full detail in the #127 section below.
 
 ## 📱 Mobile store deploy — DONE this session
 
