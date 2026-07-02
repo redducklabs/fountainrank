@@ -19,7 +19,9 @@ describe("sitemap", () => {
 
   it("uses the canonical apex origin for every entry", () => {
     for (const url of urls) {
-      expect(url.startsWith("https://fountainrank.com")).toBe(true);
+      // Compare the parsed origin exactly (not a string prefix) so a host like
+      // fountainrank.com.evil.com can't satisfy the check.
+      expect(new URL(url).origin).toBe("https://fountainrank.com");
     }
   });
 
