@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { LeaderboardControls } from "../../components/leaderboard/LeaderboardControls";
 import { LeaderboardRows } from "../../components/leaderboard/LeaderboardRows";
@@ -7,6 +8,12 @@ import { getViewerAccessToken } from "../../lib/server/api";
 import { log } from "../../lib/server/log";
 
 export const dynamic = "force-dynamic";
+
+// The rankings page is a public organic-search entry point; canonicalize it to
+// the sort/scope-agnostic URL so query-string variants don't split signals (#126).
+export const metadata: Metadata = {
+  alternates: { canonical: "/leaderboard" },
+};
 const shell = "mx-auto min-h-dvh max-w-2xl bg-white px-6 py-10";
 
 export default async function LeaderboardPage({
