@@ -112,4 +112,23 @@ describe("LeaderboardRows", () => {
     emitIntersection(true);
     expect(screen.getAllByText("You")).toHaveLength(1);
   });
+
+  it("shows the overlay after switching to a board where the caller has no in-list row (#147)", () => {
+    const you: YourStanding = { rank: 5, points: 30, category_count: null };
+    const { rerender } = render(
+      <LeaderboardRows
+        rows={[row({ rank: 5, display_name: "Me", is_you: true })]}
+        you={you}
+        sort="total"
+      />,
+    );
+    // In-list and assumed visible → no overlay.
+    expect(screen.getAllByText("You")).toHaveLength(1);
+    // Switch to a board where the caller ranks below the fetched rows (no is_you row). Even though
+    // the previous board's row was "visible", the overlay must show because there is no in-list row.
+    rerender(
+      <LeaderboardRows rows={[row({ rank: 1, display_name: "Alice" })]} you={you} sort="ratings" />,
+    );
+    expect(screen.getByText("You")).toBeInTheDocument();
+  });
 });

@@ -1,7 +1,7 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -65,11 +65,12 @@ export default function LeaderboardScreen() {
 
   const rows = query.data?.rows ?? [];
   const you = query.data?.you ?? null;
+  const youInList = rows.some((r) => r.is_you);
 
   // Keep the caller's rank visible while scrolling: track whether their in-list row is on screen
   // and, when it isn't (or they rank below the fetched rows and have no in-list row at all), show a
-  // sticky bottom overlay (#147, #117). The handler and config must be ref-stable — FlatList
-  // rejects changing them per render.
+  // sticky bottom overlay (#147, #117). The handler must be ref-stable — FlatList rejects changing
+  // it per render.
   const [youRowVisible, setYouRowVisible] = useState(false);
   const onViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: ViewToken[] }) => {
@@ -77,6 +78,13 @@ export default function LeaderboardScreen() {
     },
     [],
   );
+  // Reset visibility on a board switch (scope/sort/location) so a previous board's on-screen row
+  // can't suppress — nor an off-screen one duplicate — the new board's standing before the next
+  // viewability callback fires. The `!youInList` guard below makes the no-in-list case correct
+  // regardless of viewability timing.
+  useEffect(() => {
+    setYouRowVisible(false);
+  }, [scope, sort, center]);
 
   return (
     <View style={styles.fill}>
@@ -111,7 +119,7 @@ export default function LeaderboardScreen() {
           )
         }
       />
-      {you && !youRowVisible ? (
+      {you && (!youInList || !youRowVisible) ? (
         <View style={styles.stickyYou}>
           <YouRow you={you} sort={sort} />
         </View>

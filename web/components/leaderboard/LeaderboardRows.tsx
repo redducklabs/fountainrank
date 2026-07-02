@@ -57,10 +57,11 @@ export function LeaderboardRows({
           ))}
         </ol>
       )}
-      {you && !youRowVisible ? (
+      {you && (!youInList || !youRowVisible) ? (
         <div
-          className="fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white/95 shadow-[0_-2px_8px_rgba(0,0,0,0.06)] backdrop-blur"
+          role="region"
           aria-label="Your current ranking"
+          className="fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white/95 shadow-[0_-2px_8px_rgba(0,0,0,0.06)] backdrop-blur"
         >
           <div className="mx-auto max-w-2xl px-6 py-2">
             <YouRow you={you} sort={sort} />
