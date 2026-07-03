@@ -35,7 +35,8 @@ async def clean_db(engine):
                 "fountain_attribute_consensus, attribute_observations, condition_reports, "
                 "fountain_notes, "
                 "fountain_import_events, osm_fountain_import_candidates, "
-                "fountain_provenances, osm_fountain_import_runs, ratings, fountains, users "
+                "fountain_provenances, osm_fountain_import_runs, ratings, fountains, "
+                "place_boundaries, users "
                 "RESTART IDENTITY CASCADE"
             )
         )
