@@ -3,7 +3,7 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import require_admin
@@ -11,6 +11,8 @@ from app.contributions import reverse_contributions
 from app.db import get_session
 from app.display import public_display_name
 from app.geo import point_geography
+from app.locks import ADD_FOUNTAIN_LOCK_KEY
+from app.membership import recompute_fountain_membership, recompute_place_counts
 from app.models import Fountain, FountainNote, User
 from app.ranking import recompute_fountain_ranking
 from app.routers.fountains import serialize_fountain_detail
@@ -84,6 +86,11 @@ async def admin_patch_fountain(
     session: AsyncSession = Depends(get_session),
     admin: User = Depends(require_admin),
 ) -> AdminFountainDetail:
+    # Serialize this mutation's precomputed-membership recompute with concurrent adds / imports /
+    # full refreshes (they all share the denormalized place counts) — the same advisory lock
+    # POST /fountains and the OSM import take. Acquire it BEFORE the row lock so lock order is
+    # consistent (advisory first, then row) and no deadlock is possible (#127 Slice 1d).
+    await session.execute(select(func.pg_advisory_xact_lock(ADD_FOUNTAIN_LOCK_KEY)))
     fountain = (
         await session.execute(select(Fountain).where(Fountain.id == fountain_id).with_for_update())
     ).scalar_one_or_none()
@@ -141,6 +148,12 @@ async def admin_patch_fountain(
 
     if recompute_ranking:
         await recompute_fountain_ranking(session, fountain.id)
+    # A move (location) or a hide/unhide changes the precomputed membership and/or the non-hidden
+    # fountain_count, so re-derive them for this fountain (and re-canonicalize its slug group)
+    # before commit — the public place counts must not go stale (#127 Slice 1d).
+    if "location" in changes or "is_hidden" in changes:
+        await session.flush()
+        await recompute_fountain_membership(session, fountain.id)
     await session.commit()
     await session.refresh(fountain)
 
@@ -166,17 +179,25 @@ async def admin_delete_fountain(
     session: AsyncSession = Depends(get_session),
     admin: User = Depends(require_admin),
 ) -> Response:
+    # Advisory lock (see admin_patch_fountain): serialize the place-count recompute with concurrent
+    # adds / imports / full refreshes; acquire before the row lock so lock order is consistent.
+    await session.execute(select(func.pg_advisory_xact_lock(ADD_FOUNTAIN_LOCK_KEY)))
     fountain = (
         await session.execute(select(Fountain).where(Fountain.id == fountain_id).with_for_update())
     ).scalar_one_or_none()
     if fountain is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="fountain not found")
+    # Capture the deleted fountain's places so their fountain_count (and canonical winner) can be
+    # corrected after the row is gone (#127 Slice 1d).
+    old_place_ids = [fountain.country_place_id, fountain.city_place_id]
     # Reverse every contribution tied to this fountain BEFORE deleting it (#119 anti-gaming):
     # removing the content must not let its points persist on the leaderboard. Must run first
     # because contribution_events.fountain_id is ON DELETE SET NULL — once the fountain row is
     # gone the events can no longer be found by fountain_id.
     reversed_events = await reverse_contributions(session, fountain_id)
     await session.delete(fountain)
+    await session.flush()  # the row must be gone before its old places are recounted
+    await recompute_place_counts(session, old_place_ids)
     await session.commit()
     logger.info(
         "admin fountain mutation",

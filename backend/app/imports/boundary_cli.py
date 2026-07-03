@@ -29,6 +29,7 @@ from app.imports.boundary_load import (
     log_boundary_load_complete,
 )
 from app.logging_config import configure_logging
+from app.membership import refresh_all_memberships
 
 log = logging.getLogger(__name__)
 
@@ -72,11 +73,17 @@ async def run_boundary_load(
     release_id: str | None = None,
     scope_id: str | None = None,
     batch_size: int = _BATCH_SIZE,
+    refresh_membership: bool = True,
 ) -> BoundaryLoadSummary:
     """Stream a GeoJSONSeq ``division_area`` file into ``place_boundaries`` in committed batches.
 
     Reads one line at a time so a country-scale file (US ~35k full-resolution polygons) never has to
     be fully materialized — the previous whole-file ``json.load`` OOM-killed the loader pod.
+
+    After a successful non-dry-run load, re-derives precomputed fountain membership + counts +
+    ``is_canonical`` / ``parent_id`` over the whole DB (#127 Slice 1d — "deterministic refresh on
+    boundary load"), unless ``refresh_membership`` is False (e.g. loading several countries then
+    refreshing once via ``app.imports.membership_cli``). Skipped on dry-run.
     """
     skip_counts: dict[str, int] = {}
     summary = BoundaryLoadSummary(dry_run=dry_run)
@@ -94,6 +101,11 @@ async def run_boundary_load(
                     await apply_boundary_feature(session, feature, dry_run=dry_run, summary=summary)
                 # Commit per batch: bounds transaction size; the idempotent upsert makes a partially
                 # committed load safe to re-run. A dry-run's SQL writes nothing, so this is a no-op.
+                await session.commit()
+            if refresh_membership and not dry_run:
+                # All boundaries are now committed — re-derive fountain membership in one set-based
+                # pass and commit it as its own transaction (its own structured summary log).
+                await refresh_all_memberships(session)
                 await session.commit()
     finally:
         await asyncio.to_thread(fh.close)
@@ -115,6 +127,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--overture-release-id", default=None)
     p.add_argument("--scope-id", default=None)
     p.add_argument("--dry-run", action="store_true")
+    # Opt out of the post-load membership refresh (#127 Slice 1d) — e.g. load several countries
+    # then refresh once with app.imports.membership_cli. Default: refresh after every non-dry load.
+    p.add_argument("--skip-membership-refresh", action="store_true")
     a = p.parse_args(argv)
     summary = asyncio.run(
         run_boundary_load(
@@ -122,6 +137,7 @@ def main(argv: list[str] | None = None) -> int:
             dry_run=a.dry_run,
             release_id=a.overture_release_id,
             scope_id=a.scope_id,
+            refresh_membership=not a.skip_membership_refresh,
         )
     )
     # Diagnostics already went through structured logging (run_boundary_load emits the summary).

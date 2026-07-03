@@ -22,6 +22,7 @@ from app.config import get_settings
 from app.geo import point_geography
 from app.imports.osm import OsmCandidate
 from app.locks import ADD_FOUNTAIN_LOCK_KEY
+from app.membership import refresh_all_memberships
 from app.models import (
     Fountain,
     FountainImportEvent,
@@ -141,6 +142,12 @@ async def merge_candidates(
             now=now,
             summary=summary,
         )
+        # An import doesn't change boundaries, but its inserts/moves change which fountains fall
+        # in which place. Re-derive precomputed membership + counts (+ is_canonical/parent_id,
+        # cheaply idempotent) once, set-based, over the whole DB (#127 Slice 1d). flush() first so
+        # the set-based UPDATE sees this run's freshly inserted/moved fountain locations.
+        await session.flush()
+        await refresh_all_memberships(session)
 
     run.status = "dry_run" if dry_run else "completed"
     run.finished_at = datetime.now(tz=UTC)
@@ -483,5 +490,10 @@ async def rollback_run(session: AsyncSession, run_id: uuid.UUID) -> int:
                     prov.last_import_run_id = uuid.UUID(lr)
                 affected += 1
     await session.flush()
+    if affected:
+        # A rollback hides inserted fountains and reverts moved ones — both change which fountains
+        # count and where they fall. Re-derive membership + counts so fountain_count never keeps
+        # counting a hidden rolled-back row or a reverted location (#127 Slice 1d).
+        await refresh_all_memberships(session)
     log.info("osm_import_run_rolled_back", extra={"run_id": str(run_id), "affected": affected})
     return affected
