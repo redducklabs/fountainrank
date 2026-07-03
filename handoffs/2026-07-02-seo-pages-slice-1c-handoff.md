@@ -95,9 +95,25 @@ Cut tag **`v0.12.0`** on `ea364b7`, firing both pipelines (the coordinated-relea
   Android built + submitted to Google Play internal. Marketing version stays `0.1.0`; EAS
   auto-increments the build number (`eas.json` `appVersionSource: remote` + `production.autoIncrement`).
 
+## 🌊 Boundary load DONE + streaming OOM fix (2026-07-03)
+- **First real US dispatch OOM-killed the loader pod** (exit 137): the Slice-1b `boundary_cli` did
+  `json.load()` on the whole file + built all ~35k `BoundaryFeature`s in memory. **Fixed in PR #159**
+  (squash `b84599e`): the workflow now emits **GeoJSONSeq** and the CLI **streams** it in `to_thread`
+  batches, upserting + committing per batch (1000). CI green (Codex APPROVED); **merged over the
+  known-red `mobile-doctor`** (see below) per the documented owner-decision process. Backend
+  redeployed (manual `deploy.yml` dispatch) so the pod runs the streaming loader.
+- **Loaded to prod `place_boundaries`:** `overture:lu` = **114** rows; `overture:us` = **35,016** rows
+  (35,017 fetched, 1 `unsluggable_name` skip), 0 invalid. Re-dispatch is idempotent (upsert on
+  `overture_id`). To load more countries: add a row to `.github/boundary-source-regions.yml` (PR) then
+  dispatch.
+- **`mobile-doctor` is a known-red Expo time-drift** (unrelated): Expo published SDK-56 patches newer
+  than the repo's `minimumReleaseAge` window, so expo-doctor flags 5 packages. Adopting them is
+  blocked by the supply-chain gate; per documented process it **self-resolves as they age** (~a day),
+  and merging over it is an owner decision. (`minimumReleaseAge*` config stays LOCAL-only; PR #160,
+  which tried to bake it into git, was closed.)
+
 ## 📋 Carried-forward owner actions (still open, owner-gated)
-- [ ] **Dispatch the boundary load** (this slice) — backend is now deployed (v0.12.0), so it's ready:
-  `overture:lu` dry-run → `overture:us` dry-run → `dry_run=false`.
+- [x] **Dispatch the boundary load** — DONE (LU 114 + US 35,016 in prod; see above).
 - [ ] **Verify the "Add" FAB on-device (iOS)** — the `v0.12.0` TestFlight build includes the fix
   (PR #157); check once Apple finishes processing. Paste the run-summary "What to Test" notes into
   App Store Connect (EAS non-Enterprise plan doesn't set them automatically).
