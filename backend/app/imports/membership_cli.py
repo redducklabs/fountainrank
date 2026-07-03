@@ -9,11 +9,14 @@ the cases a load doesn't cover:
 - re-deriving membership WITHOUT re-fetching boundaries from S3 (e.g. after loading several
   countries with ``--skip-membership-refresh``).
 
-It re-derives everything :func:`app.membership.refresh_all_memberships` owns — per-fountain
+It re-derives everything :func:`app.membership.refresh_all_memberships` owns — the
+``place_boundary_cells`` point-in-polygon index (rebuilt from ``place_boundaries``), per-fountain
 country/city assignment, denormalized ``fountain_count``, ``is_canonical`` per ``(country_code,
-slug)``, and containment-derived ``parent_id`` — in one set-based transaction, then prints one
-machine-readable JSON summary line (the CLI result contract). Like ``boundary_cli`` it is the loader
-entry a CI workflow ``kubectl exec``s into the running backend pod; it takes no input file.
+slug)``, and ``parent_id`` (city -> country by ``country_code``) — in one set-based transaction,
+then prints one machine-readable JSON summary line (the CLI result contract). Like ``boundary_cli``
+it is the loader entry a CI workflow ``kubectl exec``s into the running backend pod; it takes no
+input file. This is the path to run the one-time backfill after the cell perf fix ships (it
+populates the freshly-migrated, empty ``place_boundary_cells`` and assigns every fountain).
 
 Usage:
   python -m app.imports.membership_cli

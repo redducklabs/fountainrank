@@ -25,10 +25,19 @@ Two entry points share the ladder SQL:
 - :func:`recompute_place_counts` — count-only variant for the admin **delete** path (the fountain
   row is already gone, so there is nothing to re-assign): recomputes + re-canonicalizes exactly the
   given places' groups.
-- :func:`refresh_all_memberships` — the whole DB (boundary load + backfill). Re-assigns every
-  fountain, then recomputes ``fountain_count`` (all places), ``is_canonical`` (uses the fresh
-  counts), and ``parent_id`` (city -> country by containment). Set-based; one transaction (the
+- :func:`refresh_all_memberships` — the whole DB (boundary load + backfill). Optionally rebuilds
+  the ``place_boundary_cells`` point-in-polygon index (see below), then re-assigns every fountain,
+  recomputes ``fountain_count`` (all places), ``is_canonical`` (uses the fresh counts), and
+  ``parent_id`` (city -> country by matching ``country_code``). Set-based; one transaction (the
   caller commits).
+
+Point-in-polygon at country scale runs against :class:`~app.models.PlaceBoundaryCell` — every
+boundary broken into small ``ST_Subdivide`` cells — not the whole polygon: probing the ~136k-vertex
+US country polygon per fountain ran the backfill 40+ min, while the cell GiST index makes it ~7s
+(measured on prod). :func:`rebuild_place_boundary_cells` (re)builds that derivative from
+``place_boundaries``; ``refresh_all_memberships`` does it only when boundaries changed (boundary
+load / backfill), never on a plain OSM import (``rebuild_cells=False``). The single-fountain path
+reads the already-built cells (a user add does not change boundaries).
 
 ``parent_id`` changes only when **boundaries** change, so the single-fountain path skips it. But
 ``is_canonical`` tie-breaks on ``fountain_count`` (spec §4.3/§11.5), so ANY count-changing path
@@ -75,10 +84,43 @@ def _priority_case(col: str) -> str:
 # subtype identifiers — never user input — so string-building is injection-safe).
 _DEFAULT_ELIGIBLE_SQL = "ARRAY[" + ", ".join(f"'{s}'" for s in DEFAULT_ELIGIBLE_CITY_SUBTYPES) + "]"
 
+# Rebuild place_boundary_cells: break every boundary into small ST_Subdivide pieces so that a
+# point-in-polygon probe hits a GiST index of small cells instead of one giant polygon. The US
+# country polygon is ~136k vertices and its bbox covers every fountain, so the boundary GiST
+# prefilter pruned nothing and each of ~50k fountains ran an exact PIP against 136k vertices — the
+# country-scale backfill ran 40+ min. Via cells the same assignment is ~7s (measured on prod). 128
+# = max vertices per output piece (the canonical PostGIS point-in-huge-polygon subdivision size).
+# Cells are a rebuildable derivative of place_boundaries: TRUNCATE + full re-subdivide replaces them
+# wholesale whenever boundaries change (boundary load) or on the membership backfill. TRUNCATE is
+# transactional in PostgreSQL, so a rolled-back refresh leaves the prior cells intact.
+_TRUNCATE_CELLS_SQL = text("TRUNCATE place_boundary_cells")
+_REBUILD_CELLS_SQL = text(
+    """
+    INSERT INTO place_boundary_cells (id, place_id, geom)
+    SELECT gen_random_uuid(), pb.id, sub.geom
+    FROM place_boundaries pb
+    CROSS JOIN LATERAL ST_Subdivide(pb.boundary::geometry, 128) AS sub(geom)
+    """
+)
+# ANALYZE the freshly-rebuilt cells (standalone ANALYZE is allowed inside a transaction block).
+# TRUNCATE resets reltuples to 0 and the re-INSERTed rows are uncommitted, so without this the
+# planner still thinks the table is empty and would seq-scan it inside the per-fountain PIP LATERAL
+# — turning the ~7s cell scan back into a country-scale disaster. Fresh stats let the planner pick
+# the cell GiST index.
+_ANALYZE_CELLS_SQL = text("ANALYZE place_boundary_cells")
+_COUNT_CELLS_SQL = text("SELECT count(*) FROM place_boundary_cells")
+
 # Assign country_place_id + city_place_id for the fountains selected by the :fountain_id filter
-# (a NULL filter = all fountains). ST_Covers(boundary, location): the polygon covers the point.
-# The city LATERAL keys off the country match's country_code, so an unmatched point (no country
-# polygon) yields both NULL, and a covered-but-no-eligible-city point yields country-only.
+# (a NULL filter = all fountains). Point-in-polygon runs against place_boundary_cells (the
+# subdivided pieces), not the whole boundary: ST_Covers(c.geom, location::geometry) is a planar
+# (geometry-space) containment test — correct for lon/lat point-in-polygon and cheaper than
+# geography — resolved against a small cell via the cell GiST index, then joined back to the owning
+# place_boundaries row by place_id. The city LATERAL keys off the country match's country_code, so
+# an unmatched point (no country polygon) yields both NULL, and a covered-but-no-eligible-city
+# point yields country-only. Countries do not overlap, so the country match tie-breaks on
+# overture_id (deterministic) instead of ST_Area — dropping a needless ST_Area over the 136k-vertex
+# country polygon. The city tie-break keeps smallest-area-wins (city polygons are small, so
+# ST_Area is cheap) with overture_id as a final deterministic tie-break.
 _ASSIGN_SQL = text(
     f"""
     UPDATE fountains f
@@ -92,19 +134,23 @@ _ASSIGN_SQL = text(
         FROM fountains f2
         LEFT JOIN LATERAL (
             SELECT pb.id AS country_place_id, pb.country_code
-            FROM place_boundaries pb
-            WHERE pb.subtype = 'country' AND ST_Covers(pb.boundary, f2.location)
-            ORDER BY ST_Area(pb.boundary::geometry) ASC
+            FROM place_boundary_cells c
+            JOIN place_boundaries pb ON pb.id = c.place_id
+            WHERE pb.subtype = 'country'
+              AND ST_Covers(c.geom, f2.location::geometry)
+            ORDER BY pb.overture_id ASC
             LIMIT 1
         ) cc ON TRUE
         LEFT JOIN place_scope_config cfg ON cfg.country_code = cc.country_code
         LEFT JOIN LATERAL (
             SELECT pb.id AS city_place_id
-            FROM place_boundaries pb
+            FROM place_boundary_cells c
+            JOIN place_boundaries pb ON pb.id = c.place_id
             WHERE pb.country_code = cc.country_code
               AND pb.subtype = ANY(COALESCE(cfg.eligible_city_subtypes, {_DEFAULT_ELIGIBLE_SQL}))
-              AND ST_Covers(pb.boundary, f2.location)
-            ORDER BY ({_priority_case("pb.subtype")}) DESC, ST_Area(pb.boundary::geometry) ASC
+              AND ST_Covers(c.geom, f2.location::geometry)
+            ORDER BY ({_priority_case("pb.subtype")}) DESC, ST_Area(pb.boundary::geometry) ASC,
+                     pb.overture_id ASC
             LIMIT 1
         ) city ON TRUE
         WHERE (CAST(:fountain_id AS uuid) IS NULL OR f2.id = CAST(:fountain_id AS uuid))
@@ -218,9 +264,14 @@ _RECANON_SET_SQL = text(
     """
 )
 
-# Derive parent_id by containment (city -> country), NOT Overture's hierarchy (spec §11.4). A
-# representative interior point of the child (ST_PointOnSurface, guaranteed inside the child, hence
-# inside its country) is tested against country polygons. Country places themselves get NULL.
+# Derive parent_id (city -> country), NOT Overture's hierarchy (spec §11.4). A child's country is
+# the subtype='country' place with the SAME country_code (every boundary carries a country_code,
+# assigned per-country at load). This replaces the old ST_PointOnSurface + ST_Covers containment
+# probe against country polygons: it does no spatial op at all (so it never touches the 136k-vertex
+# country polygon), and it is more correct — no border-crossing edge cases where an interior point
+# lands just outside a coarse country outline. A non-country child whose country is not loaded gets
+# NULL (the LATERAL returns no row); country places themselves keep NULL. overture_id tie-breaks the
+# (should-be-unique) country-per-code for determinism. Country places are reset to NULL first.
 _PARENT_RESET_SQL = text(
     "UPDATE place_boundaries SET parent_id = NULL "
     "WHERE subtype = 'country' AND parent_id IS NOT NULL"
@@ -236,9 +287,8 @@ _PARENT_SET_SQL = text(
             SELECT pb.id
             FROM place_boundaries pb
             WHERE pb.subtype = 'country'
-              AND pb.id <> c.id
-              AND ST_Covers(pb.boundary, ST_PointOnSurface(c.boundary::geometry)::geography)
-            ORDER BY ST_Area(pb.boundary::geometry) ASC
+              AND pb.country_code = c.country_code
+            ORDER BY pb.overture_id ASC
             LIMIT 1
         ) ctry ON TRUE
         WHERE c.subtype <> 'country'
@@ -270,6 +320,29 @@ class MembershipRefreshSummary:
     country_only: int = 0
     unmatched: int = 0
     canonical_places: int = 0
+
+
+async def rebuild_place_boundary_cells(session: AsyncSession) -> int:
+    """Fully rebuild ``place_boundary_cells`` from ``place_boundaries`` (``ST_Subdivide`` every
+    boundary into small GiST-indexed pieces) and return the resulting cell count.
+
+    Cells are the point-in-polygon acceleration structure for membership assignment: probing a small
+    cell via its GiST index is fast regardless of the source polygon's vertex count, where probing
+    the whole 136k-vertex US country polygon per fountain was not (the country-scale backfill ran
+    40+ min). Call this whenever ``place_boundaries`` changes (a boundary load) or on the one-time
+    backfill; a plain OSM import / user add does NOT change boundaries and must NOT rebuild.
+
+    Does NOT commit — the caller owns the transaction and MUST hold the ``ADD_FOUNTAIN_LOCK``
+    advisory lock (``refresh_all_memberships`` takes it before calling this). The rebuild is a
+    ``TRUNCATE`` + full re-``INSERT``; ``TRUNCATE`` is transactional in PostgreSQL, so a rolled-back
+    refresh restores the prior cells.
+    """
+    await session.execute(_TRUNCATE_CELLS_SQL)
+    await session.execute(_REBUILD_CELLS_SQL)
+    await session.execute(_ANALYZE_CELLS_SQL)
+    cells = (await session.execute(_COUNT_CELLS_SQL)).scalar_one()
+    log.info("place_boundary_cells_rebuilt", extra={"cells": cells})
+    return cells
 
 
 async def recompute_place_counts(session: AsyncSession, place_ids) -> None:
@@ -337,20 +410,31 @@ async def recompute_fountain_membership(session: AsyncSession, fountain_id) -> N
     )
 
 
-async def refresh_all_memberships(session: AsyncSession) -> MembershipRefreshSummary:
+async def refresh_all_memberships(
+    session: AsyncSession, *, rebuild_cells: bool = True
+) -> MembershipRefreshSummary:
     """Re-derive the whole membership state: assignment, counts, canonical, parent (spec §11.5).
 
-    Ordered so each step sees the previous one's output: assign every fountain -> recompute all
-    counts -> select ``is_canonical`` (tie-breaks on the fresh counts) -> derive ``parent_id``
-    (independent). Set-based; one transaction — the caller commits. Run on every boundary load and
-    by the backfill CLI.
+    Ordered so each step sees the previous one's output: (rebuild point-in-polygon cells ->) assign
+    every fountain -> recompute all counts -> select ``is_canonical`` (tie-breaks on the fresh
+    counts) -> derive ``parent_id`` (independent). Set-based; one transaction — the caller commits.
+    Run on every boundary load and by the backfill CLI.
+
+    ``rebuild_cells`` (default ``True``) controls whether ``place_boundary_cells`` is re-derived
+    first. Rebuild when the boundaries themselves changed (boundary load) or for the one-time
+    backfill (cells may be empty/stale). A plain OSM import / rollback does NOT change boundaries —
+    only which fountains fall where — so those callers pass ``rebuild_cells=False`` to skip the
+    ~200s subdivide and just re-assign against the already-current cells.
 
     Takes the ``ADD_FOUNTAIN_LOCK`` advisory lock so a whole-DB refresh (boundary load / backfill /
     rollback) is serialized with concurrent adds + imports — otherwise a refresh could recount from
     a snapshot missing an in-flight add and commit a stale ``fountain_count`` over it. The lock is
-    re-entrant, so callers that already hold it (``merge``/``rollback``) are unaffected.
+    re-entrant, so callers that already hold it (``merge``/``rollback``) are unaffected; the same
+    lock also serializes the cell rebuild + PIP against those callers' cell reads.
     """
     await session.execute(select(func.pg_advisory_xact_lock(ADD_FOUNTAIN_LOCK_KEY)))
+    if rebuild_cells:
+        await rebuild_place_boundary_cells(session)
     await session.execute(_ASSIGN_SQL, {"fountain_id": None})
     await session.execute(_RECOUNT_ALL_SQL)
     await session.execute(_CANONICAL_RESET_SQL)
