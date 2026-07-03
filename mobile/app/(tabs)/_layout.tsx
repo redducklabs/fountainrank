@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
 import { Tabs, router, usePathname } from "expo-router";
 import { useEffect } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ProfileTabIcon } from "../../components/nav/ProfileTabIcon";
@@ -104,7 +104,6 @@ export default function TabsLayout() {
                 <View style={styles.addTabCircle}>
                   <Ionicons name="add" color={colors.brandBlue} size={30} />
                 </View>
-                <Text style={styles.addTabLabel}>Add</Text>
               </Pressable>
             ),
             tabBarIcon: ({ color, size }) => (
@@ -162,11 +161,5 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     shadowOffset: { width: 0, height: 3 },
     elevation: 5,
-  },
-  addTabLabel: {
-    marginTop: 2,
-    color: colors.brandBlue,
-    fontSize: 11,
-    fontWeight: "700",
   },
 });
