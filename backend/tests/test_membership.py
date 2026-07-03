@@ -14,12 +14,33 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 
+from app.config import Settings, get_settings
 from app.imports.membership_cli import run_membership_backfill
 from app.imports.merge import RunScope, merge_candidates, rollback_run
 from app.imports.osm import OsmCandidate
+from app.main import app
 from app.membership import recompute_fountain_membership, refresh_all_memberships
+
+_ADMIN_HEADERS = {"X-Dev-User": "admin-sub"}
+
+
+@pytest.fixture
+def _admin_settings():
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        dev_auth_enabled=True, admin_subjects=["admin-sub"]
+    )
+    yield
+    app.dependency_overrides.pop(get_settings, None)
+
+
+@pytest.fixture
+async def admin_client(_admin_settings):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        yield ac
 
 
 def _sq(x0: float, y0: float, x1: float, y1: float) -> str:
@@ -710,3 +731,160 @@ async def test_backfill_cli_assigns_committed(session):
     assert m.city_place_id == city
     assert await _count(session, city) == 1
     assert await _is_canonical(session, city) is True
+
+
+# --- Admin mutations keep membership + counts consistent (Codex PR review, finding 1) ---
+
+
+async def _us_and_city(session):
+    us = await _add_boundary(
+        session,
+        overture_id="us",
+        subtype="country",
+        country_code="us",
+        name="United States",
+        slug="united-states",
+        wkt=_sq(0, 0, 10, 10),
+    )
+    city = await _add_boundary(
+        session,
+        overture_id="us-city",
+        subtype="locality",
+        country_code="us",
+        name="San Diego",
+        slug="san-diego",
+        wkt=_sq(1, 1, 2, 2),
+    )
+    return us, city
+
+
+@pytest.mark.asyncio
+async def test_admin_hide_unhide_updates_counts(session, admin_client):
+    """Admin hide/unhide of a fountain must adjust fountain_count (non-hidden only)."""
+    _, city = await _us_and_city(session)
+    fid = await _add_fountain(session, lat=1.5, lng=1.5)
+    await refresh_all_memberships(session)
+    await session.commit()
+    assert await _count(session, city) == 1
+
+    hide = await admin_client.patch(
+        f"/api/v1/admin/fountains/{fid}", headers=_ADMIN_HEADERS, json={"is_hidden": True}
+    )
+    assert hide.status_code == 200
+    assert await _count(session, city) == 0
+
+    unhide = await admin_client.patch(
+        f"/api/v1/admin/fountains/{fid}", headers=_ADMIN_HEADERS, json={"is_hidden": False}
+    )
+    assert unhide.status_code == 200
+    assert await _count(session, city) == 1
+
+
+@pytest.mark.asyncio
+async def test_admin_move_reassigns_membership(session, admin_client):
+    """Admin moving a fountain re-assigns its city and shifts the old/new counts."""
+    await _add_boundary(
+        session,
+        overture_id="us",
+        subtype="country",
+        country_code="us",
+        name="United States",
+        slug="united-states",
+        wkt=_sq(0, 0, 10, 10),
+    )
+    city_a = await _add_boundary(
+        session,
+        overture_id="city-a",
+        subtype="locality",
+        country_code="us",
+        name="Alpha",
+        slug="alpha",
+        wkt=_sq(1, 1, 2, 2),
+    )
+    city_b = await _add_boundary(
+        session,
+        overture_id="city-b",
+        subtype="locality",
+        country_code="us",
+        name="Beta",
+        slug="beta",
+        wkt=_sq(5, 5, 6, 6),
+    )
+    fid = await _add_fountain(session, lat=1.5, lng=1.5)  # in Alpha
+    await refresh_all_memberships(session)
+    await session.commit()
+    assert await _count(session, city_a) == 1 and await _count(session, city_b) == 0
+
+    moved = await admin_client.patch(
+        f"/api/v1/admin/fountains/{fid}",
+        headers=_ADMIN_HEADERS,
+        json={"location": {"latitude": 5.5, "longitude": 5.5}},
+    )
+    assert moved.status_code == 200
+    m = await _membership(session, fid)
+    assert m.city_place_id == city_b
+    assert await _count(session, city_a) == 0
+    assert await _count(session, city_b) == 1
+
+
+@pytest.mark.asyncio
+async def test_admin_delete_updates_counts(session, admin_client):
+    """Admin deleting a fountain must drop its place counts."""
+    us, city = await _us_and_city(session)
+    fid = await _add_fountain(session, lat=1.5, lng=1.5)
+    await refresh_all_memberships(session)
+    await session.commit()
+    assert await _count(session, city) == 1 and await _count(session, us) == 1
+
+    deleted = await admin_client.delete(f"/api/v1/admin/fountains/{fid}", headers=_ADMIN_HEADERS)
+    assert deleted.status_code == 204
+    assert await _count(session, city) == 0
+    assert await _count(session, us) == 0
+
+
+@pytest.mark.asyncio
+async def test_canonical_reselects_on_count_change(session):
+    """A count change re-selects the canonical owner for the affected (country_code, slug) group,
+    so is_canonical never drifts stale between full refreshes (Codex PR review, finding 2)."""
+    await _add_boundary(
+        session,
+        overture_id="us",
+        subtype="country",
+        country_code="us",
+        name="United States",
+        slug="united-states",
+        wkt=_sq(0, 0, 20, 20),
+    )
+    # Two distinct 'springfield' localities (a real slug collision). overture_id 'spring-a' sorts
+    # before 'spring-b', so A wins the count tie — the test drives B strictly ahead on count.
+    spring_a = await _add_boundary(
+        session,
+        overture_id="spring-a",
+        subtype="locality",
+        country_code="us",
+        name="Springfield",
+        slug="springfield",
+        wkt=_sq(1, 1, 2, 2),
+    )
+    spring_b = await _add_boundary(
+        session,
+        overture_id="spring-b",
+        subtype="locality",
+        country_code="us",
+        name="Springfield",
+        slug="springfield",
+        wkt=_sq(10, 10, 11, 11),
+    )
+    fa = await _add_fountain(session, lat=1.5, lng=1.5)  # Springfield A
+    await recompute_fountain_membership(session, fa)
+    assert await _is_canonical(session, spring_a) is True  # A: 1, B: 0
+    assert await _is_canonical(session, spring_b) is False
+
+    fb1 = await _add_fountain(session, lat=10.5, lng=10.5)  # Springfield B
+    await recompute_fountain_membership(session, fb1)  # A: 1, B: 1 -> tie -> A (overture_id)
+    assert await _is_canonical(session, spring_a) is True
+
+    fb2 = await _add_fountain(session, lat=10.6, lng=10.6)  # Springfield B
+    await recompute_fountain_membership(session, fb2)  # B: 2 > A: 1 -> B canonical
+    assert await _is_canonical(session, spring_b) is True
+    assert await _is_canonical(session, spring_a) is False
