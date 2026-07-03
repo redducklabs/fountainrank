@@ -1,0 +1,35 @@
+# Boundary-source registry — the one-owner control for the Overture `division_area` boundary load
+# (spec docs/specs/2026-07-02-crawlable-seo-pages-design.md §11.3; plan
+# docs/plans/2026-07-02-crawlable-seo-pages.md Slice 1c). The osm-boundary-load.yml workflow
+# validates its dispatched (scope_id, overture_release_id) against this file BEFORE any remote S3
+# read (backend/app/imports/boundaries_registry.py), mirroring .github/osm-import-regions.yml for the
+# fountain imports. Deliberately INDEPENDENT of that file — country polygons are a different unit
+# than the per-state fountain import scopes.
+#
+# Exactly ONE `active` row may own a given scope_id. The dispatched overture_release_id MUST equal
+# the active row's pinned value — the release is bound to the scope ("pin, never chase latest",
+# spec §11.3). Refreshing to a newer Overture release is a reviewed edit here (bump the pin, or
+# retire + add a row) plus a deliberate re-dispatch, never a free dispatch-time path. Retired rows
+# are rejected. The S3 path is BUILT from the validated release id, so an arbitrary S3/HTTP path is
+# impossible.
+#
+# Fields (all required):
+#   scope_id            - stable dispatch key, e.g. overture:us (lowercase; alnum plus : / _ -).
+#   country             - ISO 3166-1 alpha-2, UPPERCASE — the DuckDB `country` predicate value.
+#   overture_release_id - immutable, reproducible Overture release pin, e.g. 2026-06-17.0.
+#   status              - active | retired
+scopes:
+  # Luxembourg — 365 land divisions (100 communes); the fast end-to-end smoke-test scope. Its
+  # municipal tier is `subtype='county'` communes, so Slice 1d will opt LU's eligible-city set into
+  # `county` (spec §11.2, §11.5).
+  - scope_id: overture:lu
+    country: LU
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # United States — the launch geography (~59k land divisions; San Diego + every suburb + San Diego
+  # County resolve as polygons — spec §11.2). Larger pull; dry-run first.
+  - scope_id: overture:us
+    country: US
+    overture_release_id: 2026-06-17.0
+    status: active

@@ -1,0 +1,180 @@
+name: Boundary Load (Overture division_area)
+
+# Operator-triggered load of Overture Maps Divisions `division_area` admin/place boundaries into
+# `place_boundaries` (spec: docs/specs/2026-07-02-crawlable-seo-pages-design.md §11.3,
+# plan: docs/plans/2026-07-02-crawlable-seo-pages.md Slice 1c). This is the CI-only production
+# data-load path for boundaries — the single write rule (spec §11.3): validate the dispatched scope
+# against the boundary-source registry BEFORE any remote read, fetch the pinned release from
+# anonymous public S3 with DuckDB (country + class='land' predicate pushdown — MB-scale, no PBF/
+# planet download), then stream the GeoJSON into the running backend pod and run the already-deployed
+# `app.imports.boundary_cli` there (same pod-exec pattern as osm-import-pbf.yml). The loader
+# PostGIS-validates every geometry (ST_MakeValid -> ST_Multi -> reject non-MultiPolygon) inside its
+# write transaction. dry_run defaults TRUE.
+
+on:
+  workflow_dispatch:
+    inputs:
+      scope_id:
+        description: "Boundary scope id — must match an ACTIVE row in .github/boundary-source-regions.yml, e.g. overture:us"
+        required: true
+      overture_release_id:
+        description: "Pinned Overture release id, e.g. 2026-06-17.0 — must equal the scope's pinned value"
+        required: true
+      dry_run:
+        description: "Dry run (parse + PostGIS-validate in the pod; no writes to place_boundaries)"
+        type: boolean
+        default: true
+
+concurrency:
+  # Serialize boundary loads with each other — two concurrent upserts to place_boundaries could
+  # deadlock. Disjoint from the fountain imports (different tables), so its own group.
+  group: boundary-load-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CLUSTER_NAME: fountainrank-production-cluster
+  NAMESPACE: fountainrank
+  # Pinned DuckDB (spec §11.1 vetted 1.5.4; also the current latest stable). Refresh deliberately.
+  DUCKDB_VERSION: "1.5.4"
+
+jobs:
+  load:
+    name: Boundary load (operator)
+    runs-on: ubuntu-latest # Class B: handles cluster credentials
+    environment: production
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Validate registry (fail-closed, before any remote read)
+        env:
+          SCOPE_ID: ${{ github.event.inputs.scope_id }}
+          RELEASE_ID: ${{ github.event.inputs.overture_release_id }}
+        run: |
+          set -euo pipefail
+          # workflow_dispatch is API-callable — reject newline/CR before anything else.
+          case "$SCOPE_ID" in
+            *$'\n'* | *$'\r'*) echo "::error::scope_id must be a single line"; exit 1 ;;
+          esac
+          case "$RELEASE_ID" in
+            *$'\n'* | *$'\r'*) echo "::error::overture_release_id must be a single line"; exit 1 ;;
+          esac
+          # Ubuntu runners are PEP-668 externally-managed, so `pip install` fails; use the distro
+          # PyYAML package (boundaries_registry.py only needs yaml.safe_load), same as osm-import-pbf.
+          sudo apt-get update && sudo apt-get install -y python3-yaml
+          python3 backend/app/imports/boundaries_registry.py \
+            --registry .github/boundary-source-regions.yml \
+            --scope-id "$SCOPE_ID" --release-id "$RELEASE_ID" \
+            --emit-country "$RUNNER_TEMP/country"
+          COUNTRY="$(cat "$RUNNER_TEMP/country")"
+          # Defense-in-depth: the emitted country feeds a SQL predicate — re-assert its shape.
+          printf '%s' "$COUNTRY" | grep -Eq '^[A-Z]{2}$' \
+            || { echo "::error::emitted country failed syntax check"; exit 1; }
+          echo "COUNTRY=$COUNTRY" >> "$GITHUB_ENV"
+          echo "validated: scope=$SCOPE_ID release=$RELEASE_ID country=$COUNTRY"
+
+      - name: Install DuckDB (pinned) in an isolated venv
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/ddb"
+          "$RUNNER_TEMP/ddb/bin/pip" install --quiet --disable-pip-version-check \
+            "duckdb==${DUCKDB_VERSION}"
+          "$RUNNER_TEMP/ddb/bin/python" -c "import duckdb; print('duckdb', duckdb.__version__)"
+
+      - name: Fetch division_area from the pinned Overture release (anonymous S3)
+        env:
+          RELEASE_ID: ${{ github.event.inputs.overture_release_id }}
+        run: |
+          set -euo pipefail
+          # Re-assert both values before they build the S3 path / SQL predicate (already validated by
+          # the registry step, but the fetch must be safe on its own). Their strict shapes
+          # (release: YYYY-MM-DD.N, country: [A-Z]{2}) contain no quotes/spaces/path separators, so
+          # string-building the SQL below has no injection surface.
+          printf '%s' "$RELEASE_ID" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}\.[0-9]+$' \
+            || { echo "::error::overture_release_id failed syntax check"; exit 1; }
+          printf '%s' "$COUNTRY" | grep -Eq '^[A-Z]{2}$' \
+            || { echo "::error::country failed syntax check"; exit 1; }
+          OUT="$RUNNER_TEMP/division_area.geojson"
+          echo "OUT=$OUT" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/ddb/bin/python" - "$RELEASE_ID" "$COUNTRY" "$OUT" <<'PY'
+          import sys
+
+          import duckdb
+
+          release_id, country, out = sys.argv[1], sys.argv[2], sys.argv[3]
+          # Path/predicate are built ONLY from the regex-validated release_id + country (no quotes
+          # possible), so this is injection-safe (spec §11.3).
+          s3 = (
+              "s3://overturemaps-us-west-2/release/"
+              f"{release_id}/theme=divisions/type=division_area/*.parquet"
+          )
+          con = duckdb.connect()
+          for stmt in (
+              "INSTALL spatial",
+              "LOAD spatial",
+              "INSTALL httpfs",
+              "LOAD httpfs",
+              "SET s3_region='us-west-2'",  # anonymous public read; no credentials (spec §11.1)
+          ):
+              con.execute(stmt)
+          # Materialize the filtered set once (single S3 scan), count it, then export. `id AS
+          # overture_id` keeps GDAL from promoting a literal `id` to the feature top level;
+          # `names.primary AS name`; ST_Multi coerces Overture's mixed Polygon/MultiPolygon.
+          con.execute(
+              f"""
+              CREATE TEMP TABLE b AS
+              SELECT id AS overture_id, division_id, subtype, class, admin_level,
+                     names.primary AS name, country, region, sources,
+                     ST_Multi(geometry) AS geometry
+              FROM read_parquet('{s3}')
+              WHERE country = '{country}' AND class = 'land'
+                AND subtype IN ('country','region','county','localadmin','locality')
+              """
+          )
+          cnt = con.execute("SELECT count(*) FROM b").fetchone()[0]
+          print(f"division_area land features for {country} @ {release_id}: {cnt}")
+          if cnt == 0:
+              # Fail closed: an empty pull means a bad country/release or a coverage regression.
+              sys.exit("::error::0 features fetched — fail closed (check scope/release)")
+          con.execute(
+              f"COPY b TO '{out}' WITH (FORMAT GDAL, DRIVER 'GeoJSON')"
+          )
+          PY
+          test -s "$OUT" || { echo "::error::GeoJSON not produced"; exit 1; }
+          echo "wrote $OUT ($(wc -c < "$OUT") bytes)"
+
+      - uses: digitalocean/action-doctl@v2.5.2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: Save kubeconfig
+        run: doctl kubernetes cluster kubeconfig save "$CLUSTER_NAME"
+
+      - name: Run boundary loader in backend pod
+        env:
+          SCOPE_ID: ${{ github.event.inputs.scope_id }}
+          RELEASE_ID: ${{ github.event.inputs.overture_release_id }}
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          POD="$(kubectl -n "$NAMESPACE" get pod -l app=fountainrank-backend \
+            --field-selector=status.phase=Running \
+            -o jsonpath='{.items[0].metadata.name}')"
+          if [ -z "$POD" ]; then echo "::error::no Running backend pod found"; exit 1; fi
+          echo "backend pod: $POD"
+          # Stream the fetched GeoJSON into the pod, then run the already-deployed loader there.
+          kubectl -n "$NAMESPACE" exec -i "$POD" -- sh -c 'cat > /tmp/boundary-load.geojson' \
+            < "$OUT"
+          if ! kubectl -n "$NAMESPACE" exec "$POD" -- test -s /tmp/boundary-load.geojson; then
+            echo "::error::boundary GeoJSON missing/empty in pod"; exit 1
+          fi
+          DRY=""
+          if [ "$DRY_RUN" = "true" ]; then DRY="--dry-run"; fi
+          echo "::group::boundary loader (dry_run=$DRY_RUN, scope=$SCOPE_ID, release=$RELEASE_ID)"
+          kubectl -n "$NAMESPACE" exec "$POD" -- \
+            python -m app.imports.boundary_cli --path /tmp/boundary-load.geojson \
+            --overture-release-id "$RELEASE_ID" --scope-id "$SCOPE_ID" $DRY
+          echo "::endgroup::"
+          kubectl -n "$NAMESPACE" exec "$POD" -- rm -f /tmp/boundary-load.geojson
