@@ -96,7 +96,7 @@ jobs:
             || { echo "::error::overture_release_id failed syntax check"; exit 1; }
           printf '%s' "$COUNTRY" | grep -Eq '^[A-Z]{2}$' \
             || { echo "::error::country failed syntax check"; exit 1; }
-          OUT="$RUNNER_TEMP/division_area.geojson"
+          OUT="$RUNNER_TEMP/division_area.geojsonl"
           echo "OUT=$OUT" >> "$GITHUB_ENV"
           "$RUNNER_TEMP/ddb/bin/python" - "$RELEASE_ID" "$COUNTRY" "$OUT" <<'PY'
           import sys
@@ -138,8 +138,10 @@ jobs:
           if cnt == 0:
               # Fail closed: an empty pull means a bad country/release or a coverage regression.
               sys.exit("::error::0 features fetched — fail closed (check scope/release)")
+          # GeoJSONSeq = one Feature per line, so the loader can stream + batch it instead of
+          # holding a whole FeatureCollection in memory (country-scale loads OOM-killed the pod).
           con.execute(
-              f"COPY b TO '{out}' WITH (FORMAT GDAL, DRIVER 'GeoJSON')"
+              f"COPY b TO '{out}' WITH (FORMAT GDAL, DRIVER 'GeoJSONSeq')"
           )
           PY
           test -s "$OUT" || { echo "::error::GeoJSON not produced"; exit 1; }
@@ -164,17 +166,19 @@ jobs:
             -o jsonpath='{.items[0].metadata.name}')"
           if [ -z "$POD" ]; then echo "::error::no Running backend pod found"; exit 1; fi
           echo "backend pod: $POD"
-          # Stream the fetched GeoJSON into the pod, then run the already-deployed loader there.
-          kubectl -n "$NAMESPACE" exec -i "$POD" -- sh -c 'cat > /tmp/boundary-load.geojson' \
-            < "$OUT"
-          if ! kubectl -n "$NAMESPACE" exec "$POD" -- test -s /tmp/boundary-load.geojson; then
-            echo "::error::boundary GeoJSON missing/empty in pod"; exit 1
+          POD_FILE=/tmp/boundary-load.geojsonl
+          # Always remove the streamed file from the pod's ephemeral disk, even if the loader fails
+          # (a country-scale GeoJSONSeq is 100s of MB — don't leak it into the running pod).
+          trap 'kubectl -n "$NAMESPACE" exec "$POD" -- rm -f "$POD_FILE" 2>/dev/null || true' EXIT
+          # Stream the fetched GeoJSONSeq into the pod, then run the already-deployed loader there.
+          kubectl -n "$NAMESPACE" exec -i "$POD" -- sh -c "cat > $POD_FILE" < "$OUT"
+          if ! kubectl -n "$NAMESPACE" exec "$POD" -- test -s "$POD_FILE"; then
+            echo "::error::boundary GeoJSONSeq missing/empty in pod"; exit 1
           fi
           DRY=""
           if [ "$DRY_RUN" = "true" ]; then DRY="--dry-run"; fi
           echo "::group::boundary loader (dry_run=$DRY_RUN, scope=$SCOPE_ID, release=$RELEASE_ID)"
           kubectl -n "$NAMESPACE" exec "$POD" -- \
-            python -m app.imports.boundary_cli --path /tmp/boundary-load.geojson \
+            python -m app.imports.boundary_cli --path "$POD_FILE" \
             --overture-release-id "$RELEASE_ID" --scope-id "$SCOPE_ID" $DRY
           echo "::endgroup::"
-          kubectl -n "$NAMESPACE" exec "$POD" -- rm -f /tmp/boundary-load.geojson

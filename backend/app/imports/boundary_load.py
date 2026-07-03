@@ -118,6 +118,63 @@ def _params(feature: BoundaryFeature) -> dict:
     }
 
 
+async def apply_boundary_feature(
+    session: AsyncSession,
+    feature: BoundaryFeature,
+    *,
+    dry_run: bool,
+    summary: BoundaryLoadSummary,
+) -> None:
+    """Upsert (or dry-run validate) ONE feature, updating ``summary`` in place. Does NOT commit —
+    the caller owns the transaction boundary: :func:`load_boundaries` runs the whole list in one
+    txn (its caller commits), while ``boundary_cli`` commits per streamed batch to bound memory +
+    transaction size on country-scale loads (spec §11.3).
+    """
+    summary.feature_count += 1
+    params = _params(feature)
+    stmt = _DRYRUN_SQL if dry_run else _UPSERT_SQL
+    row = (await session.execute(stmt, params)).one()
+
+    invalid = row.wrote == 0 if not dry_run else not row.valid
+    if invalid:
+        summary.skipped_invalid_count += 1
+        # A silent geometry drop would read as "loaded" — log it so it is diagnosable.
+        log.warning(
+            "boundary_invalid_geometry",
+            extra={
+                "overture_id": feature.overture_id,
+                "subtype": feature.subtype,
+                "country_code": feature.country_code,
+                "geometry_type": feature.geometry.get("type"),
+                "dry_run": dry_run,
+            },
+        )
+        return
+    if row.existed == 0:
+        summary.inserted_count += 1
+    else:
+        summary.updated_count += 1
+
+
+def log_boundary_load_complete(
+    summary: BoundaryLoadSummary, *, release_id: str | None, scope_id: str | None
+) -> None:
+    """Emit the single ``boundary_load_complete`` summary log — shared by the list loader and the
+    streaming CLI so a batched load reports one summary line, not one per batch."""
+    log.info(
+        "boundary_load_complete",
+        extra={
+            "dry_run": summary.dry_run,
+            "release_id": release_id,
+            "scope_id": scope_id,
+            "features": summary.feature_count,
+            "inserted": summary.inserted_count,
+            "updated": summary.updated_count,
+            "skipped_invalid": summary.skipped_invalid_count,
+        },
+    )
+
+
 async def load_boundaries(
     session: AsyncSession,
     *,
@@ -133,41 +190,6 @@ async def load_boundaries(
     """
     summary = BoundaryLoadSummary(dry_run=dry_run)
     for feature in features:
-        summary.feature_count += 1
-        params = _params(feature)
-        stmt = _DRYRUN_SQL if dry_run else _UPSERT_SQL
-        row = (await session.execute(stmt, params)).one()
-
-        invalid = row.wrote == 0 if not dry_run else not row.valid
-        if invalid:
-            summary.skipped_invalid_count += 1
-            # A silent geometry drop would read as "loaded" — log it so it is diagnosable.
-            log.warning(
-                "boundary_invalid_geometry",
-                extra={
-                    "overture_id": feature.overture_id,
-                    "subtype": feature.subtype,
-                    "country_code": feature.country_code,
-                    "geometry_type": feature.geometry.get("type"),
-                    "dry_run": dry_run,
-                },
-            )
-            continue
-        if row.existed == 0:
-            summary.inserted_count += 1
-        else:
-            summary.updated_count += 1
-
-    log.info(
-        "boundary_load_complete",
-        extra={
-            "dry_run": dry_run,
-            "release_id": release_id,
-            "scope_id": scope_id,
-            "features": summary.feature_count,
-            "inserted": summary.inserted_count,
-            "updated": summary.updated_count,
-            "skipped_invalid": summary.skipped_invalid_count,
-        },
-    )
+        await apply_boundary_feature(session, feature, dry_run=dry_run, summary=summary)
+    log_boundary_load_complete(summary, release_id=release_id, scope_id=scope_id)
     return summary
