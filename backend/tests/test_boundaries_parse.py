@@ -80,9 +80,10 @@ def test_decode_drops_version_suffix():
     assert decode_osm_source([{"dataset": _OSM, "record_id": "r42@17"}]) == ("relation", 42)
 
 
-def test_decode_tolerates_missing_version():
-    # @version is optional in the wild; never drop a valid record_id for lacking it.
-    assert decode_osm_source([{"dataset": _OSM, "record_id": "r42"}]) == ("relation", 42)
+def test_decode_requires_version_suffix():
+    # The pinned Overture shape is `<nwr><id>@<version>` (spec §11.4). A version-less id is NOT
+    # that shape -> nullable best-effort provenance, never authoritative from non-Overture data.
+    assert decode_osm_source([{"dataset": _OSM, "record_id": "r42"}]) == (None, None)
 
 
 def test_decode_no_osm_source_returns_none():
@@ -228,6 +229,15 @@ def test_parse_skips_missing_required_fields():
         res = parse_boundary_geojson({"type": "FeatureCollection", "features": [feat]})
         assert res.features == [], f"{field} should have been skipped"
         assert res.skipped and res.skipped[0][1] == reason
+
+
+def test_parse_skips_maritime_class():
+    # The maritime twin (same division, different overture_id) must never persist as a place
+    # (spec §11.2/§11.3) — the parser is the fail-closed gate for every file-based load.
+    feat = _feature(_POLY, overture_id="ov-sea", **{"class": "maritime"})
+    res = parse_boundary_geojson({"type": "FeatureCollection", "features": [feat]})
+    assert res.features == []
+    assert res.skipped == [("ov-sea", "non_land_class")]
 
 
 def test_parse_skips_missing_geometry():

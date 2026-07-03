@@ -20,10 +20,11 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
-# Overture OSM provenance: ``sources[].record_id`` is ``<n|w|r><id>[@version]`` (spec §11.4).
-# The ``@version`` is optional here (defensive — never drop a valid id for lacking one); the
-# slash form ("relation/123") is intentionally NOT matched (not the pinned Overture shape).
-_OSM_RECORD_RE = re.compile(r"^([nwr])(\d+)(?:@\d+)?$")
+# Overture OSM provenance: ``sources[].record_id`` is the pinned ``<n|w|r><id>@<version>`` shape
+# (spec §11.4). We match it exactly and drop the ``@version``. A record_id that is not this shape
+# (version-less, or the slash form "relation/123") is NOT the pinned Overture form, so it yields
+# no provenance — nullable best-effort, never treated as authoritative from non-Overture data.
+_OSM_RECORD_RE = re.compile(r"^([nwr])(\d+)@\d+$")
 _OSM_TYPE = {"n": "node", "w": "way", "r": "relation"}
 # Prefer the boundary relation over a way over a name node (spec §11.4).
 _OSM_PRIORITY = {"relation": 3, "way": 2, "node": 1}
@@ -145,6 +146,15 @@ def parse_boundary_geojson(geojson: dict) -> BoundaryParseResult:
         place_class = _clean_str(props.get("class"))
         if not place_class:
             skipped.append((overture_id, "missing_class"))
+            continue
+        if place_class != "land":
+            # Fail-closed at the write boundary: only land areas are boundaries. Every division
+            # may ship a maritime twin (same division_id, DIFFERENT overture_id) — if one reached
+            # place_boundaries it would persist as a bogus over-water "place" and pollute Slice-1d
+            # membership/canonical selection. Slice 1c also filters WHERE class='land' upstream;
+            # this is the defense-in-depth gate for a regressed query / manual file / mixed extract
+            # (spec §11.2/§11.3; the models.py PlaceBoundary docstring promises land-only).
+            skipped.append((overture_id, "non_land_class"))
             continue
         name = _clean_str(props.get("name"))
         if not name:

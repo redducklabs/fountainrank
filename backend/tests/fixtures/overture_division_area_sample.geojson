@@ -78,6 +78,25 @@
         "type": "Polygon",
         "coordinates": [[[6.3, 49.6], [6.4, 49.6], [6.4, 49.7], [6.3, 49.7], [6.3, 49.6]]]
       }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "overture_id": "f1e2d3c4-b5a6-9788-6152-4c3b2a1908f7",
+        "subtype": "locality",
+        "class": "maritime",
+        "admin_level": null,
+        "name": "San Diego",
+        "country": "US",
+        "region": "US-CA",
+        "sources": [
+          {"property": "", "dataset": "OpenStreetMap", "record_id": "r253832@5", "update_time": "2026-05-01T00:00:00Z", "confidence": null}
+        ]
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-117.4, 32.5], [-117.3, 32.5], [-117.3, 32.6], [-117.4, 32.6], [-117.4, 32.5]]]
+      }
     }
   ]
 }

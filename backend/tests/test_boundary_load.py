@@ -176,3 +176,15 @@ async def test_persisted_fields_round_trip(session):
     assert row.country_code == "lu"
     assert row.slug == "bech"
     assert row.is_canonical is False  # loader never sets canonical (Slice 1d does)
+
+
+@pytest.mark.asyncio
+async def test_country_code_lowercased_at_insert_boundary(session):
+    # load_boundaries is a directly-callable internal API; even an uppercase country_code on a
+    # hand-built feature must land lowercased so canonical (country_code, slug) uniqueness holds.
+    await load_boundaries(session, features=[_feat(overture_id="ov-upper", country_code="US")])
+    await session.commit()
+    row = (
+        await session.execute(select(PlaceBoundary).where(PlaceBoundary.overture_id == "ov-upper"))
+    ).scalar_one()
+    assert row.country_code == "us"

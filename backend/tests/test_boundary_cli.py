@@ -59,3 +59,15 @@ async def test_cli_decodes_provenance_and_lowercases_country(session):
     assert rows["Kosovo"].osm_type is None and rows["Kosovo"].osm_id is None
     # Diacritic-folded sticky slug.
     assert rows["Lëtzebuerg"].slug == "letzebuerg"
+
+
+@pytest.mark.asyncio
+async def test_cli_rejects_maritime_twin(session):
+    # The fixture ships San Diego's maritime twin (class='maritime'); it must never persist.
+    await run_boundary_load(str(FIX), dry_run=False)
+    maritime_id = "f1e2d3c4-b5a6-9788-6152-4c3b2a1908f7"
+    got = (
+        await session.execute(select(PlaceBoundary).where(PlaceBoundary.overture_id == maritime_id))
+    ).scalar_one_or_none()
+    assert got is None
+    assert await _count(session) == 4  # only the four land features

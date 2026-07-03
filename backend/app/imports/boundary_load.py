@@ -110,7 +110,10 @@ def _params(feature: BoundaryFeature) -> dict:
         "osm_type": feature.osm_type,
         "osm_id": feature.osm_id,
         "name": feature.name,
-        "country_code": feature.country_code,
+        # Lowercased at the insert boundary so canonical (country_code, slug) uniqueness is never
+        # split by case — the parser already lowercases, but load_boundaries is a directly-callable
+        # internal API, so the guarantee is enforced here too (Codex 1b watch-item).
+        "country_code": feature.country_code.lower(),
         "slug": feature.slug,
     }
 
