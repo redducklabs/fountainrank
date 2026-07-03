@@ -582,3 +582,72 @@ class FountainNote(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
+
+
+class PlaceBoundary(Base):
+    """Administrative / populated-place boundary polygon for crawlable SEO pages (#127).
+
+    Loaded (Slice 1b/1c) from Overture Divisions ``division_area`` — see the spec §11
+    decision note. Identity is the Overture GERS ``overture_id`` (NOT an OSM id); the city
+    tier is a ``subtype`` (Overture's ``admin_level`` is a normalized hierarchy, not OSM's, so
+    it is informational only). Membership (fountain → place) is precomputed by point-in-polygon
+    against ``boundary`` (Slice 1d); the public request path never runs a live ``ST_Covers``.
+    """
+
+    __tablename__ = "place_boundaries"
+    __table_args__ = (
+        # Public-namespace uniqueness: the public URL /drinking-fountains/[country]/[city]
+        # omits admin_level/subtype, so exactly ONE canonical place may own a
+        # (country_code, slug). Non-canonical candidates are retained (spec §11.5), so this is
+        # a PARTIAL unique index (WHERE is_canonical), not a plain unique constraint.
+        Index(
+            "uq_place_boundaries_country_slug_canonical",
+            "country_code",
+            "slug",
+            unique=True,
+            postgresql_where=text("is_canonical"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    # Overture GERS id — stable across releases; the idempotent upsert key (spec §11.4).
+    overture_id: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    # Overture subtype: country | region | county | localadmin | locality | ... The city page
+    # tier is selected by subtype per country (spec §11.5), NOT by admin_level.
+    subtype: Mapped[str] = mapped_column(String, nullable=False)
+    # Overture `class`; the loader keeps only `class='land'` (the maritime twin is excluded).
+    # `class` is a Python keyword, so the ORM attribute is `place_class`; the DB column is `class`.
+    place_class: Mapped[str] = mapped_column("class", String, nullable=False)
+    # Overture-normalized level (country=0, region=1, county=2, NULL at the locality tier) —
+    # informational, NOT the city selector (spec §11.5). Hence nullable.
+    admin_level: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    # Best-effort OSM provenance decoded from Overture sources[] (prefer relation>way>node);
+    # nullable — a minority of features are geoBoundaries-conflated with no OSM record (§11.4).
+    osm_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    osm_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    # ISO 3166-1 alpha-2 (lowercased to match the URL segment; normalization is Slice 1b).
+    country_code: Mapped[str] = mapped_column(String, nullable=False)
+    # Sticky slug (assigned once; a renamed boundary keeps the old route as a 301) — spec §4.3.
+    slug: Mapped[str] = mapped_column(String, nullable=False)
+    # The one canonical SEO place per (country_code, slug) — spec §4.3/§11.5. Backfill sets it.
+    is_canonical: Mapped[bool] = mapped_column(nullable=False, server_default=text("false"))
+    # City → country parent link, derived by containment in Slice 1d (NOT Overture's hierarchy).
+    # SET NULL so dropping a parent boundary on a refresh never deletes its children.
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("place_boundaries.id", ondelete="SET NULL", name="fk_place_boundaries_parent"),
+        nullable=True,
+    )
+    # Loader ST_Multi-coerces every geometry (Overture mixes Polygon/MultiPolygon) — spec §11.6.
+    boundary: Mapped[WKBElement] = mapped_column(
+        Geography(geometry_type="MULTIPOLYGON", srid=4326, spatial_index=True), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
