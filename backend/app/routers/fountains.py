@@ -31,6 +31,7 @@ from app.display import public_display_name
 from app.filters import DiscoveryFilters, apply_discovery_filters, discovery_filters
 from app.geo import latitude_of, longitude_of, point_geography
 from app.locks import ADD_FOUNTAIN_LOCK_KEY
+from app.membership import recompute_fountain_membership
 from app.models import (
     AttributeObservation,
     AttributeType,
@@ -546,6 +547,12 @@ async def add_fountain(
     )
     session.add(fountain)
     await session.flush()
+
+    # Precomputed place membership (#127 Slice 1d): assign this fountain to its country + city
+    # place and bump the denormalized fountain_count. Runs inside the add's advisory-lock scope
+    # (held until commit), so the count recompute is race-safe against concurrent adds. The public
+    # place pages read this precomputed assignment — never a live ST_Covers.
+    await recompute_fountain_membership(session, fountain.id)
 
     # Emit contribution events. add_fountain + first_fountain are idempotent via dedup keys.
     specs = [

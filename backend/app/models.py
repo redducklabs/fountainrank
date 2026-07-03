@@ -17,7 +17,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -91,6 +91,10 @@ class Fountain(Base):
         ),
         # Spec §4.1: btree index on created_source for import/audit queries.
         Index("ix_fountains_created_source", "created_source"),
+        # Precomputed-membership read path (#127 Slice 1d): the public city page is
+        # `WHERE city_place_id = <canonical place>`, so both membership FKs are btree-indexed.
+        Index("ix_fountains_country_place_id", "country_place_id"),
+        Index("ix_fountains_city_place_id", "city_place_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -125,6 +129,22 @@ class Fountain(Base):
     )
     # Free-text approximate placement (#42), e.g. "near the north restrooms".
     placement_note: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Precomputed membership (#127 Slice 1d, spec §5/§11.5): the containing country place and the
+    # most-specific eligible city place, assigned by point-in-polygon against place_boundaries
+    # (app/membership.py). NULL until assigned, when no city polygon covers the point (unmatched
+    # -> country-only), or when the country's boundaries are not loaded. The public place pages read
+    # these precomputed columns — NEVER a live ST_Covers. ON DELETE SET NULL so a boundary refresh
+    # that drops a place never deletes its fountains (a subsequent refresh re-assigns them).
+    country_place_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("place_boundaries.id", ondelete="SET NULL", name="fk_fountains_country_place"),
+        nullable=True,
+    )
+    city_place_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("place_boundaries.id", ondelete="SET NULL", name="fk_fountains_city_place"),
+        nullable=True,
+    )
 
 
 class Rating(Base):
@@ -634,6 +654,11 @@ class PlaceBoundary(Base):
     slug: Mapped[str] = mapped_column(String, nullable=False)
     # The one canonical SEO place per (country_code, slug) — spec §4.3/§11.5. Backfill sets it.
     is_canonical: Mapped[bool] = mapped_column(nullable=False, server_default=text("false"))
+    # Denormalized count of NON-HIDDEN fountains assigned to this place (#127 Slice 1d) — the
+    # public "N fountains in <place>" number and the >= K indexability gate. Recomputed
+    # transactionally by app/membership.py on every refresh (boundary load, OSM import, user add,
+    # backfill); the public read path never counts live.
+    fountain_count: Mapped[int] = mapped_column(nullable=False, server_default=text("0"))
     # City → country parent link, derived by containment in Slice 1d (NOT Overture's hierarchy).
     # SET NULL so dropping a parent boundary on a refresh never deletes its children.
     parent_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -651,3 +676,22 @@ class PlaceBoundary(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
+
+
+class PlaceScopeConfig(Base):
+    """Per-country city-tier eligibility for membership assignment (#127 Slice 1d, spec §11.5).
+
+    The city-assignment ladder (app/membership.py) considers only the ``division_area`` subtypes in
+    a country's eligible set. The default (no row for a country) is ``{locality, localadmin}``; a
+    country whose finest municipal tier is coarser opts in ``county`` — e.g. Luxembourg, whose
+    communes are ``subtype='county'`` (spec §11.2/§11.5). Kept as **data, not code**, so the Slice
+    1e coverage gate / owner signoff can adjust a country's eligible set without a deploy. Seeded in
+    migration 0015 for the active boundary scopes (``us``, ``lu``).
+    """
+
+    __tablename__ = "place_scope_config"
+
+    # ISO 3166-1 alpha-2, lowercased to match place_boundaries.country_code / the URL segment.
+    country_code: Mapped[str] = mapped_column(String, primary_key=True)
+    # Overture subtypes that count as a city here, e.g. {locality, localadmin} (+county for LU).
+    eligible_city_subtypes: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False)
