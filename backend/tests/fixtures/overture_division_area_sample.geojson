@@ -1,0 +1,83 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "overture_id": "2eb59c99-97e6-4885-aa69-d2692025757b",
+        "subtype": "country",
+        "class": "land",
+        "admin_level": 0,
+        "name": "Lëtzebuerg",
+        "country": "LU",
+        "region": null,
+        "sources": [
+          {"property": "", "dataset": "OpenStreetMap", "record_id": "r2171347@8", "update_time": "2026-05-01T00:00:00Z", "confidence": null}
+        ]
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[6.0, 49.5], [6.2, 49.5], [6.2, 49.7], [6.0, 49.7], [6.0, 49.5]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "overture_id": "546488ea-ac6d-4a3f-acfd-4e11adf6b522",
+        "subtype": "locality",
+        "class": "land",
+        "admin_level": null,
+        "name": "San Diego",
+        "country": "US",
+        "region": "US-CA",
+        "sources": [
+          {"property": "/properties/names/primary", "dataset": "OpenStreetMap", "record_id": "n1500000000@2", "update_time": "2026-05-01T00:00:00Z", "confidence": null},
+          {"property": "", "dataset": "OpenStreetMap", "record_id": "w900000000@1", "update_time": "2026-05-01T00:00:00Z", "confidence": null},
+          {"property": "", "dataset": "OpenStreetMap", "record_id": "r253832@5", "update_time": "2026-05-01T00:00:00Z", "confidence": null}
+        ]
+      },
+      "geometry": {
+        "type": "MultiPolygon",
+        "coordinates": [[[[-117.2, 32.7], [-117.0, 32.7], [-117.0, 32.9], [-117.2, 32.9], [-117.2, 32.7]]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "overture_id": "0f8e7d6c-5b4a-3928-1716-05f4e3d2c1b0",
+        "subtype": "country",
+        "class": "land",
+        "admin_level": 0,
+        "name": "Kosovo",
+        "country": "XK",
+        "region": null,
+        "sources": [
+          {"property": "", "dataset": "geoBoundaries", "record_id": "XK-ADM0", "update_time": "2026-05-01T00:00:00Z", "confidence": null}
+        ]
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[20.9, 42.5], [21.1, 42.5], [21.1, 42.7], [20.9, 42.7], [20.9, 42.5]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "overture_id": "bef0cf11-3527-4ab3-826f-12633b32b824",
+        "subtype": "county",
+        "class": "land",
+        "admin_level": 2,
+        "name": "Bech",
+        "country": "LU",
+        "region": null,
+        "sources": [
+          {"property": "", "dataset": "OpenStreetMap", "record_id": "r569736@3", "update_time": "2026-05-01T00:00:00Z", "confidence": null}
+        ]
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[6.3, 49.6], [6.4, 49.6], [6.4, 49.7], [6.3, 49.7], [6.3, 49.6]]]
+      }
+    }
+  ]
+}
