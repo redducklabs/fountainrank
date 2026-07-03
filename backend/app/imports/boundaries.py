@@ -120,82 +120,90 @@ def _admin_level(raw: object) -> int | None:
         return None
 
 
+def parse_boundary_feature(feat: object) -> tuple[BoundaryFeature | None, tuple[str, str] | None]:
+    """Parse ONE division_area GeoJSON Feature.
+
+    Returns ``(feature, None)`` on success, or ``(None, (overture_id_or_"?", reason))`` when the
+    feature is skipped. Split out of :func:`parse_boundary_geojson` so ``boundary_cli`` can stream
+    features one line at a time (a GeoJSONSeq file — spec §11.3) instead of holding a whole
+    FeatureCollection in memory, which OOM-kills the loader pod on country-scale loads (US ~35k
+    features).
+    """
+    if not isinstance(feat, dict):
+        return None, ("?", "not_a_feature")
+    props = feat.get("properties") or {}
+
+    # Identity: `overture_id` property, or a GDAL-promoted feature-level `id` fallback.
+    raw_oid = props.get("overture_id")
+    if raw_oid is None:
+        raw_oid = feat.get("id")
+    overture_id = _clean_str(raw_oid)
+    if not overture_id:
+        return None, ("?", "missing_overture_id")
+
+    subtype = _clean_str(props.get("subtype"))
+    if not subtype:
+        return None, (overture_id, "missing_subtype")
+    place_class = _clean_str(props.get("class"))
+    if not place_class:
+        return None, (overture_id, "missing_class")
+    if place_class != "land":
+        # Fail-closed at the write boundary: only land areas are boundaries. Every division
+        # may ship a maritime twin (same division_id, DIFFERENT overture_id) — if one reached
+        # place_boundaries it would persist as a bogus over-water "place" and pollute Slice-1d
+        # membership/canonical selection. Slice 1c also filters WHERE class='land' upstream;
+        # this is the defense-in-depth gate for a regressed query / manual file / mixed extract
+        # (spec §11.2/§11.3; the models.py PlaceBoundary docstring promises land-only).
+        return None, (overture_id, "non_land_class")
+    name = _clean_str(props.get("name"))
+    if not name:
+        return None, (overture_id, "missing_name")
+
+    raw_country = props.get("country")
+    if raw_country is None:
+        raw_country = props.get("country_code")
+    country_code = _clean_str(raw_country).lower()
+    if not country_code:
+        return None, (overture_id, "missing_country")
+
+    geometry = feat.get("geometry")
+    if (
+        not isinstance(geometry, dict)
+        or not geometry.get("type")
+        or not geometry.get("coordinates")
+    ):
+        return None, (overture_id, "missing_geometry")
+
+    slug = slugify(name)
+    if not slug:
+        return None, (overture_id, "unsluggable_name")
+
+    osm_type, osm_id = decode_osm_source(props.get("sources"))
+    return (
+        BoundaryFeature(
+            overture_id=overture_id,
+            subtype=subtype,
+            place_class=place_class,
+            admin_level=_admin_level(props.get("admin_level")),
+            osm_type=osm_type,
+            osm_id=osm_id,
+            name=name,
+            country_code=country_code,
+            slug=slug,
+            geometry=geometry,
+        ),
+        None,
+    )
+
+
 def parse_boundary_geojson(geojson: dict) -> BoundaryParseResult:
     """Extract validated :class:`BoundaryFeature` objects from a division_area FeatureCollection."""
     features: list[BoundaryFeature] = []
     skipped: list[tuple[str, str]] = []
     for feat in geojson.get("features", []):
-        if not isinstance(feat, dict):
-            skipped.append(("?", "not_a_feature"))
-            continue
-        props = feat.get("properties") or {}
-
-        # Identity: `overture_id` property, or a GDAL-promoted feature-level `id` fallback.
-        raw_oid = props.get("overture_id")
-        if raw_oid is None:
-            raw_oid = feat.get("id")
-        overture_id = _clean_str(raw_oid)
-        if not overture_id:
-            skipped.append(("?", "missing_overture_id"))
-            continue
-
-        subtype = _clean_str(props.get("subtype"))
-        if not subtype:
-            skipped.append((overture_id, "missing_subtype"))
-            continue
-        place_class = _clean_str(props.get("class"))
-        if not place_class:
-            skipped.append((overture_id, "missing_class"))
-            continue
-        if place_class != "land":
-            # Fail-closed at the write boundary: only land areas are boundaries. Every division
-            # may ship a maritime twin (same division_id, DIFFERENT overture_id) — if one reached
-            # place_boundaries it would persist as a bogus over-water "place" and pollute Slice-1d
-            # membership/canonical selection. Slice 1c also filters WHERE class='land' upstream;
-            # this is the defense-in-depth gate for a regressed query / manual file / mixed extract
-            # (spec §11.2/§11.3; the models.py PlaceBoundary docstring promises land-only).
-            skipped.append((overture_id, "non_land_class"))
-            continue
-        name = _clean_str(props.get("name"))
-        if not name:
-            skipped.append((overture_id, "missing_name"))
-            continue
-
-        raw_country = props.get("country")
-        if raw_country is None:
-            raw_country = props.get("country_code")
-        country_code = _clean_str(raw_country).lower()
-        if not country_code:
-            skipped.append((overture_id, "missing_country"))
-            continue
-
-        geometry = feat.get("geometry")
-        if (
-            not isinstance(geometry, dict)
-            or not geometry.get("type")
-            or not geometry.get("coordinates")
-        ):
-            skipped.append((overture_id, "missing_geometry"))
-            continue
-
-        slug = slugify(name)
-        if not slug:
-            skipped.append((overture_id, "unsluggable_name"))
-            continue
-
-        osm_type, osm_id = decode_osm_source(props.get("sources"))
-        features.append(
-            BoundaryFeature(
-                overture_id=overture_id,
-                subtype=subtype,
-                place_class=place_class,
-                admin_level=_admin_level(props.get("admin_level")),
-                osm_type=osm_type,
-                osm_id=osm_id,
-                name=name,
-                country_code=country_code,
-                slug=slug,
-                geometry=geometry,
-            )
-        )
+        feature, skip = parse_boundary_feature(feat)
+        if feature is not None:
+            features.append(feature)
+        else:
+            skipped.append(skip)
     return BoundaryParseResult(features=features, skipped=skipped)
