@@ -134,6 +134,49 @@ async def test_partial_unique_allows_multiple_non_canonical(session):
 
 
 @pytest.mark.asyncio
+async def test_partial_unique_rejects_duplicate_canonical(session):
+    """The rejecting side of the invariant (spec §11.5/§11.6): two CANONICAL rows sharing
+    (country_code, slug) must violate the partial unique index — the public URL
+    /drinking-fountains/[country]/[city] resolves to exactly one place. Guards against a
+    predicate typo or migration drift that leaves a plausible-looking index that no longer
+    enforces uniqueness."""
+    from sqlalchemy.exc import IntegrityError
+
+    from app.models import PlaceBoundary
+
+    poly = "SRID=4326;MULTIPOLYGON(((0 0,1 0,1 1,0 1,0 0)))"
+    session.add(
+        PlaceBoundary(
+            overture_id=f"ov-{uuid.uuid4()}",
+            subtype="locality",
+            place_class="land",
+            name="Canon A",
+            country_code="xx",
+            slug="canon-town",
+            is_canonical=True,
+            boundary=poly,
+        )
+    )
+    await session.commit()
+
+    session.add(
+        PlaceBoundary(
+            overture_id=f"ov-{uuid.uuid4()}",
+            subtype="county",
+            place_class="land",
+            name="Canon B",
+            country_code="xx",
+            slug="canon-town",  # same (country_code, slug), also canonical -> rejected
+            is_canonical=True,
+            boundary=poly,
+        )
+    )
+    with pytest.raises(IntegrityError):
+        await session.commit()
+    await session.rollback()
+
+
+@pytest.mark.asyncio
 async def test_model_round_trip_and_st_covers(session):
     from app.models import PlaceBoundary
 
