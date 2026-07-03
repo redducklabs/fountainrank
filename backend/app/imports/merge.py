@@ -146,8 +146,10 @@ async def merge_candidates(
         # in which place. Re-derive precomputed membership + counts (+ is_canonical/parent_id,
         # cheaply idempotent) once, set-based, over the whole DB (#127 Slice 1d). flush() first so
         # the set-based UPDATE sees this run's freshly inserted/moved fountain locations.
+        # rebuild_cells=False: boundaries are unchanged, so the point-in-polygon cells are already
+        # current — skip the ~200s ST_Subdivide rebuild and just re-assign against them.
         await session.flush()
-        await refresh_all_memberships(session)
+        await refresh_all_memberships(session, rebuild_cells=False)
 
     run.status = "dry_run" if dry_run else "completed"
     run.finished_at = datetime.now(tz=UTC)
@@ -493,7 +495,8 @@ async def rollback_run(session: AsyncSession, run_id: uuid.UUID) -> int:
     if affected:
         # A rollback hides inserted fountains and reverts moved ones — both change which fountains
         # count and where they fall. Re-derive membership + counts so fountain_count never keeps
-        # counting a hidden rolled-back row or a reverted location (#127 Slice 1d).
-        await refresh_all_memberships(session)
+        # counting a hidden rolled-back row or a reverted location (#127 Slice 1d). rebuild_cells=
+        # False: a rollback changes fountains, not boundaries, so the cells are already current.
+        await refresh_all_memberships(session, rebuild_cells=False)
     log.info("osm_import_run_rolled_back", extra={"run_id": str(run_id), "affected": affected})
     return affected

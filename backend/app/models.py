@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from geoalchemy2 import Geography
+from geoalchemy2 import Geography, Geometry
 from geoalchemy2.elements import WKBElement
 from sqlalchemy import (
     BigInteger,
@@ -675,6 +675,42 @@ class PlaceBoundary(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class PlaceBoundaryCell(Base):
+    """A subdivided piece of a ``place_boundaries`` polygon, for fast point-in-polygon (#127).
+
+    Perf hardening of Slice 1d membership. Assigning ~50k fountains against whole-country polygons
+    (the US boundary is ~136k vertices, and its bbox covers every fountain so the GiST prefilter
+    prunes nothing) ran the country-scale backfill 40+ min. This table holds every boundary broken
+    into small ``ST_Subdivide`` cells; a point-in-polygon probe hits a GiST index of small cells
+    instead of one giant polygon (the canonical PostGIS pattern — measured on prod: >180s -> 7.4s).
+
+    It is a **rebuildable derivative** of ``place_boundaries``: fully replaced on every boundary
+    load / membership backfill by :func:`app.membership.rebuild_place_boundary_cells`. Membership
+    assignment joins fountains -> cells -> ``place_boundaries`` by ``place_id`` and tests
+    containment in PLANAR (geometry) space (``ST_Covers(geom, location::geometry)``) — correct for
+    lon/lat point-in-polygon and cheaper than geography.
+    """
+
+    __tablename__ = "place_boundary_cells"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    # The boundary this cell is a piece of. CASCADE so dropping a boundary drops its cells; the
+    # rebuild replaces cells wholesale, but the cascade keeps orphans impossible if one is deleted.
+    place_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("place_boundaries.id", ondelete="CASCADE", name="fk_place_boundary_cells_place"),
+        nullable=False,
+        index=True,
+    )
+    # A ST_Subdivide piece of the source boundary (Polygon/MultiPolygon), in geometry (planar)
+    # space. spatial_index=True -> GeoAlchemy2 auto-creates idx_place_boundary_cells_geom (GiST).
+    geom: Mapped[WKBElement] = mapped_column(
+        Geometry(geometry_type="GEOMETRY", srid=4326, spatial_index=True), nullable=False
     )
 
 

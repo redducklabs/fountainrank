@@ -22,7 +22,11 @@ from app.imports.membership_cli import run_membership_backfill
 from app.imports.merge import RunScope, merge_candidates, rollback_run
 from app.imports.osm import OsmCandidate
 from app.main import app
-from app.membership import recompute_fountain_membership, refresh_all_memberships
+from app.membership import (
+    rebuild_place_boundary_cells,
+    recompute_fountain_membership,
+    refresh_all_memberships,
+)
 
 _ADMIN_HEADERS = {"X-Dev-User": "admin-sub"}
 
@@ -522,6 +526,7 @@ async def test_single_fountain_recompute_matches_and_increments(session):
         slug="san-diego",
         wkt=_sq(1, 1, 2, 2),
     )
+    await rebuild_place_boundary_cells(session)  # boundary-load equivalent: cells exist before adds
     f1 = await _add_fountain(session, lat=1.5, lng=1.5)
     await recompute_fountain_membership(session, f1)
     m1 = await _membership(session, f1)
@@ -564,6 +569,57 @@ async def test_refresh_is_idempotent(session):
     assert await _is_canonical(session, city) is True
 
 
+@pytest.mark.asyncio
+async def test_cells_subdivide_large_polygon_and_assign(session):
+    """The perf fix (#127): a high-vertex boundary is broken into MULTIPLE ST_Subdivide cells, and
+    point-in-polygon via those cells still assigns correctly. Guards the whole reason the cells
+    table exists — probing the ~136k-vertex US polygon per fountain ran the backfill 40+ min; via
+    small cells the same PIP is ~7s."""
+    # A ~256-vertex circle (quad_segs=64), comfortably over the 128-vertex subdivide threshold, as a
+    # country polygon — so the rebuild MUST split it into several cells (unlike the small test
+    # squares elsewhere, which subdivide to a single cell).
+    place_id = (
+        await session.execute(
+            text(
+                """
+                INSERT INTO place_boundaries
+                    (id, overture_id, subtype, class, name, country_code, slug,
+                     is_canonical, fountain_count, boundary, created_at, updated_at)
+                VALUES (gen_random_uuid(), 'big-country', 'country', 'land', 'Bigland', 'bg',
+                        'bigland', false, 0,
+                        ST_Multi(ST_Buffer(ST_SetSRID(ST_MakePoint(0, 0), 4326), 5,
+                                           'quad_segs=64'))::geography,
+                        now(), now())
+                RETURNING id
+                """
+            )
+        )
+    ).scalar_one()
+    npoints = (
+        await session.execute(
+            text("SELECT ST_NPoints(boundary::geometry) FROM place_boundaries WHERE id = :id"),
+            {"id": place_id},
+        )
+    ).scalar_one()
+    assert npoints > 128  # a genuinely large polygon, so ST_Subdivide(…, 128) must split it
+
+    total_cells = await rebuild_place_boundary_cells(session)
+    per_place = (
+        await session.execute(
+            text("SELECT count(*) FROM place_boundary_cells WHERE place_id = :id"),
+            {"id": place_id},
+        )
+    ).scalar_one()
+    assert per_place > 1  # the large polygon was subdivided into multiple cells
+    assert total_cells == per_place  # this is the only boundary, so its cells are all of them
+
+    fid = await _add_fountain(session, lat=0.0, lng=0.0)  # centre of the circle
+    await recompute_fountain_membership(session, fid)
+    m = await _membership(session, fid)
+    assert m.country_place_id == place_id  # PIP via the subdivided cells still finds the country
+    assert m.city_place_id is None  # no city boundary loaded
+
+
 # --- Refresh triggers: user add (API), OSM import, backfill CLI ---
 
 
@@ -588,6 +644,7 @@ async def test_add_fountain_via_api_assigns_membership(session, client):
         slug="san-diego",
         wkt=_sq(1, 1, 2, 2),
     )
+    await rebuild_place_boundary_cells(session)  # boundary-load equivalent: cells exist before adds
     await session.commit()  # the API request runs in its own session — commit so it sees these
 
     resp = await client.post(
@@ -623,6 +680,7 @@ async def test_osm_import_assigns_membership(session):
         slug="san-diego",
         wkt=_sq(1, 1, 2, 2),
     )
+    await rebuild_place_boundary_cells(session)  # boundaries loaded (cells built) before the import
     scope = RunScope(
         source_system="osm",
         source_dataset="test:membership",
@@ -671,6 +729,7 @@ async def test_osm_rollback_refreshes_counts(session):
         slug="san-diego",
         wkt=_sq(1, 1, 2, 2),
     )
+    await rebuild_place_boundary_cells(session)  # boundaries loaded (cells built) before the import
     scope = RunScope(
         source_system="osm",
         source_dataset="test:rollback",
@@ -875,6 +934,7 @@ async def test_canonical_reselects_on_count_change(session):
         slug="springfield",
         wkt=_sq(10, 10, 11, 11),
     )
+    await rebuild_place_boundary_cells(session)  # boundary-load equivalent: cells exist before adds
     fa = await _add_fountain(session, lat=1.5, lng=1.5)  # Springfield A
     await recompute_fountain_membership(session, fa)
     assert await _is_canonical(session, spring_a) is True  # A: 1, B: 0
