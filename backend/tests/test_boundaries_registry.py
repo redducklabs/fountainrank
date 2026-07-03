@@ -79,6 +79,20 @@ def test_bad_release_syntax_rejected(bad):
         validate_boundary_scope(ROWS, scope_id="overture:us", release_id=bad)
 
 
+def test_row_missing_required_key_rejected():
+    # A malformed active row (missing a required key) must fail closed, not be treated as empty.
+    bad_rows = [
+        {
+            "scope_id": "overture:zz",
+            # country omitted
+            "overture_release_id": "2026-06-17.0",
+            "status": "active",
+        }
+    ]
+    with pytest.raises(BoundaryRegistryError, match="missing required keys"):
+        validate_boundary_scope(bad_rows, scope_id="overture:zz", release_id="2026-06-17.0")
+
+
 def test_invalid_country_in_row_rejected():
     bad_rows = [
         {

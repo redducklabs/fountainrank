@@ -76,6 +76,14 @@ def validate_boundary_scope(rows: list[dict], *, scope_id: str, release_id: str)
         )
     row = active[0]
 
+    # Fail closed on a malformed active row (a missing required key must never be silently treated
+    # as an empty/absent value in a security-sensitive registry).
+    missing = _REQUIRED_KEYS - set(row)
+    if missing:
+        raise BoundaryRegistryError(
+            f"registry row for scope_id={scope_id!r} is missing required keys: {sorted(missing)}"
+        )
+
     pinned = str(row.get("overture_release_id", ""))
     if pinned != release_id:
         raise BoundaryRegistryError(
