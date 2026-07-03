@@ -85,16 +85,26 @@ WSL `cwd` `/mnt/d/repos/fountainrank`, **repo-relative paths**, loop until APPRO
 every code slice is a PR.** New CI workflow / infra → read `claude_help/kubernetes-infra.md` +
 `claude_help/github-environments.md` first. **No AI attribution, no time estimates.**
 
+## 🚀 Released `v0.12.0` (2026-07-03) — web+backend + mobile
+Cut tag **`v0.12.0`** on `ea364b7`, firing both pipelines (the coordinated-release path):
+- **`deploy.yml` green** — web+backend images built, the **Slice 1a `place_boundaries` migration ran
+  on prod**, all rollouts (backend/web/logto/healthz/basemap) up. Verified live: `www`→308 apex,
+  `/robots.txt` + `/sitemap.xml` 200, app + api `healthz`/`readyz` 200. The **backend now has the
+  `place_boundaries` table + `boundary_cli`, so `osm-boundary-load.yml` is runnable.**
+- **`mobile-store-release.yml` green** — iOS built + submitted to App Store Connect (→ TestFlight),
+  Android built + submitted to Google Play internal. Marketing version stays `0.1.0`; EAS
+  auto-increments the build number (`eas.json` `appVersionSource: remote` + `production.autoIncrement`).
+
 ## 📋 Carried-forward owner actions (still open, owner-gated)
-- [ ] **Dispatch the boundary load** (this slice): `overture:lu` dry-run → `overture:us` dry-run →
-  `dry_run=false`. Needs the backend deployed to the cluster (the workflow `kubectl exec`s the pod).
-- [ ] **Verify the mobile "Add" FAB on-device (iOS)** in the next TestFlight build (PR #157).
-- [ ] **On-device verify** #149, #146, #147, #102–105, #120 — code-complete on `main`, open only for
-  on-device verification ([[fountainrank-verify-code-before-implementing-open-issue]]). #98/#99 done.
-- [ ] **Deploy web** (manual — `gh workflow run deploy.yml --ref main`,
-  [[fountainrank-deploy-is-manual-dispatch]]): ships merged #125/#126 robots.txt + sitemap.xml +
-  www→apex + canonical (still NOT live). Then `curl -I` robots/sitemap (200) + `www.` (308→apex), and
-  **submit the sitemap to GSC + Bing** (#125). *(No #127 Slice 0/1a/1b/1c work is web-facing yet.)*
+- [ ] **Dispatch the boundary load** (this slice) — backend is now deployed (v0.12.0), so it's ready:
+  `overture:lu` dry-run → `overture:us` dry-run → `dry_run=false`.
+- [ ] **Verify the "Add" FAB on-device (iOS)** — the `v0.12.0` TestFlight build includes the fix
+  (PR #157); check once Apple finishes processing. Paste the run-summary "What to Test" notes into
+  App Store Connect (EAS non-Enterprise plan doesn't set them automatically).
+- [ ] **On-device verify** #149, #146, #147, #102–105, #120 — code-complete + now shipped in
+  `v0.12.0` ([[fountainrank-verify-code-before-implementing-open-issue]]). #98/#99 done.
+- [ ] **Submit the sitemap to GSC + Bing** (#125) — robots.txt + sitemap.xml + www→apex are now
+  **live** (shipped in `v0.12.0`); `curl` confirmed. *(No #127 Slice 0/1a/1b/1c work is web-facing yet.)*
 - [ ] **#128 GA4:** add the GA4 property id to the SEO agent's **local** registry (no secrets
   committed); `seo_health_check` → GA4 `ok`. Repo scope is nil.
 - [ ] Unrelated pending: set `NEXT_PUBLIC_APP_STORE_URL` / `NEXT_PUBLIC_GOOGLE_PLAY_URL` on web deploy
