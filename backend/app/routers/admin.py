@@ -206,6 +206,21 @@ async def admin_delete_fountain(
     # Capture the deleted fountain's places so their fountain_count (and canonical winner) can be
     # corrected after the row is gone (#127 Slice 1d).
     old_place_ids = [fountain.country_place_id, fountain.city_place_id]
+    # Enqueue durable storage_cleanup rows for every photo's Spaces objects BEFORE the delete
+    # cascades the fountain_photos ROWS away (fk_fountain_photos_fountain is ON DELETE CASCADE) —
+    # otherwise the objects are orphaned in the private bucket with no ledger row for the sweep
+    # worker to find them by (design §3.3: no silent orphan). Includes hidden photos; the actual
+    # Spaces deletes are NOT done inline here, only enqueued for the sweep.
+    photo_keys = (
+        await session.execute(
+            select(FountainPhoto.storage_key, FountainPhoto.thumbnail_key).where(
+                FountainPhoto.fountain_id == fountain_id
+            )
+        )
+    ).all()
+    for storage_key, thumbnail_key in photo_keys:
+        session.add(StorageCleanup(object_key=storage_key, reason="moderation_delete"))
+        session.add(StorageCleanup(object_key=thumbnail_key, reason="moderation_delete"))
     # Reverse every contribution tied to this fountain BEFORE deleting it (#119 anti-gaming):
     # removing the content must not let its points persist on the leaderboard. Must run first
     # because contribution_events.fountain_id is ON DELETE SET NULL — once the fountain row is
@@ -305,7 +320,10 @@ async def admin_photo_reports(
         .join(FountainPhoto, FountainPhoto.id == PhotoReport.photo_id)
         .where(PhotoReport.status == "pending")
         .group_by(PhotoReport.photo_id)
-        .order_by(func.min(PhotoReport.created_at).asc())
+        # Deterministic tiebreak on photo_id: two photos whose oldest pending report share an
+        # exact timestamp would otherwise reorder across limit/offset pages (skip/dup risk at
+        # a page boundary).
+        .order_by(func.min(PhotoReport.created_at).asc(), PhotoReport.photo_id)
         .limit(limit)
         .offset(offset)
     )

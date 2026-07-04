@@ -171,6 +171,32 @@ async def test_get_hidden_or_unknown_photo_404s(session, api, fake_storage):
 
 
 @pytest.mark.asyncio
+async def test_get_photo_404s_when_parent_fountain_hidden(session, api, fake_storage):
+    """Defense-in-depth for moderation consistency: hiding the PARENT fountain must also gate
+    the direct photo-read endpoints, not just the parent-scoped list."""
+    from sqlalchemy import text
+
+    fid = await _add_fountain(session)
+    user = await _add_user(session)
+    photo = await _add_photo(session, fid, user)
+    await session.commit()
+
+    async with api as client:
+        pre_hide = await client.get(f"/api/v1/photos/{photo}", follow_redirects=False)
+        assert pre_hide.status_code == 302
+
+        await session.execute(
+            text("UPDATE fountains SET is_hidden = true WHERE id = :fid"), {"fid": fid}
+        )
+        await session.commit()
+
+        r1 = await client.get(f"/api/v1/photos/{photo}")
+        r2 = await client.get(f"/api/v1/photos/{photo}/thumb")
+    assert r1.status_code == 404
+    assert r2.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_storage_disabled_visible_503_hidden_and_unknown_still_404(
     session, api, storage_disabled
 ):

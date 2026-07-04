@@ -104,11 +104,21 @@ async def list_photos(
 
 
 async def _load_visible_photo(session: AsyncSession, photo_id: uuid.UUID) -> FountainPhoto:
-    """Unknown id or `is_hidden` both 404 (never reveal a hidden photo's existence)."""
+    """Unknown id, `is_hidden`, or a hidden PARENT fountain all 404 (never reveal a hidden
+    photo's — or a hidden fountain's — existence via the direct read endpoints; moderation
+    consistency with the parent-scoped list endpoint, which is already fountain-hidden-aware)."""
     photo = (
-        await session.execute(select(FountainPhoto).where(FountainPhoto.id == photo_id))
+        await session.execute(
+            select(FountainPhoto)
+            .join(Fountain, Fountain.id == FountainPhoto.fountain_id)
+            .where(
+                FountainPhoto.id == photo_id,
+                FountainPhoto.is_hidden.is_(False),
+                Fountain.is_hidden.is_(False),
+            )
+        )
     ).scalar_one_or_none()
-    if photo is None or photo.is_hidden:
+    if photo is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="photo not found")
     return photo
 
@@ -407,7 +417,9 @@ async def upload_photo(
             "photo upload failed unexpectedly",
             extra={"fountain_id": str(fountain_id), "user_id": str(user.id)},
         )
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail="photo_upload_failed") from exc
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, detail="photo_upload_failed"
+        ) from exc
 
     logger.info(
         "photo uploaded",

@@ -427,7 +427,8 @@ async def test_upload_failure_finalizes_failed_and_cleans_partial_upload(
 
     resp = await client.post(f"/api/v1/fountains/{fid}/photos", files=_FILE)
 
-    assert resp.status_code >= 500
+    # Storage failures map to 503 (spec §8.1), not a generic 502/500.
+    assert resp.status_code == 503
     assert len(partial.put_keys) == 2  # both puts attempted (2nd raised)
     # The one object that DID land is deleted.
     assert partial.deleted_keys == [partial.put_keys[0]]
