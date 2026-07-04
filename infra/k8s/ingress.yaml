@@ -28,16 +28,6 @@ spec:
                 name: healthz-service
                 port:
                   number: 80
-    - host: api.${DOMAIN}
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: fountainrank-backend-service
-                port:
-                  number: 80
     - host: auth.${DOMAIN}
       http:
         paths:
@@ -66,6 +56,36 @@ spec:
             backend:
               service:
                 name: fountainrank-web-service
+                port:
+                  number: 80
+---
+# Separate Ingress for the backend host so proxy-body-size can be scoped tighter than the
+# web/auth hosts above (nginx annotations apply per-Ingress resource, not per-rule). 12m is
+# defense-in-depth over the app's 10 MB streaming upload cap for fountain photos (spec
+# docs/specs/2026-07-04-fountain-photos-design.md §16).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fountainrank-backend-ingress
+  namespace: ${NAMESPACE}
+  annotations:
+    nginx.ingress.kubernetes.io/use-forwarded-headers: "true"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "12m"
+  labels:
+    app: fountainrank
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: api.${DOMAIN}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: fountainrank-backend-service
                 port:
                   number: 80
 ---
