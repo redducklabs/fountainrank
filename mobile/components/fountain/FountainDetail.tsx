@@ -42,9 +42,12 @@ export function FountainDetail({
   };
   const onShare = () => {
     // Share the public web URL; Android needs it in `message` (its sheet ignores `url`). A
-    // user-dismissed share sheet rejects — swallow it.
+    // user-dismissed sheet RESOLVES (dismissedAction), so a rejection here is a genuine failure —
+    // log it for diagnosis rather than suppressing it silently.
     const url = fountainShareUrl(webBaseUrl, String(detail.id));
-    Share.share(shareContent(url, Platform.OS)).catch(() => {});
+    Share.share(shareContent(url, Platform.OS)).catch((err) => {
+      console.warn(`[share] fountain share failed: ${(err as Error)?.message ?? String(err)}`);
+    });
   };
 
   return (
