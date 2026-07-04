@@ -51,7 +51,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-it("renders the country name, count, and linked top cities", async () => {
+it("renders the country name, count, and top cities as text (no links until Slice 3)", async () => {
   getCountriesServer.mockResolvedValue({ data: [US], status: 200 });
   getCountryCitiesServer.mockResolvedValue({ data: [SAN_DIEGO], status: 200 });
 
@@ -59,8 +59,10 @@ it("renders the country name, count, and linked top cities", async () => {
 
   expect((await screen.findByRole("heading", { level: 1 })).textContent).toContain("United States");
   expect(await screen.findByText(/1,234/)).toBeTruthy();
-  const cityLink = await screen.findByRole("link", { name: "San Diego" });
-  expect(cityLink.getAttribute("href")).toBe("/drinking-fountains/us/san-diego");
+  // City name + count render, but NOT as a link (city pages 404 until Slice 3 ships them).
+  expect(await screen.findByText("San Diego")).toBeTruthy();
+  expect(screen.getByText(/42 fountains/)).toBeTruthy();
+  expect(screen.queryByRole("link", { name: "San Diego" })).toBeNull();
 });
 
 it("resolves the country segment case-insensitively", async () => {

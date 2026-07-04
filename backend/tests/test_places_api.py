@@ -1,11 +1,11 @@
 """Slice 2 — public crawlable-place list ``GET /api/v1/places`` (#127, spec §5).
 
-Integration tests against the local PostGIS container (the CI mirror). Seeds ``place_boundaries``
-rows directly with explicit ``is_canonical`` / ``fountain_count`` / ``parent_id`` (this endpoint
-reads the precomputed columns and never runs point-in-polygon, so membership refresh is not
-exercised here). The thin-content gate ``K`` is pinned to 3 via a settings override so the tests
-are independent of the default. Boundary geometry is a throwaway unit square — the endpoint never
-touches it.
+Integration tests against the local PostGIS container (the CI mirror). Most tests seed
+``place_boundaries`` directly with the SAME is_canonical invariant the real Slice 1 refresh
+produces — **countries are is_canonical=false** (that flag disambiguates same-(country_code, slug)
+*city* rows only; see app/membership.py), **cities are is_canonical=true** for the one that owns
+the slug. ``test_real_refresh_*`` proves the endpoint against the actual ``refresh_all_memberships``
+contract (not hand-set flags). K (the thin-content gate) is pinned to 3 via a settings override.
 """
 
 from __future__ import annotations
@@ -16,8 +16,10 @@ from sqlalchemy import text
 
 from app.config import Settings, get_settings
 from app.main import app
+from app.membership import refresh_all_memberships
 
 _K = 3
+_UNIT_SQUARE = "POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))"
 
 
 @pytest.fixture
@@ -45,8 +47,9 @@ async def _add_place(
     name: str,
     slug: str,
     fountain_count: int,
-    is_canonical: bool = True,
+    is_canonical: bool,
     parent_id=None,
+    wkt: str = _UNIT_SQUARE,
 ):
     row = (
         await session.execute(
@@ -57,9 +60,7 @@ async def _add_place(
                      is_canonical, fountain_count, parent_id, boundary, created_at, updated_at)
                 VALUES (gen_random_uuid(), :oid, :subtype, 'land', :name, :cc, :slug,
                         :canon, :fc, :parent,
-                        ST_Multi(ST_GeomFromText(
-                            'POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))', 4326))::geography,
-                        now(), now())
+                        ST_Multi(ST_GeomFromText(:wkt, 4326))::geography, now(), now())
                 RETURNING id
                 """
             ),
@@ -72,15 +73,34 @@ async def _add_place(
                 "canon": is_canonical,
                 "fc": fountain_count,
                 "parent": parent_id,
+                "wkt": wkt,
             },
         )
     ).one()
     return row.id
 
 
+async def _add_fountain(session, lat: float, lng: float, *, hidden: bool = False):
+    await session.execute(
+        text(
+            """
+            INSERT INTO fountains (id, location, is_hidden, created_source)
+            VALUES (gen_random_uuid(),
+                    ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography, :hidden, 'admin_import')
+            """
+        ),
+        {"lat": lat, "lng": lng, "hidden": hidden},
+    )
+
+
+def _sq(x0: float, y0: float, x1: float, y1: float) -> str:
+    return f"POLYGON(({x0} {y0}, {x1} {y0}, {x1} {y1}, {x0} {y1}, {x0} {y0}))"
+
+
 @pytest.mark.asyncio
-async def test_lists_canonical_countries_above_threshold_ordered(session, api):
-    """Countries with fountain_count >= K, canonical only, ordered by count desc then name."""
+async def test_lists_countries_above_threshold_ordered(session, api):
+    """Countries (is_canonical=false, as the real refresh leaves them) with fountain_count >= K,
+    ordered by count desc then name."""
     await _add_place(
         session,
         overture_id="us",
@@ -89,6 +109,7 @@ async def test_lists_canonical_countries_above_threshold_ordered(session, api):
         name="United States",
         slug="united-states",
         fountain_count=10,
+        is_canonical=False,
     )
     await _add_place(
         session,
@@ -98,6 +119,7 @@ async def test_lists_canonical_countries_above_threshold_ordered(session, api):
         name="Luxembourg",
         slug="luxembourg",
         fountain_count=5,
+        is_canonical=False,
     )
     # Below the gate (K=3) -> excluded.
     await _add_place(
@@ -108,6 +130,7 @@ async def test_lists_canonical_countries_above_threshold_ordered(session, api):
         name="Monaco",
         slug="monaco",
         fountain_count=2,
+        is_canonical=False,
     )
     await session.commit()
 
@@ -121,8 +144,8 @@ async def test_lists_canonical_countries_above_threshold_ordered(session, api):
 
 
 @pytest.mark.asyncio
-async def test_excludes_non_canonical_and_child_places_from_country_list(session, api):
-    """The countries list excludes non-canonical rows and any non-country subtype."""
+async def test_country_list_excludes_cities(session, api):
+    """The countries list is subtype='country' only — city rows never appear."""
     us = await _add_place(
         session,
         overture_id="us",
@@ -131,19 +154,8 @@ async def test_excludes_non_canonical_and_child_places_from_country_list(session
         name="United States",
         slug="united-states",
         fountain_count=10,
-    )
-    # A non-canonical duplicate country -> excluded even though it is over the gate.
-    await _add_place(
-        session,
-        overture_id="us-dupe",
-        subtype="country",
-        country_code="us",
-        name="USA",
-        slug="usa",
-        fountain_count=99,
         is_canonical=False,
     )
-    # A city (child place) -> never in the countries list.
     await _add_place(
         session,
         overture_id="us-city",
@@ -152,14 +164,14 @@ async def test_excludes_non_canonical_and_child_places_from_country_list(session
         name="San Diego",
         slug="san-diego",
         fountain_count=8,
+        is_canonical=True,
         parent_id=us,
     )
     await session.commit()
 
     resp = await api.get("/api/v1/places")
     assert resp.status_code == 200
-    body = resp.json()
-    assert [p["slug"] for p in body] == ["united-states"]
+    assert [p["slug"] for p in resp.json()] == ["united-states"]
 
 
 @pytest.mark.asyncio
@@ -174,6 +186,7 @@ async def test_cities_by_parent(session, api):
         name="United States",
         slug="united-states",
         fountain_count=100,
+        is_canonical=False,
     )
     lu = await _add_place(
         session,
@@ -183,6 +196,7 @@ async def test_cities_by_parent(session, api):
         name="Luxembourg",
         slug="luxembourg",
         fountain_count=50,
+        is_canonical=False,
     )
     await _add_place(
         session,
@@ -192,6 +206,7 @@ async def test_cities_by_parent(session, api):
         name="San Diego",
         slug="san-diego",
         fountain_count=8,
+        is_canonical=True,
         parent_id=us,
     )
     await _add_place(
@@ -202,6 +217,7 @@ async def test_cities_by_parent(session, api):
         name="Los Angeles",
         slug="los-angeles",
         fountain_count=20,
+        is_canonical=True,
         parent_id=us,
     )
     # Below the gate -> excluded.
@@ -213,6 +229,7 @@ async def test_cities_by_parent(session, api):
         name="Tinytown",
         slug="tinytown",
         fountain_count=1,
+        is_canonical=True,
         parent_id=us,
     )
     # A LU city -> must not leak into the US query.
@@ -224,6 +241,7 @@ async def test_cities_by_parent(session, api):
         name="Luxembourg City",
         slug="luxembourg-city",
         fountain_count=9,
+        is_canonical=True,
         parent_id=lu,
     )
     await session.commit()
@@ -233,6 +251,52 @@ async def test_cities_by_parent(session, api):
     body = resp.json()
     assert [p["slug"] for p in body] == ["los-angeles", "san-diego"]  # count desc; tinytown gated
     assert all(p["subtype"] != "country" for p in body)
+
+
+@pytest.mark.asyncio
+async def test_cities_list_excludes_non_canonical(session, api):
+    """A non-canonical city (a slug-collision loser, is_canonical=false) is excluded — this is
+    where the is_canonical filter matters (cities, not countries)."""
+    us = await _add_place(
+        session,
+        overture_id="us",
+        subtype="country",
+        country_code="us",
+        name="United States",
+        slug="united-states",
+        fountain_count=100,
+        is_canonical=False,
+    )
+    await _add_place(
+        session,
+        overture_id="riv-loc",
+        subtype="locality",
+        country_code="us",
+        name="Riverside",
+        slug="riverside",
+        fountain_count=8,
+        is_canonical=True,
+        parent_id=us,
+    )
+    await _add_place(
+        session,
+        overture_id="riv-la",
+        subtype="localadmin",
+        country_code="us",
+        name="Riverside",
+        slug="riverside",
+        fountain_count=99,
+        is_canonical=False,
+        parent_id=us,
+    )
+    await session.commit()
+
+    resp = await api.get("/api/v1/places", params={"country": "us"})
+    assert resp.status_code == 200
+    body = resp.json()
+    # Only the canonical Riverside (locality) survives; the non-canonical localadmin twin is gone.
+    assert len(body) == 1
+    assert body[0]["name"] == "Riverside" and body[0]["subtype"] == "locality"
 
 
 @pytest.mark.asyncio
@@ -246,6 +310,7 @@ async def test_country_segment_is_case_insensitive(session, api):
         name="United States",
         slug="united-states",
         fountain_count=100,
+        is_canonical=False,
     )
     await _add_place(
         session,
@@ -255,6 +320,7 @@ async def test_country_segment_is_case_insensitive(session, api):
         name="San Diego",
         slug="san-diego",
         fountain_count=8,
+        is_canonical=True,
         parent_id=us,
     )
     await session.commit()
@@ -275,6 +341,7 @@ async def test_unknown_country_returns_empty(session, api):
         name="United States",
         slug="united-states",
         fountain_count=100,
+        is_canonical=False,
     )
     await session.commit()
 
@@ -294,6 +361,7 @@ async def test_public_and_sets_cache_header(session, api):
         name="United States",
         slug="united-states",
         fountain_count=10,
+        is_canonical=False,
     )
     await session.commit()
 
@@ -315,6 +383,7 @@ async def test_limit_and_offset(session, api):
             name=f"Country {cc}",
             slug=cc,
             fountain_count=100 - i,
+            is_canonical=False,
         )
     await session.commit()
 
@@ -330,3 +399,48 @@ async def test_limit_bounds_are_enforced(api):
     assert (await api.get("/api/v1/places", params={"limit": 0})).status_code == 422
     assert (await api.get("/api/v1/places", params={"limit": 1001})).status_code == 422
     assert (await api.get("/api/v1/places", params={"offset": -1})).status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_real_refresh_makes_country_and_city_listable(session, api):
+    """End-to-end against the REAL Slice 1 contract: seed a country + city + fountains, run the
+    actual refresh_all_memberships (which leaves the country is_canonical=false and marks the city
+    canonical), and prove /api/v1/places returns BOTH. This is the guard for the class of bug where
+    the endpoint filtered countries on is_canonical and returned [] for a normally-loaded scope."""
+    await _add_place(
+        session,
+        overture_id="us",
+        subtype="country",
+        country_code="us",
+        name="United States",
+        slug="united-states",
+        fountain_count=0,
+        is_canonical=False,
+        wkt=_sq(0, 0, 10, 10),
+    )
+    await _add_place(
+        session,
+        overture_id="us-city",
+        subtype="locality",
+        country_code="us",
+        name="San Diego",
+        slug="san-diego",
+        fountain_count=0,
+        is_canonical=False,
+        wkt=_sq(1, 1, 2, 2),
+    )
+    # 3 fountains inside the city (>= K=3) so both country and city clear the gate.
+    for lat, lng in [(1.5, 1.5), (1.6, 1.6), (1.4, 1.4)]:
+        await _add_fountain(session, lat=lat, lng=lng)
+    await refresh_all_memberships(session)
+    await session.commit()
+
+    # The country is listable even though the real refresh leaves it is_canonical=false.
+    countries = (await api.get("/api/v1/places")).json()
+    assert [c["country_code"] for c in countries] == ["us"]
+    assert countries[0]["fountain_count"] == 3
+
+    # Its canonical city is listable under the parent.
+    cities = (await api.get("/api/v1/places", params={"country": "us"})).json()
+    assert [c["slug"] for c in cities] == ["san-diego"]
+    assert cities[0]["fountain_count"] == 3

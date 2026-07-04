@@ -4,12 +4,7 @@ import { notFound } from "next/navigation";
 import { cache } from "react";
 
 import { SiteHeader } from "../../../components/SiteHeader";
-import {
-  cityPath,
-  countryPath,
-  getCountriesServer,
-  getCountryCitiesServer,
-} from "../../../lib/places";
+import { countryPath, getCountriesServer, getCountryCitiesServer } from "../../../lib/places";
 import type { PlaceOut } from "../../../lib/places";
 import { log } from "../../../lib/server/log";
 
@@ -77,15 +72,13 @@ export default async function CountryPage({ params }: { params: Promise<{ countr
         {cities.length > 0 ? (
           <section className="mt-8">
             <h2 className="text-lg font-bold text-[#0A357E]">Top cities</h2>
+            {/* Names + counts only — the city pages (/[country]/[city]) ship in Slice 3, which
+                turns these into links. We must NOT link an indexable page to routes that 404 yet
+                (bad crawl graph). */}
             <ul className="mt-3 divide-y divide-slate-100">
               {cities.map((city) => (
                 <li key={city.id} className="flex items-center justify-between py-2">
-                  <Link
-                    href={cityPath(place.country_code, city.slug)}
-                    className="text-[#0C44A0] underline"
-                  >
-                    {city.name}
-                  </Link>
+                  <span className="text-slate-700">{city.name}</span>
                   <span className="text-sm text-slate-500">
                     {city.fountain_count.toLocaleString()} fountains
                   </span>

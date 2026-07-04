@@ -54,36 +54,44 @@ async def list_places(
     contract, not just tests).
     """
     min_count = settings.seo_place_min_fountains
-    stmt = (
-        select(PlaceBoundary)
-        .where(
-            PlaceBoundary.is_canonical.is_(True),
-            PlaceBoundary.fountain_count >= min_count,
-        )
-        .order_by(
-            PlaceBoundary.fountain_count.desc(),
-            PlaceBoundary.name.asc(),
-            PlaceBoundary.id.asc(),
-        )
-        .limit(limit)
-        .offset(offset)
+    order_by = (
+        PlaceBoundary.fountain_count.desc(),
+        PlaceBoundary.name.asc(),
+        PlaceBoundary.id.asc(),
     )
 
     if country is None:
-        stmt = stmt.where(PlaceBoundary.subtype == "country")
+        # Countries are keyed by country_code (the URL segment) and the loader keeps exactly one
+        # `class='land'` row per code. They are NEVER is_canonical: that flag disambiguates same
+        # (country_code, slug) *city* rows only (see app/membership.py — "only city-eligible places
+        # are ever canonical"). So do NOT filter countries on is_canonical, or this returns nothing
+        # for a normally-loaded scope (US/LU are non-canonical countries).
+        stmt = (
+            select(PlaceBoundary)
+            .where(
+                PlaceBoundary.subtype == "country",
+                PlaceBoundary.fountain_count >= min_count,
+            )
+            .order_by(*order_by)
+            .limit(limit)
+            .offset(offset)
+        )
         scope = "countries"
         country_code = None
     else:
         country_code = country.lower()
-        # Resolve the canonical country row, then return its children. A country below the gate
-        # (or not loaded) yields no cities — the country page 404s on its own (web notFound()).
+        # Resolve the country row by code (one per code from the loader; overture_id gives a
+        # deterministic pick if that invariant is ever violated). A country not loaded yields no
+        # cities — the country page 404s on its own (web notFound()).
         parent_id = (
             await session.execute(
-                select(PlaceBoundary.id).where(
+                select(PlaceBoundary.id)
+                .where(
                     PlaceBoundary.subtype == "country",
                     PlaceBoundary.country_code == country_code,
-                    PlaceBoundary.is_canonical.is_(True),
                 )
+                .order_by(PlaceBoundary.overture_id.asc())
+                .limit(1)
             )
         ).scalar_one_or_none()
         if parent_id is None:
@@ -98,9 +106,20 @@ async def list_places(
                 },
             )
             return []
-        stmt = stmt.where(
-            PlaceBoundary.parent_id == parent_id,
-            PlaceBoundary.subtype != "country",
+        # Cities ARE is_canonical: canonicalization keeps exactly one row per (country_code, slug)
+        # among city-eligible subtypes, which is what owns the /[country]/[city] URL — so the flag
+        # is correct and required here to collapse slug collisions.
+        stmt = (
+            select(PlaceBoundary)
+            .where(
+                PlaceBoundary.parent_id == parent_id,
+                PlaceBoundary.subtype != "country",
+                PlaceBoundary.is_canonical.is_(True),
+                PlaceBoundary.fountain_count >= min_count,
+            )
+            .order_by(*order_by)
+            .limit(limit)
+            .offset(offset)
         )
         scope = "cities"
 
