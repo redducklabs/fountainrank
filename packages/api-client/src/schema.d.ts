@@ -107,6 +107,62 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/fountains/by-attribute": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Fountains By Attribute
+         * @description A global crawlable attribute page (spec §4.5): the NON-HIDDEN fountains whose crowdsourced
+         *     consensus matches ``attribute``, best-rated first (Bayesian ``ranking_score`` desc, unrated
+         *     last). Reads the denormalized consensus (never recomputes it) — public + cacheable. Declared
+         *     BEFORE ``/fountains/{fountain_id}`` so the literal path is not parsed as a UUID.
+         *
+         *     ``total_count`` is the full non-hidden match total (the list is capped by ``limit``);
+         *     ``indexable`` is the server-side thin-content verdict (``total_count >=
+         *     seo_attribute_min_fountains``), so the web sets ``noindex`` without knowing ``K_attr``. Invalid
+         *     ``attribute`` values 422 (Literal).
+         */
+        get: operations["fountains_by_attribute_api_v1_fountains_by_attribute_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/fountains/sitemap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Fountains Sitemap
+         * @description The indexable fountain ids for the fountains sitemap chunk (spec §6/§7).
+         *
+         *     Enumerates the fountains satisfying the single §7 indexing predicate — a city resolves, not
+         *     hidden, and (rated OR a working, non-degraded/broken fountain) — ordered by id for a stable,
+         *     deterministic page across offsets. Reads the precomputed membership (never a live ST_Covers)
+         *     plus the public status columns; unauthenticated + cacheable. ``total_count`` is the full
+         *     indexable total so the sitemap builder can log (never silently) when a chunk nears the 50k-URL
+         *     limit and must be split. Declared BEFORE ``/fountains/{fountain_id}`` so the literal ``sitemap``
+         *     path is not parsed as a UUID.
+         */
+        get: operations["fountains_sitemap_api_v1_fountains_sitemap_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/fountains/{fountain_id}": {
         parameters: {
             query?: never;
@@ -116,6 +172,33 @@ export interface paths {
         };
         /** Fountain Detail */
         get: operations["fountain_detail_api_v1_fountains__fountain_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/fountains/{fountain_id}/place": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Fountain Place
+         * @description One fountain's PUBLIC place membership + the §7 indexing verdict (spec §5/§7).
+         *
+         *     Public + unauthenticated + cacheable, computed only from non-hidden columns (never the
+         *     viewer/admin detail path), so auth/admin state can never influence indexability or SEO copy.
+         *     Resolves the fountain's precomputed country/city place from the membership columns (never a
+         *     live ST_Covers). 404s a hidden or unknown fountain (matching the detail endpoint), so the web
+         *     page can ``noindex`` + ``notFound()``. ``indexable`` is the single §7 predicate, evaluated in
+         *     the same query that loads the row so it can never drift from the sitemap enumeration.
+         */
+        get: operations["fountain_place_api_v1_fountains__fountain_id__place_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -244,6 +327,59 @@ export interface paths {
          *     an invalid bearer is still a hard 401, never silently downgraded to anonymous (#117).
          */
         get: operations["contributors_api_v1_leaderboard_contributors_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/places": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Places
+         * @description List crawlable places, most-populous first.
+         *
+         *     Countries when ``country`` is omitted; the cities of ``country`` otherwise. Only **canonical**
+         *     places (one per ``(country_code, slug)``) with ``fountain_count >= seo_place_min_fountains``
+         *     are returned — the thin-content gate (spec §7). Hidden fountains are already excluded from
+         *     ``fountain_count`` (denormalized at membership refresh), so no per-row hidden filter is needed
+         *     here. Bounded by ``limit``/``offset`` and served with a public ``Cache-Control`` (both in the
+         *     contract, not just tests).
+         */
+        get: operations["list_places_api_v1_places_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/places/{country}/{city}/fountains": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * City Fountains
+         * @description The canonical city for /[country]/[city] plus its ranked, paginated fountains (spec §4.3/§5).
+         *
+         *     Resolves the canonical place owning ``(country_code, slug)`` (both matched lowercased — slugs
+         *     are stored lowercased), then returns its NON-HIDDEN fountains best-rated first (Bayesian
+         *     ``ranking_score`` DESC, unrated last). Reads the precomputed ``city_place_id`` membership, not a
+         *     live ST_Covers (spec §5). Public + cacheable. 404 when no canonical city matches, so the page
+         *     can ``notFound()``.
+         */
+        get: operations["city_fountains_api_v1_places__country___city__fountains_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -477,6 +613,27 @@ export interface components {
             /** Latest Observation Value */
             latest_observation_value: string | null;
         };
+        /**
+         * AttributeFountainsOut
+         * @description A global attribute page's ranked, paginated fountains (#127 Slice 4, spec §4.5).
+         *
+         *     ``attribute`` echoes the requested SEO attribute key (e.g. ``bottle_filler``). ``fountains`` are
+         *     the non-hidden fountains whose crowdsourced consensus matches, best-rated first. ``total_count``
+         *     is the full matching non-hidden total (the list is capped by ``limit``), so the page can show
+         *     "N fountains" and "top M of N". ``indexable`` is the spec §7/§4.5 thin-content predicate
+         *     computed server-side (``total_count >= seo_attribute_min_fountains``) — the single source of
+         *     ``K_attr`` so the web sets ``noindex`` from it rather than knowing the threshold.
+         */
+        AttributeFountainsOut: {
+            /** Attribute */
+            attribute: string;
+            /** Fountains */
+            fountains: components["schemas"]["FountainPin"][];
+            /** Total Count */
+            total_count: number;
+            /** Indexable */
+            indexable: boolean;
+        };
         /** AttributeObservationInput */
         AttributeObservationInput: {
             /** Attribute Type Id */
@@ -524,6 +681,24 @@ export interface components {
             north: number;
             /** East */
             east: number;
+        };
+        /**
+         * CityFountainsOut
+         * @description A city place plus its ranked, paginated fountains (#127 Slice 3, spec §4.3/§5).
+         *
+         *     ``place`` is the canonical city that owns the ``/[country]/[city]`` URL; ``fountains`` are its
+         *     non-hidden fountains, best-rated first. ``place.fountain_count`` is the full non-hidden total
+         *     (the list is capped by ``limit``), so the page can show "top N of M" without a separate count.
+         *     ``indexable`` is the spec §7 thin-content predicate computed server-side (``fountain_count >=
+         *     seo_place_min_fountains``) — the single source of truth for K, so the web sets ``noindex`` from
+         *     it rather than knowing the threshold.
+         */
+        CityFountainsOut: {
+            place: components["schemas"]["PlaceOut"];
+            /** Fountains */
+            fountains: components["schemas"]["FountainPin"][];
+            /** Indexable */
+            indexable: boolean;
         };
         /** ConditionReportRequest */
         ConditionReportRequest: {
@@ -693,6 +868,44 @@ export interface components {
             /** Last Verified At */
             last_verified_at?: string | null;
         };
+        /**
+         * FountainPlaceOut
+         * @description One fountain's public place membership + indexability verdict (#127 Slice 5, spec §5/§7).
+         *
+         *     Computed from PUBLIC, non-hidden data only (never the viewer/admin path), so auth/admin state
+         *     can never influence indexability or SEO copy. ``city`` is the fountain's most-specific covering
+         *     city place — it shares its ``(country_code, slug)`` with the canonical city that owns the public
+         *     ``/[country]/[city]`` URL — and ``country`` is its country place; either is ``None`` when
+         *     unmatched. Read from the precomputed membership columns (never a live ST_Covers, spec §5).
+         *     ``indexable`` is the single server-side §7 predicate, so the web sets ``noindex`` from it
+         *     without re-deriving the rule.
+         */
+        FountainPlaceOut: {
+            /**
+             * Fountain Id
+             * Format: uuid
+             */
+            fountain_id: string;
+            city: components["schemas"]["PlaceOut"] | null;
+            country: components["schemas"]["PlaceOut"] | null;
+            /** Indexable */
+            indexable: boolean;
+        };
+        /**
+         * FountainSitemapOut
+         * @description The indexable fountain ids for the fountains sitemap chunk (#127 Slice 5, spec §6/§7).
+         *
+         *     ``fountain_ids`` are the ids satisfying the single §7 indexing predicate, ordered by id for
+         *     stable pagination and capped by ``limit``. ``total_count`` is the full indexable total, so the
+         *     sitemap builder can log (never silently) when a chunk approaches the 50k-URL limit and must be
+         *     split.
+         */
+        FountainSitemapOut: {
+            /** Fountain Ids */
+            fountain_ids: string[];
+            /** Total Count */
+            total_count: number;
+        };
         /** GeocodeResponse */
         GeocodeResponse: {
             /** Results */
@@ -782,6 +995,32 @@ export interface components {
         ObserveAttributesRequest: {
             /** Observations */
             observations: components["schemas"]["AttributeObservationInput"][];
+        };
+        /**
+         * PlaceOut
+         * @description A crawlable place (country or city) for the public SEO endpoints (#127, spec §5).
+         *
+         *     Serialized from ``PlaceBoundary`` (precomputed membership; never a live ST_Covers). The
+         *     public URL segment is ``country_code`` for a country (ISO-3166-1 alpha-2, lowercased) and
+         *     ``slug`` for a city — both are carried so the client can build either route. ``fountain_count``
+         *     is the denormalized NON-HIDDEN count that drives the "N fountains" copy and the >= K gate.
+         */
+        PlaceOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Country Code */
+            country_code: string;
+            /** Slug */
+            slug: string;
+            /** Name */
+            name: string;
+            /** Subtype */
+            subtype: string;
+            /** Fountain Count */
+            fountain_count: number;
         };
         /** RateRequest */
         RateRequest: {
@@ -1077,6 +1316,72 @@ export interface operations {
             };
         };
     };
+    fountains_by_attribute_api_v1_fountains_by_attribute_get: {
+        parameters: {
+            query: {
+                /** @description SEO attribute key: bottle_filler | wheelchair_reachable. */
+                attribute: "bottle_filler" | "wheelchair_reachable";
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttributeFountainsOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    fountains_sitemap_api_v1_fountains_sitemap_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FountainSitemapOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     fountain_detail_api_v1_fountains__fountain_id__get: {
         parameters: {
             query?: never;
@@ -1100,6 +1405,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FountainDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    fountain_place_api_v1_fountains__fountain_id__place_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fountain_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FountainPlaceOut"];
                 };
             };
             /** @description Validation Error */
@@ -1517,6 +1853,75 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LeaderboardOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_places_api_v1_places_get: {
+        parameters: {
+            query?: {
+                /** @description ISO-3166-1 alpha-2 country code. Omit to list countries; provide it to list that country's cities (its canonical child places). */
+                country?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlaceOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    city_fountains_api_v1_places__country___city__fountains_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                country: string;
+                city: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CityFountainsOut"];
                 };
             };
             /** @description Validation Error */

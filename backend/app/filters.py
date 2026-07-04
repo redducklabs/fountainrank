@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 from fastapi import Query
 from sqlalchemy import Select, exists, not_, select
@@ -25,6 +26,19 @@ ATTRIBUTE_FILTERS: dict[str, tuple[str, str]] = {
     "indoor": ("indoor_outdoor", "indoor"),
     "public_access": ("access_kind", "public"),
 }
+
+# The subset of attributes exposed as GLOBAL, crawlable SEO pages (spec §4.5). Only these two get a
+# public /drinking-fountains/bottle-fillers | /wheelchair-accessible-drinking-fountains page; the
+# param value maps to the same (attribute key, consensus value) the discovery filters use.
+SEO_ATTRIBUTE_FILTERS: dict[str, tuple[str, str]] = {
+    "bottle_filler": ATTRIBUTE_FILTERS["bottle_filler"],
+    "wheelchair_reachable": ATTRIBUTE_FILTERS["wheelchair_reachable"],
+}
+
+# The public ``attribute`` query param for the by-attribute endpoint. A Literal so FastAPI validates
+# it (422 on anything else) and documents the allowed values in the OpenAPI schema — the generated
+# web client then types the param as this union.
+SeoAttribute = Literal["bottle_filler", "wheelchair_reachable"]
 
 
 @dataclass(frozen=True)
@@ -94,6 +108,44 @@ def _attr_match(key: str, value: str, include_unknown: bool):
         exists(_consensus_base(key).where(FountainAttributeConsensus.consensus_value.is_not(None)))
     )
     return has_value | no_definite
+
+
+def attribute_consensus_match(key: str, value: str):
+    """Public WHERE predicate: fountains whose ACTIVE, fountain-scoped consensus for ``key`` equals
+    ``value`` (positive match only — never widened to "unknown"). Reused by the SEO by-attribute
+    endpoint so the crawlable attribute pages share the exact match semantics of the map filters."""
+    return _attr_match(key, value, include_unknown=False)
+
+
+# The negative operational states for the indexing predicate (spec §7). A fountain in one of these
+# is not a serviceable fountain to index on its own. ``reported_issue`` is a NON-flipping advisory
+# (see app/conditions.py) — deliberately NOT a hard negative — and ``ok``/NULL are fine, so only the
+# two authoritative bad states below de-index an otherwise-working fountain. Single source of truth
+# so the SQL predicate can never drift from the documented rule.
+NEGATIVE_STATUS_VALUES: tuple[str, ...] = ("degraded", "not_working")
+
+
+def fountain_indexable_predicate():
+    """The single public §7 indexing predicate, as a SQL ``WHERE`` expression on ``Fountain``.
+
+    A fountain is indexable **iff** a city resolves (``city_place_id`` is set) **AND** it is not
+    hidden **AND** (it has ``rating_count >= 1`` **OR** it is a working fountain that is not in a
+    negative operational state — ``degraded`` / ``not_working``). Computed ONLY from public,
+    non-hidden, unauthenticated columns, so auth/admin data can never influence indexability or SEO
+    copy. Reused by BOTH the single ``/fountains/{id}/place`` verdict and the fountains sitemap
+    enumeration, so the two can never diverge (the spec's "one predicate" requirement).
+
+    ``current_status IS NULL`` is handled explicitly because ``NULL NOT IN (...)`` is SQL-unknown
+    (not true), so a NULL derived status must fall through to the ``is_working`` baseline.
+    """
+    working = Fountain.is_working.is_(True) & (
+        Fountain.current_status.is_(None) | Fountain.current_status.not_in(NEGATIVE_STATUS_VALUES)
+    )
+    return (
+        Fountain.city_place_id.is_not(None)
+        & Fountain.is_hidden.is_(False)
+        & ((Fountain.rating_count >= 1) | working)
+    )
 
 
 def apply_discovery_filters(

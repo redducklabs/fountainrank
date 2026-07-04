@@ -73,6 +73,24 @@ class Settings(BaseSettings):
     # Default radius (m) for the local contributor leaderboard when no radius_m is given.
     leaderboard_local_radius_m: float = 5000.0
 
+    # --- Crawlable SEO pages (#127, see docs/specs/2026-07-02-crawlable-seo-pages-design.md) ---
+    # Thin-content gate (spec §5/§7): a place (country/city) is returned by the public
+    # /api/v1/places endpoint, linked, and sitemap-indexed only when its precomputed
+    # NON-HIDDEN fountain_count is at least this. Provisional; the coverage gate (Slice 1e)
+    # may tune it per scope. Countries are unaffected in practice (any loaded country has
+    # far more), so this mainly guards near-empty city pages.
+    seo_place_min_fountains: int = 3
+    # Thin-content gate for the GLOBAL attribute pages (spec §4.5, "K_attr"): an attribute page
+    # (/drinking-fountains/bottle-fillers, /wheelchair-accessible-drinking-fountains) is indexable
+    # and sitemap-listed only when its matching NON-HIDDEN fountain count is at least this. Separate
+    # from seo_place_min_fountains because global attribute pages scale very differently from a
+    # single city. Attributes are crowdsourced, so a page stays noindex until enough are observed.
+    seo_attribute_min_fountains: int = 3
+    # Cache-Control max-age (== s-maxage) for the public, unauthenticated place endpoints.
+    # Place lists change slowly (only on a boundary load / membership refresh), so they cache
+    # well at the browser and any shared CDN. One hour by default.
+    seo_cache_max_age_seconds: int = 3600
+
     # --- OSM ingestion (see docs/specs/2026-06-21-osm-fountain-ingestion-design.md) ---
     # Auto-update an imported-only, unrated fountain's location only if it moved <= this.
     osm_move_small_max_m: float = 25.0

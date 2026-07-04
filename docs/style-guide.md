@@ -116,6 +116,75 @@ Static, readable policy pages for app-store and OAuth registration URLs.
 - These pages intentionally avoid the landing page gradient so long policy text
   remains comfortable to read.
 
+### SEO place pages (`web/app/drinking-fountains/[country]/page.tsx`, `[country]/[city]/page.tsx`)
+
+Crawlable, server-rendered directory pages for organic search (#127) — the **country** page
+(top cities) and the **city** page (ranked fountain list). They share one template.
+
+- **Shell:** the slim `SiteHeader variant="bar"` + a white, constrained column
+  (`mx-auto min-h-dvh max-w-2xl bg-white px-6 py-10`) — the same reading shell as the
+  leaderboard and fountain-detail pages.
+- Small brand-blue (`text-[#0C44A0]`) back link at the top (country → "← Back to the map";
+  city → "← All of {CC}").
+- **Title:** `h1` in `text-2xl font-black text-[#0A357E]` ("Drinking fountains in {place}"),
+  followed by a one-line lead in `text-slate-600` stating the fountain count (city pages add
+  "Showing the top N" when the list is capped).
+- **List rows:** under an optional `h2` (`text-lg font-bold text-[#0A357E]`), a
+  `divide-y divide-slate-100` list. Country "Top cities" rows are a brand-blue underlined `Link`
+  to the city page + a right-aligned `text-sm text-slate-500` count. City fountain rows are a
+  full-width `Link` to `/fountains/[id]` — fountains have no names, so the label is
+  "Drinking fountain" (+ "· Out of order" when not working) with a right-aligned rating
+  (`formatAverage` + rating count).
+- **Indexability:** the **country** page renders only at/above the gate (`K`) — anything else is
+  `notFound()` (404). The **city** page renders even below the gate but is `noindex` (the backend
+  returns an `indexable` flag — the single source of `K`); a missing city is `notFound()`. Both set
+  a unique title/description + `alternates.canonical` (the sticky slug); a non-canonical city URL
+  (e.g. wrong case) `permanentRedirect`s (301) to the canonical.
+
+### SEO attribute pages (`web/components/AttributePage.tsx`)
+
+Crawlable global pages for an attribute filter (#127 Slice 4) — **bottle fillers**
+(`/drinking-fountains/bottle-fillers`) and **wheelchair-accessible**
+(`/wheelchair-accessible-drinking-fountains`). Structurally identical, so they share one
+`AttributePage` component + `buildAttributeMetadata`; each route is a thin file supplying a config
+(attribute key, canonical path, heading, copy). The URLs are intentionally different shapes to match
+the target search phrase; `bottle-fillers` is a **static** segment so it wins over the sibling
+`/drinking-fountains/[country]` dynamic route.
+
+- **Shell / title / rows:** identical to the SEO place pages — the same white `max-w-2xl` reading
+  shell, "← Back to the map" link, `h1` in `text-2xl font-black text-[#0A357E]` (the page heading),
+  a `text-slate-600` lead with the live count, and the same `/fountains/[id]` ranked list rows
+  ("Drinking fountain" + `formatAverage`). Empty state: "No public fountains match this yet".
+- **Indexability:** the page always renders (200); the backend's `indexable` verdict (the single
+  source of `K_attr`) drives `noindex` — below the gate, zero matches, or a backend error are all
+  `noindex` (`{ index: false, follow: true }`) and omitted from the sitemap. Unique
+  title/description + `alternates.canonical`.
+
+### Near-me hub (`web/app/drinking-fountains-near-me/page.tsx`)
+
+A static hub (`/drinking-fountains-near-me`, #127 Slice 4) — always indexable, no per-place
+thin-content risk. Same reading shell. A prominent solid brand-blue CTA
+(`rounded-lg bg-[#0C44A0] px-4 py-2 font-bold text-white`, "Open the map near you") deep-links into
+the map (which geolocates the visitor), followed by "Popular cities" (the busiest country's top
+cities) and a "Browse by country" wrap list — crawlable internal links. Degrades to just the CTA
+when no places are loaded.
+
+### Fountain-detail SEO metadata (`web/app/fountains/[id]/page.tsx`)
+
+The individual fountain detail page (#127 Slice 5) gains `generateMetadata` + a city-aware `h1`,
+both driven by the **public** `GET /api/v1/fountains/{id}/place` endpoint only — never the
+viewer/admin detail path, so a signed-in or admin viewer can't change the SEO output.
+
+- **Title / canonical:** `Drinking fountain in {city}` (or `Public drinking fountain` when no city
+  resolves) + `alternates.canonical = /fountains/[id]`, plus a matching description + OpenGraph.
+- **Indexability:** the backend's single §7 predicate (a city resolves, not hidden, and rated OR
+  working-and-not-broken) drives `noindex` — below the predicate is `{ index: false, follow: true }`
+  (rendered but out of the index); a hidden / unknown / backend-down page is `{ index: false,
+  follow: false }`. Indexable fountains are listed in `/sitemaps/fountains.xml`.
+- **`h1`:** the shared `FountainDetail` takes an optional `locationLabel` so the heading reads
+  "Public drinking fountain in {city}" on the public page; it falls back to "Public drinking
+  fountain" when no city resolves or on the admin path (which doesn't fetch the public place).
+
 ### Auth buttons (`web/components/SignInButton.tsx`, `SignOutButton.tsx`)
 
 Pill-shaped buttons that submit a Next.js server action (`<form action={...}>`).

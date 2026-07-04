@@ -302,3 +302,86 @@ class GeocodeResult(BaseModel):
 
 class GeocodeResponse(BaseModel):
     results: list[GeocodeResult]
+
+
+class PlaceOut(BaseModel):
+    """A crawlable place (country or city) for the public SEO endpoints (#127, spec §5).
+
+    Serialized from ``PlaceBoundary`` (precomputed membership; never a live ST_Covers). The
+    public URL segment is ``country_code`` for a country (ISO-3166-1 alpha-2, lowercased) and
+    ``slug`` for a city — both are carried so the client can build either route. ``fountain_count``
+    is the denormalized NON-HIDDEN count that drives the "N fountains" copy and the >= K gate.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    country_code: str
+    slug: str
+    name: str
+    subtype: str
+    fountain_count: int
+
+
+class CityFountainsOut(BaseModel):
+    """A city place plus its ranked, paginated fountains (#127 Slice 3, spec §4.3/§5).
+
+    ``place`` is the canonical city that owns the ``/[country]/[city]`` URL; ``fountains`` are its
+    non-hidden fountains, best-rated first. ``place.fountain_count`` is the full non-hidden total
+    (the list is capped by ``limit``), so the page can show "top N of M" without a separate count.
+    ``indexable`` is the spec §7 thin-content predicate computed server-side (``fountain_count >=
+    seo_place_min_fountains``) — the single source of truth for K, so the web sets ``noindex`` from
+    it rather than knowing the threshold.
+    """
+
+    place: PlaceOut
+    fountains: list[FountainPin]
+    indexable: bool
+
+
+class AttributeFountainsOut(BaseModel):
+    """A global attribute page's ranked, paginated fountains (#127 Slice 4, spec §4.5).
+
+    ``attribute`` echoes the requested SEO attribute key (e.g. ``bottle_filler``). ``fountains`` are
+    the non-hidden fountains whose crowdsourced consensus matches, best-rated first. ``total_count``
+    is the full matching non-hidden total (the list is capped by ``limit``), so the page can show
+    "N fountains" and "top M of N". ``indexable`` is the spec §7/§4.5 thin-content predicate
+    computed server-side (``total_count >= seo_attribute_min_fountains``) — the single source of
+    ``K_attr`` so the web sets ``noindex`` from it rather than knowing the threshold.
+    """
+
+    attribute: str
+    fountains: list[FountainPin]
+    total_count: int
+    indexable: bool
+
+
+class FountainPlaceOut(BaseModel):
+    """One fountain's public place membership + indexability verdict (#127 Slice 5, spec §5/§7).
+
+    Computed from PUBLIC, non-hidden data only (never the viewer/admin path), so auth/admin state
+    can never influence indexability or SEO copy. ``city`` is the fountain's most-specific covering
+    city place — it shares its ``(country_code, slug)`` with the canonical city that owns the public
+    ``/[country]/[city]`` URL — and ``country`` is its country place; either is ``None`` when
+    unmatched. Read from the precomputed membership columns (never a live ST_Covers, spec §5).
+    ``indexable`` is the single server-side §7 predicate, so the web sets ``noindex`` from it
+    without re-deriving the rule.
+    """
+
+    fountain_id: uuid.UUID
+    city: PlaceOut | None
+    country: PlaceOut | None
+    indexable: bool
+
+
+class FountainSitemapOut(BaseModel):
+    """The indexable fountain ids for the fountains sitemap chunk (#127 Slice 5, spec §6/§7).
+
+    ``fountain_ids`` are the ids satisfying the single §7 indexing predicate, ordered by id for
+    stable pagination and capped by ``limit``. ``total_count`` is the full indexable total, so the
+    sitemap builder can log (never silently) when a chunk approaches the 50k-URL limit and must be
+    split.
+    """
+
+    fountain_ids: list[uuid.UUID]
+    total_count: int
