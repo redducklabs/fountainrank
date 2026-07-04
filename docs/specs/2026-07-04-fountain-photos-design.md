@@ -393,7 +393,10 @@ re-check the report rate/quota → 429, then insert via **`INSERT ... ON CONFLIC
 NOTHING`** against the partial-unique predicate (`status='pending'`), using the
 inserted-row count to decide — **no exception path** for duplicates, so the async session
 is never poisoned by an `IntegrityError`. A duplicate pending report is an **idempotent
-204** ("already reported").
+204** ("already reported"). **Accepted trade-off:** because a duplicate adds no row
+(`DO NOTHING`), re-reporting the same photo does not consume the report-rate count; this is
+fine — the path is a single cheap authenticated upsert with no expensive work, so a
+dedicated report-attempt ledger is deferred unless duplicate-report spam is observed.
 Reporting a hidden photo is allowed (records the report; visibility unchanged). Structured
 log records ids/category/count only — **never the raw note** (PII). Returns 204.
 
