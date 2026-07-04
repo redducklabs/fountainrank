@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from sqlalchemy import text
 
@@ -174,3 +176,95 @@ async def test_compute_coverage_performs_no_writes(session, _fixture):
         await session.execute(text("SELECT coalesce(sum(fountain_count),0) FROM place_boundaries"))
     ).scalar_one()
     assert (before, fc_before) == (after, fc_after)
+
+
+@pytest.mark.asyncio
+async def test_collect_locked_coverage_matches_and_releases_lock(session, _fixture):
+    from app.imports.seo_coverage_cli import collect_locked_coverage
+    from app.locks import ADD_FOUNTAIN_LOCK_KEY
+
+    report = await collect_locked_coverage()
+    assert {s.country_code for s in report.scopes} >= {"aa", "bb"}
+
+    # The session advisory lock must be released after the run: another session can take it.
+    got = (
+        await session.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": ADD_FOUNTAIN_LOCK_KEY})
+    ).scalar_one()
+    assert got is True
+    await session.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": ADD_FOUNTAIN_LOCK_KEY})
+    await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_lock_is_held_during_read(session, _fixture, monkeypatch):
+    """Regression guard for the lock-then-snapshot contract: while the report reads, the advisory
+    lock is HELD (a separate connection's pg_try_advisory_lock fails). If the lock were taken as the
+    read transaction's first statement / not held across the read, this would fail."""
+    import app.imports.seo_coverage_cli as cli
+    from app.db import get_engine
+    from app.locks import ADD_FOUNTAIN_LOCK_KEY
+
+    real = cli.compute_coverage
+    seen = {}
+
+    async def probe(bind, **kw):
+        async with get_engine().connect() as other:
+            got = (
+                await other.execute(
+                    text("SELECT pg_try_advisory_lock(:k)"), {"k": ADD_FOUNTAIN_LOCK_KEY}
+                )
+            ).scalar_one()
+            seen["held"] = got is False
+            if got:  # defensive: if we somehow acquired it, release so we don't leak the lock
+                await other.execute(
+                    text("SELECT pg_advisory_unlock(:k)"), {"k": ADD_FOUNTAIN_LOCK_KEY}
+                )
+            await other.rollback()
+        return await real(bind, **kw)
+
+    monkeypatch.setattr(cli, "compute_coverage", probe)
+    await cli.collect_locked_coverage()
+    assert seen["held"] is True
+
+
+@pytest.mark.asyncio
+async def test_collect_locked_coverage_no_writes(session, _fixture):
+    from app.imports.seo_coverage_cli import collect_locked_coverage
+
+    before = (await session.execute(text("SELECT count(*) FROM fountains"))).scalar_one()
+    await collect_locked_coverage()
+    after = (await session.execute(text("SELECT count(*) FROM fountains"))).scalar_one()
+    assert before == after
+
+
+def test_country_regex_validation():
+    from app.imports.seo_coverage_cli import _COUNTRY_RE
+
+    assert _COUNTRY_RE.fullmatch("us") and _COUNTRY_RE.fullmatch("US")
+    assert not _COUNTRY_RE.fullmatch("usa")
+    assert not _COUNTRY_RE.fullmatch("u")
+    assert not _COUNTRY_RE.fullmatch("u1")
+    assert not _COUNTRY_RE.fullmatch("us\n")
+
+
+def test_cli_main_prints_json(capsys, monkeypatch):
+    """main() is a sync entrypoint (argparse + asyncio.run + print). Stub the DB-touching collector
+    so this stays a pure sync test — no nested event loop, no DB."""
+    import app.imports.seo_coverage_cli as cli
+    from app.seo_coverage import CoverageReport
+
+    async def fake(*, country=None):
+        return CoverageReport(scopes=[], unmatched_no_country=0)
+
+    monkeypatch.setattr(cli, "collect_locked_coverage", fake)
+    rc = cli.main([])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert payload == {"scopes": [], "unmatched_no_country": 0, "unmatched_no_country_clusters": []}
+
+
+def test_cli_main_rejects_bad_country():
+    import app.imports.seo_coverage_cli as cli
+
+    with pytest.raises(SystemExit):
+        cli.main(["--country", "usa"])
