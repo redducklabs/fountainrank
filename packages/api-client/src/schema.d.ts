@@ -286,7 +286,13 @@ export interface paths {
         /** List Photos */
         get: operations["list_photos_api_v1_fountains__fountain_id__photos_get"];
         put?: never;
-        post?: never;
+        /**
+         * Upload Photo
+         * @description Upload a photo of a fountain (design §8.1). Reserve-before-work: the endpoint takes
+         *     the raw ``Request`` (NOT an ``UploadFile`` body param) so the authoritative per-user
+         *     reservation gate runs before the multipart body is read or any Pillow/S3 work happens.
+         */
+        post: operations["upload_photo_api_v1_fountains__fountain_id__photos_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1827,6 +1833,51 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PhotoOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_photo_api_v1_fountains__fountain_id__photos_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "X-Dev-User"?: string | null;
+                "X-Dev-Email"?: string | null;
+                "X-Dev-Name"?: string | null;
+            };
+            path: {
+                fountain_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PhotoOut"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DisplayNameRequiredConflict"];
                 };
             };
             /** @description Validation Error */
