@@ -212,6 +212,17 @@ class MeContributionsOut(BaseModel):
     recent: list[ContributionEventOut]
 
 
+class MyFountainsOut(BaseModel):
+    """Fountains the authenticated user has contributed to (#170).
+
+    Deduped to one entry per fountain (any AWARDED contribution — add/rate/note/condition),
+    non-hidden, most-recent-contribution first. Serialized as ``FountainPin`` so the web list
+    reuses the city-list row (including ``location`` for the See-on-Map link).
+    """
+
+    fountains: list[FountainPin]
+
+
 class BadgeOut(BaseModel):
     key: str
     name: str

@@ -9,13 +9,17 @@ from app.auth import get_current_user
 from app.badges import earned_badges
 from app.db import get_session
 from app.display import resolved_display_name
-from app.models import ContributionEvent, User, UserContributionStats
+from app.geo import latitude_of, longitude_of
+from app.models import ContributionEvent, Fountain, User, UserContributionStats
 from app.schemas import (
     BadgeOut,
     ContributionEventOut,
     ContributionStatsOut,
+    Coordinates,
+    FountainPin,
     MeContributionsOut,
     MeResponse,
+    MyFountainsOut,
     SyncProfileRequest,
     UpdateMeRequest,
 )
@@ -78,6 +82,10 @@ async def update_me(
     return me_response(current_user)
 
 
+# Defensive guardrail for the unpaginated per-user aggregate (#170, spec §3.1): bound the
+# response so a power user can't silently produce a slow account page before pagination lands.
+ME_FOUNTAINS_MAX = 500
+
 _ZERO_STATS = ContributionStatsOut(
     total_points=0,
     fountains_added=0,
@@ -120,6 +128,74 @@ async def get_my_contributions(
     )
     recent = [ContributionEventOut.model_validate(r) for r in recent_rows]
     return MeContributionsOut(stats=stats, recent=recent)
+
+
+@router.get("/me/fountains", response_model=MyFountainsOut)
+async def get_my_fountains(
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> MyFountainsOut:
+    # Auth-required, caller's own data only. Deduped fountains the user has an AWARDED
+    # contribution to (add/rate/note/condition), non-hidden, most-recent-contribution first.
+    last_touch = (
+        select(
+            ContributionEvent.fountain_id.label("fid"),
+            func.max(ContributionEvent.created_at).label("last_at"),
+        )
+        .where(
+            ContributionEvent.user_id == current_user.id,
+            ContributionEvent.status == "awarded",
+            ContributionEvent.fountain_id.is_not(None),
+        )
+        .group_by(ContributionEvent.fountain_id)
+        .subquery()
+    )
+    rows = (
+        await session.execute(
+            select(
+                Fountain.id,
+                latitude_of(Fountain.location),
+                longitude_of(Fountain.location),
+                Fountain.is_working,
+                Fountain.average_rating,
+                Fountain.rating_count,
+                Fountain.ranking_score,
+                Fountain.current_status,
+                Fountain.last_verified_at,
+            )
+            .join(last_touch, last_touch.c.fid == Fountain.id)
+            .where(Fountain.is_hidden.is_(False))
+            # Recent-first; fountain.id breaks created_at ties deterministically. (No MAX(id):
+            # contribution_events.id is a random uuid4, so it's not a recency signal.)
+            .order_by(last_touch.c.last_at.desc(), Fountain.id.asc())
+            .limit(ME_FOUNTAINS_MAX + 1)
+        )
+    ).all()
+    capped = len(rows) > ME_FOUNTAINS_MAX
+    if capped:
+        rows = rows[:ME_FOUNTAINS_MAX]
+        logger.warning(
+            "my fountains capped",
+            extra={"user_id": str(current_user.id), "cap": ME_FOUNTAINS_MAX},
+        )
+    fountains = [
+        FountainPin(
+            id=rid,
+            location=Coordinates(latitude=float(rlat), longitude=float(rlng)),
+            is_working=working,
+            average_rating=avg,
+            rating_count=count,
+            ranking_score=score,
+            current_status=cur_status,
+            last_verified_at=last_verified,
+        )
+        for (rid, rlat, rlng, working, avg, count, score, cur_status, last_verified) in rows
+    ]
+    logger.info(
+        "my fountains served",
+        extra={"user_id": str(current_user.id), "count": len(fountains)},
+    )
+    return MyFountainsOut(fountains=fountains)
 
 
 @router.get("/me/badges", response_model=list[BadgeOut])
