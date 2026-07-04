@@ -136,6 +136,10 @@ Surface: `put_object(key, data, content_type)` (uploads `ACL="public-read"`, lon
 `Cache-Control`); `delete_objects(keys)` (best-effort); `public_url(key)`. Object keys:
 `fountains/{fountain_id}/{photo_id}.jpg` and `..._thumb.jpg`.
 
+`boto3` is **synchronous**; every storage call is invoked from the async endpoints via
+Starlette's `run_in_threadpool` (a.k.a. `anyio.to_thread`) so it never blocks the event
+loop. The client is constructed once at module import and reused.
+
 When `photos_enabled` is false (e.g. local dev without creds), the upload endpoint returns
 **503** (`photo_uploads_unavailable`) and logs a warning — fails closed, never silent.
 
@@ -148,7 +152,9 @@ metadata (strips EXIF/GPS by construction); (4) **downscale** full image to max 
 **2048px**, JPEG q≈85; (5) **thumbnail** max long edge **400px**, JPEG q≈80; (6) **store**
 full then thumbnail (best-effort delete the first if the second fails, to avoid orphans);
 (7) **persist** the row. Every step logs structured events (fountain/user id, byte sizes,
-outcome); failures log WARNING/ERROR with context.
+outcome); failures log WARNING/ERROR with context. The Pillow decode/resize/encode work
+is CPU-bound and blocking, so — like the storage calls (§4) — the whole pipeline runs off
+the event loop via `run_in_threadpool`.
 
 ## 6. Limits & validation
 
