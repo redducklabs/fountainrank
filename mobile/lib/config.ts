@@ -1,5 +1,6 @@
 export type MobileConfig = {
   apiBaseUrl: string;
+  webBaseUrl: string;
   logtoEndpoint: string;
   logtoAudience: string;
   authCallbackScheme: string;
@@ -39,6 +40,9 @@ export function parseMobileConfig(extra: unknown): MobileConfig {
   const e = extra as Record<string, unknown>;
   const config: MobileConfig = {
     apiBaseUrl: requireHttpsUrl(e.apiBaseUrl, "apiBaseUrl"),
+    // Public web origin used to build shareable fountain links (#168). HTTPS-only, like the
+    // other origins; a committed default ships in app.config.ts (EXPO_PUBLIC_WEB_BASE_URL).
+    webBaseUrl: requireHttpsUrl(e.webBaseUrl, "webBaseUrl"),
     logtoEndpoint: requireHttpsUrl(e.logtoEndpoint, "logtoEndpoint"),
     logtoAudience: requireHttpsUrl(e.logtoAudience, "logtoAudience"),
     authCallbackScheme: requireNonEmpty(e.authCallbackScheme, "authCallbackScheme"),

@@ -1,13 +1,10 @@
-import { getLogtoContext } from "@logto/next/server-actions";
+import Link from "next/link";
 
 import { DisplayNameForm } from "../../components/account/DisplayNameForm";
 import { SignInButton } from "../../components/SignInButton";
 import { SignOutButton } from "../../components/SignOutButton";
 import { SiteHeader } from "../../components/SiteHeader";
-import { getLogtoConfig } from "../../lib/logto";
-import { getAuthedApiClient } from "../../lib/server/api";
-import { log } from "../../lib/server/log";
-import { syncProfile } from "../../lib/server/sync";
+import { resolveAccountGate } from "../../lib/server/account-gate";
 import { isDisplayableEmail } from "../../lib/email";
 
 export const dynamic = "force-dynamic";
@@ -22,9 +19,10 @@ export default async function AccountPage({
 }) {
   // Only ever compared to a fixed literal — the raw value is never rendered (no injection).
   const { error } = await searchParams;
-  const { isAuthenticated } = await getLogtoContext(getLogtoConfig(), { fetchUserInfo: false });
+  const requestId = crypto.randomUUID();
+  const gate = await resolveAccountGate(requestId);
 
-  if (!isAuthenticated) {
+  if (gate.status === "unauthenticated") {
     return (
       <>
         <SiteHeader variant="bar" />
@@ -42,30 +40,7 @@ export default async function AccountPage({
     );
   }
 
-  const requestId = crypto.randomUUID();
-  // Best-effort: refresh the stored profile from Logto before reading it (never throws).
-  await syncProfile(requestId);
-  let profile: {
-    display_name: string;
-    email: string;
-    avatar_url: string | null;
-    needs_name: boolean;
-  } | null = null;
-  try {
-    const { data, error, response } = await (await getAuthedApiClient(requestId)).GET("/api/v1/me");
-    if (error || !data) {
-      log("error", "failed to load profile", { requestId, status: response?.status });
-    } else {
-      profile = data;
-      log("debug", "loaded profile", { requestId, status: response?.status });
-    }
-  } catch (err) {
-    // getAccessTokenRSC()/network can throw on an expired or broken session — render the
-    // graceful state instead of an unhandled server error (spec §4.5/§5).
-    log("error", "failed to load profile", { requestId, reason: (err as Error).name });
-  }
-
-  if (!profile) {
+  if (gate.status === "no-profile") {
     return (
       <>
         <SiteHeader variant="bar" />
@@ -80,7 +55,7 @@ export default async function AccountPage({
 
   // First-sign-in gate: when the account still resolves to "Anonymous", require a name before
   // anything else. The raw subject never reaches here (the API sends display_name="" when needs_name).
-  if (profile.needs_name) {
+  if (gate.status === "needs-name") {
     return (
       <>
         <SiteHeader variant="bar" />
@@ -92,6 +67,7 @@ export default async function AccountPage({
     );
   }
 
+  const { profile } = gate;
   return (
     <>
       <SiteHeader variant="bar" />
@@ -114,6 +90,9 @@ export default async function AccountPage({
           )}
         </dl>
         <DisplayNameForm initialValue={profile.display_name} required={false} />
+        <Link href="/account/fountains" className="text-sm font-semibold text-white underline">
+          My rated water fountains
+        </Link>
         <SignOutButton />
       </main>
     </>

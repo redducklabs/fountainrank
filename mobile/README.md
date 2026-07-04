@@ -50,6 +50,10 @@ alternate HTTPS endpoint with `EXPO_PUBLIC_API_BASE_URL` /
 `EXPO_PUBLIC_LOGTO_ENDPOINT` / `EXPO_PUBLIC_LOGTO_AUDIENCE`. URLs must be
 `https://` (local cleartext is not supported in this slice).
 
+The public web origin used to build shareable fountain links (the Share button on
+the fountain detail screen) is `EXPO_PUBLIC_WEB_BASE_URL` (public, non-secret;
+defaults to `https://fountainrank.com`). HTTPS-only, validated at startup.
+
 Native auth uses the public Logto Native app id from `EXPO_PUBLIC_LOGTO_APP_ID`,
 but a lone app-id env var is deliberately inert. `app.config.ts` only surfaces
 `extra.logtoAppId` when `EXPO_PUBLIC_LOGTO_NATIVE_AUTH_CONFIRMED=true` is also

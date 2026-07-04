@@ -57,7 +57,7 @@ function NotFound({ note }: { note: string }) {
 }
 
 export default function FountainDetailScreen() {
-  const { client } = useApi();
+  const { client, config } = useApi();
   const auth = useAuth();
   const queryClient = useQueryClient();
   const [showMoreDetails, setShowMoreDetails] = useState(false);
@@ -413,6 +413,7 @@ export default function FountainDetailScreen() {
                 </ContributePanel>
               }
               now={now}
+              webBaseUrl={config.webBaseUrl}
             />
           ) : null}
         </ScrollView>

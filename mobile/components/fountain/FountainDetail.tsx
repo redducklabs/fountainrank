@@ -1,8 +1,9 @@
 import type { components } from "@fountainrank/api-client";
 import type React from "react";
-import { Alert, Linking, Pressable, StyleSheet, Text, View } from "react-native";
+import { Alert, Linking, Platform, Pressable, Share, StyleSheet, Text, View } from "react-native";
 
 import { formatAverage, formatDate, formatVotes } from "../../lib/map/format";
+import { fountainShareUrl, shareContent } from "../../lib/share-url";
 import { colors, spacing, typography } from "../../theme";
 import { AttributeList } from "./AttributeList";
 import { NotesList } from "./NotesList";
@@ -20,6 +21,7 @@ export function FountainDetail({
   adminControls,
   contribution,
   now,
+  webBaseUrl,
 }: {
   detail: FountainDetailT;
   notes: NoteOut[];
@@ -28,6 +30,7 @@ export function FountainDetail({
   adminControls?: React.ReactNode;
   contribution?: React.ReactNode;
   now: Date;
+  webBaseUrl: string;
 }) {
   const { latitude, longitude } = detail.location;
   const contextComment = detail.comments || detail.placement_note;
@@ -35,6 +38,15 @@ export function FountainDetail({
   const openDirections = () => {
     Linking.openURL(directionsUrl).catch(() => {
       Alert.alert("Couldn't open maps", "No maps app is available to open directions.");
+    });
+  };
+  const onShare = () => {
+    // Share the public web URL; Android needs it in `message` (its sheet ignores `url`). A
+    // user-dismissed sheet RESOLVES (dismissedAction), so a rejection here is a genuine failure —
+    // log it for diagnosis rather than suppressing it silently.
+    const url = fountainShareUrl(webBaseUrl, String(detail.id));
+    Share.share(shareContent(url, Platform.OS)).catch((err) => {
+      console.warn(`[share] fountain share failed: ${(err as Error)?.message ?? String(err)}`);
     });
   };
 
@@ -134,14 +146,24 @@ export function FountainDetail({
         {detail.last_rated_at ? ` · Last rated ${formatDate(detail.last_rated_at)}` : ""}
       </Text>
 
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Get directions"
-        onPress={openDirections}
-        style={styles.directions}
-      >
-        <Text style={styles.directionsText}>Directions</Text>
-      </Pressable>
+      <View style={styles.actions}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Get directions"
+          onPress={openDirections}
+          style={styles.directions}
+        >
+          <Text style={styles.directionsText}>Directions</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Share this fountain"
+          onPress={onShare}
+          style={styles.share}
+        >
+          <Text style={styles.shareText}>Share</Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -187,6 +209,7 @@ const styles = StyleSheet.create({
   notesErrorText: { ...typography.meta, color: colors.textMuted },
   notesRetry: { ...typography.meta, color: colors.brandBlue, fontWeight: "700" },
   footer: { ...typography.meta, color: colors.textMuted },
+  actions: { flexDirection: "row", alignItems: "center", gap: spacing.sm, flexWrap: "wrap" },
   directions: {
     alignSelf: "flex-start",
     backgroundColor: colors.brandYellow,
@@ -195,4 +218,14 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   directionsText: { ...typography.body, fontWeight: "700", color: colors.brandBlue },
+  share: {
+    alignSelf: "flex-start",
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+  },
+  shareText: { ...typography.body, fontWeight: "700", color: colors.brandBlue },
 });

@@ -423,6 +423,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/me/fountains": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get My Fountains */
+        get: operations["get_my_fountains_api_v1_me_fountains_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/me/badges": {
         parameters: {
             query?: never;
@@ -968,6 +985,18 @@ export interface components {
              * @default false
              */
             needs_name: boolean;
+        };
+        /**
+         * MyFountainsOut
+         * @description Fountains the authenticated user has contributed to (#170).
+         *
+         *     Deduped to one entry per fountain (any AWARDED contribution — add/rate/note/condition),
+         *     non-hidden, most-recent-contribution first. Serialized as ``FountainPin`` so the web list
+         *     reuses the city-list row (including ``location`` for the See-on-Map link).
+         */
+        MyFountainsOut: {
+            /** Fountains */
+            fountains: components["schemas"]["FountainPin"][];
         };
         /** NoteOut */
         NoteOut: {
@@ -2028,6 +2057,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MeContributionsOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_my_fountains_api_v1_me_fountains_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "X-Dev-User"?: string | null;
+                "X-Dev-Email"?: string | null;
+                "X-Dev-Name"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyFountainsOut"];
                 };
             };
             /** @description Validation Error */

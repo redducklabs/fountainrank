@@ -5,6 +5,7 @@ import { authCallbackUri, nativeAuthConfig } from "./config";
 
 const CONFIG: MobileConfig = {
   apiBaseUrl: "https://api.fountainrank.com",
+  webBaseUrl: "https://fountainrank.com",
   logtoEndpoint: "https://auth.fountainrank.com",
   logtoAudience: "https://api.fountainrank.com",
   authCallbackScheme: "com.redducklabs.fountainrank",

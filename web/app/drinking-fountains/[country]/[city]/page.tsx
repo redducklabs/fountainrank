@@ -3,8 +3,8 @@ import Link from "next/link";
 import { notFound, permanentRedirect } from "next/navigation";
 import { cache } from "react";
 
+import { FountainList } from "../../../../components/fountain/FountainList";
 import { SiteHeader } from "../../../../components/SiteHeader";
-import { formatAverage } from "../../../../lib/map/format";
 import { cityPath, countryPath, getCityFountainsServer } from "../../../../lib/places";
 import type { CityFountainsOut } from "../../../../lib/places";
 import { log } from "../../../../lib/server/log";
@@ -105,24 +105,7 @@ export default async function CityPage({
         </p>
 
         {fountains.length > 0 ? (
-          <ul className="mt-6 divide-y divide-slate-100">
-            {fountains.map((f) => (
-              <li key={f.id}>
-                <Link
-                  href={`/fountains/${f.id}`}
-                  className="flex items-center justify-between py-3 hover:bg-slate-50"
-                >
-                  <span className="text-[#0C44A0] underline">
-                    Drinking fountain{f.is_working ? "" : " · Out of order"}
-                  </span>
-                  <span className="text-sm text-slate-500">
-                    {formatAverage(f.average_rating ?? null)}
-                    {f.rating_count ? ` · ${f.rating_count} ratings` : ""}
-                  </span>
-                </Link>
-              </li>
-            ))}
-          </ul>
+          <FountainList fountains={fountains} />
         ) : (
           <p className="mt-6 text-slate-500">No public fountains are mapped here yet.</p>
         )}
