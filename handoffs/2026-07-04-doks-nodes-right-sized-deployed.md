@@ -39,16 +39,22 @@ path instead (early stage, no active users). **No data loss** — verified befor
 - LB public IP / DNS A records / cert survive (only the cluster resource is replaced; LB updated
   in place). `deploy.yml` saves kubeconfig by the **stable cluster name**, so CI still works.
 
-## 3. ⚠️ Landmine hit during apply — `manage_basemap_spaces` MUST be `true`
+## 3. ⚠️ Landmine hit during apply — `manage_basemap_spaces` — ✅ NOW FIXED (#174)
 
 The first `plan` (with the input's default `manage_basemap_spaces=false`) showed
 `Plan: 1 to add, 2 to change, 4 to destroy` — the 3 extra destroys were the **live basemap Spaces
-bucket (planet `.pmtiles`), CDN, and CORS** (`*.basemap[0]`). They're gated behind
-`count = var.manage_basemap_spaces ? 1 : 0`; the var **defaults `false`** but the resources **exist
-in state** from a prior apply. Re-planning with **`manage_basemap_spaces=true`** gave the clean
-`1 to add, 2 to change, 1 to destroy` (cluster replace + LB/project in-place, basemap preserved).
-**Every future apply must pass `manage_basemap_spaces=true`** (memory:
-`fountainrank-terraform-basemap-gate-landmine`). Proper fix TBD (flip the default / reconcile the gate).
+bucket (planet `.pmtiles`), CDN, and CORS** (`*.basemap[0]`). They were gated behind
+`count = var.manage_basemap_spaces ? 1 : 0`; the var **defaulted `false`** but the resources
+**exist in state** from a prior apply. Re-planning with **`manage_basemap_spaces=true`** gave the
+clean `1 to add, 2 to change, 1 to destroy` (cluster replace + LB/project in-place, basemap
+preserved), and the DOKS apply was run that way.
+
+**✅ Reconciled in PR #174 (merged + applied same day).** The gate was **removed** — the basemap
+bucket/CDN/CORS are now **unconditional** managed infra. The removal used Terraform `moved` blocks
+(`.basemap[0]` → unindexed); a CI `plan` confirmed **`0 to add, 0 to change, 0 to destroy`** (pure
+state-address migration), the apply persisted it (`0/0/0`), and a follow-up plan reports **"No
+changes."** So **routine applies are now safe with NO special input** — the `manage_basemap_spaces`
+dispatch input no longer exists. Basemap still serving (CDN `style.light.json` → 200, 268 KB).
 
 ## 4. Apply sequence (all via CI — never local)
 
@@ -70,16 +76,26 @@ in state** from a prior apply. Re-planning with **`manage_basemap_spaces=true`**
 - `GET /api/v1/rating-types` → real reference data · `GET /api/v1/fountains/sitemap` → 200, **729 KB**
   → all imported fountains intact. **Zero data loss.**
 
-## 6. Follow-ups (unchanged from prior handoff §3, still outstanding)
+## 6. Next tasks (current state as of 2026-07-04, after #173 + #174)
 
-- **Reconcile the `manage_basemap_spaces` gate** so a default apply is safe (flip default to `true`
-  or gate on actual state) — new, from §3 above.
-- Optional cluster hygiene: install **metrics-server** (`kubectl top` / HPA), pod anti-affinity /
-  topology-spread so app pods aren't all on one node.
-- **Resubmit sitemap in GSC + Bing** (owner-local; now includes the fountains chunk).
-- **Slice 1e** — coverage report/gate (spec §4.2/§7); backend-heavy, no new public routes.
-- **#128 GA4** — owner-local (GA4 property id in SEO registry; `seo_health_check` until ok).
-- Dependabot **#151** (frontend-js) & **#138** (backend-python).
+**✅ Done this session:** DOKS nodes right-sized to `s-2vcpu-4gb` + deployed + verified (#173);
+`manage_basemap_spaces` gate removed / basemap footgun fixed + applied + verified (#174).
+
+**Still outstanding (pick up next — none blocked):**
+
+- Optional cluster hygiene (infra): install **metrics-server** (enables `kubectl top` + HPA);
+  add pod anti-affinity / topology-spread so the app pods (`backend`/`web`/`logto`) aren't all
+  packed onto one node (that lopsidedness is what tripped the disk alert first). Not required —
+  the resize relieved the pressure — but it's the natural next infra improvement.
+- **Slice 1e** — SEO coverage report/gate (spec §4.2/§7); backend-heavy, no new public routes.
+  Likely the best *code* pickup (self-contained, testable).
+- **Resubmit sitemap in GSC + Bing** — owner-local (now includes the fountains chunk).
+- **#128 GA4** — owner-local (add GA4 property id to the SEO registry; `seo_health_check` until ok).
+- Dependabot **#151** (frontend-js) & **#138** (backend-python) — routine dependency PRs.
+
+Note: with the basemap gate gone, a Terraform apply is now a plain
+`gh workflow run terraform.yml --ref main -f action=apply` (plan-first, then apply) — **no**
+`manage_basemap_spaces` input. Deploy is still a separate manual dispatch (`deploy.yml`).
 
 ## 7. Env gotchas (carried forward)
 
