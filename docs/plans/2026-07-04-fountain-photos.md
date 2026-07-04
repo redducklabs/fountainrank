@@ -29,7 +29,7 @@
 Three sequenced PRs off `feat/fountain-photos` (or stacked branches), each independently CI-green + Codex-approved before the next builds on it:
 
 - **PR 1 — Backend + infra + api-client** (Tasks B1–B16, I1–I2). Ships working, tested endpoints; storage mocked in tests.
-- **PR 2 — Web** (Tasks W1–W9). Consumes the regenerated api-client.
+- **PR 2 — Web** (Tasks W1–W9, incl. the pre-UI style-guide task W2b). Consumes the regenerated api-client.
 - **PR 3 — Mobile** (Tasks M1–M8).
 
 The spec (`docs/specs/2026-07-04-fountain-photos-design.md`) and this plan are already committed on the branch.
@@ -837,7 +837,7 @@ Per `CLAUDE.md` + spec §11, the style guide is updated **before** building the 
 
 **Interfaces — Produces:** a new **`uploadMultipart(path, formData) -> Promise<{status:number}>`** method on the `MobileApiClient` facade that reuses the **same sanitized fetch** `createApiClient` already builds (strips any `x-dev*` header, attaches `Authorization: Bearer` via `getAccessToken`) — **not** a separate raw `fetch`, so there is no second unaudited network path for an authenticated write. Also add `/api/v1/admin/photo-reports` and `/api/v1/admin/photo-reports/summary` to the force-authed GET list in `isAuthenticatedApiRequest` (80-108).
 
-- [ ] **Step 1: Write failing tests** in `mobile/lib/api.test.ts` (mirror the existing sanitizer/classification tests): `uploadMultipart` sends the `FormData` body, attaches the bearer token, and **strips any `x-dev*` header** passed in; `isAuthenticatedApiRequest("/api/v1/admin/photo-reports")` and `.../summary` both return true (so the GET carries a token) while a public route stays false.
+- [ ] **Step 1: Write failing tests** in `mobile/lib/api.test.ts` (mirror the existing sanitizer/classification tests). Note `uploadMultipart(path, formData)` has **no caller header channel** (deliberately), so test the two properties separately: (a) `uploadMultipart` sends the `FormData` body and attaches the bearer token (assert on the outbound `Request`); (b) the **sanitizer itself**, exercised with a constructed `new Request(url, { headers: { "x-dev-user": "x" } })`, strips the `x-dev*` header before network I/O (this is the shared path `uploadMultipart` uses). Also: `isAuthenticatedApiRequest("/api/v1/admin/photo-reports")` and `.../summary` both return true while a public route stays false.
 
 - [ ] **Step 2: Run — expect FAIL.** `pnpm exec turbo run test --filter=mobile`
 
