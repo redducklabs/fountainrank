@@ -14,12 +14,17 @@ export function FountainDetail({
   now,
   isAuthenticated,
   adminControls,
+  locationLabel,
 }: {
   detail: Detail;
   notes: NoteOut[];
   now?: Date;
   isAuthenticated: boolean;
   adminControls?: React.ReactNode;
+  // The public h1 label, e.g. "Public drinking fountain in Manhattan" — resolved server-side from
+  // the fountain's public city (spec §7). Falls back to the generic label when no city resolves (or
+  // on the admin path, which does not fetch the public place).
+  locationLabel?: string;
 }) {
   const renderNow = now ?? new Date();
   const { latitude, longitude } = detail.location;
@@ -28,7 +33,9 @@ export function FountainDetail({
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-lg font-bold text-[#0A357E]">Public drinking fountain</h1>
+        <h1 className="text-lg font-bold text-[#0A357E]">
+          {locationLabel ?? "Public drinking fountain"}
+        </h1>
         <StatusBlock
           currentStatus={detail.current_status}
           isWorking={detail.is_working}

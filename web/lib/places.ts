@@ -122,3 +122,62 @@ export async function getFountainsByAttributeServer(
     return { data: undefined, status: 0 };
   }
 }
+
+// --- Fountain detail metadata + fountains sitemap (#127 Slice 5, spec §5/§6/§7) --------------
+
+// Pure: the public route for a single fountain's detail page (its own canonical URL).
+export function fountainPath(id: string): string {
+  return `/fountains/${id}`;
+}
+
+// One fountain's PUBLIC place membership + the backend's §7 indexability verdict. `city`/`country`
+// are the precomputed places (or null when unmatched); `indexable` is the single server-side
+// predicate, so the page sets `noindex` from it without re-deriving the rule. The detail page's
+// generateMetadata + h1 use ONLY this public data — never the viewer/admin detail path (spec §7).
+export type FountainPlaceOut = components["schemas"]["FountainPlaceOut"];
+
+export async function getFountainPlaceServer(
+  id: string,
+  requestId?: string,
+): Promise<{ data: FountainPlaceOut | undefined; status: number }> {
+  const headers: Record<string, string> = {};
+  if (requestId) headers["X-Request-ID"] = requestId;
+  const client = makeClient(resolveApiBaseUrl(), { headers });
+  try {
+    const { data, response } = await client.GET("/api/v1/fountains/{fountain_id}/place", {
+      params: { path: { fountain_id: id } },
+    });
+    return { data, status: response?.status ?? 0 };
+  } catch {
+    // status 0 = no HTTP response (network error / backend down / DNS failure)
+    return { data: undefined, status: 0 };
+  }
+}
+
+// The indexable fountain ids for the fountains sitemap chunk (spec §6/§7).
+export type FountainSitemapOut = components["schemas"]["FountainSitemapOut"];
+
+// The backend /api/v1/fountains/sitemap `limit` hard cap (server enforces le=50000). The sitemap
+// builder fetches at this cap; if `total_count` exceeds what came back, the chunk logs it (never a
+// silent drop) — a signal to split the fountains chunk via generateSitemaps before it breaks 50k.
+export const SITEMAP_FOUNTAIN_CAP = 50000;
+
+// Server-only fetch of the indexable fountain ids. A network error yields `undefined` with status 0
+// (the sitemap builder then emits an empty urlset rather than a partial/false one).
+export async function getIndexableFountainsServer(
+  requestId?: string,
+  limit = SITEMAP_FOUNTAIN_CAP,
+): Promise<{ data: FountainSitemapOut | undefined; status: number }> {
+  const headers: Record<string, string> = {};
+  if (requestId) headers["X-Request-ID"] = requestId;
+  const client = makeClient(resolveApiBaseUrl(), { headers });
+  try {
+    const { data, response } = await client.GET("/api/v1/fountains/sitemap", {
+      params: { query: { limit } },
+    });
+    return { data, status: response?.status ?? 0 };
+  } catch {
+    // status 0 = no HTTP response (network error / backend down / DNS failure)
+    return { data: undefined, status: 0 };
+  }
+}

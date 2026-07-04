@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const getDetail = vi.fn();
 const getAdminDetail = vi.fn();
 const getNotes = vi.fn();
+const getPlaceFn = vi.fn();
 const getViewerFn = vi.fn();
 const getTokenFn = vi.fn();
 const logFn = vi.fn();
@@ -17,6 +18,11 @@ vi.mock("../../../lib/fountains", () => ({
   getFountainDetailServer: (...a: unknown[]) => getDetail(...a),
   getFountainNotesServer: (...a: unknown[]) => getNotes(...a),
 }));
+// Keep the real pure helpers (fountainPath); stub only the public place fetch.
+vi.mock("../../../lib/places", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../lib/places")>();
+  return { ...actual, getFountainPlaceServer: (...a: unknown[]) => getPlaceFn(...a) };
+});
 vi.mock("../../../lib/server/admin", () => ({
   getAdminFountainDetailServer: (...a: unknown[]) => getAdminDetail(...a),
 }));
@@ -41,12 +47,18 @@ vi.mock("../../../components/fountain/FountainDetail", () => ({
     notes,
     isAuthenticated,
     adminControls,
+    locationLabel,
   }: {
     notes: unknown[];
     isAuthenticated: boolean;
     adminControls?: ReactNode;
+    locationLabel?: string;
   }) => (
-    <div data-testid="detail" data-authed={String(isAuthenticated)}>
+    <div
+      data-testid="detail"
+      data-authed={String(isAuthenticated)}
+      data-location={locationLabel ?? ""}
+    >
       notes:{notes.length}
       {adminControls}
     </div>
@@ -59,20 +71,36 @@ vi.mock("../../../components/SiteHeader", () => ({
   SiteHeader: () => <div data-testid="site-header" />,
 }));
 
-import FountainPage from "./page";
+import FountainPage, { generateMetadata } from "./page";
 
 const params = Promise.resolve({ id: "f1" });
+
+// A minimal /place response for the h1 + metadata (public data only).
+const placeIn = (city: { name: string; country_code: string } | null, indexable: boolean) => ({
+  data: {
+    fountain_id: "f1",
+    city: city
+      ? { id: "c1", slug: "manhattan", subtype: "locality", fountain_count: 5, ...city }
+      : null,
+    country: null,
+    indexable,
+  },
+  status: 200,
+});
 
 beforeEach(() => {
   getDetail.mockReset();
   getAdminDetail.mockReset();
   getNotes.mockReset();
+  getPlaceFn.mockReset();
   getViewerFn.mockReset();
   getTokenFn.mockReset();
   logFn.mockReset();
   notFoundFn.mockClear();
   getViewerFn.mockResolvedValue({ state: "anonymous" });
   getTokenFn.mockResolvedValue(null);
+  // Default: no place resolved (backend down / no city) — the h1 falls back, metadata noindexes.
+  getPlaceFn.mockResolvedValue({ data: undefined, status: 0 });
 });
 
 describe("FountainPage route (standalone)", () => {
@@ -174,5 +202,57 @@ describe("FountainPage route (standalone)", () => {
     expect(getNotes).not.toHaveBeenCalled();
     expect(await screen.findByTestId("detail")).toHaveTextContent("notes:1");
     expect(await screen.findByTestId("admin-controls")).toBeInTheDocument();
+  });
+
+  it("passes a city location label to the detail h1 when the place resolves (public data)", async () => {
+    getDetail.mockResolvedValue({ data: { id: "f1" }, status: 200 });
+    getNotes.mockResolvedValue({ data: [], status: 200 });
+    getPlaceFn.mockResolvedValue(placeIn({ name: "Manhattan", country_code: "us" }, true));
+    render(await FountainPage({ params }));
+    expect(await screen.findByTestId("detail")).toHaveAttribute(
+      "data-location",
+      "Public drinking fountain in Manhattan",
+    );
+    // The h1 label uses PUBLIC place data, not the viewer/admin detail path.
+    expect(getPlaceFn).toHaveBeenCalledWith("f1", expect.any(String));
+  });
+
+  it("omits the location label when no city resolves (fallback h1)", async () => {
+    getDetail.mockResolvedValue({ data: { id: "f1" }, status: 200 });
+    getNotes.mockResolvedValue({ data: [], status: 200 });
+    getPlaceFn.mockResolvedValue(placeIn(null, false));
+    render(await FountainPage({ params }));
+    expect(await screen.findByTestId("detail")).toHaveAttribute("data-location", "");
+  });
+});
+
+describe("FountainPage generateMetadata", () => {
+  it("city + indexable: city title, canonical, no noindex override", async () => {
+    getPlaceFn.mockResolvedValue(placeIn({ name: "Manhattan", country_code: "us" }, true));
+    const meta = await generateMetadata({ params });
+    expect(meta.title).toBe("Drinking fountain in Manhattan");
+    expect(meta.alternates?.canonical).toBe("/fountains/f1");
+    expect(meta.robots).toBeUndefined();
+  });
+
+  it("below the §7 predicate (indexable=false): rendered but noindex, still followable", async () => {
+    getPlaceFn.mockResolvedValue(placeIn({ name: "Manhattan", country_code: "us" }, false));
+    const meta = await generateMetadata({ params });
+    expect(meta.title).toBe("Drinking fountain in Manhattan");
+    expect(meta.robots).toEqual({ index: false, follow: true });
+  });
+
+  it("no city resolves: generic title, still canonical", async () => {
+    getPlaceFn.mockResolvedValue(placeIn(null, false));
+    const meta = await generateMetadata({ params });
+    expect(meta.title).toBe("Public drinking fountain");
+    expect(meta.alternates?.canonical).toBe("/fountains/f1");
+    expect(meta.robots).toEqual({ index: false, follow: true });
+  });
+
+  it("hidden / unknown / backend-down (no data): fully noindex, nofollow", async () => {
+    getPlaceFn.mockResolvedValue({ data: undefined, status: 404 });
+    const meta = await generateMetadata({ params });
+    expect(meta.robots).toEqual({ index: false, follow: false });
   });
 });
