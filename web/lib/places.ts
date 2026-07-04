@@ -50,3 +50,27 @@ export function getCountryCitiesServer(
 ): Promise<PlacesResult> {
   return getPlaces({ country, limit }, requestId);
 }
+
+// A canonical city + its ranked fountains (#127 Slice 3). `indexable` is the backend's thin-content
+// verdict (fountain_count >= K); the page sets `noindex` from it. status 404 => no such city.
+export type CityFountainsOut = components["schemas"]["CityFountainsOut"];
+
+export async function getCityFountainsServer(
+  country: string,
+  city: string,
+  requestId?: string,
+  limit = 100,
+): Promise<{ data: CityFountainsOut | undefined; status: number }> {
+  const headers: Record<string, string> = {};
+  if (requestId) headers["X-Request-ID"] = requestId;
+  const client = makeClient(resolveApiBaseUrl(), { headers });
+  try {
+    const { data, response } = await client.GET("/api/v1/places/{country}/{city}/fountains", {
+      params: { path: { country, city }, query: { limit } },
+    });
+    return { data, status: response?.status ?? 0 };
+  } catch {
+    // status 0 = no HTTP response (network error / backend down / DNS failure)
+    return { data: undefined, status: 0 };
+  }
+}

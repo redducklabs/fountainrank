@@ -5,6 +5,10 @@ import { buildSitemapIndex, sitemapResponse } from "../../lib/seo/sitemap";
 // does not produce an index, so we serve one explicitly that references the chunk sitemaps.
 // Static content (chunk URLs are fixed); the chunks themselves carry the live data.
 export function GET(): Response {
-  const chunks = [`${SITE_URL}/sitemaps/core.xml`, `${SITE_URL}/sitemaps/countries.xml`];
+  const chunks = [
+    `${SITE_URL}/sitemaps/core.xml`,
+    `${SITE_URL}/sitemaps/countries.xml`,
+    `${SITE_URL}/sitemaps/cities.xml`,
+  ];
   return sitemapResponse(buildSitemapIndex(chunks));
 }
