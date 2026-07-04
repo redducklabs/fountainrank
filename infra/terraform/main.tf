@@ -13,9 +13,10 @@
 #       single-registry endpoint, incompatible with this account's multiple registries);
 #       `fountainrank` is created out-of-band via /v2/registries. See below. ✅
 #   (c) sizing/cost reviewed (cheapest defaults, owner-approved). ✅
-#   (d) Basemap Spaces bucket/CDN/CORS defined but GATED (var.manage_basemap_spaces,
-#       default off — current key can't create buckets); Phase 4 private photos bucket
-#       landed (var.manage_photos_spaces, same gate pattern, default off).
+#   (d) Basemap Spaces bucket/CDN/CORS — live prod infra, managed unconditionally (the
+#       old manage_basemap_spaces count-gate was removed 2026-07-04); Phase 4 private
+#       photos bucket landed but GATED (var.manage_photos_spaces, default off — needs a
+#       bucket-create-capable Spaces key).
 #   (e) 🔴 DNSSEC must be OFF on the domain or DO refuses the LE cert (422) — the
 #       owner removed the GoDaddy DS record on 2026-06-18.
 
@@ -102,19 +103,10 @@ variable "registry_name" {
   default     = "fountainrank"
 }
 
-# --- Phase 3a basemap Spaces (gated; see the Spaces section below) ---
-variable "manage_basemap_spaces" {
-  description = <<-EOT
-    Gate for the Phase 3a basemap Spaces bucket + CDN + CORS. Keep FALSE until a
-    bucket-create-capable Spaces key is wired as the apply job's SPACES_ACCESS_KEY/
-    SPACES_SECRET_KEY (the current key is TF-state-scoped and 403s on bucket create).
-    Then set TF_VAR_manage_basemap_spaces=true and dispatch the Terraform apply
-    workflow. Default false keeps every other apply a no-op for these resources.
-  EOT
-  type        = bool
-  default     = false
-}
-
+# --- Basemap Spaces bucket config. The bucket/CDN/CORS below are UNCONDITIONAL managed
+#     infra. The old `manage_basemap_spaces` count-gate was removed 2026-07-04: once the
+#     bucket was live in state, the gate's default (false) made every routine apply plan
+#     to DESTROY the live basemap — a footgun. See the `moved` blocks in the Spaces section. ---
 variable "basemap_bucket_name" {
   description = "DO Spaces bucket for the Protomaps planet .pmtiles + style/glyphs/sprite."
   type        = string
@@ -153,9 +145,23 @@ variable "kubernetes_version_prefix" {
 }
 
 variable "node_size" {
-  description = "DOKS worker node size (minimal default; tune before first apply)."
+  # Right-sized from the initial minimal s-2vcpu-2gb on 2026-07-04: both 2 GB nodes
+  # were ~90% memory-committed (node1 91% req / 133% lim) and node1 tripped DO's 70%
+  # disk-utilization alert (stale web image tags accumulating on a 60 GB fs). s-2vcpu-4gb
+  # doubles RAM (relieves the pressure) and gives an 80 GB fs.
+  #
+  # 🔴 ForceNew — CHANGING THIS RECREATES THE WHOLE CLUSTER. This value feeds the
+  # inline default node_pool of digitalocean_kubernetes_cluster.main, whose `size` the
+  # DO provider marks ForceNew (DO node-pool droplet size is immutable — there is no
+  # in-place resize). `terraform apply` therefore plans "1 to add, 1 to destroy" on the
+  # cluster: a destroy-and-recreate, NOT a rolling node replacement. The new cluster is
+  # empty, so a full deploy.yml redeploy is required afterward. No data loss: there are
+  # no PVCs in-cluster (Postgres/PostGIS is a DO Managed Database, external) and the LB
+  # IP / DNS / cert survive (only the cluster resource is replaced). Treat any change to
+  # this value as a planned maintenance event, not a routine apply.
+  description = "DOKS worker node size. ForceNew: changing it recreates the cluster (see comment)."
   type        = string
-  default     = "s-2vcpu-2gb"
+  default     = "s-2vcpu-4gb"
 }
 
 variable "node_min" {
@@ -263,22 +269,36 @@ resource "digitalocean_database_db" "logto" {
 # the `DO_REGISTRY` CI variable. `var.registry_name` is retained for documentation.
 
 # ---------------------------------------------------------------------------
-# Spaces — Phase 3a basemap bucket + CDN + CORS (GATED), Phase 4 photos bucket (GATED).
+# Spaces — basemap bucket + CDN + CORS (live prod infra), Phase 4 private photos bucket (GATED).
 # ---------------------------------------------------------------------------
-# 🔴 PREREQUISITE: the current `SPACES_ACCESS_KEY` is scoped to the TF-state bucket
-# only (403 AccessDenied on bucket create). These basemap resources are gated behind
-# `var.manage_basemap_spaces` (default false) so merging them changes nothing and a
-# routine apply stays a no-op. To bring them up: wire a bucket-create-capable Spaces
-# key as the apply job's SPACES_ACCESS_KEY/SPACES_SECRET_KEY, then dispatch the
-# Terraform workflow with action=apply AND the `manage_basemap_spaces` input set true
-# (it is wired to TF_VAR_manage_basemap_spaces in .github/workflows/terraform.yml). Then
-# upload the planet .pmtiles + Light style/glyphs/sprite and set the web
-# NEXT_PUBLIC_BASEMAP_* env — see docs/setup/README.md.
+# These serve the Protomaps planet .pmtiles + Light style/glyphs/sprite via the CDN
+# (web NEXT_PUBLIC_BASEMAP_* env — see docs/setup/README.md). They are UNCONDITIONAL:
+# the bucket already exists in state and is live, so managing it plainly is correct.
+#
+# History: these were originally count-gated behind `var.manage_basemap_spaces`
+# (default false) to defer creation until a bucket-create-capable Spaces key was wired.
+# That purpose is served (the bucket is live), and the gate then became a footgun — a
+# routine apply with the default false planned to DESTROY the live basemap. The gate was
+# removed 2026-07-04; the `moved` blocks below migrate the existing count-indexed state
+# instances (`.basemap[0]`) to the unindexed resources with ZERO destroy/recreate.
 #
 # The TF-state bucket is NOT managed here.
 
+# One-time state refactor (safe to keep; no-op once applied): count removal, [0] -> unindexed.
+moved {
+  from = digitalocean_spaces_bucket.basemap[0]
+  to   = digitalocean_spaces_bucket.basemap
+}
+moved {
+  from = digitalocean_spaces_bucket_cors_configuration.basemap[0]
+  to   = digitalocean_spaces_bucket_cors_configuration.basemap
+}
+moved {
+  from = digitalocean_cdn.basemap[0]
+  to   = digitalocean_cdn.basemap
+}
+
 resource "digitalocean_spaces_bucket" "basemap" {
-  count  = var.manage_basemap_spaces ? 1 : 0
   name   = var.basemap_bucket_name
   region = var.region
   acl    = "public-read" # public basemap assets, served via the CDN
@@ -293,8 +313,7 @@ resource "digitalocean_spaces_bucket" "basemap" {
 }
 
 resource "digitalocean_spaces_bucket_cors_configuration" "basemap" {
-  count  = var.manage_basemap_spaces ? 1 : 0
-  bucket = digitalocean_spaces_bucket.basemap[0].id
+  bucket = digitalocean_spaces_bucket.basemap.id
   region = var.region
 
   # Browser fetches the style/glyphs/sprite + PMTiles byte-ranges cross-origin. PMTiles
@@ -309,8 +328,7 @@ resource "digitalocean_spaces_bucket_cors_configuration" "basemap" {
 }
 
 resource "digitalocean_cdn" "basemap" {
-  count  = var.manage_basemap_spaces ? 1 : 0
-  origin = digitalocean_spaces_bucket.basemap[0].bucket_domain_name
+  origin = digitalocean_spaces_bucket.basemap.bucket_domain_name
   ttl    = 86400
 }
 
@@ -437,10 +455,10 @@ resource "digitalocean_record" "auth" {
 # Assign resources to the FountainRank DO project.
 # DO project-resource supported URN types are: app, database, domain, droplet,
 # floating IP, Kubernetes cluster, load balancer, Spaces bucket, volume. So we
-# assign the cluster, DB, LB, and the (pre-existing) domain — but NOT the container
-# registry or certificate (account/region-scoped, not project-assignable). The basemap
-# and photos Spaces buckets join only when their respective gates (var.manage_basemap_spaces,
-# var.manage_photos_spaces) are enabled (concat below). Assigning the domain only GROUPS
+# assign the cluster, DB, LB, the (pre-existing) domain, and the basemap Spaces bucket —
+# but NOT the container registry or certificate (account/region-scoped, not
+# project-assignable). The Phase 4 photos bucket joins only when its gate
+# (var.manage_photos_spaces) is enabled (concat below). Assigning the domain only GROUPS
 # it under the project; it does not manage or alter its DNS records.
 # ---------------------------------------------------------------------------
 resource "digitalocean_project_resources" "main" {
@@ -450,9 +468,9 @@ resource "digitalocean_project_resources" "main" {
     digitalocean_database_cluster.postgres.urn,
     digitalocean_loadbalancer.main.urn,
     data.digitalocean_domain.main.urn,
-    # The basemap and photos buckets (splat -> [] when their gate is off) join the
-    # project when enabled.
-  ], digitalocean_spaces_bucket.basemap[*].urn, digitalocean_spaces_bucket.photos[*].urn)
+    digitalocean_spaces_bucket.basemap.urn,
+    # The photos bucket (splat -> [] when its gate is off) joins the project when enabled.
+  ], digitalocean_spaces_bucket.photos[*].urn)
 }
 
 # ---------------------------------------------------------------------------
@@ -494,18 +512,18 @@ output "loadbalancer_ip" {
 
 # NOTE: no registry endpoint output — the registry is managed out-of-band
 # (`registry.digitalocean.com/${DO_REGISTRY}`, a CI variable). The basemap bucket/CDN
-# outputs are defined below (null until var.manage_basemap_spaces is enabled).
+# outputs are defined below.
 
 output "certificate_id" {
   value = digitalocean_certificate.main.id
 }
 
-# Basemap (null until var.manage_basemap_spaces = true). Feed these into the web
-# NEXT_PUBLIC_BASEMAP_* env after uploading the style/pmtiles — see docs/setup/README.md.
+# Basemap CDN/bucket. Feed these into the web NEXT_PUBLIC_BASEMAP_* env after uploading
+# the style/pmtiles — see docs/setup/README.md.
 output "basemap_bucket_domain" {
-  value = var.manage_basemap_spaces ? digitalocean_spaces_bucket.basemap[0].bucket_domain_name : null
+  value = digitalocean_spaces_bucket.basemap.bucket_domain_name
 }
 
 output "basemap_cdn_endpoint" {
-  value = var.manage_basemap_spaces ? digitalocean_cdn.basemap[0].endpoint : null
+  value = digitalocean_cdn.basemap.endpoint
 }

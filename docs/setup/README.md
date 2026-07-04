@@ -231,12 +231,13 @@ grep ADMIN_SUBJECTS`).
 ## Basemap hosting (Protomaps planet on Spaces + CDN) — Phase 3a
 
 The web map renders a self-hosted Protomaps **Light** basemap. Terraform manages the bucket +
-CDN + CORS (gated behind `var.manage_basemap_spaces`); the upload runs via the
-**`basemap-upload`** GitHub Actions workflow.
+CDN + CORS **unconditionally** (the `var.manage_basemap_spaces` count-gate was removed
+2026-07-04, once the bucket was live, because its default made a routine apply plan to destroy
+the live basemap); the upload runs via the **`basemap-upload`** GitHub Actions workflow.
 
 **Status (2026-06-21):**
 
-- ✅ **Bucket + CDN + CORS provisioned** (Terraform apply with `manage_basemap_spaces=true`):
+- ✅ **Bucket + CDN + CORS provisioned** (managed unconditionally by Terraform):
   bucket `fountainrank-basemap` (sfo3, public-read; CORS: GET/HEAD, `Range` allowed,
   `Accept-Ranges`/`Content-Range`/`Content-Length`/`ETag` exposed, origins = the web origins).
   **CDN `fountainrank-basemap.sfo3.cdn.digitaloceanspaces.com`.**

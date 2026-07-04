@@ -907,3 +907,8 @@ class PlaceScopeConfig(Base):
     country_code: Mapped[str] = mapped_column(String, primary_key=True)
     # Overture subtypes that count as a city here, e.g. {locality, localadmin} (+county for LU).
     eligible_city_subtypes: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False)
+    # Slice 1e per-scope readiness gate (spec docs/specs/2026-07-04-seo-coverage-gate-design.md):
+    # a scope's CITY routes (cities sitemap chunk + each city page's indexability) are live only
+    # when this is true. Owner signoff after reading the coverage report; set via a reviewed
+    # migration. A country with no row here is NOT ready. Seeded true for us/lu in migration 0017.
+    city_routes_ready: Mapped[bool] = mapped_column(nullable=False, server_default=text("false"))

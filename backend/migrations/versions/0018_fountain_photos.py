@@ -1,7 +1,7 @@
 """fountain photos: fountain_photos, storage_cleanup, upload_attempts
 
-Revision ID: 0017_fountain_photos
-Revises: 0016_place_boundary_cells
+Revision ID: 0018_fountain_photos
+Revises: 0017_place_scope_config_ready
 Create Date: 2026-07-04
 """
 
@@ -9,8 +9,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 
-revision = "0017_fountain_photos"
-down_revision = "0016_place_boundary_cells"
+revision = "0018_fountain_photos"
+down_revision = "0017_place_scope_config_ready"
 branch_labels = None
 depends_on = None
 

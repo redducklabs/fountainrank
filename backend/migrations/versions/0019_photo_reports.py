@@ -1,7 +1,7 @@
 """photo reports: photo_reports
 
-Revision ID: 0018_photo_reports
-Revises: 0017_fountain_photos
+Revision ID: 0019_photo_reports
+Revises: 0018_fountain_photos
 Create Date: 2026-07-04
 """
 
@@ -9,8 +9,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 
-revision = "0018_photo_reports"
-down_revision = "0017_fountain_photos"
+revision = "0019_photo_reports"
+down_revision = "0018_fountain_photos"
 branch_labels = None
 depends_on = None
 
