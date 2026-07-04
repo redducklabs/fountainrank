@@ -9,14 +9,14 @@ path reads only the precomputed membership columns on ``place_boundaries`` — i
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
 from app.db import get_session
 from app.geo import latitude_of, longitude_of
-from app.models import Fountain, PlaceBoundary
-from app.schemas import CityFountainsOut, Coordinates, FountainPin, PlaceOut
+from app.models import Fountain, FountainPhoto, PlaceBoundary
+from app.schemas import CityFountainPin, CityFountainsOut, Coordinates, PlaceOut
 
 logger = logging.getLogger(__name__)
 
@@ -174,6 +174,25 @@ async def city_fountains(
         logger.info("city fountains: no canonical city", extra={"country": cc, "slug": slug})
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="No such city")
 
+    # Correlated scalar subqueries: the newest visible photo's id (for the thumbnail URL) and the
+    # visible-photo count. Both return exactly one value per Fountain row, so they don't change the
+    # page's row count, order, or pagination — they're just extra columns on the same select.
+    thumb_id_sq = (
+        select(FountainPhoto.id)
+        .where(FountainPhoto.fountain_id == Fountain.id, FountainPhoto.is_hidden.is_(False))
+        .order_by(FountainPhoto.created_at.desc())
+        .limit(1)
+        .correlate(Fountain)
+        .scalar_subquery()
+    )
+    photo_count_sq = (
+        select(func.count())
+        .select_from(FountainPhoto)
+        .where(FountainPhoto.fountain_id == Fountain.id, FountainPhoto.is_hidden.is_(False))
+        .correlate(Fountain)
+        .scalar_subquery()
+    )
+
     rows = (
         await session.execute(
             select(
@@ -186,6 +205,8 @@ async def city_fountains(
                 Fountain.ranking_score,
                 Fountain.current_status,
                 Fountain.last_verified_at,
+                thumb_id_sq.label("thumb_id"),
+                photo_count_sq.label("photo_count"),
             )
             .where(Fountain.city_place_id == place.id, Fountain.is_hidden.is_(False))
             # Best-rated first: Bayesian ranking_score desc, unrated (NULL) last; then more-rated,
@@ -200,17 +221,19 @@ async def city_fountains(
         )
     ).all()
     fountains = [
-        FountainPin(
-            id=rid,
-            location=Coordinates(latitude=float(rlat), longitude=float(rlng)),
-            is_working=working,
-            average_rating=avg,
-            rating_count=count,
-            ranking_score=score,
-            current_status=cur_status,
-            last_verified_at=last_verified,
+        CityFountainPin(
+            id=row.id,
+            location=Coordinates(latitude=float(row[1]), longitude=float(row[2])),
+            is_working=row.is_working,
+            average_rating=row.average_rating,
+            rating_count=row.rating_count,
+            ranking_score=row.ranking_score,
+            current_status=row.current_status,
+            last_verified_at=row.last_verified_at,
+            photo_count=row.photo_count,
+            thumbnail_url=(f"/api/v1/photos/{row.thumb_id}/thumb" if row.thumb_id else None),
         )
-        for (rid, rlat, rlng, working, avg, count, score, cur_status, last_verified) in rows
+        for row in rows
     ]
     indexable = place.fountain_count >= settings.seo_place_min_fountains
     _set_cache(response, settings)
