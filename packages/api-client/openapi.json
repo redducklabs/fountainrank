@@ -2522,6 +2522,103 @@
         }
       }
     },
+    "/api/v1/me/fountains": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Get My Fountains",
+        "operationId": "get_my_fountains_api_v1_me_fountains_get",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "X-Dev-User",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Dev-User"
+            }
+          },
+          {
+            "name": "X-Dev-Email",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Dev-Email"
+            }
+          },
+          {
+            "name": "X-Dev-Name",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Dev-Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyFountainsOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/me/badges": {
       "get": {
         "tags": [
@@ -4145,6 +4242,23 @@
           "created_at"
         ],
         "title": "MeResponse"
+      },
+      "MyFountainsOut": {
+        "properties": {
+          "fountains": {
+            "items": {
+              "$ref": "#/components/schemas/FountainPin"
+            },
+            "type": "array",
+            "title": "Fountains"
+          }
+        },
+        "type": "object",
+        "required": [
+          "fountains"
+        ],
+        "title": "MyFountainsOut",
+        "description": "Fountains the authenticated user has contributed to (#170).\n\nDeduped to one entry per fountain (any AWARDED contribution \u2014 add/rate/note/condition),\nnon-hidden, most-recent-contribution first. Serialized as ``FountainPin`` so the web list\nreuses the city-list row (including ``location`` for the See-on-Map link)."
       },
       "NoteOut": {
         "properties": {
