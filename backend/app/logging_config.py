@@ -133,5 +133,8 @@ def log_startup(settings: Any) -> None:
             "logto_jwks_cache_ttl_seconds": settings.logto_jwks_cache_ttl_seconds,
             "db_tls": bool(settings.db_ssl_root_cert),
             "database_url": redact_url(settings.database_url),
+            # Non-secret Spaces metadata — no access/secret keys here.
+            "photos_enabled": settings.photos_enabled,
+            "spaces_region": settings.spaces_region,
         },
     )

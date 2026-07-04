@@ -276,6 +276,112 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/fountains/{fountain_id}/photos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Photos */
+        get: operations["list_photos_api_v1_fountains__fountain_id__photos_get"];
+        put?: never;
+        /**
+         * Upload Photo
+         * @description Upload a photo of a fountain (design §8.1). Reserve-before-work: the endpoint takes
+         *     the raw ``Request`` (NOT an ``UploadFile`` body param) so the authoritative per-user
+         *     reservation gate runs before the multipart body is read or any Pillow/S3 work happens.
+         */
+        post: operations["upload_photo_api_v1_fountains__fountain_id__photos_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/photos/{photo_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Photo */
+        get: operations["get_photo_api_v1_photos__photo_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/photos/{photo_id}/thumb": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Photo Thumb */
+        get: operations["get_photo_thumb_api_v1_photos__photo_id__thumb_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/fountains/{fountain_id}/photos/{photo_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Own Photo
+         * @description Owner self-delete (fountain-photos design §8.2): the uploader may remove their own
+         *     photo. Both storage objects are deleted before the row (best-effort with a durable
+         *     `storage_cleanup` fallback on failure); the still-awarded contribution point is reversed
+         *     BEFORE the row is deleted so the reversal can still find the event by `target_id`; the
+         *     row delete then cascades to any pending `photo_reports` (no `resolution` write — the
+         *     report simply no longer applies to a photo that no longer exists).
+         */
+        delete: operations["delete_own_photo_api_v1_fountains__fountain_id__photos__photo_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/fountains/{fountain_id}/photos/{photo_id}/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Report Photo
+         * @description Flag a photo for moderation (fountain-photos design §8.3). Any signed-in user may
+         *     report (a display name is NOT required — unlike contribution-earning actions); reporting
+         *     is idempotent — a duplicate pending report from the same reporter on the same photo is
+         *     silently accepted (204) rather than surfacing a conflict, so a double-tap in a flaky
+         *     client never poisons the async session with an unhandled IntegrityError.
+         */
+        post: operations["report_photo_api_v1_fountains__fountain_id__photos__photo_id__report_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/fountains/{fountain_id}": {
         parameters: {
             query?: never;
@@ -310,6 +416,101 @@ export interface paths {
         head?: never;
         /** Admin Patch Note */
         patch: operations["admin_patch_note_api_v1_admin_notes__note_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/admin/photo-reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Admin Photo Reports
+         * @description Moderation queue: one row per photo that has ≥1 pending report, oldest-reported first,
+         *     paginated. Two-part query bounds the admin-only PII notes: a grouped aggregate for the
+         *     counts/categories/first-reported, then a windowed fetch of the 3 newest truncated notes for
+         *     only the page's photos. Notes are truncated in SQL and never logged.
+         */
+        get: operations["admin_photo_reports_api_v1_admin_photo_reports_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/photo-reports/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Admin Photo Reports Summary
+         * @description Badge count: the number of DISTINCT photos with ≥1 pending report.
+         */
+        get: operations["admin_photo_reports_summary_api_v1_admin_photo_reports_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/photos/{photo_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Admin Delete Photo
+         * @description Hard-delete a photo (mirrors the owner self-delete in `photos.py`): delete BOTH Spaces
+         *     objects first — a delete failure is escalated to a durable `storage_cleanup` row and a 5xx
+         *     (never a silent success) — then reverse the still-awarded point BEFORE deleting the row (so
+         *     the reversal can still find the event by `target_id`), then delete the row (its pending
+         *     reports cascade away).
+         */
+        delete: operations["admin_delete_photo_api_v1_admin_photos__photo_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Admin Patch Photo
+         * @description Hide/unhide a photo (clones `admin_patch_note`). On HIDE: stamp `hidden_by/at`, resolve
+         *     this photo's pending reports (`resolution='hidden'`), and reverse the first-photo point — the
+         *     gated read then 404s (is_hidden=true, B11). On UNHIDE: clear the stamps and re-award the point;
+         *     already-resolved reports stay resolved.
+         */
+        patch: operations["admin_patch_photo_api_v1_admin_photos__photo_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/admin/photos/{photo_id}/dismiss-reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Admin Dismiss Photo Reports
+         * @description Reject a photo's pending reports without touching the photo — it stays visible. The
+         *     reports flip to `resolved`/`rejected`; the photo drops out of the queue.
+         */
+        post: operations["admin_dismiss_photo_reports_api_v1_admin_photos__photo_id__dismiss_reports_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/leaderboard/contributors": {
@@ -601,6 +802,23 @@ export interface components {
             /** Is Hidden */
             is_hidden: boolean;
         };
+        /** AdminPhotoOut */
+        AdminPhotoOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Is Hidden */
+            is_hidden: boolean;
+            /** Hidden At */
+            hidden_at: string | null;
+        };
+        /** AdminPhotoPatch */
+        AdminPhotoPatch: {
+            /** Is Hidden */
+            is_hidden: boolean;
+        };
         /** AttributeConsensusOut */
         AttributeConsensusOut: {
             /** Attribute Type Id */
@@ -699,6 +917,36 @@ export interface components {
             /** East */
             east: number;
         };
+        /** CityFountainPin */
+        CityFountainPin: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            location: components["schemas"]["Coordinates"];
+            /** Is Working */
+            is_working: boolean;
+            /** Average Rating */
+            average_rating: number | null;
+            /** Rating Count */
+            rating_count: number;
+            /** Ranking Score */
+            ranking_score?: number | null;
+            /** Distance M */
+            distance_m?: number | null;
+            /** Current Status */
+            current_status?: string | null;
+            /** Last Verified At */
+            last_verified_at?: string | null;
+            /**
+             * Photo Count
+             * @default 0
+             */
+            photo_count: number;
+            /** Thumbnail Url */
+            thumbnail_url?: string | null;
+        };
         /**
          * CityFountainsOut
          * @description A city place plus its ranked, paginated fountains (#127 Slice 3, spec §4.3/§5).
@@ -713,7 +961,7 @@ export interface components {
         CityFountainsOut: {
             place: components["schemas"]["PlaceOut"];
             /** Fountains */
-            fountains: components["schemas"]["FountainPin"][];
+            fountains: components["schemas"]["CityFountainPin"][];
             /** Indexable */
             indexable: boolean;
         };
@@ -1025,6 +1273,34 @@ export interface components {
             /** Observations */
             observations: components["schemas"]["AttributeObservationInput"][];
         };
+        /** PhotoOut */
+        PhotoOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Url */
+            url: string;
+            /** Thumbnail Url */
+            thumbnail_url: string;
+            /** Width */
+            width: number;
+            /** Height */
+            height: number;
+            /** Uploaded By */
+            uploaded_by: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** PhotoReportsSummary */
+        PhotoReportsSummary: {
+            /** Pending Photo Count */
+            pending_photo_count: number;
+        };
         /**
          * PlaceOut
          * @description A crawlable place (country or city) for the public SEO endpoints (#127, spec §5).
@@ -1082,6 +1358,48 @@ export interface components {
             postgis_version: string;
             /** Sf To Nyc M */
             sf_to_nyc_m: number;
+        };
+        /** ReportPhotoRequest */
+        ReportPhotoRequest: {
+            /**
+             * Category
+             * @enum {string}
+             */
+            category: "inappropriate" | "not_a_fountain" | "spam" | "other";
+            /** Note */
+            note?: string | null;
+        };
+        /** ReportedPhotoOut */
+        ReportedPhotoOut: {
+            /**
+             * Photo Id
+             * Format: uuid
+             */
+            photo_id: string;
+            /**
+             * Fountain Id
+             * Format: uuid
+             */
+            fountain_id: string;
+            /** Url */
+            url: string;
+            /** Thumbnail Url */
+            thumbnail_url: string;
+            /** Is Hidden */
+            is_hidden: boolean;
+            /** Report Count */
+            report_count: number;
+            /** Categories */
+            categories: string[];
+            /** Notes */
+            notes: string[];
+            /**
+             * First Reported At
+             * Format: date-time
+             */
+            first_reported_at: string;
+            /** Uploaded By */
+            uploaded_by: string | null;
         };
         /** SyncProfileRequest */
         SyncProfileRequest: {
@@ -1705,6 +2023,218 @@ export interface operations {
             };
         };
     };
+    list_photos_api_v1_fountains__fountain_id__photos_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fountain_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PhotoOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_photo_api_v1_fountains__fountain_id__photos_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "X-Dev-User"?: string | null;
+                "X-Dev-Email"?: string | null;
+                "X-Dev-Name"?: string | null;
+            };
+            path: {
+                fountain_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PhotoOut"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DisplayNameRequiredConflict"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_photo_api_v1_photos__photo_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                photo_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_photo_thumb_api_v1_photos__photo_id__thumb_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                photo_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_own_photo_api_v1_fountains__fountain_id__photos__photo_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "X-Dev-User"?: string | null;
+                "X-Dev-Email"?: string | null;
+                "X-Dev-Name"?: string | null;
+            };
+            path: {
+                fountain_id: string;
+                photo_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    report_photo_api_v1_fountains__fountain_id__photos__photo_id__report_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "X-Dev-User"?: string | null;
+                "X-Dev-Email"?: string | null;
+                "X-Dev-Name"?: string | null;
+            };
+            path: {
+                fountain_id: string;
+                photo_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportPhotoRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     admin_fountain_detail_api_v1_admin_fountains__fountain_id__get: {
         parameters: {
             query?: never;
@@ -1843,6 +2373,185 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["AdminNoteOut"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    admin_photo_reports_api_v1_admin_photo_reports_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: {
+                authorization?: string | null;
+                "X-Dev-User"?: string | null;
+                "X-Dev-Email"?: string | null;
+                "X-Dev-Name"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportedPhotoOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    admin_photo_reports_summary_api_v1_admin_photo_reports_summary_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "X-Dev-User"?: string | null;
+                "X-Dev-Email"?: string | null;
+                "X-Dev-Name"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PhotoReportsSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    admin_delete_photo_api_v1_admin_photos__photo_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "X-Dev-User"?: string | null;
+                "X-Dev-Email"?: string | null;
+                "X-Dev-Name"?: string | null;
+            };
+            path: {
+                photo_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    admin_patch_photo_api_v1_admin_photos__photo_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "X-Dev-User"?: string | null;
+                "X-Dev-Email"?: string | null;
+                "X-Dev-Name"?: string | null;
+            };
+            path: {
+                photo_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminPhotoPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminPhotoOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    admin_dismiss_photo_reports_api_v1_admin_photos__photo_id__dismiss_reports_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "X-Dev-User"?: string | null;
+                "X-Dev-Email"?: string | null;
+                "X-Dev-Name"?: string | null;
+            };
+            path: {
+                photo_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

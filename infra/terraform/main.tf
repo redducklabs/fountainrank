@@ -14,8 +14,9 @@
 #       `fountainrank` is created out-of-band via /v2/registries. See below. ✅
 #   (c) sizing/cost reviewed (cheapest defaults, owner-approved). ✅
 #   (d) Basemap Spaces bucket/CDN/CORS — live prod infra, managed unconditionally (the
-#       old manage_basemap_spaces count-gate was removed 2026-07-04); Phase 4 photos bucket
-#       still deferred.
+#       old manage_basemap_spaces count-gate was removed 2026-07-04); Phase 4 private
+#       photos bucket landed but GATED (var.manage_photos_spaces, default off — needs a
+#       bucket-create-capable Spaces key).
 #   (e) 🔴 DNSSEC must be OFF on the domain or DO refuses the LE cert (422) — the
 #       owner removed the GoDaddy DS record on 2026-06-18.
 
@@ -116,6 +117,25 @@ variable "basemap_cors_origins" {
   description = "Browser origins allowed to fetch the basemap (style/glyphs/sprite/pmtiles) cross-origin."
   type        = list(string)
   default     = ["https://fountainrank.com", "https://www.fountainrank.com", "http://localhost:3020"]
+}
+
+# --- Phase 4 private photos Spaces (gated; see the Spaces section below) ---
+variable "manage_photos_spaces" {
+  description = <<-EOT
+    Gate for the Phase 4 private photos Spaces bucket. Keep FALSE until a
+    bucket-create-capable Spaces key is wired as the apply job's SPACES_ACCESS_KEY/
+    SPACES_SECRET_KEY (the current key is TF-state-scoped and 403s on bucket create).
+    Then set TF_VAR_manage_photos_spaces=true and dispatch the Terraform apply
+    workflow. Default false keeps every other apply a no-op for this resource.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "photos_bucket_name" {
+  description = "DO Spaces bucket for user-uploaded fountain photos (private; reads are backend-presigned)."
+  type        = string
+  default     = "fountainrank-photos"
 }
 
 variable "kubernetes_version_prefix" {
@@ -249,7 +269,7 @@ resource "digitalocean_database_db" "logto" {
 # the `DO_REGISTRY` CI variable. `var.registry_name` is retained for documentation.
 
 # ---------------------------------------------------------------------------
-# Spaces — basemap bucket + CDN + CORS (live prod infra), Phase 4 photos DEFERRED.
+# Spaces — basemap bucket + CDN + CORS (live prod infra), Phase 4 private photos bucket (GATED).
 # ---------------------------------------------------------------------------
 # These serve the Protomaps planet .pmtiles + Light style/glyphs/sprite via the CDN
 # (web NEXT_PUBLIC_BASEMAP_* env — see docs/setup/README.md). They are UNCONDITIONAL:
@@ -262,8 +282,7 @@ resource "digitalocean_database_db" "logto" {
 # removed 2026-07-04; the `moved` blocks below migrate the existing count-indexed state
 # instances (`.basemap[0]`) to the unindexed resources with ZERO destroy/recreate.
 #
-# Phase 4 photos Spaces bucket remains deferred (add when Phase 4 lands). The
-# TF-state bucket is NOT managed here.
+# The TF-state bucket is NOT managed here.
 
 # One-time state refactor (safe to keep; no-op once applied): count removal, [0] -> unindexed.
 moved {
@@ -311,6 +330,36 @@ resource "digitalocean_spaces_bucket_cors_configuration" "basemap" {
 resource "digitalocean_cdn" "basemap" {
   origin = digitalocean_spaces_bucket.basemap.bucket_domain_name
   ttl    = 86400
+}
+
+# --- Phase 4 private photos bucket (GATED) ---
+# 🔴 Same prerequisite as above: gated behind `var.manage_photos_spaces` (default
+# false, wired to TF_VAR_manage_photos_spaces in .github/workflows/terraform.yml) until
+# a bucket-create-capable Spaces key is available. PRIVATE bucket — default ACL
+# (no public-read), no CORS configuration, no CDN. Fountain photos are read via
+# backend-issued presigned GET URLs, never served directly from Spaces/CDN.
+#
+# Once enabled, the following `production` GitHub environment secrets must be set
+# for the backend deployment (they feed config.py's spaces_* settings and the
+# k8s secretKeyRefs added alongside the upload endpoints):
+#   SPACES_ENDPOINT     - e.g. https://<region>.digitaloceanspaces.com
+#   SPACES_REGION       - the Spaces region (matches var.region)
+#   SPACES_BUCKET       - fountainrank-photos (= var.photos_bucket_name)
+#   SPACES_ACCESS_KEY   - bucket-create/read/write-capable Spaces access key
+#   SPACES_SECRET_KEY   - matching Spaces secret key
+resource "digitalocean_spaces_bucket" "photos" {
+  count  = var.manage_photos_spaces ? 1 : 0
+  name   = var.photos_bucket_name
+  region = var.region
+  acl    = "private" # user photos; reads are backend-presigned, not public
+
+  # Failed/aborted large multipart uploads leave orphaned parts that are invisible
+  # but accrue storage. Auto-abort them.
+  lifecycle_rule {
+    id                                     = "abort-incomplete-mpu"
+    enabled                                = true
+    abort_incomplete_multipart_upload_days = 7
+  }
 }
 
 # ---------------------------------------------------------------------------
@@ -408,18 +457,20 @@ resource "digitalocean_record" "auth" {
 # floating IP, Kubernetes cluster, load balancer, Spaces bucket, volume. So we
 # assign the cluster, DB, LB, the (pre-existing) domain, and the basemap Spaces bucket —
 # but NOT the container registry or certificate (account/region-scoped, not
-# project-assignable). The Phase 4 photos bucket is still deferred. Assigning the domain
-# only GROUPS it under the project; it does not manage or alter its DNS records.
+# project-assignable). The Phase 4 photos bucket joins only when its gate
+# (var.manage_photos_spaces) is enabled (concat below). Assigning the domain only GROUPS
+# it under the project; it does not manage or alter its DNS records.
 # ---------------------------------------------------------------------------
 resource "digitalocean_project_resources" "main" {
   project = data.digitalocean_project.main.id
-  resources = [
+  resources = concat([
     digitalocean_kubernetes_cluster.main.urn,
     digitalocean_database_cluster.postgres.urn,
     digitalocean_loadbalancer.main.urn,
     data.digitalocean_domain.main.urn,
     digitalocean_spaces_bucket.basemap.urn,
-  ]
+    # The photos bucket (splat -> [] when its gate is off) joins the project when enabled.
+  ], digitalocean_spaces_bucket.photos[*].urn)
 }
 
 # ---------------------------------------------------------------------------

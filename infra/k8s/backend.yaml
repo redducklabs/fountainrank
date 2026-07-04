@@ -71,6 +71,40 @@ spec:
                 secretKeyRef:
                   name: fountainrank-secrets
                   key: geocoding-api-key
+            # DO Spaces (fountain photos, S3-compatible object storage). All five default
+            # empty in fountainrank-secrets -> Settings.photos_enabled is false and the
+            # upload endpoints fail closed with 503 (backend/app/config.py). See spec §16.1
+            # for the pre-deploy Spaces key scope dependency.
+            - name: SPACES_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: fountainrank-secrets
+                  key: spaces-endpoint
+                  optional: true
+            - name: SPACES_REGION
+              valueFrom:
+                secretKeyRef:
+                  name: fountainrank-secrets
+                  key: spaces-region
+                  optional: true
+            - name: SPACES_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: fountainrank-secrets
+                  key: spaces-bucket
+                  optional: true
+            - name: SPACES_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: fountainrank-secrets
+                  key: spaces-access-key
+                  optional: true
+            - name: SPACES_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: fountainrank-secrets
+                  key: spaces-secret-key
+                  optional: true
             - name: GOOGLE_DELEGATED_USER
               value: "${GOOGLE_DELEGATED_USER}"
             - name: FROM_EMAIL

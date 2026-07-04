@@ -604,6 +604,182 @@ class FountainNote(Base):
     )
 
 
+class FountainPhoto(Base):
+    """User-uploaded photo of a fountain (fountain-photos design §3.1). Stores the private
+    Spaces object keys (not URLs — the bucket is private, URLs are presigned at read time).
+    Moderation-hideable like FountainNote/ConditionReport; no unique(fountain_id, user_id)
+    since a user may upload more than one photo (bounded by caps, spec §6)."""
+
+    __tablename__ = "fountain_photos"
+    __table_args__ = (
+        CheckConstraint("content_type = 'image/jpeg'", name="content_type"),
+        CheckConstraint("width > 0", name="width_positive"),
+        CheckConstraint("height > 0", name="height_positive"),
+        CheckConstraint("byte_size > 0", name="byte_size_positive"),
+        # Public list / city-list "most recent visible photo" lookup (spec §3.1).
+        Index(
+            "ix_fountain_photos_fountain_visible",
+            "fountain_id",
+            "created_at",
+            postgresql_where=text("is_hidden = false"),
+        ),
+        # Powers the per-user rate/quota counts (spec §6).
+        Index("ix_fountain_photos_user_created", "user_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    fountain_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("fountains.id", ondelete="CASCADE", name="fk_fountain_photos_fountain"),
+        nullable=False,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE", name="fk_fountain_photos_user"),
+        nullable=False,
+    )
+    storage_key: Mapped[str] = mapped_column(String, nullable=False)
+    thumbnail_key: Mapped[str] = mapped_column(String, nullable=False)
+    content_type: Mapped[str] = mapped_column(String, nullable=False)
+    width: Mapped[int] = mapped_column(nullable=False)
+    height: Mapped[int] = mapped_column(nullable=False)
+    byte_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    is_hidden: Mapped[bool] = mapped_column(nullable=False, server_default=text("false"))
+    hidden_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("users.id", name="fk_fountain_photos_hidden_by"),
+        nullable=True,
+    )
+    hidden_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class PhotoReport(Base):
+    """User report flagging a fountain photo for moderation (fountain-photos design §3.2).
+    A user may hold at most one *pending* report per photo (partial unique index below) but
+    may re-report after resolution."""
+
+    __tablename__ = "photo_reports"
+    __table_args__ = (
+        CheckConstraint(
+            "category IN ('inappropriate','not_a_fountain','spam','other')", name="category"
+        ),
+        CheckConstraint("status IN ('pending','resolved')", name="status"),
+        CheckConstraint("resolution IN ('hidden','rejected')", name="resolution"),
+        # One pending report per (photo, reporter); a user may re-report after resolution.
+        Index(
+            "uq_photo_reports_photo_reporter_pending",
+            "photo_id",
+            "reporter_user_id",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+        ),
+        # Queue / badge count (spec §6).
+        Index(
+            "ix_photo_reports_photo_pending",
+            "photo_id",
+            postgresql_where=text("status = 'pending'"),
+        ),
+        # Reporter rate limit (spec §6).
+        Index(
+            "ix_photo_reports_reporter_pending_created",
+            "reporter_user_id",
+            "created_at",
+            postgresql_where=text("status = 'pending'"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    photo_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("fountain_photos.id", ondelete="CASCADE", name="fk_photo_reports_photo"),
+        nullable=False,
+    )
+    reporter_user_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE", name="fk_photo_reports_reporter"),
+        nullable=False,
+    )
+    category: Mapped[str] = mapped_column(String, nullable=False)
+    note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=False, server_default=text("'pending'"))
+    resolution: Mapped[str | None] = mapped_column(String, nullable=True)
+    resolved_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("users.id", name="fk_photo_reports_resolved_by"),
+        nullable=True,
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class StorageCleanup(Base):
+    """Durable retry ledger for Spaces objects whose deletion failed or must be swept
+    (fountain-photos design §3.3) — tracks orphans even when no `fountain_photos` row was
+    ever inserted (e.g. upload failed the post-upload quota re-check)."""
+
+    __tablename__ = "storage_cleanup"
+    __table_args__ = (
+        CheckConstraint("reason IN ('upload_orphan','moderation_delete')", name="reason"),
+        CheckConstraint("status IN ('pending','done')", name="status"),
+        Index(
+            "ix_storage_cleanup_pending_created",
+            "created_at",
+            postgresql_where=text("status = 'pending'"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    object_key: Mapped[str] = mapped_column(String, nullable=False)
+    reason: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, server_default=text("'pending'"))
+    attempts: Mapped[int] = mapped_column(nullable=False, server_default=text("0"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class UploadAttempt(Base):
+    """Pre-work reservation ledger (fountain-photos design §3.4): bounds expensive upload
+    work (Pillow/S3) per user *before* that cost is incurred, so a burst of parallel
+    requests cannot outrun the quota check. `completed`/`failed` rows always count toward
+    the rolling rate window; only a `reserved` row past the reservation TTL is excluded."""
+
+    __tablename__ = "upload_attempts"
+    __table_args__ = (
+        CheckConstraint("status IN ('reserved','completed','failed')", name="status"),
+        Index("ix_upload_attempts_user_status_created", "user_id", "status", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE", name="fk_upload_attempts_user"),
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(String, nullable=False, server_default=text("'reserved'"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class PlaceBoundary(Base):
     """Administrative / populated-place boundary polygon for crawlable SEO pages (#127).
 

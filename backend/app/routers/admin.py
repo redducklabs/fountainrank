@@ -2,21 +2,37 @@ import logging
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy import func, select
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi.concurrency import run_in_threadpool
+from sqlalchemy import delete, distinct, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import require_admin
-from app.contributions import reverse_contributions
+from app.config import Settings, get_settings
+from app.contributions import (
+    reactivate_contribution_for_target,
+    reverse_contribution_for_target,
+    reverse_contributions,
+)
 from app.db import get_session
 from app.display import public_display_name
 from app.geo import point_geography
 from app.locks import ADD_FOUNTAIN_LOCK_KEY
 from app.membership import recompute_fountain_membership, recompute_place_counts
-from app.models import Fountain, FountainNote, User
+from app.models import Fountain, FountainNote, FountainPhoto, PhotoReport, StorageCleanup, User
 from app.ranking import recompute_fountain_ranking
 from app.routers.fountains import serialize_fountain_detail
-from app.schemas import AdminFountainDetail, AdminFountainPatch, AdminNoteOut, AdminNotePatch
+from app.schemas import (
+    AdminFountainDetail,
+    AdminFountainPatch,
+    AdminNoteOut,
+    AdminNotePatch,
+    AdminPhotoOut,
+    AdminPhotoPatch,
+    PhotoReportsSummary,
+    ReportedPhotoOut,
+)
+from app.storage import get_storage
 
 router = APIRouter(
     prefix="/api/v1/admin",
@@ -190,6 +206,21 @@ async def admin_delete_fountain(
     # Capture the deleted fountain's places so their fountain_count (and canonical winner) can be
     # corrected after the row is gone (#127 Slice 1d).
     old_place_ids = [fountain.country_place_id, fountain.city_place_id]
+    # Enqueue durable storage_cleanup rows for every photo's Spaces objects BEFORE the delete
+    # cascades the fountain_photos ROWS away (fk_fountain_photos_fountain is ON DELETE CASCADE) —
+    # otherwise the objects are orphaned in the private bucket with no ledger row for the sweep
+    # worker to find them by (design §3.3: no silent orphan). Includes hidden photos; the actual
+    # Spaces deletes are NOT done inline here, only enqueued for the sweep.
+    photo_keys = (
+        await session.execute(
+            select(FountainPhoto.storage_key, FountainPhoto.thumbnail_key).where(
+                FountainPhoto.fountain_id == fountain_id
+            )
+        )
+    ).all()
+    for storage_key, thumbnail_key in photo_keys:
+        session.add(StorageCleanup(object_key=storage_key, reason="moderation_delete"))
+        session.add(StorageCleanup(object_key=thumbnail_key, reason="moderation_delete"))
     # Reverse every contribution tied to this fountain BEFORE deleting it (#119 anti-gaming):
     # removing the content must not let its points persist on the leaderboard. Must run first
     # because contribution_events.fountain_id is ON DELETE SET NULL — once the fountain row is
@@ -256,3 +287,312 @@ async def admin_patch_note(
         },
     )
     return await _serialize_admin_note(note, author)
+
+
+# --- photo moderation (fountain-photos design §8.4) --------------------------------
+# The queue exposes the free-text report `note` (admin-only PII). It is truncated to
+# MAX_NOTE_CHARS *in SQL* (so the untruncated text never leaves the DB), capped at the
+# MAX_NOTES_PER_PHOTO newest per photo, and NEVER logged.
+MAX_NOTE_CHARS = 200
+MAX_NOTES_PER_PHOTO = 3
+
+
+@router.get("/photo-reports", response_model=list[ReportedPhotoOut])
+async def admin_photo_reports(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    session: AsyncSession = Depends(get_session),
+    admin: User = Depends(require_admin),
+) -> list[ReportedPhotoOut]:
+    """Moderation queue: one row per photo that has ≥1 pending report, oldest-reported first,
+    paginated. Two-part query bounds the admin-only PII notes: a grouped aggregate for the
+    counts/categories/first-reported, then a windowed fetch of the 3 newest truncated notes for
+    only the page's photos. Notes are truncated in SQL and never logged."""
+    # (1) Grouped aggregate over PENDING reports, joined to the photo so a report orphaned by a
+    # (cascade-)deleted photo can never surface. Oldest pending report first; page-bounded.
+    grouped = (
+        select(
+            PhotoReport.photo_id.label("photo_id"),
+            func.count().label("report_count"),
+            func.array_agg(distinct(PhotoReport.category)).label("categories"),
+            func.min(PhotoReport.created_at).label("first_reported_at"),
+        )
+        .join(FountainPhoto, FountainPhoto.id == PhotoReport.photo_id)
+        .where(PhotoReport.status == "pending")
+        .group_by(PhotoReport.photo_id)
+        # Deterministic tiebreak on photo_id: two photos whose oldest pending report share an
+        # exact timestamp would otherwise reorder across limit/offset pages (skip/dup risk at
+        # a page boundary).
+        .order_by(func.min(PhotoReport.created_at).asc(), PhotoReport.photo_id)
+        .limit(limit)
+        .offset(offset)
+    )
+    group_rows = (await session.execute(grouped)).all()
+    if not group_rows:
+        return []
+    page_ids = [row.photo_id for row in group_rows]
+
+    # (2a) Photo + uploader details for the page's photos.
+    detail_rows = (
+        await session.execute(
+            select(
+                FountainPhoto.id,
+                FountainPhoto.fountain_id,
+                FountainPhoto.is_hidden,
+                User.display_name,
+                User.logto_user_id,
+                User.nickname,
+            )
+            .join(User, User.id == FountainPhoto.user_id)
+            .where(FountainPhoto.id.in_(page_ids))
+        )
+    ).all()
+    details = {row.id: row for row in detail_rows}
+
+    # (2b) The 3 newest NON-NULL notes per page photo, each truncated to 200 chars IN SQL via
+    # left(note, 200) so the untruncated free text never leaves the DB. A windowed row_number
+    # bounds it to 3 without a per-row LATERAL.
+    rn = (
+        func.row_number()
+        .over(
+            partition_by=PhotoReport.photo_id,
+            order_by=PhotoReport.created_at.desc(),
+        )
+        .label("rn")
+    )
+    ranked_notes = (
+        select(
+            PhotoReport.photo_id.label("photo_id"),
+            func.left(PhotoReport.note, MAX_NOTE_CHARS).label("note"),
+            rn,
+        )
+        .where(
+            PhotoReport.status == "pending",
+            PhotoReport.photo_id.in_(page_ids),
+            PhotoReport.note.isnot(None),
+        )
+        .subquery()
+    )
+    note_rows = (
+        await session.execute(
+            select(ranked_notes.c.photo_id, ranked_notes.c.note)
+            .where(ranked_notes.c.rn <= MAX_NOTES_PER_PHOTO)
+            .order_by(ranked_notes.c.photo_id, ranked_notes.c.rn)
+        )
+    ).all()
+    notes_by_photo: dict[uuid.UUID, list[str]] = {}
+    for row in note_rows:
+        notes_by_photo.setdefault(row.photo_id, []).append(row.note)
+
+    result: list[ReportedPhotoOut] = []
+    for row in group_rows:
+        detail = details.get(row.photo_id)
+        if detail is None:
+            continue
+        result.append(
+            ReportedPhotoOut(
+                photo_id=row.photo_id,
+                fountain_id=detail.fountain_id,
+                url=f"/api/v1/photos/{row.photo_id}",
+                thumbnail_url=f"/api/v1/photos/{row.photo_id}/thumb",
+                is_hidden=detail.is_hidden,
+                report_count=row.report_count,
+                categories=list(row.categories),
+                notes=notes_by_photo.get(row.photo_id, []),
+                first_reported_at=row.first_reported_at,
+                uploaded_by=public_display_name(
+                    detail.display_name, detail.logto_user_id, detail.nickname
+                ),
+            )
+        )
+    # Deliberately logs only ids/counts — NEVER the notes (admin-only PII).
+    logger.info(
+        "admin photo queue read",
+        extra={**_admin_context(admin), "returned": len(result), "limit": limit, "offset": offset},
+    )
+    return result
+
+
+@router.get("/photo-reports/summary", response_model=PhotoReportsSummary)
+async def admin_photo_reports_summary(
+    session: AsyncSession = Depends(get_session),
+    admin: User = Depends(require_admin),
+) -> PhotoReportsSummary:
+    """Badge count: the number of DISTINCT photos with ≥1 pending report."""
+    count = (
+        await session.execute(
+            select(func.count(distinct(PhotoReport.photo_id))).where(
+                PhotoReport.status == "pending"
+            )
+        )
+    ).scalar_one()
+    return PhotoReportsSummary(pending_photo_count=count)
+
+
+async def _resolve_pending_reports(
+    session: AsyncSession, photo_id: uuid.UUID, admin: User, resolution: str
+) -> int:
+    """Resolve every still-pending report on a photo with the given resolution
+    (`hidden` on a moderation hide, `rejected` on a dismiss). Returns the number resolved."""
+    result = await session.execute(
+        update(PhotoReport)
+        .where(PhotoReport.photo_id == photo_id, PhotoReport.status == "pending")
+        .values(
+            status="resolved",
+            resolution=resolution,
+            resolved_by_user_id=admin.id,
+            resolved_at=datetime.now(tz=UTC),
+        )
+    )
+    return result.rowcount or 0
+
+
+@router.patch("/photos/{photo_id}", response_model=AdminPhotoOut)
+async def admin_patch_photo(
+    photo_id: uuid.UUID,
+    payload: AdminPhotoPatch,
+    session: AsyncSession = Depends(get_session),
+    admin: User = Depends(require_admin),
+) -> AdminPhotoOut:
+    """Hide/unhide a photo (clones `admin_patch_note`). On HIDE: stamp `hidden_by/at`, resolve
+    this photo's pending reports (`resolution='hidden'`), and reverse the first-photo point — the
+    gated read then 404s (is_hidden=true, B11). On UNHIDE: clear the stamps and re-award the point;
+    already-resolved reports stay resolved."""
+    photo = (
+        await session.execute(
+            select(FountainPhoto).where(FountainPhoto.id == photo_id).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if photo is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="photo not found")
+
+    before_hidden = photo.is_hidden
+    resolved_reports = 0
+    if payload.is_hidden:
+        if not photo.is_hidden:
+            photo.hidden_by_user_id = admin.id
+            photo.hidden_at = datetime.now(tz=UTC)
+            photo.is_hidden = True
+            resolved_reports = await _resolve_pending_reports(session, photo_id, admin, "hidden")
+            await reverse_contribution_for_target(session, "photo", photo_id)
+    else:
+        if photo.is_hidden:
+            photo.is_hidden = False
+            photo.hidden_by_user_id = None
+            photo.hidden_at = None
+            await reactivate_contribution_for_target(session, "photo", photo_id)
+    await session.commit()
+    await session.refresh(photo)
+
+    logger.info(
+        "admin photo mutation",
+        extra={
+            **_admin_context(admin),
+            "action": "hide" if photo.is_hidden else "unhide",
+            "target_type": "photo",
+            "target_id": str(photo.id),
+            "changed_fields": {
+                "is_hidden": {"before": before_hidden, "after": photo.is_hidden},
+                "resolved_reports": resolved_reports,
+            },
+        },
+    )
+    return AdminPhotoOut(id=photo.id, is_hidden=photo.is_hidden, hidden_at=photo.hidden_at)
+
+
+@router.post("/photos/{photo_id}/dismiss-reports", status_code=status.HTTP_204_NO_CONTENT)
+async def admin_dismiss_photo_reports(
+    photo_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    admin: User = Depends(require_admin),
+) -> Response:
+    """Reject a photo's pending reports without touching the photo — it stays visible. The
+    reports flip to `resolved`/`rejected`; the photo drops out of the queue."""
+    exists = (
+        await session.execute(select(FountainPhoto.id).where(FountainPhoto.id == photo_id))
+    ).scalar_one_or_none()
+    if exists is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="photo not found")
+
+    resolved = await _resolve_pending_reports(session, photo_id, admin, "rejected")
+    await session.commit()
+    logger.info(
+        "admin photo mutation",
+        extra={
+            **_admin_context(admin),
+            "action": "dismiss_reports",
+            "target_type": "photo",
+            "target_id": str(photo_id),
+            "changed_fields": {"resolved_reports": resolved},
+        },
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.delete("/photos/{photo_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def admin_delete_photo(
+    photo_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    admin: User = Depends(require_admin),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    """Hard-delete a photo (mirrors the owner self-delete in `photos.py`): delete BOTH Spaces
+    objects first — a delete failure is escalated to a durable `storage_cleanup` row and a 5xx
+    (never a silent success) — then reverse the still-awarded point BEFORE deleting the row (so
+    the reversal can still find the event by `target_id`), then delete the row (its pending
+    reports cascade away)."""
+    photo = (
+        await session.execute(select(FountainPhoto).where(FountainPhoto.id == photo_id))
+    ).scalar_one_or_none()
+    if photo is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="photo not found")
+
+    storage = get_storage(settings)
+    if storage is None:
+        logger.warning(
+            "admin photo delete requested but storage is disabled/misconfigured",
+            extra={**_admin_context(admin), "photo_id": str(photo_id)},
+        )
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="photo_delete_unavailable")
+
+    storage_key, thumbnail_key = photo.storage_key, photo.thumbnail_key
+    failed_keys: list[str] = []
+    for key in (storage_key, thumbnail_key):
+        try:
+            await run_in_threadpool(storage.delete_object, key)
+        except Exception:
+            logger.error(
+                "failed to delete photo object; recording for durable cleanup",
+                extra={**_admin_context(admin), "object_key": key, "photo_id": str(photo_id)},
+            )
+            failed_keys.append(key)
+
+    if failed_keys:
+        for key in failed_keys:
+            session.add(StorageCleanup(object_key=key, reason="moderation_delete"))
+        try:
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            logger.exception(
+                "failed to record storage_cleanup rows for admin photo delete failure",
+                extra={**_admin_context(admin), "photo_id": str(photo_id)},
+            )
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, detail="photo_delete_failed")
+
+    # Reverse the still-awarded point BEFORE deleting the row (find the event by target_id).
+    await reverse_contribution_for_target(session, "photo", photo_id)
+    # Deleting the row cascades to `photo_reports` (ON DELETE CASCADE).
+    await session.execute(delete(FountainPhoto).where(FountainPhoto.id == photo_id))
+    await session.commit()
+
+    logger.info(
+        "admin photo mutation",
+        extra={
+            **_admin_context(admin),
+            "action": "delete",
+            "target_type": "photo",
+            "target_id": str(photo_id),
+        },
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

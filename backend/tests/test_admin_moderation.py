@@ -16,9 +16,11 @@ from app.models import (
     FountainAttributeConsensus,
     FountainImportEvent,
     FountainNote,
+    FountainPhoto,
     FountainProvenance,
     OsmImportRun,
     Rating,
+    StorageCleanup,
     User,
     UserContributionStats,
 )
@@ -298,9 +300,39 @@ async def test_hard_delete_cascades_children_and_preserves_contribution_event(
         ),
     ]
     session.add_all(rows)
+    # Two photos (one hidden) — their Spaces objects must be enqueued for cleanup BEFORE the
+    # cascade removes the fountain_photos rows, so the sweep worker can still find them
+    # (Codex whole-branch review finding: hard-delete must not silently orphan Spaces objects).
+    photos = [
+        FountainPhoto(
+            fountain_id=fountain.id,
+            user_id=author.id,
+            storage_key=f"fountains/{fountain.id}/photo-1.jpg",
+            thumbnail_key=f"fountains/{fountain.id}/photo-1_thumb.jpg",
+            content_type="image/jpeg",
+            width=800,
+            height=600,
+            byte_size=12345,
+        ),
+        FountainPhoto(
+            fountain_id=fountain.id,
+            user_id=author.id,
+            storage_key=f"fountains/{fountain.id}/photo-2.jpg",
+            thumbnail_key=f"fountains/{fountain.id}/photo-2_thumb.jpg",
+            content_type="image/jpeg",
+            width=800,
+            height=600,
+            byte_size=12345,
+            is_hidden=True,
+        ),
+    ]
+    session.add_all(photos)
     await session.commit()
     fountain_id = fountain.id
     dedup_key = f"delete-test-{fountain_id}"
+    expected_photo_keys = sorted(
+        key for photo in photos for key in (photo.storage_key, photo.thumbnail_key)
+    )
 
     resp = await raw_client.delete(
         f"/api/v1/admin/fountains/{fountain_id}",
@@ -321,6 +353,7 @@ async def test_hard_delete_cascades_children_and_preserves_contribution_event(
         AttributeObservation,
         FountainAttributeConsensus,
         FountainProvenance,
+        FountainPhoto,
     ):
         count = (
             await session.execute(
@@ -328,6 +361,18 @@ async def test_hard_delete_cascades_children_and_preserves_contribution_event(
             )
         ).scalar_one()
         assert count == 0
+
+    cleanup_rows = (
+        (
+            await session.execute(
+                select(StorageCleanup).where(StorageCleanup.reason == "moderation_delete")
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert sorted(row.object_key for row in cleanup_rows) == expected_photo_keys
+    assert all(row.status == "pending" for row in cleanup_rows)
 
     contribution = (
         await session.execute(
