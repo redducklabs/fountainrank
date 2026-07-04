@@ -31,6 +31,7 @@ import {
   GEOLOCATE_TIMEOUT_MS,
   NEIGHBORHOOD_ZOOM,
 } from "../../lib/map/constants";
+import { resolveActiveId } from "../../lib/map/active-id";
 import { logMapError } from "../../lib/map/log";
 import { deriveCameraAction, parseFlyToParam } from "../../lib/search/flyto";
 import { FountainsInViewList } from "./FountainsInViewList";
@@ -45,7 +46,6 @@ import {
 } from "./MapStates";
 
 type Status = "idle" | "loading" | "empty" | "error" | "belowZoom" | "capped";
-const activeIdFromPath = (p: string | null) => p?.match(/^\/fountains\/([^/?#]+)/)?.[1] ?? "";
 
 // MapLibre v5 needs a WebGL2 context. Probe once with default attributes (matching the map's
 // powerPreference:'default' below) so we can render a graceful hint instead of throwing/crashing.
@@ -98,7 +98,9 @@ export default function MapBrowser({
   const [status, setStatus] = useState<Status>("idle");
   const [celebrationKey, setCelebrationKey] = useState(0);
   const [webglOk] = useState(isWebglSupported);
-  const activeId = activeIdFromPath(pathname);
+  // `?focus=<id>` (from the city-list / my-fountains "See on Map" links) wins over the path so
+  // the map highlights that fountain on `/`; otherwise the id comes from `/fountains/<id>`.
+  const activeId = resolveActiveId(searchParams.get("focus"), pathname);
   const add = useAddFountainMode(placementMap, {
     isAuthenticated,
     webglOk,
