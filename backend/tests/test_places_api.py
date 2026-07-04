@@ -97,6 +97,25 @@ def _sq(x0: float, y0: float, x1: float, y1: float) -> str:
     return f"POLYGON(({x0} {y0}, {x1} {y0}, {x1} {y1}, {x0} {y1}, {x0} {y0}))"
 
 
+async def _set_scope_ready(
+    session, country_code: str, ready: bool, *, subtypes=("locality", "localadmin")
+):
+    """Insert/patch a place_scope_config row so a test scope is (not) city-routes-ready. us/lu are
+    seeded ready=true by migration 0017; use this for other test country codes."""
+    await session.execute(
+        text(
+            """
+            INSERT INTO place_scope_config (country_code, eligible_city_subtypes, city_routes_ready)
+            VALUES (:cc, :subs, :ready)
+            ON CONFLICT (country_code)
+            DO UPDATE SET eligible_city_subtypes = EXCLUDED.eligible_city_subtypes,
+                          city_routes_ready = EXCLUDED.city_routes_ready
+            """
+        ),
+        {"cc": country_code, "subs": list(subtypes), "ready": ready},
+    )
+
+
 @pytest.mark.asyncio
 async def test_lists_countries_above_threshold_ordered(session, api):
     """Countries (is_canonical=false, as the real refresh leaves them) with fountain_count >= K,
@@ -627,3 +646,105 @@ async def test_city_fountains_only_this_city(session, api):
 
     body = (await api.get("/api/v1/places/us/san-diego/fountains")).json()
     assert len(body["fountains"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_cities_hidden_for_not_ready_scope(session, api):
+    """A scope with city_routes_ready=false returns NO cities from /places?country=cc even when a
+    city clears K — the per-scope gate (spec §4.2/§7)."""
+    zy = await _add_place(
+        session,
+        overture_id="zy",
+        subtype="country",
+        country_code="zy",
+        name="Zedland",
+        slug="zedland",
+        fountain_count=50,
+        is_canonical=False,
+    )
+    await _add_place(
+        session,
+        overture_id="zy-town",
+        subtype="locality",
+        country_code="zy",
+        name="Zed Town",
+        slug="zed-town",
+        fountain_count=9,
+        is_canonical=True,
+        parent_id=zy,
+    )
+    await _set_scope_ready(session, "zy", ready=False)
+    await session.commit()
+
+    body = (await api.get("/api/v1/places", params={"country": "zy"})).json()
+    assert body == []
+
+
+@pytest.mark.asyncio
+async def test_cities_shown_for_ready_scope(session, api):
+    """Flipping the same scope to ready surfaces its canonical cities >= K."""
+    zy = await _add_place(
+        session,
+        overture_id="zy",
+        subtype="country",
+        country_code="zy",
+        name="Zedland",
+        slug="zedland",
+        fountain_count=50,
+        is_canonical=False,
+    )
+    await _add_place(
+        session,
+        overture_id="zy-town",
+        subtype="locality",
+        country_code="zy",
+        name="Zed Town",
+        slug="zed-town",
+        fountain_count=9,
+        is_canonical=True,
+        parent_id=zy,
+    )
+    await _set_scope_ready(session, "zy", ready=True)
+    await session.commit()
+
+    body = (await api.get("/api/v1/places", params={"country": "zy"})).json()
+    assert [c["slug"] for c in body] == ["zed-town"]
+
+
+@pytest.mark.asyncio
+async def test_city_fountains_not_indexable_for_not_ready_scope(session, api):
+    """city_fountains still SERVES its fountains (reachable), but indexable=false when the scope
+    isn't ready, even though fountain_count (9) >= K (3)."""
+    zy = await _add_place(
+        session,
+        overture_id="zy",
+        subtype="country",
+        country_code="zy",
+        name="Zedland",
+        slug="zedland",
+        fountain_count=50,
+        is_canonical=False,
+    )
+    city = await _add_place(
+        session,
+        overture_id="zy-town",
+        subtype="locality",
+        country_code="zy",
+        name="Zed Town",
+        slug="zed-town",
+        fountain_count=9,
+        is_canonical=True,
+        parent_id=zy,
+    )
+    await _set_scope_ready(session, "zy", ready=False)
+    # One visible fountain assigned to the city so the row is genuinely reachable. clean_db
+    # truncates fountains between tests, so this UPDATE targets exactly the one row just inserted.
+    await _add_fountain(session, 0.5, 0.5)
+    await session.execute(text("UPDATE fountains SET city_place_id = :cid"), {"cid": city})
+    await session.commit()
+
+    resp = await api.get("/api/v1/places/zy/zed-town/fountains")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["indexable"] is False
+    assert len(body["fountains"]) == 1  # reachable with its assigned fountain

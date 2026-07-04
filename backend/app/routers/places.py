@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import Settings, get_settings
 from app.db import get_session
 from app.geo import latitude_of, longitude_of
-from app.models import Fountain, PlaceBoundary
+from app.models import Fountain, PlaceBoundary, PlaceScopeConfig
 from app.schemas import CityFountainsOut, Coordinates, FountainPin, PlaceOut
 
 logger = logging.getLogger(__name__)
@@ -26,6 +26,20 @@ router = APIRouter(prefix="/api/v1", tags=["places"])
 def _set_cache(response: Response, settings: Settings) -> None:
     ttl = settings.seo_cache_max_age_seconds
     response.headers["Cache-Control"] = f"public, max-age={ttl}, s-maxage={ttl}"
+
+
+async def _scope_city_routes_ready(session: AsyncSession, country_code: str) -> bool:
+    """Whether this scope's CITY routes are signed off as ready (spec §4.2/§7). A missing
+    place_scope_config row (or city_routes_ready=false) means NOT ready — the safe default that
+    keeps a new scope's city routes out of the index/sitemap until an owner signs off in a
+    migration."""
+    return bool(
+        await session.scalar(
+            select(PlaceScopeConfig.city_routes_ready).where(
+                PlaceScopeConfig.country_code == country_code
+            )
+        )
+    )
 
 
 @router.get("/places", response_model=list[PlaceOut])
@@ -105,6 +119,13 @@ async def list_places(
                     "rows": 0,
                     "country_found": False,
                 },
+            )
+            return []
+        if not await _scope_city_routes_ready(session, country_code):
+            _set_cache(response, settings)
+            logger.info(
+                "places served",
+                extra={"scope": "cities", "country": country_code, "rows": 0, "scope_ready": False},
             )
             return []
         # Cities ARE is_canonical: canonicalization keeps exactly one row per (country_code, slug)
@@ -212,7 +233,9 @@ async def city_fountains(
         )
         for (rid, rlat, rlng, working, avg, count, score, cur_status, last_verified) in rows
     ]
-    indexable = place.fountain_count >= settings.seo_place_min_fountains
+    indexable = place.fountain_count >= settings.seo_place_min_fountains and (
+        await _scope_city_routes_ready(session, cc)
+    )
     _set_cache(response, settings)
     logger.info(
         "city fountains served",
