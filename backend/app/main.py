@@ -15,6 +15,7 @@ from app.routers import (
     geocode,
     health,
     leaderboard,
+    photos,
     places,
     rating_types,
     users,
@@ -44,6 +45,7 @@ def create_app() -> FastAPI:
     app.include_router(rating_types.router)
     app.include_router(attribute_types.router)
     app.include_router(fountains.router)
+    app.include_router(photos.router)
     app.include_router(admin.router)
     app.include_router(leaderboard.router)
     app.include_router(places.router)
