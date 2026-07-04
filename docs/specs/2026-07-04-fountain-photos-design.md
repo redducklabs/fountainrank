@@ -174,9 +174,10 @@ cheap DB insert, gated at commit time.)
 | `created_at` | timestamptz | `server_default now()` |
 | `finalized_at` | timestamptz nullable | set when completed/failed |
 
-Index on `(user_id, status, created_at)`. A `reserved` row older than the reservation TTL
-(`upload_reservation_ttl_seconds`, default 120) is treated as **expired** — excluded from
-quota counts — so a crashed request never permanently consumes quota.
+Index on `(user_id, status, created_at)`. Counting (§6): `completed` and `failed` rows
+always count in their rolling window (so failures still cost budget); only a `reserved`
+row older than the reservation TTL (`upload_reservation_ttl_seconds`, default 120) is
+**expired** and excluded — so a crashed request never permanently consumes quota.
 
 ## 4. Object storage (`backend/app/storage.py`, new)
 
@@ -241,27 +242,41 @@ txn under the fountain row lock, §8.1):
 - Per-user-per-fountain visible cap **5** (409 `photo_limit_user`).
 
 **Rate limits & global quotas** (durable, **Postgres-count-based** so they hold across
-pods without a Redis dependency — count rows in a rolling window; the `(user_id,
-created_at)` indexes back these):
-- Upload: **≤10 / rolling 60s** and **≤30 / rolling 24h per user** (counts include hidden
-  rows so hiding can't reset the quota) → **429** with `Retry-After`.
-- Report: **≤20 / rolling 60s** and **≤100 / rolling 24h per user** → **429**.
+pods without a Redis dependency — count rows in a rolling window; the `(user_id, …)`
+indexes back these). Two distinct dimensions, so that **failed attempts still cost
+budget** (a client that repeatedly triggers post-reservation validation/cap failures must
+not upload for free):
+- **Attempt rate limit** — counts **all non-expired `upload_attempt` rows regardless of
+  status** (`reserved` + `completed` + `failed`) by `created_at`: **≤10 / rolling 60s**
+  and **≤60 / rolling 24h per user** → **429** with `Retry-After`. This is what stops
+  sequential abuse through failures.
+- **Successful-upload quota** — counts `completed` attempts in **≤30 / rolling 24h per
+  user** → **429** (the product limit; hidden photos still count because the attempt row
+  is `completed` regardless of later hide).
+- **Report** — counts all `photo_reports` by that reporter in **≤20 / rolling 60s** and
+  **≤100 / rolling 24h per user** → **429**.
 - **Atomic enforcement (not raceable), and it gates expensive work.** A plain
   count-then-insert races (concurrent requests all observe the same pre-count and all
   proceed), and even an atomic *commit-time* check would still let a burst burn Pillow/S3
   cost before rejection. So:
   - **Uploads** use the **`upload_attempt` reservation** (§3.4) as the *first
-    authoritative gate*, **before** the body is fully processed or any object is uploaded.
-    Under a per-user advisory lock: count non-expired `reserved` + `completed` rows in the
-    60s and 24h windows; if at the limit → **429** with `Retry-After` (no CPU/S3 spent);
-    else insert a `reserved` row and commit that short reservation txn, releasing the lock.
-    Then process + upload (§8.1 step 2), then **finalize** the reservation to `completed`
-    (on success) or `failed` (on cap conflict / cleanup). The lock is held only around the
-    tiny reservation write — never across CPU/S3 work — so it can't starve the connection
-    pool.
+    authoritative gate*, evaluated in a **reservation dependency** that runs **before the
+    request body is consumed** (the endpoint reads the multipart part via a size-capped
+    manual stream — §8.1 — rather than an `UploadFile` body param, so nothing is parsed
+    until the reservation passes). Under a per-user advisory lock: evaluate both the
+    attempt-rate and success-quota counts above; if either is at its limit → **429** (no
+    body read, no CPU/S3 spent); else insert a `reserved` row and commit that short
+    reservation txn, releasing the lock. Then process + upload (§8.1 step 3), then
+    **finalize** the reservation to `completed` (success) or `failed` (validation/cap
+    conflict / cleanup — and a `failed` row **still counts** toward the attempt-rate
+    window). The lock is held only around the tiny reservation write — never across CPU/S3
+    work — so it can't starve the connection pool.
   - **Reports** do only a cheap insert, so the authoritative check runs at insert time
     under the per-user advisory lock (count in windows → 429, else the ON-CONFLICT insert
     of §9.1) — no reservation needed.
+  - **Raw-body cost** (before Pillow) is bounded independently by the 10 MB streaming cap
+    and the ingress `proxy-body-size` limit, so the honest claim is: the reservation gates
+    **Pillow + Spaces** work, and raw multipart bytes are separately capped.
 - **Advisory-lock keying.** Use the **two-argument** `pg_advisory_xact_lock(namespace,
   user_key)` form with a **distinct per-feature namespace constant** (e.g.
   `PHOTO_UPLOAD_LOCK_NS`, `PHOTO_REPORT_LOCK_NS`, both different from the existing
@@ -310,23 +325,28 @@ contributions on the same fountain are never reversed.
 Under `APIRouter(prefix="/api/v1")`. Schemas in `backend/app/schemas.py`.
 
 ### 8.1 `POST /fountains/{fountain_id}/photos` — upload
-Auth `require_named_user`; `multipart/form-data` single `file` (`UploadFile`, needs the new
-`python-multipart` dep). **Transaction boundary redesigned** to avoid holding a lock across
-image/S3 work:
+Auth `require_named_user`. `multipart/form-data`, but the endpoint takes the raw `Request`
+and reads the single file part via a **size-capped manual multipart stream**
+(`python-multipart`'s streaming parser, aborting at the 10 MB cap → 413) **rather than an
+`UploadFile` body param** — so the reservation gate below runs before the body is consumed
+(an `UploadFile` param would force full multipart parsing before the function body). The
+transaction boundary is designed to avoid holding a lock across image/S3 work:
 1. **Cheap existence check** (no lock): fountain exists + not hidden → 404 else.
-2. **Reservation (authoritative rate gate, before any expensive work):** in a short txn,
-   take the per-user advisory lock (§6), count non-expired `reserved` + `completed`
-   `upload_attempt` rows in the 60s/24h windows → **429** if at the limit (nothing
-   processed), else insert a `reserved` row, `commit`, release the lock. Capture the
-   reservation id.
-3. **Outside any txn:** run the pipeline (§5) and upload both objects (full + thumb) to the
-   private bucket via `run_in_threadpool`.
+2. **Reservation (authoritative rate gate, before the body is read or any expensive work):**
+   in a short txn, take the per-user advisory lock (§6), evaluate the attempt-rate
+   (`reserved`+`completed`+`failed`, non-expired) and success-quota (`completed`) counts in
+   the 60s/24h windows → **429** if either is at its limit (nothing read/processed), else
+   insert a `reserved` `upload_attempt`, `commit`, release the lock. Capture the id.
+3. **Read + process (outside any txn):** stream-read the file part under the size cap, run
+   the pipeline (§5), and upload both objects (full + thumb) to the private bucket via
+   `run_in_threadpool`.
 4. **Short txn:** `SELECT ... FOR UPDATE` the fountain, re-check caps/visibility (§6) →
    409, insert the row, award the first-photo point if applicable (§7), **finalize the
    reservation → `completed`**, `commit`.
-5. **Failure/cleanup:** on a 409 or any failure after step 3 (row not committed), delete
-   the just-uploaded objects and mark the reservation `failed`; if the object delete fails,
-   log ERROR and insert a `storage_cleanup` row (§3.3, §10.6) — never leave a silent orphan.
+5. **Failure/cleanup:** on a 413/415/409 or any failure after step 2 (row not committed),
+   mark the reservation `failed` (it **still counts** toward the attempt-rate window),
+   delete any just-uploaded objects; if that delete fails, log ERROR and insert a
+   `storage_cleanup` row (§3.3, §10.6) — never leave a silent orphan.
 
 Returns `PhotoOut`. Failure modes: 401/403, 404, 409, 413, 415, 429, 503.
 
@@ -523,11 +543,13 @@ only the production deploy and is called out so it is scheduled, not discovered 
 - **Backend (pytest, Spaces mocked — no real network in CI):**
   - upload: JPEG/PNG/WebP accepted & re-encoded to JPEG; oversized → 413 (streaming cap);
     non-image/SVG/animated → 415; EXIF/GPS stripped from output; per-fountain + per-user
-    visible caps → 409; upload rate/quota → 429 via the `upload_attempt` reservation;
-    **concurrent** uploads from one user are rejected **before** `put_object`/Pillow runs
-    (reservation gate) and can never commit past the quota; a `reserved` row is finalized
-    to `completed`/`failed`; expired reservations don't consume quota; `photos_enabled=false`
-    → 503; **orphan cleanup** writes a `storage_cleanup` row on a post-upload conflict; no
+    visible caps → 409; upload attempt-rate + success-quota → 429 via the `upload_attempt`
+    reservation; **concurrent** uploads from one user are rejected **before**
+    `put_object`/Pillow runs (reservation gate) and can never commit past the quota;
+    **repeated invalid (415) and repeated cap-conflict (409) uploads still hit 429** once
+    the attempt-rate window fills (failed attempts count); a `reserved` row is finalized to
+    `completed`/`failed`; expired reservations don't consume quota; `photos_enabled=false` →
+    503; **orphan cleanup** writes a `storage_cleanup` row on a post-upload conflict; no
     lock held across S3/CPU work.
   - read gate: visible → 302 to presigned; hidden → 404; unknown id → 404.
   - list: hidden excluded; ordering.
@@ -554,8 +576,9 @@ only the production deploy and is called out so it is scheduled, not discovered 
 ## 18. Open decisions for spec review
 
 1. **City-list thumbnail = most-recent visible photo** (vs the awarded first photo).
-2. **Numbers:** caps 20/fountain, 5/user/fountain; 10 MB; 2048px/400px; upload 10/min +
-   30/day; report 20/min + 100/day; presign TTL 600s. All tunable — confirm the ballpark.
+2. **Numbers:** caps 20/fountain, 5/user/fountain; 10 MB; 2048px/400px; upload attempt-rate
+   10/min + 60/day, successful-upload quota 30/day; report 20/min + 100/day; presign TTL
+   600s; reservation TTL 120s. All tunable — confirm the ballpark.
 3. **Un-hide re-awards** the first-photo point (symmetric with hide reversing it).
 4. **Report categories:** `inappropriate` / `not_a_fountain` / `spam` / `other` + optional
    note.
