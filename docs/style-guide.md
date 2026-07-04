@@ -116,6 +116,24 @@ Static, readable policy pages for app-store and OAuth registration URLs.
 - These pages intentionally avoid the landing page gradient so long policy text
   remains comfortable to read.
 
+### SEO place pages (`web/app/drinking-fountains/[country]/page.tsx`)
+
+Crawlable, server-rendered directory pages for organic search (#127). The country page is
+the first of the family (city/attribute pages share the template).
+
+- **Shell:** the slim `SiteHeader variant="bar"` + a white, constrained column
+  (`mx-auto min-h-dvh max-w-2xl bg-white px-6 py-10`) — the same reading shell as the
+  leaderboard and fountain-detail pages.
+- Small brand-blue (`text-[#0C44A0]`) "← Back to the map" link at the top.
+- **Title:** `h1` in `text-2xl font-black text-[#0A357E]` ("Drinking fountains in {place}"),
+  followed by a one-line lead in `text-slate-600` stating the fountain count.
+- **List sections** (e.g. "Top cities"): an `h2` in `text-lg font-bold text-[#0A357E]` over a
+  `divide-y divide-slate-100` list; each row is a brand-blue underlined `Link` to the child
+  page with a right-aligned `text-sm text-slate-500` count.
+- **Indexability:** the page only renders for a place at/above the fountain-count gate (`K`);
+  anything else is `notFound()` (404). `generateMetadata` sets a unique title/description and
+  `alternates.canonical`; unknown segments return `robots: { index: false }`.
+
 ### Auth buttons (`web/components/SignInButton.tsx`, `SignOutButton.tsx`)
 
 Pill-shaped buttons that submit a Next.js server action (`<form action={...}>`).

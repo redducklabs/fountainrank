@@ -252,6 +252,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/places": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Places
+         * @description List crawlable places, most-populous first.
+         *
+         *     Countries when ``country`` is omitted; the cities of ``country`` otherwise. Only **canonical**
+         *     places (one per ``(country_code, slug)``) with ``fountain_count >= seo_place_min_fountains``
+         *     are returned — the thin-content gate (spec §7). Hidden fountains are already excluded from
+         *     ``fountain_count`` (denormalized at membership refresh), so no per-row hidden filter is needed
+         *     here. Bounded by ``limit``/``offset`` and served with a public ``Cache-Control`` (both in the
+         *     contract, not just tests).
+         */
+        get: operations["list_places_api_v1_places_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/me": {
         parameters: {
             query?: never;
@@ -782,6 +809,32 @@ export interface components {
         ObserveAttributesRequest: {
             /** Observations */
             observations: components["schemas"]["AttributeObservationInput"][];
+        };
+        /**
+         * PlaceOut
+         * @description A crawlable place (country or city) for the public SEO endpoints (#127, spec §5).
+         *
+         *     Serialized from ``PlaceBoundary`` (precomputed membership; never a live ST_Covers). The
+         *     public URL segment is ``country_code`` for a country (ISO-3166-1 alpha-2, lowercased) and
+         *     ``slug`` for a city — both are carried so the client can build either route. ``fountain_count``
+         *     is the denormalized NON-HIDDEN count that drives the "N fountains" copy and the >= K gate.
+         */
+        PlaceOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Country Code */
+            country_code: string;
+            /** Slug */
+            slug: string;
+            /** Name */
+            name: string;
+            /** Subtype */
+            subtype: string;
+            /** Fountain Count */
+            fountain_count: number;
         };
         /** RateRequest */
         RateRequest: {
@@ -1517,6 +1570,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LeaderboardOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_places_api_v1_places_get: {
+        parameters: {
+            query?: {
+                /** @description ISO-3166-1 alpha-2 country code. Omit to list countries; provide it to list that country's cities (its canonical child places). */
+                country?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlaceOut"][];
                 };
             };
             /** @description Validation Error */

@@ -302,3 +302,22 @@ class GeocodeResult(BaseModel):
 
 class GeocodeResponse(BaseModel):
     results: list[GeocodeResult]
+
+
+class PlaceOut(BaseModel):
+    """A crawlable place (country or city) for the public SEO endpoints (#127, spec §5).
+
+    Serialized from ``PlaceBoundary`` (precomputed membership; never a live ST_Covers). The
+    public URL segment is ``country_code`` for a country (ISO-3166-1 alpha-2, lowercased) and
+    ``slug`` for a city — both are carried so the client can build either route. ``fountain_count``
+    is the denormalized NON-HIDDEN count that drives the "N fountains" copy and the >= K gate.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    country_code: str
+    slug: str
+    name: str
+    subtype: str
+    fountain_count: int
