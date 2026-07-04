@@ -275,6 +275,16 @@ class AdminNotePatch(BaseModel):
     is_hidden: bool
 
 
+class AdminPhotoPatch(BaseModel):
+    is_hidden: bool
+
+
+class AdminPhotoOut(BaseModel):
+    id: uuid.UUID
+    is_hidden: bool
+    hidden_at: datetime | None
+
+
 class AdminFountainPatch(BaseModel):
     location: Coordinates | None = None
     is_working: bool | None = None
