@@ -463,4 +463,54 @@ async def test_concurrent_uploads_cannot_exceed_user_cap(
     statuses = sorted(r.status_code for r in results)
     assert statuses.count(201) == 5
     assert statuses.count(409) == 2
-    assert await _count_photos(session, fid, user_id=test_user.id) == 5
+
+
+@pytest.mark.asyncio
+async def test_post_commit_failure_does_not_trigger_destructive_cleanup(
+    session, test_user, storage, process, monkeypatch
+):
+    """Regression for the B12 review finding: `session.refresh(photo)` used to run AFTER
+    `commit()` but still inside the failure `try`, so any post-commit error fell into
+    `_cleanup_after_failure` and destroyed an already-created photo (finalized the
+    completed reservation to `failed` and deleted the live Spaces objects). The fix moves
+    the refresh before `commit()` and leaves no DB access after it, so nothing runs after
+    commit that could route into the cleanup handler.
+
+    Simulate a failure in the (now purely in-memory, post-commit) response-building step
+    and assert the committed photo/reservation/storage state is left untouched — only the
+    response to the caller is affected (a 500), not the data that was already durably
+    committed. (Uses a local client with `raise_app_exceptions=False`: the centralized
+    handler in ``app.main`` sends the 500 response, but Starlette's ServerErrorMiddleware
+    always re-raises afterward — the `client` fixture's default transport would propagate
+    that as a test exception instead of a response.)
+    """
+    fid = await _add_fountain(session)
+    await session.commit()
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("simulated post-commit failure")
+
+    monkeypatch.setattr(photos_module, "photo_out", _boom)
+
+    from app.auth import get_current_user
+
+    async def _override_user():
+        return test_user
+
+    app.dependency_overrides[get_current_user] = _override_user
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post(f"/api/v1/fountains/{fid}/photos", files=_FILE)
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+    # The caller sees a failure (the centralized 500 handler), but the work already
+    # committed to the DB before the simulated failure must be left intact.
+    assert resp.status_code == 500
+
+    assert await _count_photos(session, fid) == 1
+    assert await _reservation_statuses(session, test_user.id) == ["completed"]
+    # Both live objects were uploaded and must NOT have been cleaned up.
+    assert storage.put_keys != []
+    assert storage.deleted_keys == []

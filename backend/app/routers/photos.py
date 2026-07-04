@@ -354,6 +354,11 @@ async def upload_photo(
         )
         session.add(photo)
         await session.flush()
+        # Refresh WHILE STILL IN THE TRANSACTION so `photo.created_at` (a server_default) is
+        # populated before commit. Nothing DB-related may run after commit below: a failure
+        # there would otherwise fall into the `except` and destroy an already-committed photo
+        # (finalize it `failed`, delete its live Spaces objects, 502 a photo that exists).
+        await session.refresh(photo)
 
         # First-photo-per-fountain point (design §7). Rebuild the location as a SQL
         # expression from lat/lng — binding the loaded WKBElement would require the optional
@@ -381,7 +386,6 @@ async def upload_photo(
         )
         await finalize_upload(session, reservation_id, "completed")
         await session.commit()
-        await session.refresh(photo)
     except Exception as exc:
         await _cleanup_after_failure(
             session,
