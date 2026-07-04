@@ -35,6 +35,7 @@ POINTS: dict[str, int] = {
     "verify_working": 3,
     "report_condition": 2,
     "add_note": 2,
+    "photo_first": 5,
 }
 
 # Allowed target_type per event_type (None = a pure bonus event with no source row).
@@ -50,6 +51,7 @@ EVENT_TARGET_TYPES: dict[str, set[str | None]] = {
     "verify_working": {"condition_report"},
     "report_condition": {"condition_report"},
     "add_note": {"note"},
+    "photo_first": {"photo"},
 }
 
 # Which user_contribution_stats counter each event_type increments (besides total_points).
@@ -120,6 +122,10 @@ def dk_report_condition(user_id: uuid.UUID, fountain_id: uuid.UUID, day: str) ->
 
 def dk_note(user_id: uuid.UUID, fountain_id: uuid.UUID) -> str:
     return f"note:{user_id}:{fountain_id}"
+
+
+def dk_photo_first(fountain_id: uuid.UUID) -> str:
+    return f"photo_first:{fountain_id}"
 
 
 def _validate(spec: ContributionSpec) -> None:
@@ -266,3 +272,95 @@ async def reverse_contributions(session: AsyncSession, fountain_id: uuid.UUID) -
         len(per_user),
     )
     return len(reversed_rows)
+
+
+async def _adjust_target(
+    session: AsyncSession,
+    target_type: str,
+    target_id: uuid.UUID,
+    from_status: str,
+    to_status: str,
+    sign: int,
+) -> int:
+    """Flip contribution_events matching (target_type, target_id, from_status) to
+    ``to_status`` and apply the signed point/counter delta to the affected users' stats.
+
+    Scoped by target (not fountain_id), so e.g. hiding one photo does not touch any other
+    photo's or contribution's events on the same fountain. Idempotent by construction: the
+    ``status == from_status`` predicate means a repeat call matches zero rows (returns 0),
+    so callers can safely re-run a hide/unhide without double-adjusting stats.
+    """
+    rows = (
+        await session.execute(
+            update(ContributionEvent)
+            .where(
+                ContributionEvent.target_type == target_type,
+                ContributionEvent.target_id == target_id,
+                ContributionEvent.status == from_status,
+            )
+            .values(status=to_status)
+            .returning(
+                ContributionEvent.user_id,
+                ContributionEvent.event_type,
+                ContributionEvent.points,
+            )
+        )
+    ).all()
+
+    if not rows:
+        logger.info(
+            "contribution target adjustment no-op target_type=%s target_id=%s "
+            "from_status=%s to_status=%s",
+            target_type,
+            target_id,
+            from_status,
+            to_status,
+        )
+        return 0
+
+    for row in rows:
+        col_delta = {"total_points": sign * row.points}
+        counter = _STAT_COUNTER.get(row.event_type)
+        if counter:
+            col_delta[counter] = sign * 1
+        set_ = {
+            col: func.greatest(UserContributionStats.__table__.c[col] + delta, 0)
+            for col, delta in col_delta.items()
+        }
+        set_["updated_at"] = func.now()
+        await session.execute(
+            update(UserContributionStats)
+            .where(UserContributionStats.user_id == row.user_id)
+            .values(**set_)
+        )
+
+    logger.info(
+        "contribution target adjustment target_type=%s target_id=%s "
+        "from_status=%s to_status=%s events=%d",
+        target_type,
+        target_id,
+        from_status,
+        to_status,
+        len(rows),
+    )
+    return len(rows)
+
+
+async def reverse_contribution_for_target(
+    session: AsyncSession, target_type: str, target_id: uuid.UUID
+) -> int:
+    """Reverse the still-awarded contribution event(s) tied to a single target (e.g. a photo
+    being hidden/deleted), without affecting any other contribution on the same fountain.
+    Returns the number of events reversed.
+    """
+    return await _adjust_target(session, target_type, target_id, "awarded", "reversed", -1)
+
+
+async def reactivate_contribution_for_target(
+    session: AsyncSession, target_type: str, target_id: uuid.UUID
+) -> int:
+    """Re-award a previously reversed contribution event tied to a single target (e.g. a
+    hidden photo being restored) — the inverse of ``reverse_contribution_for_target``.
+    Returns the number of events reactivated.
+    """
+    return await _adjust_target(session, target_type, target_id, "reversed", "awarded", 1)
