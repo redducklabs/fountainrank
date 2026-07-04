@@ -61,11 +61,18 @@ describe("fountains chunk (/sitemaps/fountains.xml)", () => {
     expect(xml).toContain(`<loc>${APEX}/fountains/f2</loc>`);
   });
 
-  it("is an empty urlset when the backend is unreachable", async () => {
+  it("returns a transient, uncacheable 503 (not a cacheable empty sitemap) when the backend fails", async () => {
+    // A cacheable empty 200 would tell crawlers/CDNs "no indexable fountains" for a full hour on a
+    // transient outage. Instead: log it and 503 with no-store so crawlers retry (Codex pr-171-1).
     getIndexableFountainsServer.mockResolvedValue({ data: undefined, status: 0 });
-    const xml = await (await fountainsGET()).text();
-    expect(xml).toContain("<urlset");
-    expect(xml).not.toContain("<loc>");
+    const res = await fountainsGET();
+    expect(res.status).toBe(503);
+    expect(res.headers.get("cache-control")).toContain("no-store");
+    expect(logFn).toHaveBeenCalledWith(
+      "error",
+      expect.stringMatching(/fountains sitemap/i),
+      expect.any(Object),
+    );
   });
 
   it("warns (never silently) when the indexable total exceeds the fetched page", async () => {

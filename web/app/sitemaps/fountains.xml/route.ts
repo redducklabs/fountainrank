@@ -18,9 +18,19 @@ export const dynamic = "force-dynamic";
 const CHUNK_SOFT_LIMIT = 45000;
 
 export async function GET(): Promise<Response> {
-  const { data } = await getIndexableFountainsServer(crypto.randomUUID());
-  const ids = data?.fountain_ids ?? [];
-  const total = data?.total_count ?? 0;
+  const { data, status } = await getIndexableFountainsServer(crypto.randomUUID());
+  if (!data) {
+    // Backend down / non-2xx: do NOT serve a cacheable empty sitemap — a transient outage would
+    // stick at crawlers/CDNs as "no indexable fountains" for the full cache window. Log it and
+    // return an uncacheable transient 503 so crawlers retry instead (spec §7 diagnosability).
+    log("error", "fountains sitemap: indexable-fountains fetch failed", { status });
+    return new Response("", {
+      status: 503,
+      headers: { "Content-Type": "application/xml; charset=utf-8", "Cache-Control": "no-store" },
+    });
+  }
+  const ids = data.fountain_ids;
+  const total = data.total_count;
   if (total > ids.length) {
     // The fetch cap dropped some indexable fountains — surface it (never a silent truncation).
     log("warn", "fountains sitemap hit the fetch cap; some fountains omitted", {
