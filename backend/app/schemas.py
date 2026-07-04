@@ -334,6 +334,43 @@ class PlaceOut(BaseModel):
     fountain_count: int
 
 
+class PhotoOut(BaseModel):
+    id: uuid.UUID
+    url: str
+    thumbnail_url: str
+    width: int
+    height: int
+    uploaded_by: str | None
+    created_at: datetime
+
+
+class ReportPhotoRequest(BaseModel):
+    category: Literal["inappropriate", "not_a_fountain", "spam", "other"]
+    note: str | None = Field(default=None, max_length=500)
+
+
+class ReportedPhotoOut(BaseModel):
+    photo_id: uuid.UUID
+    fountain_id: uuid.UUID
+    url: str
+    thumbnail_url: str
+    is_hidden: bool
+    report_count: int
+    categories: list[str]
+    notes: list[str]  # <=3, each truncated <=200 chars
+    first_reported_at: datetime
+    uploaded_by: str | None
+
+
+class CityFountainPin(FountainPin):
+    photo_count: int = 0
+    thumbnail_url: str | None = None
+
+
+class PhotoReportsSummary(BaseModel):
+    pending_photo_count: int
+
+
 class CityFountainsOut(BaseModel):
     """A city place plus its ranked, paginated fountains (#127 Slice 3, spec §4.3/§5).
 
@@ -346,7 +383,7 @@ class CityFountainsOut(BaseModel):
     """
 
     place: PlaceOut
-    fountains: list[FountainPin]
+    fountains: list[CityFountainPin]
     indexable: bool
 
 
