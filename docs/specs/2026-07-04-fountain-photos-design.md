@@ -159,6 +159,25 @@ inserted). Created in the `0017_fountain_photos.py` migration alongside `fountai
 Index `WHERE status = 'pending'` on `(created_at)`. A future janitor (out of scope here)
 drains it; this row is what guarantees "never a silent orphan."
 
+### 3.4 `upload_attempt` (`upload_attempts`) — pre-work reservation ledger
+
+Bounds **expensive** upload work per user *before* any Pillow/S3 cost, so a parallel burst
+from one account cannot consume CPU/bandwidth ahead of the quota check (§6, §8.1). Created
+in the `0017_fountain_photos.py` migration. (Reports need no reservation — they do only a
+cheap DB insert, gated at commit time.)
+
+| column | type | notes |
+|---|---|---|
+| `id` | UUID PK | `default=uuid.uuid4` |
+| `user_id` | UUID FK → `users.id` | `ondelete=CASCADE` |
+| `status` | text | CHECK in (`reserved`,`completed`,`failed`); `server_default 'reserved'` |
+| `created_at` | timestamptz | `server_default now()` |
+| `finalized_at` | timestamptz nullable | set when completed/failed |
+
+Index on `(user_id, status, created_at)`. A `reserved` row older than the reservation TTL
+(`upload_reservation_ttl_seconds`, default 120) is treated as **expired** — excluded from
+quota counts — so a crashed request never permanently consumes quota.
+
 ## 4. Object storage (`backend/app/storage.py`, new)
 
 A small module wrapping a `boto3` S3 client pointed at DO Spaces (S3-compatible). New
@@ -227,21 +246,32 @@ created_at)` indexes back these):
 - Upload: **≤10 / rolling 60s** and **≤30 / rolling 24h per user** (counts include hidden
   rows so hiding can't reset the quota) → **429** with `Retry-After`.
 - Report: **≤20 / rolling 60s** and **≤100 / rolling 24h per user** → **429**.
-- **Atomic enforcement (not raceable).** A plain count-then-insert races: concurrent
-  requests from one account all observe the same pre-count and all commit. So the
-  **authoritative** check runs **inside the insert transaction** under a **per-user
-  transaction-scoped advisory lock** (`pg_advisory_xact_lock(hashtext('photo_upload:'||
-  user_id))` for uploads, `'photo_report:'||user_id` for reports — the same
-  `pg_advisory_xact_lock` idiom `add_fountain` already uses), which serializes a given
-  user's concurrent inserts so the count+insert is atomic. The pre-request check
-  (§8.1 step 1 / §9.1) is only a cheap **non-authoritative fast-fail** to avoid wasted
-  work; the binding decision is the locked re-count. **Lock ordering:** take the per-user
-  advisory lock **before** the fountain `FOR UPDATE` to avoid deadlock. For uploads, the
-  lock is held only around the short DB count+insert (never across CPU/S3 work); an
-  over-quota result there is handled as normal **orphan cleanup** (§8.1 step 4) + 429.
+- **Atomic enforcement (not raceable), and it gates expensive work.** A plain
+  count-then-insert races (concurrent requests all observe the same pre-count and all
+  proceed), and even an atomic *commit-time* check would still let a burst burn Pillow/S3
+  cost before rejection. So:
+  - **Uploads** use the **`upload_attempt` reservation** (§3.4) as the *first
+    authoritative gate*, **before** the body is fully processed or any object is uploaded.
+    Under a per-user advisory lock: count non-expired `reserved` + `completed` rows in the
+    60s and 24h windows; if at the limit → **429** with `Retry-After` (no CPU/S3 spent);
+    else insert a `reserved` row and commit that short reservation txn, releasing the lock.
+    Then process + upload (§8.1 step 2), then **finalize** the reservation to `completed`
+    (on success) or `failed` (on cap conflict / cleanup). The lock is held only around the
+    tiny reservation write — never across CPU/S3 work — so it can't starve the connection
+    pool.
+  - **Reports** do only a cheap insert, so the authoritative check runs at insert time
+    under the per-user advisory lock (count in windows → 429, else the ON-CONFLICT insert
+    of §9.1) — no reservation needed.
+- **Advisory-lock keying.** Use the **two-argument** `pg_advisory_xact_lock(namespace,
+  user_key)` form with a **distinct per-feature namespace constant** (e.g.
+  `PHOTO_UPLOAD_LOCK_NS`, `PHOTO_REPORT_LOCK_NS`, both different from the existing
+  `ADD_FOUNTAIN` key) and `user_key` = a stable 32-bit hash of the user id, so these locks
+  cannot collide with each other or with `add_fountain`'s lock. Constants live in one
+  place. **Lock ordering:** per-user advisory lock **before** any fountain `FOR UPDATE`.
 - Every throttle emits a structured audit log (user id, kind, window, count). Tests fire
-  **concurrent** upload/report requests and prove the committed row count cannot exceed
-  the limit, plus the single-request 429 boundary for both endpoints.
+  **concurrent** uploads/reports and prove (a) committed rows never exceed the limit, and
+  (b) excess parallel uploads are rejected **before** `put_object`/Pillow runs — plus the
+  single-request 429 boundary for both endpoints.
 
 **Deferred (documented non-goal for v1):** per-IP/subnet throttling and new-account trust
 tiers. Rationale: DB-count per-user quotas + post-moderation + the report queue + fast
@@ -283,18 +313,20 @@ Under `APIRouter(prefix="/api/v1")`. Schemas in `backend/app/schemas.py`.
 Auth `require_named_user`; `multipart/form-data` single `file` (`UploadFile`, needs the new
 `python-multipart` dep). **Transaction boundary redesigned** to avoid holding a lock across
 image/S3 work:
-1. Cheap check (no lock): fountain exists + not hidden → 404 else; **non-authoritative**
-   upload rate/quota fast-fail (§6) → 429 (avoids wasted image work; not the binding check).
-2. **Outside any txn:** run the pipeline (§5) and upload both objects (full + thumb) to the
+1. **Cheap existence check** (no lock): fountain exists + not hidden → 404 else.
+2. **Reservation (authoritative rate gate, before any expensive work):** in a short txn,
+   take the per-user advisory lock (§6), count non-expired `reserved` + `completed`
+   `upload_attempt` rows in the 60s/24h windows → **429** if at the limit (nothing
+   processed), else insert a `reserved` row, `commit`, release the lock. Capture the
+   reservation id.
+3. **Outside any txn:** run the pipeline (§5) and upload both objects (full + thumb) to the
    private bucket via `run_in_threadpool`.
-3. **Short txn:** take the **per-user advisory lock** then `SELECT ... FOR UPDATE` the
-   fountain (lock order per §6); **authoritatively re-check the per-user upload
-   rate/quota** (§6) → 429, and re-check caps/visibility → 409; then insert the row, award
-   the first-photo point if applicable (§7), `commit`. The lock is held only around this
-   short DB work.
-4. **Orphan cleanup:** on a 429/409/failure in step 3 (row not committed), delete the
-   just-uploaded objects; if that delete fails, log ERROR with the keys and insert a
-   `storage_cleanup` row (§3.3, §10.6) — never leave a silent orphan.
+4. **Short txn:** `SELECT ... FOR UPDATE` the fountain, re-check caps/visibility (§6) →
+   409, insert the row, award the first-photo point if applicable (§7), **finalize the
+   reservation → `completed`**, `commit`.
+5. **Failure/cleanup:** on a 409 or any failure after step 3 (row not committed), delete
+   the just-uploaded objects and mark the reservation `failed`; if the object delete fails,
+   log ERROR and insert a `storage_cleanup` row (§3.3, §10.6) — never leave a silent orphan.
 
 Returns `PhotoOut`. Failure modes: 401/403, 404, 409, 413, 415, 429, 503.
 
@@ -491,10 +523,12 @@ only the production deploy and is called out so it is scheduled, not discovered 
 - **Backend (pytest, Spaces mocked — no real network in CI):**
   - upload: JPEG/PNG/WebP accepted & re-encoded to JPEG; oversized → 413 (streaming cap);
     non-image/SVG/animated → 415; EXIF/GPS stripped from output; per-fountain + per-user
-    visible caps → 409; upload rate/quota → 429; **concurrent** uploads from one user
-    cannot commit past the quota (advisory-lock atomicity); `photos_enabled=false` → 503;
-    **orphan cleanup** writes a `storage_cleanup` row on step-3 conflict (objects deleted or
-    recorded); no lock held across S3/CPU work.
+    visible caps → 409; upload rate/quota → 429 via the `upload_attempt` reservation;
+    **concurrent** uploads from one user are rejected **before** `put_object`/Pillow runs
+    (reservation gate) and can never commit past the quota; a `reserved` row is finalized
+    to `completed`/`failed`; expired reservations don't consume quota; `photos_enabled=false`
+    → 503; **orphan cleanup** writes a `storage_cleanup` row on a post-upload conflict; no
+    lock held across S3/CPU work.
   - read gate: visible → 302 to presigned; hidden → 404; unknown id → 404.
   - list: hidden excluded; ordering.
   - delete: owner deletes; non-owner → 403; object delete failure → 5xx (no silent
