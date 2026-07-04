@@ -1448,6 +1448,135 @@
         }
       }
     },
+    "/api/v1/fountains/{fountain_id}/photos": {
+      "get": {
+        "tags": [
+          "photos"
+        ],
+        "summary": "List Photos",
+        "operationId": "list_photos_api_v1_fountains__fountain_id__photos_get",
+        "parameters": [
+          {
+            "name": "fountain_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Fountain Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PhotoOut"
+                  },
+                  "title": "Response List Photos Api V1 Fountains  Fountain Id  Photos Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/photos/{photo_id}": {
+      "get": {
+        "tags": [
+          "photos"
+        ],
+        "summary": "Get Photo",
+        "operationId": "get_photo_api_v1_photos__photo_id__get",
+        "parameters": [
+          {
+            "name": "photo_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Photo Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/photos/{photo_id}/thumb": {
+      "get": {
+        "tags": [
+          "photos"
+        ],
+        "summary": "Get Photo Thumb",
+        "operationId": "get_photo_thumb_api_v1_photos__photo_id__thumb_get",
+        "parameters": [
+          {
+            "name": "photo_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Photo Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/admin/fountains/{fountain_id}": {
       "get": {
         "tags": [
@@ -3514,6 +3643,107 @@
         ],
         "title": "BoundingBox"
       },
+      "CityFountainPin": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "location": {
+            "$ref": "#/components/schemas/Coordinates"
+          },
+          "is_working": {
+            "type": "boolean",
+            "title": "Is Working"
+          },
+          "average_rating": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average Rating"
+          },
+          "rating_count": {
+            "type": "integer",
+            "title": "Rating Count"
+          },
+          "ranking_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ranking Score"
+          },
+          "distance_m": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Distance M"
+          },
+          "current_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Status"
+          },
+          "last_verified_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Verified At"
+          },
+          "photo_count": {
+            "type": "integer",
+            "title": "Photo Count",
+            "default": 0
+          },
+          "thumbnail_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thumbnail Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "location",
+          "is_working",
+          "average_rating",
+          "rating_count"
+        ],
+        "title": "CityFountainPin"
+      },
       "CityFountainsOut": {
         "properties": {
           "place": {
@@ -3521,7 +3751,7 @@
           },
           "fountains": {
             "items": {
-              "$ref": "#/components/schemas/FountainPin"
+              "$ref": "#/components/schemas/CityFountainPin"
             },
             "type": "array",
             "title": "Fountains"
@@ -4312,6 +4542,58 @@
           "observations"
         ],
         "title": "ObserveAttributesRequest"
+      },
+      "PhotoOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "thumbnail_url": {
+            "type": "string",
+            "title": "Thumbnail Url"
+          },
+          "width": {
+            "type": "integer",
+            "title": "Width"
+          },
+          "height": {
+            "type": "integer",
+            "title": "Height"
+          },
+          "uploaded_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uploaded By"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "url",
+          "thumbnail_url",
+          "width",
+          "height",
+          "uploaded_by",
+          "created_at"
+        ],
+        "title": "PhotoOut"
       },
       "PlaceOut": {
         "properties": {

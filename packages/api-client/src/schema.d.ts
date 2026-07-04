@@ -276,6 +276,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/fountains/{fountain_id}/photos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Photos */
+        get: operations["list_photos_api_v1_fountains__fountain_id__photos_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/photos/{photo_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Photo */
+        get: operations["get_photo_api_v1_photos__photo_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/photos/{photo_id}/thumb": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Photo Thumb */
+        get: operations["get_photo_thumb_api_v1_photos__photo_id__thumb_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/fountains/{fountain_id}": {
         parameters: {
             query?: never;
@@ -699,6 +750,36 @@ export interface components {
             /** East */
             east: number;
         };
+        /** CityFountainPin */
+        CityFountainPin: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            location: components["schemas"]["Coordinates"];
+            /** Is Working */
+            is_working: boolean;
+            /** Average Rating */
+            average_rating: number | null;
+            /** Rating Count */
+            rating_count: number;
+            /** Ranking Score */
+            ranking_score?: number | null;
+            /** Distance M */
+            distance_m?: number | null;
+            /** Current Status */
+            current_status?: string | null;
+            /** Last Verified At */
+            last_verified_at?: string | null;
+            /**
+             * Photo Count
+             * @default 0
+             */
+            photo_count: number;
+            /** Thumbnail Url */
+            thumbnail_url?: string | null;
+        };
         /**
          * CityFountainsOut
          * @description A city place plus its ranked, paginated fountains (#127 Slice 3, spec §4.3/§5).
@@ -713,7 +794,7 @@ export interface components {
         CityFountainsOut: {
             place: components["schemas"]["PlaceOut"];
             /** Fountains */
-            fountains: components["schemas"]["FountainPin"][];
+            fountains: components["schemas"]["CityFountainPin"][];
             /** Indexable */
             indexable: boolean;
         };
@@ -1024,6 +1105,29 @@ export interface components {
         ObserveAttributesRequest: {
             /** Observations */
             observations: components["schemas"]["AttributeObservationInput"][];
+        };
+        /** PhotoOut */
+        PhotoOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Url */
+            url: string;
+            /** Thumbnail Url */
+            thumbnail_url: string;
+            /** Width */
+            width: number;
+            /** Height */
+            height: number;
+            /** Uploaded By */
+            uploaded_by: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
         };
         /**
          * PlaceOut
@@ -1692,6 +1796,99 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DisplayNameRequiredConflict"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_photos_api_v1_fountains__fountain_id__photos_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fountain_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PhotoOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_photo_api_v1_photos__photo_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                photo_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_photo_thumb_api_v1_photos__photo_id__thumb_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                photo_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
