@@ -80,6 +80,12 @@ class Settings(BaseSettings):
     # may tune it per scope. Countries are unaffected in practice (any loaded country has
     # far more), so this mainly guards near-empty city pages.
     seo_place_min_fountains: int = 3
+    # Thin-content gate for the GLOBAL attribute pages (spec §4.5, "K_attr"): an attribute page
+    # (/drinking-fountains/bottle-fillers, /wheelchair-accessible-drinking-fountains) is indexable
+    # and sitemap-listed only when its matching NON-HIDDEN fountain count is at least this. Separate
+    # from seo_place_min_fountains because global attribute pages scale very differently from a
+    # single city. Attributes are crowdsourced, so a page stays noindex until enough are observed.
+    seo_attribute_min_fountains: int = 3
     # Cache-Control max-age (== s-maxage) for the public, unauthenticated place endpoints.
     # Place lists change slowly (only on a boundary load / membership refresh), so they cache
     # well at the browser and any shared CDN. One hour by default.

@@ -28,7 +28,14 @@ from app.contributions import (
 )
 from app.db import get_session
 from app.display import public_display_name
-from app.filters import DiscoveryFilters, apply_discovery_filters, discovery_filters
+from app.filters import (
+    SEO_ATTRIBUTE_FILTERS,
+    DiscoveryFilters,
+    SeoAttribute,
+    apply_discovery_filters,
+    attribute_consensus_match,
+    discovery_filters,
+)
 from app.geo import latitude_of, longitude_of, point_geography
 from app.locks import ADD_FOUNTAIN_LOCK_KEY
 from app.membership import recompute_fountain_membership
@@ -48,6 +55,7 @@ from app.schemas import (
     AddFountainRequest,
     AddNoteRequest,
     AttributeConsensusOut,
+    AttributeFountainsOut,
     ConditionReportRequest,
     Coordinates,
     DimensionSummary,
@@ -479,6 +487,95 @@ async def fountains_in_bbox(
         )
         for (rid, rlat, rlng, working, avg, count, score, cur_status, last_verified) in rows
     ]
+
+
+@router.get("/fountains/by-attribute", response_model=AttributeFountainsOut)
+async def fountains_by_attribute(
+    response: Response,
+    attribute: SeoAttribute = Query(
+        description="SEO attribute key: bottle_filler | wheelchair_reachable."
+    ),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> AttributeFountainsOut:
+    """A global crawlable attribute page (spec §4.5): the NON-HIDDEN fountains whose crowdsourced
+    consensus matches ``attribute``, best-rated first (Bayesian ``ranking_score`` desc, unrated
+    last). Reads the denormalized consensus (never recomputes it) — public + cacheable. Declared
+    BEFORE ``/fountains/{fountain_id}`` so the literal path is not parsed as a UUID.
+
+    ``total_count`` is the full non-hidden match total (the list is capped by ``limit``);
+    ``indexable`` is the server-side thin-content verdict (``total_count >=
+    seo_attribute_min_fountains``), so the web sets ``noindex`` without knowing ``K_attr``. Invalid
+    ``attribute`` values 422 (Literal).
+    """
+    key, value = SEO_ATTRIBUTE_FILTERS[attribute]
+    predicate = attribute_consensus_match(key, value)
+    match_where = (Fountain.is_hidden.is_(False), predicate)
+
+    total_count = (
+        await session.execute(select(func.count()).select_from(Fountain).where(*match_where))
+    ).scalar_one()
+
+    rows = (
+        await session.execute(
+            select(
+                Fountain.id,
+                latitude_of(Fountain.location),
+                longitude_of(Fountain.location),
+                Fountain.is_working,
+                Fountain.average_rating,
+                Fountain.rating_count,
+                Fountain.ranking_score,
+                Fountain.current_status,
+                Fountain.last_verified_at,
+            )
+            .where(*match_where)
+            # Best-rated first: Bayesian ranking_score desc, unrated (NULL) last; then more-rated,
+            # then id for a stable, deterministic page across offsets (mirrors the city endpoint).
+            .order_by(
+                Fountain.ranking_score.desc().nulls_last(),
+                Fountain.rating_count.desc(),
+                Fountain.id.asc(),
+            )
+            .limit(limit)
+            .offset(offset)
+        )
+    ).all()
+    fountains = [
+        FountainPin(
+            id=rid,
+            location=Coordinates(latitude=float(rlat), longitude=float(rlng)),
+            is_working=working,
+            average_rating=avg,
+            rating_count=count,
+            ranking_score=score,
+            current_status=cur_status,
+            last_verified_at=last_verified,
+        )
+        for (rid, rlat, rlng, working, avg, count, score, cur_status, last_verified) in rows
+    ]
+    indexable = total_count >= settings.seo_attribute_min_fountains
+    ttl = settings.seo_cache_max_age_seconds
+    response.headers["Cache-Control"] = f"public, max-age={ttl}, s-maxage={ttl}"
+    logger.info(
+        "fountains by attribute served",
+        extra={
+            "attribute": attribute,
+            "total_count": total_count,
+            "rows": len(fountains),
+            "indexable": indexable,
+            "limit": limit,
+            "offset": offset,
+        },
+    )
+    return AttributeFountainsOut(
+        attribute=attribute,
+        fountains=fountains,
+        total_count=total_count,
+        indexable=indexable,
+    )
 
 
 @router.get("/fountains/{fountain_id}", response_model=FountainDetail)

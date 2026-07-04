@@ -9,6 +9,7 @@ export function GET(): Response {
     `${SITE_URL}/sitemaps/core.xml`,
     `${SITE_URL}/sitemaps/countries.xml`,
     `${SITE_URL}/sitemaps/cities.xml`,
+    `${SITE_URL}/sitemaps/attributes.xml`,
   ];
   return sitemapResponse(buildSitemapIndex(chunks));
 }

@@ -1,18 +1,22 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 // The data chunks fetch the public place list — stub them, keep the real country/cityPath.
-const { getCountriesServer, getCountryCitiesServer } = vi.hoisted(() => ({
-  getCountriesServer: vi.fn(),
-  getCountryCitiesServer: vi.fn(),
-}));
+const { getCountriesServer, getCountryCitiesServer, getFountainsByAttributeServer } = vi.hoisted(
+  () => ({
+    getCountriesServer: vi.fn(),
+    getCountryCitiesServer: vi.fn(),
+    getFountainsByAttributeServer: vi.fn(),
+  }),
+);
 vi.mock("../lib/places", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/places")>();
-  return { ...actual, getCountriesServer, getCountryCitiesServer };
+  return { ...actual, getCountriesServer, getCountryCitiesServer, getFountainsByAttributeServer };
 });
 vi.mock("../lib/server/log", () => ({ log: vi.fn() }));
 
 import robots from "./robots";
 import { GET as indexGET } from "./sitemap.xml/route";
+import { GET as attributesGET } from "./sitemaps/attributes.xml/route";
 import { GET as citiesGET } from "./sitemaps/cities.xml/route";
 import { GET as coreGET } from "./sitemaps/core.xml/route";
 import { GET as countriesGET } from "./sitemaps/countries.xml/route";
@@ -28,6 +32,32 @@ describe("sitemap index (/sitemap.xml)", () => {
     expect(xml).toContain(`<loc>${APEX}/sitemaps/core.xml</loc>`);
     expect(xml).toContain(`<loc>${APEX}/sitemaps/countries.xml</loc>`);
     expect(xml).toContain(`<loc>${APEX}/sitemaps/cities.xml</loc>`);
+    expect(xml).toContain(`<loc>${APEX}/sitemaps/attributes.xml</loc>`);
+  });
+});
+
+describe("attributes chunk (/sitemaps/attributes.xml)", () => {
+  it("lists indexable attribute pages + the near-me hub; omits below-gate pages", async () => {
+    // bottle_filler is ready (indexable); wheelchair_reachable is below the gate (noindex).
+    getFountainsByAttributeServer.mockImplementation((attribute: string) => {
+      const indexable = attribute === "bottle_filler";
+      return Promise.resolve({
+        data: { attribute, fountains: [], total_count: indexable ? 10 : 1, indexable },
+        status: 200,
+      });
+    });
+    const xml = await (await attributesGET()).text();
+    expect(xml).toContain(`<loc>${APEX}/drinking-fountains/bottle-fillers</loc>`);
+    expect(xml).not.toContain(`<loc>${APEX}/wheelchair-accessible-drinking-fountains</loc>`);
+    // The static hub is always indexable, regardless of attribute data.
+    expect(xml).toContain(`<loc>${APEX}/drinking-fountains-near-me</loc>`);
+  });
+
+  it("still lists near-me when the backend is unreachable (attribute pages omitted)", async () => {
+    getFountainsByAttributeServer.mockResolvedValue({ data: undefined, status: 0 });
+    const xml = await (await attributesGET()).text();
+    expect(xml).toContain(`<loc>${APEX}/drinking-fountains-near-me</loc>`);
+    expect(xml).not.toContain("bottle-fillers");
   });
 });
 

@@ -615,6 +615,78 @@
         }
       }
     },
+    "/api/v1/fountains/by-attribute": {
+      "get": {
+        "tags": [
+          "fountains"
+        ],
+        "summary": "Fountains By Attribute",
+        "description": "A global crawlable attribute page (spec \u00a74.5): the NON-HIDDEN fountains whose crowdsourced\nconsensus matches ``attribute``, best-rated first (Bayesian ``ranking_score`` desc, unrated\nlast). Reads the denormalized consensus (never recomputes it) \u2014 public + cacheable. Declared\nBEFORE ``/fountains/{fountain_id}`` so the literal path is not parsed as a UUID.\n\n``total_count`` is the full non-hidden match total (the list is capped by ``limit``);\n``indexable`` is the server-side thin-content verdict (``total_count >=\nseo_attribute_min_fountains``), so the web sets ``noindex`` without knowing ``K_attr``. Invalid\n``attribute`` values 422 (Literal).",
+        "operationId": "fountains_by_attribute_api_v1_fountains_by_attribute_get",
+        "parameters": [
+          {
+            "name": "attribute",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "enum": [
+                "bottle_filler",
+                "wheelchair_reachable"
+              ],
+              "type": "string",
+              "description": "SEO attribute key: bottle_filler | wheelchair_reachable.",
+              "title": "Attribute"
+            },
+            "description": "SEO attribute key: bottle_filler | wheelchair_reachable."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttributeFountainsOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/fountains/{fountain_id}": {
       "get": {
         "tags": [
@@ -3079,6 +3151,38 @@
           "latest_observation_value"
         ],
         "title": "AttributeConsensusOut"
+      },
+      "AttributeFountainsOut": {
+        "properties": {
+          "attribute": {
+            "type": "string",
+            "title": "Attribute"
+          },
+          "fountains": {
+            "items": {
+              "$ref": "#/components/schemas/FountainPin"
+            },
+            "type": "array",
+            "title": "Fountains"
+          },
+          "total_count": {
+            "type": "integer",
+            "title": "Total Count"
+          },
+          "indexable": {
+            "type": "boolean",
+            "title": "Indexable"
+          }
+        },
+        "type": "object",
+        "required": [
+          "attribute",
+          "fountains",
+          "total_count",
+          "indexable"
+        ],
+        "title": "AttributeFountainsOut",
+        "description": "A global attribute page's ranked, paginated fountains (#127 Slice 4, spec \u00a74.5).\n\n``attribute`` echoes the requested SEO attribute key (e.g. ``bottle_filler``). ``fountains`` are\nthe non-hidden fountains whose crowdsourced consensus matches, best-rated first. ``total_count``\nis the full matching non-hidden total (the list is capped by ``limit``), so the page can show\n\"N fountains\" and \"top M of N\". ``indexable`` is the spec \u00a77/\u00a74.5 thin-content predicate\ncomputed server-side (``total_count >= seo_attribute_min_fountains``) \u2014 the single source of\n``K_attr`` so the web sets ``noindex`` from it rather than knowing the threshold."
       },
       "AttributeObservationInput": {
         "properties": {
