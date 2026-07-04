@@ -560,16 +560,18 @@ only the production deploy and is called out so it is scheduled, not discovered 
     lock held across S3/CPU work.
   - read gate: visible → 302 to presigned; hidden → 404; unknown id → 404.
   - list: hidden excluded; ordering.
-  - delete: owner deletes; non-owner → 403; object delete failure → 5xx (no silent
-    success); point reversal + report resolution invoked.
+  - delete: owner deletes; non-owner → 403; wrong `{fountain_id}` path → 404; object delete
+    failure → 5xx (no silent success); point reversed; the photo's `photo_reports` removed
+    by `ON DELETE CASCADE` (not resolved with a moderation `resolution`).
   - report: any signed-in user reports; **duplicate pending → idempotent 204 and the
     session still commits** (ON CONFLICT DO NOTHING, no poisoned txn); report rate → 429;
     **concurrent** reports from one user cannot commit past the quota; category validated;
     note length bound; report on hidden photo allowed; note never logged.
   - admin queue: grouped-by-photo, pending-only, oldest-first, paginated; note truncation +
     max-3; summary count correct; hide resolves reports + reverses point + read 404s;
-    unhide re-awards; dismiss-reports rejects + keeps photo; delete resolves + reverses +
-    hard removal; audit logs carry no PII; non-admin → 403.
+    unhide re-awards; dismiss-reports sets `resolution='rejected'` + keeps photo; admin
+    delete reverses point + hard-removes objects, and reports are removed by cascade (not
+    resolved); audit logs carry no PII; non-admin → 403.
   - points: first photo awards `photo_first:{fountain_id}`; second does not; reversal on
     hide/delete; re-award on unhide; **no unrelated fountain contributions reversed**;
     hide-twice/unhide-twice idempotent.

@@ -4,7 +4,7 @@
 
 **Goal:** Let signed-in users upload photos of a fountain, shown in a carousel on the web and mobile detail pages, with a user report path feeding an admin moderation queue (hide/reject) and a pending-count badge on the profile icon.
 
-**Architecture:** A backend-proxied upload validates + re-encodes + thumbnails each image and stores it in a **private** DO Spaces bucket; all reads go through backend **presigned-redirect** endpoints that 404 when a photo is hidden, so moderation actually removes access. Post-moderation visibility is bounded by per-user quotas (a pre-work `upload_attempt` reservation) + a report queue. Web uses Next server actions/components; mobile uses the api-client + a direct `fetch` for multipart.
+**Architecture:** A backend-proxied upload validates + re-encodes + thumbnails each image and stores it in a **private** DO Spaces bucket; all reads go through backend **presigned-redirect** endpoints that 404 when a photo is hidden, so moderation actually removes access. Post-moderation visibility is bounded by per-user quotas (a pre-work `upload_attempt` reservation) + a report queue. Web uses Next server actions/components (multipart via a raw `fetch` in the action with a server-side token); mobile uses the api-client, with multipart going through a sanitized `MobileApiClient.uploadMultipart` method (same x-dev-stripping/bearer path as every other call).
 
 **Tech Stack:** FastAPI + async SQLAlchemy 2 + Alembic + PostGIS (backend), boto3/Pillow/python-multipart (new), DO Spaces (S3-compatible), Next.js 16 (web), Expo SDK 56 / React Native (mobile), `packages/api-client` (openapi-typescript + openapi-fetch), Terraform + DOKS (infra).
 
@@ -503,11 +503,11 @@ Change `CityFountainsOut.fountains` type to `list[CityFountainPin]`.
 
 **Interfaces — Produces:** `GET /api/v1/fountains/{fountain_id}/photos` → `list[PhotoOut]`; `GET /api/v1/photos/{photo_id}` and `/api/v1/photos/{photo_id}/thumb` → 302 or 404. Helper `photo_out(photo) -> PhotoOut` building `url=/api/v1/photos/{id}`, `thumbnail_url=/api/v1/photos/{id}/thumb`.
 
-- [ ] **Step 1: Write failing tests** (use the app test client + a mocked `get_storage`; seed fountain + a visible + a hidden photo): list returns only visible, newest-first; `GET /photos/{visible}` → 302 with `Location` = the mocked presigned URL; `GET /photos/{hidden}` → 404; unknown id → 404; **with storage disabled (`get_storage` → None): visible → 503, hidden/unknown → 404**.
+- [ ] **Step 1: Write failing tests** (use the app test client + a mocked `get_storage`; seed fountain + a visible + a hidden photo): list returns only visible, newest-first; **`GET /fountains/{unknown_or_hidden}/photos` → 404** (parent-scoped, like notes — not an empty list); `GET /photos/{visible}` → 302 with `Location` = the mocked presigned URL; `GET /photos/{hidden}` → 404; unknown id → 404; **with storage disabled (`get_storage` → None): visible → 503, hidden/unknown → 404**.
 
 - [ ] **Step 2: Run — expect FAIL.**
 
-- [ ] **Step 3: Implement** the router (`APIRouter(prefix="/api/v1", tags=["photos"])`), the read endpoints returning `RedirectResponse(storage.presign_get(key), status_code=302)` with `Cache-Control: private, max-age=60`, `photo_out` helper, and register `app.include_router(photos.router)` in `main.py`. Read-gate order: **unknown id or `is_hidden` → 404** (don't reveal hidden/missing); for a **visible existing row** when `get_storage(settings)` is None (misconfigured storage) → **503** with a structured error + WARNING log (an operational misconfig must not masquerade as "not found", per the observability standard).
+- [ ] **Step 3: Implement** the router (`APIRouter(prefix="/api/v1", tags=["photos"])`). The **list** endpoint first loads the parent fountain (`is_hidden.is_(False)`) → **404** if missing/hidden (mirror `list_notes`), then returns visible photos. The read endpoints return `RedirectResponse(storage.presign_get(key), status_code=302)` with `Cache-Control: private, max-age=60`; add the `photo_out` helper; register `app.include_router(photos.router)` in `main.py`. Read-gate order: **unknown id or `is_hidden` → 404** (don't reveal hidden/missing); for a **visible existing row** when `get_storage(settings)` is None (misconfigured storage) → **503** with a structured error + WARNING log (an operational misconfig must not masquerade as "not found", per the observability standard).
 
 - [ ] **Step 4: Run — expect PASS.** `cd backend && uv run pytest tests/test_photos_read.py -v`
 
@@ -571,11 +571,11 @@ Change `CityFountainsOut.fountains` type to `list[CityFountainPin]`.
 
 **Interfaces — Produces:** `DELETE /api/v1/fountains/{fountain_id}/photos/{photo_id}` (owner) → 204; `POST /api/v1/fountains/{fountain_id}/photos/{photo_id}/report` → 204.
 
-- [ ] **Step 1: Write failing tests:** owner delete removes the row + calls `delete_object` + reverses the point, and its pending `photo_reports` are gone (removed by `ON DELETE CASCADE` — assert the report rows no longer exist, not that they carry a `resolution`); non-owner → 403; object-delete failure → 5xx + `storage_cleanup` row (`reason='moderation_delete'`). Report: any signed-in user creates a pending report; duplicate pending → 204 and **the session still commits** (no IntegrityError); category validated (422 on bad); note >500 → 422; report on hidden photo allowed; report rate → 429; unknown photo → 404.
+- [ ] **Step 1: Write failing tests:** owner delete removes the row + calls `delete_object` + reverses the point, and its pending `photo_reports` are gone (removed by `ON DELETE CASCADE` — assert the report rows no longer exist, not that they carry a `resolution`); non-owner → 403; object-delete failure → 5xx + `storage_cleanup` row (`reason='moderation_delete'`); **a `photo_id` whose `fountain_id` doesn't match the path `{fountain_id}` → 404** (route is nested). Report: any signed-in user creates a pending report; duplicate pending → 204 and **the session still commits** (no IntegrityError); category validated (422 on bad); note >500 → 422; report on hidden photo allowed; report rate → 429; unknown photo → 404; **photo under the wrong `{fountain_id}` path → 404**.
 
 - [ ] **Step 2: Run — expect FAIL.**
 
-- [ ] **Step 3: Implement.** Delete: `require_named_user`, load photo (404), ownership check (403), `run_in_threadpool(delete_object)` for both keys (on failure insert `StorageCleanup(reason="moderation_delete")` and raise 500), `reverse_contribution_for_target(session, "photo", photo_id)` **before** deleting the row (so the awarded event is still found), then delete the row — the photo's `photo_reports` are removed automatically by `ON DELETE CASCADE` (no `resolution` write), `commit`, 204. Report: `Depends(get_current_user)`, `check_report_rate` (429), 404 if photo missing, then `pg_insert(PhotoReport).values(...).on_conflict_do_nothing(index_elements=["photo_id","reporter_user_id"], index_where=(PhotoReport.status=="pending")).returning(PhotoReport.id)` — use the row-count to decide (no exception path); log ids/category only (never the note); 204 always (idempotent).
+- [ ] **Step 3: Implement.** Both routes are **nested** — load the photo with `WHERE id == photo_id AND fountain_id == fountain_id` (→ 404 on mismatch, mirroring `submit_note`/`list_notes` scoping in `fountains.py`). Delete: `require_named_user`, load scoped photo (404), ownership check (403), `run_in_threadpool(delete_object)` for both keys (on failure insert `StorageCleanup(reason="moderation_delete")` and raise 500), `reverse_contribution_for_target(session, "photo", photo_id)` **before** deleting the row (so the awarded event is still found), then delete the row — the photo's `photo_reports` are removed automatically by `ON DELETE CASCADE` (no `resolution` write), `commit`, 204. Report: `Depends(get_current_user)`, `check_report_rate` (429), load scoped photo (404 on missing/mismatch), then `pg_insert(PhotoReport).values(...).on_conflict_do_nothing(index_elements=["photo_id","reporter_user_id"], index_where=(PhotoReport.status=="pending")).returning(PhotoReport.id)` — use the row-count to decide (no exception path); log ids/category only (never the note); 204 always (idempotent).
 
 - [ ] **Step 4: Run — expect PASS.** `cd backend && uv run pytest tests/test_photos_delete_report.py -v`
 
@@ -709,6 +709,18 @@ photo_count_sq = (
 
 ---
 
+### Task W2b: Style guide — document photo UI patterns (BEFORE any UI)
+
+**Files:** Modify `docs/style-guide.md`
+
+Per `CLAUDE.md` + spec §11, the style guide is updated **before** building the components.
+
+- [ ] **Step 1:** Read `docs/style-guide.md`, then add the specs for: the photo carousel + overlaid arrow button (position, size, focus ring, brand colors), the report dialog (category select + note), the list-row thumbnail (size, radius, placeholder), the admin queue row, and the pending-report badge (color, min size, count formatting). Use existing tokens/patterns.
+
+- [ ] **Step 2: Commit.** `git add docs/style-guide.md && git commit -m "docs(style): photo carousel, report dialog, list thumbnail, queue row, badge"`
+
+---
+
 ### Task W3: PhotoCarousel component
 
 **Files:** Create `web/components/fountain/PhotoCarousel.tsx`; Test `web/components/fountain/PhotoCarousel.test.tsx`
@@ -793,13 +805,13 @@ photo_count_sq = (
 
 ---
 
-### Task W9: Style guide
+### Task W9: Style guide — reconcile with shipped UI
 
 **Files:** Modify `docs/style-guide.md`
 
-- [ ] **Step 1:** Document the carousel + overlaid arrow button, the report dialog, the list-row thumbnail, the admin queue row, and the badge (tokens/spacing/variants used).
+- [ ] **Step 1:** Compare the components as built (W3–W8) against the pre-UI spec written in W2b; update `docs/style-guide.md` for any variance (final tokens/spacing/states as actually implemented).
 
-- [ ] **Step 2: Commit.** `git add docs/style-guide.md && git commit -m "docs(style): photo carousel, report dialog, badge components"`
+- [ ] **Step 2: Commit.** `git add docs/style-guide.md && git commit -m "docs(style): reconcile photo UI patterns with implementation"`
 
 **→ Open PR 2, CI green, Codex PR-review loop to APPROVED, address comments, squash-merge.**
 
@@ -829,7 +841,7 @@ photo_count_sq = (
 
 - [ ] **Step 2: Run — expect FAIL.** `pnpm exec turbo run test --filter=mobile`
 
-- [ ] **Step 3: Implement** `uploadMultipart` inside `createApiClient` (it closes over the same sanitized `fetch` + `getAccessToken`): `const res = await sanitizedFetch(\`${baseUrl}${path}\`, { method:"POST", body: formData })` (let the sanitized fetch add auth; do **not** set `Content-Type` so RN sets the multipart boundary); return `{ status: res.status }`. Expose it on the narrowed facade (167-176) alongside GET/POST/etc. Add the two admin routes to `isAuthenticatedApiRequest`.
+- [ ] **Step 3: Implement** `uploadMultipart` inside `createApiClient` (it closes over the same sanitizing fetch + `getAccessToken`). The existing sanitizer has signature `(input: Request) => Promise<Response>`, so build a `Request` and pass it through: `const req = new Request(\`${baseUrl}${path}\`, { method:"POST", body: formData }); const res = await sanitizingFetch(req); return { status: res.status };` — do **not** set `Content-Type` (RN sets the multipart boundary); auth + x-dev stripping happen inside the sanitizer exactly as for every other call. Add `uploadMultipart` to the `MobileApiClient` **type** and the narrowed facade object (167-176). Add the two admin routes to `isAuthenticatedApiRequest`. (The Step-1 test passes an `x-dev*` header by constructing the input `Request` with it and asserting the sanitizer strips it.)
 
 - [ ] **Step 4: Run — expect PASS.**
 
@@ -918,6 +930,6 @@ photo_count_sq = (
 ## Self-Review notes (author)
 
 - **Spec coverage:** upload (B12), list+gated reads (B11), own-delete + report (B13), admin queue/hide/dismiss/delete + summary (B14), first-photo point + reverse/reactivate (B8/B12/B13/B14), reservation/quotas (B9/B12), storage/private+presign (B3/B11), image pipeline (B4), CityFountainPin (B10/B15), infra (I1/I2), web carousel/upload/report/queue/badge/city-thumb (W3–W8/W5), mobile equivalents (M3–M7). All spec sections map to a task.
-- **Multipart** handled explicitly on both clients (W2 raw fetch, M2 direct fetch) — the one place the typed api-client doesn't fit.
+- **Multipart** handled explicitly on both clients (W2 raw fetch with a server-side token; M2 sanitized `uploadMultipart` through the existing x-dev-stripping/bearer fetch) — the one place the typed api-client doesn't fit.
 - **Type consistency:** `PhotoOut.url`/`thumbnail_url` are API-relative everywhere; clients prefix with the API base (W3/W4/W5/M3/M4). `photo_first` has no stat counter. Advisory-lock namespaces are distinct constants (B9).
 - **Deferred (spec-approved):** per-IP throttling, new-account trust tiers, presign window-snapping, a `storage_cleanup` janitor — noted, not built.
