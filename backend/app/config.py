@@ -91,6 +91,17 @@ class Settings(BaseSettings):
     # well at the browser and any shared CDN. One hour by default.
     seo_cache_max_age_seconds: int = 3600
 
+    # --- SEO coverage report (Slice 1e, docs/specs/2026-07-04-seo-coverage-gate-design.md) ---
+    # A scope is *recommended* ready when this fraction of its (non-hidden) fountains resolved to a
+    # city. A recommendation the owner reads before the signoff migration — never an automatic
+    # action.
+    seo_coverage_ready_pct: float = 0.5
+    # Grid size (degrees) for coarse ST_SnapToGrid binning of unmatched fountains — deterministic,
+    # no k parameter (unlike ST_ClusterKMeans). ~0.5 degrees ~= a metro-scale cell.
+    seo_coverage_grid_deg: float = 0.5
+    # How many top unmatched grid cells to report per scope (and globally).
+    seo_coverage_top_clusters: int = 10
+
     # --- OSM ingestion (see docs/specs/2026-06-21-osm-fountain-ingestion-design.md) ---
     # Auto-update an imported-only, unrated fountain's location only if it moved <= this.
     osm_move_small_max_m: float = 25.0
