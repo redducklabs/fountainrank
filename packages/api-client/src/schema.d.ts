@@ -107,6 +107,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/fountains/by-attribute": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Fountains By Attribute
+         * @description A global crawlable attribute page (spec §4.5): the NON-HIDDEN fountains whose crowdsourced
+         *     consensus matches ``attribute``, best-rated first (Bayesian ``ranking_score`` desc, unrated
+         *     last). Reads the denormalized consensus (never recomputes it) — public + cacheable. Declared
+         *     BEFORE ``/fountains/{fountain_id}`` so the literal path is not parsed as a UUID.
+         *
+         *     ``total_count`` is the full non-hidden match total (the list is capped by ``limit``);
+         *     ``indexable`` is the server-side thin-content verdict (``total_count >=
+         *     seo_attribute_min_fountains``), so the web sets ``noindex`` without knowing ``K_attr``. Invalid
+         *     ``attribute`` values 422 (Literal).
+         */
+        get: operations["fountains_by_attribute_api_v1_fountains_by_attribute_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/fountains/{fountain_id}": {
         parameters: {
             query?: never;
@@ -529,6 +557,27 @@ export interface components {
             observation_count: number;
             /** Latest Observation Value */
             latest_observation_value: string | null;
+        };
+        /**
+         * AttributeFountainsOut
+         * @description A global attribute page's ranked, paginated fountains (#127 Slice 4, spec §4.5).
+         *
+         *     ``attribute`` echoes the requested SEO attribute key (e.g. ``bottle_filler``). ``fountains`` are
+         *     the non-hidden fountains whose crowdsourced consensus matches, best-rated first. ``total_count``
+         *     is the full matching non-hidden total (the list is capped by ``limit``), so the page can show
+         *     "N fountains" and "top M of N". ``indexable`` is the spec §7/§4.5 thin-content predicate
+         *     computed server-side (``total_count >= seo_attribute_min_fountains``) — the single source of
+         *     ``K_attr`` so the web sets ``noindex`` from it rather than knowing the threshold.
+         */
+        AttributeFountainsOut: {
+            /** Attribute */
+            attribute: string;
+            /** Fountains */
+            fountains: components["schemas"]["FountainPin"][];
+            /** Total Count */
+            total_count: number;
+            /** Indexable */
+            indexable: boolean;
         };
         /** AttributeObservationInput */
         AttributeObservationInput: {
@@ -1161,6 +1210,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FountainPin"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    fountains_by_attribute_api_v1_fountains_by_attribute_get: {
+        parameters: {
+            query: {
+                /** @description SEO attribute key: bottle_filler | wheelchair_reachable. */
+                attribute: "bottle_filler" | "wheelchair_reachable";
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttributeFountainsOut"];
                 };
             };
             /** @description Validation Error */

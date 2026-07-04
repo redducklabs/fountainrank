@@ -337,3 +337,20 @@ class CityFountainsOut(BaseModel):
     place: PlaceOut
     fountains: list[FountainPin]
     indexable: bool
+
+
+class AttributeFountainsOut(BaseModel):
+    """A global attribute page's ranked, paginated fountains (#127 Slice 4, spec §4.5).
+
+    ``attribute`` echoes the requested SEO attribute key (e.g. ``bottle_filler``). ``fountains`` are
+    the non-hidden fountains whose crowdsourced consensus matches, best-rated first. ``total_count``
+    is the full matching non-hidden total (the list is capped by ``limit``), so the page can show
+    "N fountains" and "top M of N". ``indexable`` is the spec §7/§4.5 thin-content predicate
+    computed server-side (``total_count >= seo_attribute_min_fountains``) — the single source of
+    ``K_attr`` so the web sets ``noindex`` from it rather than knowing the threshold.
+    """
+
+    attribute: str
+    fountains: list[FountainPin]
+    total_count: int
+    indexable: bool

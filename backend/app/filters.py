@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 from fastapi import Query
 from sqlalchemy import Select, exists, not_, select
@@ -25,6 +26,19 @@ ATTRIBUTE_FILTERS: dict[str, tuple[str, str]] = {
     "indoor": ("indoor_outdoor", "indoor"),
     "public_access": ("access_kind", "public"),
 }
+
+# The subset of attributes exposed as GLOBAL, crawlable SEO pages (spec §4.5). Only these two get a
+# public /drinking-fountains/bottle-fillers | /wheelchair-accessible-drinking-fountains page; the
+# param value maps to the same (attribute key, consensus value) the discovery filters use.
+SEO_ATTRIBUTE_FILTERS: dict[str, tuple[str, str]] = {
+    "bottle_filler": ATTRIBUTE_FILTERS["bottle_filler"],
+    "wheelchair_reachable": ATTRIBUTE_FILTERS["wheelchair_reachable"],
+}
+
+# The public ``attribute`` query param for the by-attribute endpoint. A Literal so FastAPI validates
+# it (422 on anything else) and documents the allowed values in the OpenAPI schema — the generated
+# web client then types the param as this union.
+SeoAttribute = Literal["bottle_filler", "wheelchair_reachable"]
 
 
 @dataclass(frozen=True)
@@ -94,6 +108,13 @@ def _attr_match(key: str, value: str, include_unknown: bool):
         exists(_consensus_base(key).where(FountainAttributeConsensus.consensus_value.is_not(None)))
     )
     return has_value | no_definite
+
+
+def attribute_consensus_match(key: str, value: str):
+    """Public WHERE predicate: fountains whose ACTIVE, fountain-scoped consensus for ``key`` equals
+    ``value`` (positive match only — never widened to "unknown"). Reused by the SEO by-attribute
+    endpoint so the crawlable attribute pages share the exact match semantics of the map filters."""
+    return _attr_match(key, value, include_unknown=False)
 
 
 def apply_discovery_filters(
