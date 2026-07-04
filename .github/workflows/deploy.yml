@@ -179,10 +179,30 @@ jobs:
           LOGTO_APP_SECRET: ${{ secrets.LOGTO_APP_SECRET }}
           LOGTO_COOKIE_SECRET: ${{ secrets.LOGTO_COOKIE_SECRET }}
           GEOCODING_API_KEY: ${{ secrets.GEOCODING_API_KEY }}
+          SPACES_ENDPOINT: ${{ secrets.SPACES_ENDPOINT }}
+          SPACES_REGION: ${{ secrets.SPACES_REGION }}
+          SPACES_BUCKET: ${{ secrets.SPACES_BUCKET }}
+          SPACES_ACCESS_KEY: ${{ secrets.SPACES_ACCESS_KEY }}
+          SPACES_SECRET_KEY: ${{ secrets.SPACES_SECRET_KEY }}
         run: |
           tmp="$(mktemp -d)"
           trap 'rm -rf "$tmp"' EXIT
           printf '%s\n' "$DATABASE_CA_CERT" > "$tmp/database-ca.crt"
+          # Spaces (photos) keys are optional until the owner provisions a
+          # bucket-create-capable Spaces key (see infra/terraform/main.tf). Only add
+          # --from-literal for keys that are actually set: an unset GitHub secret
+          # expands to an empty string, and injecting an empty spaces-endpoint would
+          # set SPACES_ENDPOINT="" on the backend, which its https-endpoint validator
+          # rejects at startup — a crash loop. `optional: true` on the k8s
+          # secretKeyRef only skips a *missing* key, not an empty one, so we must
+          # omit the key entirely rather than set it empty. Backend fails closed
+          # (503 on photo endpoints) when these are absent, never a crash.
+          extra=()
+          [ -n "$SPACES_ENDPOINT" ] && extra+=(--from-literal=spaces-endpoint="$SPACES_ENDPOINT")
+          [ -n "$SPACES_REGION" ] && extra+=(--from-literal=spaces-region="$SPACES_REGION")
+          [ -n "$SPACES_BUCKET" ] && extra+=(--from-literal=spaces-bucket="$SPACES_BUCKET")
+          [ -n "$SPACES_ACCESS_KEY" ] && extra+=(--from-literal=spaces-access-key="$SPACES_ACCESS_KEY")
+          [ -n "$SPACES_SECRET_KEY" ] && extra+=(--from-literal=spaces-secret-key="$SPACES_SECRET_KEY")
           kubectl create secret generic fountainrank-secrets \
             -n "$NAMESPACE" \
             --from-literal=database-url="$DATABASE_URL_SECRET" \
@@ -192,6 +212,7 @@ jobs:
             --from-literal=logto-app-secret="$LOGTO_APP_SECRET" \
             --from-literal=logto-cookie-secret="$LOGTO_COOKIE_SECRET" \
             --from-literal=geocoding-api-key="$GEOCODING_API_KEY" \
+            "${extra[@]}" \
             --from-file=database-ca.crt="$tmp/database-ca.crt" \
             --dry-run=client -o yaml | kubectl apply -f -
           doctl registry kubernetes-manifest "$DO_REGISTRY" \

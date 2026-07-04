@@ -17,6 +17,11 @@ on:
         required: false
         default: false
         type: boolean
+      manage_photos_spaces:
+        description: "Enable the Phase 4 private photos Spaces bucket (needs a bucket-create-capable Spaces key)"
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: terraform-production
@@ -57,6 +62,9 @@ jobs:
       # Phase 3a basemap gate (default false). Set the workflow input true — with a
       # bucket-create-capable Spaces key above — to create the basemap bucket/CDN/CORS.
       TF_VAR_manage_basemap_spaces: ${{ github.event.inputs.manage_basemap_spaces }}
+      # Phase 4 photos gate (default false). Set the workflow input true — with a
+      # bucket-create-capable Spaces key above — to create the private photos bucket.
+      TF_VAR_manage_photos_spaces: ${{ github.event.inputs.manage_photos_spaces }}
     steps:
       - uses: actions/checkout@v7
       - uses: hashicorp/setup-terraform@v4
