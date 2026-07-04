@@ -16,12 +16,12 @@ thin-content policy). Prior handoff (superseded for Slice 5): `handoffs/2026-07-
 | Item | What | State |
 |------|------|-------|
 | **PR #171** | Slice 5 — `/fountains/{id}/place` + `/fountains/sitemap` API, detail-page `generateMetadata` + city h1, `fountains.xml` sitemap chunk | **MERGED** to `main` (`4420114`) |
-| **Deploy** | NOT dispatched this session | **NOT deployed** — Slice 5 is on `main` but not live yet |
+| **Deploy** | `deploy.yml` dispatched from `main` → built+rolled out backend+web | **DEPLOYED + VERIFIED live** (run `28700136508`, success) |
 | **#163** | mobile-doctor fix (Expo SDK-56 patch bump) | **OPEN, still parked** on the min-release-age window (opens ~2026-07-04 **08:53Z**) |
 
-**SEO feature status:** Slices 0, 1a–1e-data, 2, 3, 4 = done + LIVE in prod (deployed last session).
-**Slice 5 = merged to `main`, NOT yet deployed.** Remaining: **deploy Slice 5**, Slice 1e (coverage
-report/gate), #128 GA4 (owner-local), sitemap resubmit in GSC+Bing (owner-local).
+**SEO feature status:** Slices 0, 1a–1e-data, 2, 3, 4 = done + LIVE. **Slice 5 = merged AND now LIVE
+in prod** (see §3). Remaining: Slice 1e (coverage report/gate), #128 GA4 (owner-local), sitemap
+resubmit in GSC+Bing (owner-local — now includes the fountains chunk).
 
 ---
 
@@ -104,33 +104,44 @@ CI on #171: `backend` + `workspace-js` (web lint/tsc/test + mobile lint/tsc/test
 
 ---
 
-## 3. Next tasks (recommended order)
+## 3. Deploy + verification (this session) — Slice 5 is LIVE
 
-1. **Deploy Slice 5** — manual dispatch (`gh workflow run deploy.yml --ref main` then
-   `gh run watch <id>`). Builds+rolls out backend+web together; **no migration** so the Alembic step
-   is a no-op. Memory: `fountainrank-deploy-is-manual-dispatch`. **Verify live** after:
-   - `GET https://api.fountainrank.com/api/v1/fountains/{id}/place` for a known fountain (pick one
-     from `GET /api/v1/places/us/manhattan/fountains`) → 200 with `city`/`country`/`indexable`.
-   - `GET https://api.fountainrank.com/api/v1/fountains/sitemap` → 200, `fountain_ids` + `total_count`.
-   - `https://fountainrank.com/fountains/{id}` → 200; view-source: title includes the city, and
-     `<link rel="canonical" href="…/fountains/{id}">`; `<meta name="robots">` present only when
-     noindex.
-   - `https://fountainrank.com/sitemaps/fountains.xml` → 200 urlset of `/fountains/{id}` URLs;
-     `https://fountainrank.com/sitemap.xml` now references the **fountains** chunk.
-2. **Finish #163** once now ≥ 2026-07-04 08:53Z (see §1) — quick, unblocks `mobile-doctor` for all PRs.
-3. **Resubmit the sitemap in GSC + Bing** (spec §10) — **owner-local**; now includes the fountains
+**Deploy is manual dispatch** (memory `fountainrank-deploy-is-manual-dispatch`). Ran:
+`gh workflow run deploy.yml --ref main` → run `28700136508`, **success** (Build+push 2m41s; Deploy to
+DOKS 1m13s; DB-migration step a **no-op** — Slice 5 adds no migration; rollouts completed).
+
+**Verified live (all passing):**
+- **API** `https://api.fountainrank.com`:
+  - `GET /api/v1/fountains/{id}/place` for a Manhattan fountain → 200: `city` Manhattan
+    (`fountain_count` 447), `country` US (24465), `indexable: true`.
+  - `GET /api/v1/fountains/sitemap?limit=5` → 200, **`total_count` = 18696** indexable fountains
+    (of 24465 US total — the rest have no city or are unrated+not-working), ids ordered.
+- **Web** `https://fountainrank.com`:
+  - **Indexable** fountain `/fountains/004c1f0c-…` → 200, `<title>Drinking fountain in Manhattan</title>`,
+    `<link rel="canonical" …/fountains/004c1f0c-…>`, **no** `robots` meta (correct), and it **is
+    listed** in `/sitemaps/fountains.xml`.
+  - **Non-indexable** fountain `/fountains/7497d710-…` (no city → `indexable:false`) → 200,
+    `<title>Public drinking fountain</title>`, `<meta name="robots" content="noindex, follow">`, and
+    it is **absent** from the sitemap. Both §7 branches confirmed on live data.
+  - `/sitemap.xml` → 200, references core + countries + cities + attributes + **fountains** chunks.
+    `/sitemaps/fountains.xml` → 200, 18696 `/fountains/{id}` URLs.
+
+## 4. Next tasks (recommended order)
+
+1. **Finish #163** once now ≥ 2026-07-04 08:53Z (see §1) — quick, unblocks `mobile-doctor` for all PRs.
+2. **Resubmit the sitemap in GSC + Bing** (spec §10) — **owner-local**; now includes the fountains
    chunk. `seo-mcp` tools (`gsc_sitemaps`, `gsc_search_analytics`, `bing_*`) available.
-4. **Slice 1e — coverage report/gate** (spec §4.2/§7). Per-scope stats (matched/unmatched, top
+3. **Slice 1e — coverage report/gate** (spec §4.2/§7). Per-scope stats (matched/unmatched, top
    unmatched clusters, city-assignment % by subtype). Lets the owner raise `K`/`K_attr` per scope
    with signoff. Backend-heavy; no new public routes.
-5. **#128 GA4** — owner-local: add the GA4 property id to the SEO agent registry; run
+4. **#128 GA4** — owner-local: add the GA4 property id to the SEO agent registry; run
    `seo_health_check` until GA4 = ok. Key events excluded (spec §8.3).
 
 Also outstanding (unrelated): Dependabot **#151** (frontend-js) & **#138** (backend-python).
 
 ---
 
-## 4. How to work in this repo (env gotchas — carried forward, still true)
+## 5. How to work in this repo (env gotchas — carried forward, still true)
 
 - **Backend tests need an isolated Windows UV env** (repo's `backend/.venv` is WSL-built). Create
   once, reuse:
@@ -173,7 +184,7 @@ Also outstanding (unrelated): Dependabot **#151** (frontend-js) & **#138** (back
 
 ---
 
-## 5. The per-slice ship gate (what "done" means)
+## 6. The per-slice ship gate (what "done" means)
 
 branch off `main` → implement (TDD) → **backend** `uv run pytest`/ruff green + **web** tsc/prettier +
 your new vitest green + **api-client regen** if the contract changed → PR → **CI green on `backend` +
