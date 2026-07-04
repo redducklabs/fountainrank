@@ -116,23 +116,30 @@ Static, readable policy pages for app-store and OAuth registration URLs.
 - These pages intentionally avoid the landing page gradient so long policy text
   remains comfortable to read.
 
-### SEO place pages (`web/app/drinking-fountains/[country]/page.tsx`)
+### SEO place pages (`web/app/drinking-fountains/[country]/page.tsx`, `[country]/[city]/page.tsx`)
 
-Crawlable, server-rendered directory pages for organic search (#127). The country page is
-the first of the family (city/attribute pages share the template).
+Crawlable, server-rendered directory pages for organic search (#127) — the **country** page
+(top cities) and the **city** page (ranked fountain list). They share one template.
 
 - **Shell:** the slim `SiteHeader variant="bar"` + a white, constrained column
   (`mx-auto min-h-dvh max-w-2xl bg-white px-6 py-10`) — the same reading shell as the
   leaderboard and fountain-detail pages.
-- Small brand-blue (`text-[#0C44A0]`) "← Back to the map" link at the top.
+- Small brand-blue (`text-[#0C44A0]`) back link at the top (country → "← Back to the map";
+  city → "← All of {CC}").
 - **Title:** `h1` in `text-2xl font-black text-[#0A357E]` ("Drinking fountains in {place}"),
-  followed by a one-line lead in `text-slate-600` stating the fountain count.
-- **List sections** (e.g. "Top cities"): an `h2` in `text-lg font-bold text-[#0A357E]` over a
-  `divide-y divide-slate-100` list; each row is a brand-blue underlined `Link` to the child
-  page with a right-aligned `text-sm text-slate-500` count.
-- **Indexability:** the page only renders for a place at/above the fountain-count gate (`K`);
-  anything else is `notFound()` (404). `generateMetadata` sets a unique title/description and
-  `alternates.canonical`; unknown segments return `robots: { index: false }`.
+  followed by a one-line lead in `text-slate-600` stating the fountain count (city pages add
+  "Showing the top N" when the list is capped).
+- **List rows:** under an optional `h2` (`text-lg font-bold text-[#0A357E]`), a
+  `divide-y divide-slate-100` list. Country "Top cities" rows are a brand-blue underlined `Link`
+  to the city page + a right-aligned `text-sm text-slate-500` count. City fountain rows are a
+  full-width `Link` to `/fountains/[id]` — fountains have no names, so the label is
+  "Drinking fountain" (+ "· Out of order" when not working) with a right-aligned rating
+  (`formatAverage` + rating count).
+- **Indexability:** the **country** page renders only at/above the gate (`K`) — anything else is
+  `notFound()` (404). The **city** page renders even below the gate but is `noindex` (the backend
+  returns an `indexable` flag — the single source of `K`); a missing city is `notFound()`. Both set
+  a unique title/description + `alternates.canonical` (the sticky slug); a non-canonical city URL
+  (e.g. wrong case) `permanentRedirect`s (301) to the canonical.
 
 ### Auth buttons (`web/components/SignInButton.tsx`, `SignOutButton.tsx`)
 

@@ -321,3 +321,19 @@ class PlaceOut(BaseModel):
     name: str
     subtype: str
     fountain_count: int
+
+
+class CityFountainsOut(BaseModel):
+    """A city place plus its ranked, paginated fountains (#127 Slice 3, spec §4.3/§5).
+
+    ``place`` is the canonical city that owns the ``/[country]/[city]`` URL; ``fountains`` are its
+    non-hidden fountains, best-rated first. ``place.fountain_count`` is the full non-hidden total
+    (the list is capped by ``limit``), so the page can show "top N of M" without a separate count.
+    ``indexable`` is the spec §7 thin-content predicate computed server-side (``fountain_count >=
+    seo_place_min_fountains``) — the single source of truth for K, so the web sets ``noindex`` from
+    it rather than knowing the threshold.
+    """
+
+    place: PlaceOut
+    fountains: list[FountainPin]
+    indexable: bool

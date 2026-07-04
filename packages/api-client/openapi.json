@@ -1975,6 +1975,81 @@
         }
       }
     },
+    "/api/v1/places/{country}/{city}/fountains": {
+      "get": {
+        "tags": [
+          "places"
+        ],
+        "summary": "City Fountains",
+        "description": "The canonical city for /[country]/[city] plus its ranked, paginated fountains (spec \u00a74.3/\u00a75).\n\nResolves the canonical place owning ``(country_code, slug)`` (both matched lowercased \u2014 slugs\nare stored lowercased), then returns its NON-HIDDEN fountains best-rated first (Bayesian\n``ranking_score`` DESC, unrated last). Reads the precomputed ``city_place_id`` membership, not a\nlive ST_Covers (spec \u00a75). Public + cacheable. 404 when no canonical city matches, so the page\ncan ``notFound()``.",
+        "operationId": "city_fountains_api_v1_places__country___city__fountains_get",
+        "parameters": [
+          {
+            "name": "country",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Country"
+            }
+          },
+          {
+            "name": "city",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "City"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CityFountainsOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/me": {
       "get": {
         "tags": [
@@ -3136,6 +3211,32 @@
           "east"
         ],
         "title": "BoundingBox"
+      },
+      "CityFountainsOut": {
+        "properties": {
+          "place": {
+            "$ref": "#/components/schemas/PlaceOut"
+          },
+          "fountains": {
+            "items": {
+              "$ref": "#/components/schemas/FountainPin"
+            },
+            "type": "array",
+            "title": "Fountains"
+          },
+          "indexable": {
+            "type": "boolean",
+            "title": "Indexable"
+          }
+        },
+        "type": "object",
+        "required": [
+          "place",
+          "fountains",
+          "indexable"
+        ],
+        "title": "CityFountainsOut",
+        "description": "A city place plus its ranked, paginated fountains (#127 Slice 3, spec \u00a74.3/\u00a75).\n\n``place`` is the canonical city that owns the ``/[country]/[city]`` URL; ``fountains`` are its\nnon-hidden fountains, best-rated first. ``place.fountain_count`` is the full non-hidden total\n(the list is capped by ``limit``), so the page can show \"top N of M\" without a separate count.\n``indexable`` is the spec \u00a77 thin-content predicate computed server-side (``fountain_count >=\nseo_place_min_fountains``) \u2014 the single source of truth for K, so the web sets ``noindex`` from\nit rather than knowing the threshold."
       },
       "ConditionReportRequest": {
         "properties": {

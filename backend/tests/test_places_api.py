@@ -444,3 +444,186 @@ async def test_real_refresh_makes_country_and_city_listable(session, api):
     cities = (await api.get("/api/v1/places", params={"country": "us"})).json()
     assert [c["slug"] for c in cities] == ["san-diego"]
     assert cities[0]["fountain_count"] == 3
+
+
+# --- GET /api/v1/places/{country}/{city}/fountains (Slice 3) ---
+
+
+async def _add_city_fountain(
+    session,
+    place_id,
+    *,
+    ranking_score=None,
+    rating_count=0,
+    average_rating=None,
+    is_working=True,
+    hidden=False,
+):
+    """A fountain pinned to a city via the precomputed city_place_id (geometry is irrelevant —
+    the endpoint reads membership, not PIP)."""
+    row = (
+        await session.execute(
+            text(
+                """
+                INSERT INTO fountains
+                    (id, location, is_hidden, is_working, created_source,
+                     city_place_id, ranking_score, rating_count, average_rating)
+                VALUES (gen_random_uuid(), ST_SetSRID(ST_MakePoint(1.5, 1.5), 4326)::geography,
+                        :hidden, :working, 'admin_import', :pid, :score, :rc, :avg)
+                RETURNING id
+                """
+            ),
+            {
+                "hidden": hidden,
+                "working": is_working,
+                "pid": place_id,
+                "score": ranking_score,
+                "rc": rating_count,
+                "avg": average_rating,
+            },
+        )
+    ).one()
+    return row.id
+
+
+async def _seed_city(session, *, fountain_count):
+    us = await _add_place(
+        session,
+        overture_id="us",
+        subtype="country",
+        country_code="us",
+        name="United States",
+        slug="united-states",
+        fountain_count=fountain_count,
+        is_canonical=False,
+    )
+    city = await _add_place(
+        session,
+        overture_id="sd",
+        subtype="locality",
+        country_code="us",
+        name="San Diego",
+        slug="san-diego",
+        fountain_count=fountain_count,
+        is_canonical=True,
+        parent_id=us,
+    )
+    return city
+
+
+@pytest.mark.asyncio
+async def test_city_fountains_ranked_best_first(session, api):
+    """Fountains come back best-rated first: ranking_score desc, unrated (NULL) last, then more
+    ratings, then id — and the response carries the city place (name + total count)."""
+    city = await _seed_city(session, fountain_count=4)
+    top = await _add_city_fountain(
+        session, city, ranking_score=0.9, rating_count=10, average_rating=4.6
+    )
+    mid = await _add_city_fountain(
+        session, city, ranking_score=0.5, rating_count=8, average_rating=3.2
+    )
+    # Same score as mid but fewer ratings -> sorts after mid on the rating_count tiebreak.
+    low = await _add_city_fountain(
+        session, city, ranking_score=0.5, rating_count=2, average_rating=3.2
+    )
+    unrated = await _add_city_fountain(session, city, ranking_score=None, rating_count=0)
+    await session.commit()
+
+    resp = await api.get("/api/v1/places/us/san-diego/fountains")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["place"]["name"] == "San Diego"
+    assert body["place"]["fountain_count"] == 4
+    assert body["indexable"] is True  # 4 >= K (3)
+    ids = [f["id"] for f in body["fountains"]]
+    assert ids == [str(top), str(mid), str(low), str(unrated)]
+    assert body["fountains"][0]["average_rating"] == 4.6
+
+
+@pytest.mark.asyncio
+async def test_city_fountains_excludes_hidden(session, api):
+    """Hidden fountains never appear in the public list."""
+    city = await _seed_city(session, fountain_count=1)
+    await _add_city_fountain(session, city, ranking_score=0.9, rating_count=5)
+    await _add_city_fountain(session, city, ranking_score=0.8, rating_count=5, hidden=True)
+    await session.commit()
+
+    body = (await api.get("/api/v1/places/us/san-diego/fountains")).json()
+    assert len(body["fountains"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_city_fountains_below_gate_still_serves_but_not_indexable(session, api):
+    """A city below K still serves its fountains (200) but is flagged indexable=false — the web
+    renders it with noindex (spec §7), rather than 404ing a real-but-thin place."""
+    city = await _seed_city(session, fountain_count=2)  # < K (3)
+    await _add_city_fountain(session, city, ranking_score=0.9, rating_count=3)
+    await _add_city_fountain(session, city, ranking_score=0.5, rating_count=1)
+    await session.commit()
+
+    resp = await api.get("/api/v1/places/us/san-diego/fountains")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["indexable"] is False
+    assert len(body["fountains"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_city_fountains_pagination(session, api):
+    """limit caps the page; offset walks it, stable under the rank order."""
+    city = await _seed_city(session, fountain_count=3)
+    a = await _add_city_fountain(session, city, ranking_score=0.9, rating_count=9)
+    b = await _add_city_fountain(session, city, ranking_score=0.8, rating_count=8)
+    c = await _add_city_fountain(session, city, ranking_score=0.7, rating_count=7)
+    await session.commit()
+
+    page1 = (await api.get("/api/v1/places/us/san-diego/fountains", params={"limit": 2})).json()
+    assert [f["id"] for f in page1["fountains"]] == [str(a), str(b)]
+    page2 = (
+        await api.get("/api/v1/places/us/san-diego/fountains", params={"limit": 2, "offset": 2})
+    ).json()
+    assert [f["id"] for f in page2["fountains"]] == [str(c)]
+
+
+@pytest.mark.asyncio
+async def test_city_fountains_404_for_unknown_city(session, api):
+    """No canonical city for (country, slug) -> 404 so the web page can notFound()."""
+    await _seed_city(session, fountain_count=1)
+    await session.commit()
+    assert (await api.get("/api/v1/places/us/nowhere/fountains")).status_code == 404
+    assert (await api.get("/api/v1/places/zz/san-diego/fountains")).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_city_fountains_case_insensitive_and_cacheable(session, api):
+    """Country + city segments resolve case-insensitively; the response is publicly cacheable."""
+    city = await _seed_city(session, fountain_count=1)
+    await _add_city_fountain(session, city, ranking_score=0.9, rating_count=3)
+    await session.commit()
+
+    resp = await api.get("/api/v1/places/US/San-Diego/fountains")
+    assert resp.status_code == 200
+    assert resp.json()["place"]["slug"] == "san-diego"
+    assert "public" in resp.headers.get("cache-control", "")
+
+
+@pytest.mark.asyncio
+async def test_city_fountains_only_this_city(session, api):
+    """Fountains of a different city (different city_place_id) never leak in."""
+    city = await _seed_city(session, fountain_count=1)
+    other = await _add_place(
+        session,
+        overture_id="la",
+        subtype="locality",
+        country_code="us",
+        name="Los Angeles",
+        slug="los-angeles",
+        fountain_count=1,
+        is_canonical=True,
+    )
+    await _add_city_fountain(session, city, ranking_score=0.9, rating_count=3)
+    await _add_city_fountain(session, other, ranking_score=0.95, rating_count=9)
+    await session.commit()
+
+    body = (await api.get("/api/v1/places/us/san-diego/fountains")).json()
+    assert len(body["fountains"]) == 1

@@ -8,14 +8,15 @@ path reads only the precomputed membership columns on ``place_boundaries`` — i
 
 import logging
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
 from app.db import get_session
-from app.models import PlaceBoundary
-from app.schemas import PlaceOut
+from app.geo import latitude_of, longitude_of
+from app.models import Fountain, PlaceBoundary
+from app.schemas import CityFountainsOut, Coordinates, FountainPin, PlaceOut
 
 logger = logging.getLogger(__name__)
 
@@ -136,3 +137,95 @@ async def list_places(
         },
     )
     return [PlaceOut.model_validate(row) for row in rows]
+
+
+@router.get("/places/{country}/{city}/fountains", response_model=CityFountainsOut)
+async def city_fountains(
+    response: Response,
+    country: str,
+    city: str,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> CityFountainsOut:
+    """The canonical city for /[country]/[city] plus its ranked, paginated fountains (spec §4.3/§5).
+
+    Resolves the canonical place owning ``(country_code, slug)`` (both matched lowercased — slugs
+    are stored lowercased), then returns its NON-HIDDEN fountains best-rated first (Bayesian
+    ``ranking_score`` DESC, unrated last). Reads the precomputed ``city_place_id`` membership, not a
+    live ST_Covers (spec §5). Public + cacheable. 404 when no canonical city matches, so the page
+    can ``notFound()``.
+    """
+    cc = country.lower()
+    slug = city.lower()
+    place = (
+        await session.execute(
+            select(PlaceBoundary).where(
+                PlaceBoundary.country_code == cc,
+                PlaceBoundary.slug == slug,
+                PlaceBoundary.is_canonical.is_(True),
+                PlaceBoundary.subtype != "country",
+            )
+        )
+    ).scalar_one_or_none()
+    if place is None:
+        _set_cache(response, settings)
+        logger.info("city fountains: no canonical city", extra={"country": cc, "slug": slug})
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="No such city")
+
+    rows = (
+        await session.execute(
+            select(
+                Fountain.id,
+                latitude_of(Fountain.location),
+                longitude_of(Fountain.location),
+                Fountain.is_working,
+                Fountain.average_rating,
+                Fountain.rating_count,
+                Fountain.ranking_score,
+                Fountain.current_status,
+                Fountain.last_verified_at,
+            )
+            .where(Fountain.city_place_id == place.id, Fountain.is_hidden.is_(False))
+            # Best-rated first: Bayesian ranking_score desc, unrated (NULL) last; then more-rated,
+            # then id for a stable, deterministic page across offsets.
+            .order_by(
+                Fountain.ranking_score.desc().nulls_last(),
+                Fountain.rating_count.desc(),
+                Fountain.id.asc(),
+            )
+            .limit(limit)
+            .offset(offset)
+        )
+    ).all()
+    fountains = [
+        FountainPin(
+            id=rid,
+            location=Coordinates(latitude=float(rlat), longitude=float(rlng)),
+            is_working=working,
+            average_rating=avg,
+            rating_count=count,
+            ranking_score=score,
+            current_status=cur_status,
+            last_verified_at=last_verified,
+        )
+        for (rid, rlat, rlng, working, avg, count, score, cur_status, last_verified) in rows
+    ]
+    indexable = place.fountain_count >= settings.seo_place_min_fountains
+    _set_cache(response, settings)
+    logger.info(
+        "city fountains served",
+        extra={
+            "country": cc,
+            "slug": slug,
+            "place_id": str(place.id),
+            "rows": len(fountains),
+            "indexable": indexable,
+            "limit": limit,
+            "offset": offset,
+        },
+    )
+    return CityFountainsOut(
+        place=PlaceOut.model_validate(place), fountains=fountains, indexable=indexable
+    )

@@ -279,6 +279,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/places/{country}/{city}/fountains": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * City Fountains
+         * @description The canonical city for /[country]/[city] plus its ranked, paginated fountains (spec §4.3/§5).
+         *
+         *     Resolves the canonical place owning ``(country_code, slug)`` (both matched lowercased — slugs
+         *     are stored lowercased), then returns its NON-HIDDEN fountains best-rated first (Bayesian
+         *     ``ranking_score`` DESC, unrated last). Reads the precomputed ``city_place_id`` membership, not a
+         *     live ST_Covers (spec §5). Public + cacheable. 404 when no canonical city matches, so the page
+         *     can ``notFound()``.
+         */
+        get: operations["city_fountains_api_v1_places__country___city__fountains_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/me": {
         parameters: {
             query?: never;
@@ -551,6 +577,24 @@ export interface components {
             north: number;
             /** East */
             east: number;
+        };
+        /**
+         * CityFountainsOut
+         * @description A city place plus its ranked, paginated fountains (#127 Slice 3, spec §4.3/§5).
+         *
+         *     ``place`` is the canonical city that owns the ``/[country]/[city]`` URL; ``fountains`` are its
+         *     non-hidden fountains, best-rated first. ``place.fountain_count`` is the full non-hidden total
+         *     (the list is capped by ``limit``), so the page can show "top N of M" without a separate count.
+         *     ``indexable`` is the spec §7 thin-content predicate computed server-side (``fountain_count >=
+         *     seo_place_min_fountains``) — the single source of truth for K, so the web sets ``noindex`` from
+         *     it rather than knowing the threshold.
+         */
+        CityFountainsOut: {
+            place: components["schemas"]["PlaceOut"];
+            /** Fountains */
+            fountains: components["schemas"]["FountainPin"][];
+            /** Indexable */
+            indexable: boolean;
         };
         /** ConditionReportRequest */
         ConditionReportRequest: {
@@ -1604,6 +1648,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PlaceOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    city_fountains_api_v1_places__country___city__fountains_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                country: string;
+                city: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CityFountainsOut"];
                 };
             };
             /** @description Validation Error */
