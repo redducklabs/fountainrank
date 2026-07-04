@@ -20,7 +20,7 @@
 - **Alembic**: deterministic constraint/index names per `models.py` `NAMING_CONVENTION`; every migration reversible; `alembic check` must be drift-free.
 - **Logging**: structured, no bare `print`, no secrets/tokens/PII/raw report notes in logs; a 500 is never silent.
 - **Auth**: reuse existing deps — `require_named_user` (uploads/own-delete), `get_current_user` (report), `require_admin` (admin). Never self-mint tokens; dev-auth seam stays closed in prod.
-- **Every PR**: CI green **AND** Codex `VERDICT: APPROVED` **AND** every PR comment addressed → squash-merge. Codex `cwd` = `/mnt/c/Repos/fountainrank`, bypass mode.
+- **Every PR**: CI green **AND** Codex `VERDICT: APPROVED` **AND** every PR comment addressed → squash-merge. Codex `cwd` = the WSL path **derived from the current repo root** (translate the Windows working dir, e.g. `C:\…\fountainrank` → `/mnt/c/…/fountainrank`; never hardcode), bypass mode (`sandbox: danger-full-access`, `approval-policy: never`).
 
 ---
 
@@ -42,6 +42,7 @@ The spec (`docs/specs/2026-07-04-fountain-photos-design.md`) and this plan are a
 - `backend/app/storage.py` — Spaces client wrapper (put/delete/presign), lazy+cached.
 - `backend/app/images.py` — Pillow validate/normalize/downscale/thumbnail (pure, blocking).
 - `backend/app/rate_limit.py` — advisory-lock helpers + upload reservation + report rate check.
+- `backend/app/multipart_read.py` — size-capped streaming multipart file reader (B12a).
 - `backend/app/routers/photos.py` — upload / list / delete-own / gated reads / report.
 - `backend/migrations/versions/0017_fountain_photos.py` — `fountain_photos` + `storage_cleanup` + `upload_attempts`.
 - `backend/migrations/versions/0018_photo_reports.py` — `photo_reports`.
@@ -65,10 +66,10 @@ The spec (`docs/specs/2026-07-04-fountain-photos-design.md`) and this plan are a
 
 **Files:** Modify `backend/pyproject.toml`
 
-- [ ] **Step 1: Add deps.** In `[project].dependencies` add `"boto3>=1.34"`, `"pillow>=10.3"`, `"python-multipart>=0.0.9"` (match existing pin style).
+- [ ] **Step 1: Add deps.** The repo uses **exact pins** (e.g. `fastapi==0.138.0`). Add `boto3`, `pillow`, `python-multipart` to `[project].dependencies`, then in Step 2 pin each to the exact version `uv lock` resolves (edit the `==` pins to match `uv.lock`), matching the existing style.
 
-- [ ] **Step 2: Lock + install.** Run: `cd backend && uv lock && uv sync`
-  Expected: resolves and installs boto3, pillow, python-multipart.
+- [ ] **Step 2: Lock + install + pin.** Run: `cd backend && uv lock && uv sync`, then read the resolved versions from `uv.lock` and set exact `==` pins in `pyproject.toml`.
+  Expected: resolves and installs boto3, pillow, python-multipart at pinned versions.
 
 - [ ] **Step 3: Commit.**
 ```bash
@@ -133,7 +134,7 @@ def photos_enabled(self) -> bool:
     return all([self.spaces_endpoint, self.spaces_region, self.spaces_bucket,
                 self.spaces_access_key, self.spaces_secret_key])
 ```
-Ensure startup config logging (wherever `Settings` is logged redacted) treats `spaces_access_key`/`spaces_secret_key` as secrets — add them to the redaction set if it is an explicit list.
+The startup logger (`backend/app/logging_config.py` `log_startup`) is an explicit **allow-list**, not a settings dump — do **not** add the access/secret keys anywhere. If useful, add only non-secret metadata (`photos_enabled`, `spaces_region`) to that allow-list.
 
 - [ ] **Step 4: Run — expect PASS.** Run: `cd backend && uv run pytest tests/test_config_spaces.py -v`
 
@@ -219,7 +220,10 @@ def get_storage(settings: Settings) -> Storage | None:
     global _cache, _cache_key
     if not settings.photos_enabled:
         return None
-    k = (settings.spaces_endpoint, settings.spaces_region, settings.spaces_bucket, settings.spaces_access_key)
+    # Cache key includes BOTH keys so a credential rotation rebuilds the client
+    # (hash the secret so it never lands in a repr/log).
+    k = (settings.spaces_endpoint, settings.spaces_region, settings.spaces_bucket,
+         settings.spaces_access_key, hash(settings.spaces_secret_key))
     if _cache is None or _cache_key != k:
         _cache, _cache_key = Storage(settings), k
     return _cache
@@ -228,7 +232,7 @@ def reset_storage_cache() -> None:
     global _cache, _cache_key
     _cache, _cache_key = None, None
 ```
-Note: `presign_get` window-snapping (cache-friendly stable URLs) is a possible refinement but `Date.now`-free determinism isn't required; keep the simple TTL for v1.
+Note: per the amended spec §4, `presign_get(key)` uses the configured TTL directly — window-snapped stable-within-window URLs are a deferred optimization (SigV4 embeds the signing time, so a stable URL string isn't simple with boto3).
 
 - [ ] **Step 4: Run — expect PASS.** `cd backend && uv run pytest tests/test_storage.py -v`
 
@@ -342,11 +346,11 @@ def process_image(raw: bytes, *, max_edge: int = 2048, thumb_edge: int = 400) ->
 
 **Files:** Create `backend/migrations/versions/0017_fountain_photos.py`
 
-- [ ] **Step 1:** Copy `0008_fountain_notes.py` as the template. `down_revision = "0016"` (verify latest with `cd backend && uv run alembic heads`). In `upgrade()` create `fountain_photos`, `storage_cleanup`, `upload_attempts` with **explicit named** PK/FK/CHECK/index constraints matching the model `__table_args__`. Add the partial indexes: `fountain_photos` `WHERE is_hidden = false` on `(fountain_id, created_at DESC)` and `(user_id, created_at)`; `storage_cleanup` `WHERE status='pending'` on `(created_at)`; `upload_attempts` on `(user_id, status, created_at)`. `downgrade()` drops all three (reverse order).
+- [ ] **Step 1:** Copy `0008_fountain_notes.py` as the template. Revision ids follow the repo's **full-string** convention: set `revision = "0017_fountain_photos"` and `down_revision = "0016_place_boundary_cells"` (confirm the current head first: `cd backend && uv run alembic heads` — it should print `0016_place_boundary_cells`; use whatever it prints). In `upgrade()` create `fountain_photos`, `storage_cleanup`, `upload_attempts` with **explicit named** PK/FK/CHECK/index constraints matching the model `__table_args__`. Add the partial indexes: `fountain_photos` `WHERE is_hidden = false` on `(fountain_id, created_at DESC)` and `(user_id, created_at)`; `storage_cleanup` `WHERE status='pending'` on `(created_at)`; `upload_attempts` on `(user_id, status, created_at)`. `downgrade()` drops all three (reverse order).
 
 - [ ] **Step 2: Apply.** Run: `cd backend && uv run alembic upgrade head` Expected: revision 0017 applied, no error.
 
-- [ ] **Step 3: Check drift.** Run: `cd backend && uv run alembic check` Expected: "No new upgrade operations detected."
+- [ ] **Step 3: Check drift + verify constraint/index names.** Run: `cd backend && uv run alembic check` (expect "No new upgrade operations detected"). Then — because `alembic check` does **not** compare CHECK definitions (`claude_help/testing-ci.md`) — verify the CHECK/partial-index names exist against the live DB: `cd backend && uv run python -c "import asyncio,sqlalchemy as sa; from app.db import engine; ..."` querying `pg_constraint`/`pg_indexes` for the expected names (or a psql `\d fountain_photos`). Confirm the `content_type='image/jpeg'` and `width/height/byte_size>0` CHECKs and the two partial indexes are present with the deterministic names.
 
 - [ ] **Step 4: Round-trip.** Run: `cd backend && uv run alembic downgrade -1 && uv run alembic upgrade head` Expected: both succeed.
 
@@ -358,7 +362,7 @@ def process_image(raw: bytes, *, max_edge: int = 2048, thumb_edge: int = 400) ->
 
 **Files:** Create `backend/migrations/versions/0018_photo_reports.py`
 
-- [ ] **Step 1:** `down_revision = "0017"`. Create `photo_reports` with named constraints; add the **partial unique** index `unique(photo_id, reporter_user_id) WHERE status='pending'` and partial indexes `WHERE status='pending'` on `(photo_id)` and on `(reporter_user_id, created_at)`. `downgrade()` drops the table.
+- [ ] **Step 1:** `revision = "0018_photo_reports"`, `down_revision = "0017_fountain_photos"`. Create `photo_reports` with named constraints; add the **partial unique** index `unique(photo_id, reporter_user_id) WHERE status='pending'` and partial indexes `WHERE status='pending'` on `(photo_id)` and on `(reporter_user_id, created_at)`. `downgrade()` drops the table.
 
 - [ ] **Step 2:** `cd backend && uv run alembic upgrade head && uv run alembic check` — applied + drift-free.
 
@@ -427,13 +431,13 @@ async def reactivate_contribution_for_target(session, target_type, target_id) ->
 **Interfaces — Produces:**
 - Constants `PHOTO_UPLOAD_LOCK_NS`, `PHOTO_REPORT_LOCK_NS` (distinct ints, ≠ the existing `ADD_FOUNTAIN` lock key — grep for it and pick unused namespaces).
 - `async def acquire_user_lock(session, namespace: int, user_id) -> None` — `SELECT pg_advisory_xact_lock(:ns, :ukey)` with `ukey = signed-32-bit hash of user_id`.
-- `async def reserve_upload(session, user_id, settings) -> uuid.UUID` — under the upload lock, count non-expired `reserved`+`completed`+`failed` attempts in 60s and `completed` in 24h vs limits; raise `RateLimited` (→429) or insert a `reserved` UploadAttempt and return its id. Also enforce attempt-rate 60/24h.
+- `async def reserve_upload(session, user_id, settings) -> uuid.UUID` — under the upload lock, evaluate **three** checks, each → `RateLimited` (429, with `retry_after`): (a) non-expired `reserved`+`completed`+`failed` attempts in the last 60s ≥ `UPLOAD_ATTEMPTS_PER_MIN` (10); (b) same set in the last 24h ≥ `UPLOAD_ATTEMPTS_PER_DAY` (60); (c) `completed` in the last 24h ≥ `UPLOAD_COMPLETED_PER_DAY` (30). Otherwise insert a `reserved` UploadAttempt and return its id.
 - `async def finalize_upload(session, attempt_id, status: str) -> None`.
 - `async def check_report_rate(session, user_id) -> None` — under the report lock, count reports in 60s/24h vs limits; raise `RateLimited`.
 - `class RateLimited(Exception)` (carries `retry_after: int`).
 - Limits (module constants, tunable): `UPLOAD_ATTEMPTS_PER_MIN=10`, `UPLOAD_ATTEMPTS_PER_DAY=60`, `UPLOAD_COMPLETED_PER_DAY=30`, `REPORTS_PER_MIN=20`, `REPORTS_PER_DAY=100`.
 
-- [ ] **Step 1: Write failing tests** (async DB fixture): reserving 10 in 60s → 11th raises `RateLimited`; a `failed` attempt still counts toward the 60s window; `completed` beyond 30/24h raises; expired `reserved` (created_at older than TTL, forced via direct UPDATE of created_at) does not count; `check_report_rate` caps at 20/60s. Use `func.now() - interval` in seeding or set `created_at` explicitly.
+- [ ] **Step 1: Write failing tests** (async DB fixture): reserving 10 in 60s → 11th raises `RateLimited`; **61 non-expired attempts spread across 24h (no 60s window breached) → 429** (the daily attempt cap); a `failed` attempt still counts toward both attempt windows; `completed` beyond 30/24h raises even when attempt caps aren't hit; expired `reserved` (created_at older than TTL, forced via direct UPDATE of created_at) does not count; `RateLimited.retry_after` is set; `check_report_rate` caps at 20/60s and 100/24h. Seed `created_at` explicitly to place rows in windows.
 
 - [ ] **Step 2: Run — expect FAIL.**
 
@@ -499,11 +503,11 @@ Change `CityFountainsOut.fountains` type to `list[CityFountainPin]`.
 
 **Interfaces — Produces:** `GET /api/v1/fountains/{fountain_id}/photos` → `list[PhotoOut]`; `GET /api/v1/photos/{photo_id}` and `/api/v1/photos/{photo_id}/thumb` → 302 or 404. Helper `photo_out(photo) -> PhotoOut` building `url=/api/v1/photos/{id}`, `thumbnail_url=/api/v1/photos/{id}/thumb`.
 
-- [ ] **Step 1: Write failing tests** (use the app test client + a mocked `get_storage`; seed fountain + a visible + a hidden photo): list returns only visible, newest-first; `GET /photos/{visible}` → 302 with `Location` = the mocked presigned URL; `GET /photos/{hidden}` → 404; unknown id → 404.
+- [ ] **Step 1: Write failing tests** (use the app test client + a mocked `get_storage`; seed fountain + a visible + a hidden photo): list returns only visible, newest-first; `GET /photos/{visible}` → 302 with `Location` = the mocked presigned URL; `GET /photos/{hidden}` → 404; unknown id → 404; **with storage disabled (`get_storage` → None): visible → 503, hidden/unknown → 404**.
 
 - [ ] **Step 2: Run — expect FAIL.**
 
-- [ ] **Step 3: Implement** the router (`APIRouter(prefix="/api/v1", tags=["photos"])`), the read endpoints returning `RedirectResponse(storage.presign_get(key), status_code=302)` with `Cache-Control: private, max-age=60`, `photo_out` helper, and register `app.include_router(photos.router)` in `main.py`. Reads use `get_storage(settings)`; if None (disabled) → 404 (nothing to serve).
+- [ ] **Step 3: Implement** the router (`APIRouter(prefix="/api/v1", tags=["photos"])`), the read endpoints returning `RedirectResponse(storage.presign_get(key), status_code=302)` with `Cache-Control: private, max-age=60`, `photo_out` helper, and register `app.include_router(photos.router)` in `main.py`. Read-gate order: **unknown id or `is_hidden` → 404** (don't reveal hidden/missing); for a **visible existing row** when `get_storage(settings)` is None (misconfigured storage) → **503** with a structured error + WARNING log (an operational misconfig must not masquerade as "not found", per the observability standard).
 
 - [ ] **Step 4: Run — expect PASS.** `cd backend && uv run pytest tests/test_photos_read.py -v`
 
@@ -511,17 +515,49 @@ Change `CityFountainsOut.fountains` type to `list[CityFountainPin]`.
 
 ---
 
+### Task B12a: Streaming multipart file reader
+
+**Files:** Create `backend/app/multipart_read.py`; Test `backend/tests/test_multipart_read.py`
+
+**Interfaces — Produces:** `async def read_capped_multipart_file(request: Request, max_bytes: int) -> bytes` — streams the request body via `request.stream()`, feeds `python-multipart`'s streaming parser (`multipart.MultipartParser` with the boundary from the `Content-Type` header), extracts the first file part's bytes, and raises `TooLarge` (→413) the instant the accumulated bytes exceed `max_bytes` (never buffering unbounded). `class TooLarge(Exception)`.
+
+- [ ] **Step 1: Write failing tests** (build a Starlette `Request` from an ASGI scope + a `receive` that yields multipart chunks, or use the app test client posting `files=`): a valid small file returns its exact bytes; a body exceeding `max_bytes` raises `TooLarge` after reading ≤ `max_bytes + one chunk` (assert it aborts early, e.g. via a chunk counter); a non-multipart content-type raises a clear error.
+
+- [ ] **Step 2: Run — expect FAIL.** `cd backend && uv run pytest tests/test_multipart_read.py -v`
+
+- [ ] **Step 3: Implement** using `python-multipart` (`from multipart import MultipartParser` / the `multipart.multipart` callback API) fed chunk-by-chunk from `async for chunk in request.stream()`; track a running byte total and raise `TooLarge` when it would exceed `max_bytes`; collect the first file part's data into a `bytearray`. Parse the boundary from `request.headers["content-type"]`.
+
+- [ ] **Step 4: Run — expect PASS.**
+
+- [ ] **Step 5: Commit.** `git add backend/app/multipart_read.py backend/tests/test_multipart_read.py && git commit -m "feat(backend): size-capped streaming multipart file reader"`
+
+---
+
 ### Task B12: Photo router — upload
 
 **Files:** Modify `backend/app/routers/photos.py`; Test `backend/tests/test_photos_upload.py`
 
-**Interfaces — Produces:** `POST /api/v1/fountains/{fountain_id}/photos` (multipart) → `PhotoOut`.
+**Interfaces — Consumes:** `read_capped_multipart_file` (B12a), `reserve_upload`/`finalize_upload` (B9), `process_image` (B4), `get_storage` (B3), `dk_photo_first`/`record_contributions` (B8). **Produces:** `POST /api/v1/fountains/{fountain_id}/photos` (multipart) → `PhotoOut`.
 
-- [ ] **Step 1: Write failing tests** (mock `get_storage` + `process_image` where useful; seed fountain): happy path inserts a row + returns `PhotoOut`, awards `photo_first` on the first photo (2nd doesn't); over-size → 413; non-image → 415; per-fountain cap (seed 20) → 409; per-user cap (seed 5 by user) → 409; over-quota via reservation → 429; `photos_enabled=False` → 503; a step-4 conflict deletes uploaded objects (assert `delete_object` called) or writes a `storage_cleanup` row on delete failure; concurrent uploads can't exceed quota (fire N tasks, assert committed ≤ limit).
+- [ ] **Step 1: Write failing tests** (mock `get_storage` + `process_image` where useful; seed fountain). Assert:
+  - happy path inserts a row + returns `PhotoOut`; awards `photo_first` on the first photo (2nd doesn't); the awarded `ContributionEvent` has `user_id == uploader.id`, `target_type == "photo"`, `target_id == photo_id`, and a non-null `location` (copied from the fountain);
+  - **`photos_enabled=False` → 503 and neither the body is read nor `process_image`/`put_object` called** (before reservation);
+  - **over-quota via reservation → 429 with `Retry-After`, and `process_image`/`put_object` are NOT called** (reservation precedes body read) — assert via mock call-count;
+  - over-size (>10 MB) → 413; non-image → 415; per-fountain cap (seed 20 visible) → 409; per-user cap (seed 5 by user) → 409;
+  - **reservation finalize status** is `failed` for the 413/415/409/upload-failure cases and `completed` on success (query `upload_attempts`);
+  - a step-4 cap conflict deletes the uploaded objects (assert `delete_object` called) and, when `delete_object` raises, writes a `storage_cleanup` row (`reason='upload_orphan'`);
+  - concurrent uploads can't exceed quota (fire N tasks, assert committed rows ≤ limit).
 
 - [ ] **Step 2: Run — expect FAIL.**
 
-- [ ] **Step 3: Implement** the endpoint using the §8.1 sequence: `Depends(require_named_user)`; 503 if `get_storage` None; step-1 cheap 404 check; step-2 `reserve_upload` (429 on `RateLimited`, `Retry-After`); read the file part with a **10 MB streaming cap** (413) — read from `request.stream()`/a size-guarded `UploadFile` read; `await run_in_threadpool(process_image, raw)` (415 on `UnsupportedImage`); `run_in_threadpool` the two `put_object` calls (keys `fountains/{fid}/{pid}.jpg` + `_thumb.jpg`, `pid=uuid4()`); step-4 short txn: advisory user lock already released — re-acquire fountain `FOR UPDATE`, re-check caps (409 → cleanup + finalize failed), insert row, `record_contributions([ContributionSpec(event_type="photo_first", target_type="photo", target_id=photo_id, fountain_id=fid, dedup_key=dk_photo_first(fid))])`, `finalize_upload(reservation, "completed")`, commit; step-5 on any failure after upload: delete objects (best-effort→on failure insert `StorageCleanup(reason="upload_orphan")`), `finalize_upload(reservation, "failed")`. Structured logs throughout (no secrets).
+- [ ] **Step 3: Implement** the endpoint `async def upload_photo(request: Request, fountain_id: uuid.UUID, user: User = Depends(require_named_user), session=..., settings=...)`. **Do NOT declare an `UploadFile`/`Form` body param** — that forces FastAPI to parse the multipart body before the function runs, defeating reserve-before-work. Sequence (spec §8.1):
+  1. `storage = get_storage(settings)`; if None → **503** `photo_uploads_unavailable` (no body read).
+  2. Cheap 404 check: fountain exists + not hidden (no lock).
+  3. **Reservation** — `reservation_id = await reserve_upload(session, user.id, settings)` (its own short txn; `RateLimited` → **429** + `Retry-After`; **no body read yet**).
+  4. **Read + validate** (wrapped so every failure finalizes the reservation `failed`): `raw = await read_capped_multipart_file(request, 10*1024*1024)` (Task B12a; `TooLarge` → 413); `processed = await run_in_threadpool(process_image, raw)` (`UnsupportedImage` → 415).
+  5. **Upload** both objects via `run_in_threadpool(storage.put_object, ...)` — keys `fountains/{fountain_id}/{pid}.jpg` and `..._thumb.jpg`, `pid = uuid4()`.
+  6. **Short txn:** `SELECT ... FOR UPDATE` the fountain; re-check caps → **409**; insert the `FountainPhoto`; award via `record_contributions([ContributionSpec(user_id=user.id, event_type="photo_first", target_type="photo", target_id=pid, fountain_id=fountain_id, location=fountain.location, dedup_key=dk_photo_first(fountain_id))])`; `await finalize_upload(session, reservation_id, "completed")`; `commit`.
+  7. **Failure handler** (a single `try/except` spanning steps 4–6): on **any** exception after the reservation exists — 413/415 (before upload), 409/DB failure (after upload) — run in a fresh short txn: `finalize_upload(session, reservation_id, "failed")`; and if objects were already uploaded, `run_in_threadpool(storage.delete_object, key)` for each (on delete failure insert `StorageCleanup(reason="upload_orphan")`), then re-raise as the mapped HTTP error. This guarantees the reservation is **never** left `reserved` and failures still cost budget. Structured logs throughout (fountain/user id, sizes, outcome; no secrets).
 
 - [ ] **Step 4: Run — expect PASS.** `cd backend && uv run pytest tests/test_photos_upload.py -v`
 
@@ -535,11 +571,11 @@ Change `CityFountainsOut.fountains` type to `list[CityFountainPin]`.
 
 **Interfaces — Produces:** `DELETE /api/v1/fountains/{fountain_id}/photos/{photo_id}` (owner) → 204; `POST /api/v1/fountains/{fountain_id}/photos/{photo_id}/report` → 204.
 
-- [ ] **Step 1: Write failing tests:** owner delete removes row + calls `delete_object` + reverses point + resolves pending reports; non-owner → 403; object-delete failure → 5xx + `storage_cleanup` row. Report: any signed-in user creates a pending report; duplicate pending → 204 and **the session still commits** (no IntegrityError); category validated (422 on bad); note >500 → 422; report on hidden photo allowed; report rate → 429; unknown photo → 404.
+- [ ] **Step 1: Write failing tests:** owner delete removes the row + calls `delete_object` + reverses the point, and its pending `photo_reports` are gone (removed by `ON DELETE CASCADE` — assert the report rows no longer exist, not that they carry a `resolution`); non-owner → 403; object-delete failure → 5xx + `storage_cleanup` row (`reason='moderation_delete'`). Report: any signed-in user creates a pending report; duplicate pending → 204 and **the session still commits** (no IntegrityError); category validated (422 on bad); note >500 → 422; report on hidden photo allowed; report rate → 429; unknown photo → 404.
 
 - [ ] **Step 2: Run — expect FAIL.**
 
-- [ ] **Step 3: Implement.** Delete: `require_named_user`, load photo (404), ownership (403), `run_in_threadpool(delete_object)` for both keys (on failure insert `StorageCleanup(reason="moderation_delete")` and raise 500), delete row, `reverse_contribution_for_target("photo", photo_id)`, resolve pending reports (`UPDATE ... SET status='resolved', resolution='hidden'`... actually for owner-delete mark resolved w/ resolution NULL or 'rejected'? Use `resolution='hidden'` since the content is gone), commit, 204. Report: `Depends(get_current_user)`, `check_report_rate` (429), 404 if photo missing, then `INSERT ... ON CONFLICT DO NOTHING` on the partial-unique predicate via `pg_insert(PhotoReport).on_conflict_do_nothing(...)` using `.returning(id)` row-count to decide; log ids/category only; 204 always (idempotent).
+- [ ] **Step 3: Implement.** Delete: `require_named_user`, load photo (404), ownership check (403), `run_in_threadpool(delete_object)` for both keys (on failure insert `StorageCleanup(reason="moderation_delete")` and raise 500), `reverse_contribution_for_target(session, "photo", photo_id)` **before** deleting the row (so the awarded event is still found), then delete the row — the photo's `photo_reports` are removed automatically by `ON DELETE CASCADE` (no `resolution` write), `commit`, 204. Report: `Depends(get_current_user)`, `check_report_rate` (429), 404 if photo missing, then `pg_insert(PhotoReport).values(...).on_conflict_do_nothing(index_elements=["photo_id","reporter_user_id"], index_where=(PhotoReport.status=="pending")).returning(PhotoReport.id)` — use the row-count to decide (no exception path); log ids/category only (never the note); 204 always (idempotent).
 
 - [ ] **Step 4: Run — expect PASS.** `cd backend && uv run pytest tests/test_photos_delete_report.py -v`
 
@@ -557,7 +593,13 @@ Change `CityFountainsOut.fountains` type to `list[CityFountainPin]`.
 
 - [ ] **Step 2: Run — expect FAIL.**
 
-- [ ] **Step 3: Implement.** Clone `admin_patch_note` (admin.py ~215) for `admin_patch_photo`; reuse `_admin_context` for audit logs. Queue: a grouped query (join `photo_reports` pending → `fountain_photos`, `GROUP BY photo`, `array_agg` distinct categories, `array_agg` recent notes limited/truncated in Python, `min(created_at)` first_reported, `count`). Hide → `reverse_contribution_for_target`/reactivate + resolve reports. Delete → `run_in_threadpool(delete_object)` first (5xx + `storage_cleanup` on failure), then delete row + reverse point. Register any new routes on the existing admin router.
+- [ ] **Step 3: Implement.** Clone `admin_patch_note` (admin.py ~215) for `admin_patch_photo`; reuse `_admin_context` for audit logs.
+  - **Queue** (`GET /admin/photo-reports`): two-part query to bound the admin-only PII notes. (1) A **grouped subquery** over pending `photo_reports` joined to `fountain_photos`: `GROUP BY photo_id` selecting `count(*) AS report_count`, `array_agg(DISTINCT category) AS categories`, `min(created_at) AS first_reported_at`; order by `first_reported_at ASC`; `limit/offset`. (2) For that page's photo ids, a **`LATERAL`** (or per-row correlated) subquery selecting the **3 newest non-null notes** per photo `ORDER BY created_at DESC LIMIT 3`, each truncated to 200 chars via `left(note, 200)` **in SQL** (so untruncated notes never leave the DB). Join in the fountain id + uploader display name + `is_hidden` + the gated `url`/`thumbnail_url`. Never log the notes.
+  - **Summary** (`GET /admin/photo-reports/summary`): `SELECT count(DISTINCT photo_id) FROM photo_reports WHERE status='pending'`.
+  - **Hide** (`PATCH /admin/photos/{id}`): flip `is_hidden` + stamp `hidden_by_user_id/hidden_at` (clone admin_patch_note); on hide → `reverse_contribution_for_target(session, "photo", id)` + resolve this photo's pending reports (`UPDATE ... SET status='resolved', resolution='hidden', resolved_by_user_id=admin.id, resolved_at=now()`); on unhide → `reactivate_contribution_for_target(...)` (already-resolved reports stay resolved). Audit log.
+  - **Dismiss** (`POST /admin/photos/{id}/dismiss-reports`): `UPDATE ... SET status='resolved', resolution='rejected', resolved_by_user_id, resolved_at` for pending reports; photo unchanged; 204; audit log.
+  - **Delete** (`DELETE /admin/photos/{id}`): `run_in_threadpool(delete_object)` both keys first (5xx + `storage_cleanup(reason='moderation_delete')` on failure), `reverse_contribution_for_target(...)` before deleting the row, then delete the row (reports removed by cascade). Audit log.
+  - Register the new routes on the existing admin router (`require_admin` dep).
 
 - [ ] **Step 4: Run — expect PASS.** `cd backend && uv run pytest tests/test_admin_photos.py -v`
 
@@ -573,7 +615,21 @@ Change `CityFountainsOut.fountains` type to `list[CityFountainPin]`.
 
 - [ ] **Step 2: Run — expect FAIL.**
 
-- [ ] **Step 3: Implement** per spec §12: keep the existing page query (ranking/count/id order + limit/offset) selecting the fountain page; then `LEFT JOIN LATERAL (SELECT id FROM fountain_photos WHERE fountain_id = f.id AND is_hidden = false ORDER BY created_at DESC LIMIT 1) tp ON true` for the representative id and a scalar `(SELECT count(*) FROM fountain_photos WHERE fountain_id = f.id AND is_hidden = false)` for `photo_count`; build `CityFountainPin(..., photo_count=n, thumbnail_url=f"/api/v1/photos/{tp_id}/thumb" if tp_id else None)`.
+- [ ] **Step 3: Implement** per spec §12 in **SQLAlchemy 2 async** (not raw SQL). Import `FountainPhoto`. Add two **correlated scalar subqueries** as extra columns on the existing `select(...)` (keep the `WHERE city_place_id == place.id, is_hidden.is_(False)` filter and the **exact** existing `order_by(ranking_score.desc().nulls_last(), rating_count.desc(), id.asc())` + `limit`/`offset` untouched):
+```python
+thumb_id_sq = (
+    select(FountainPhoto.id)
+    .where(FountainPhoto.fountain_id == Fountain.id, FountainPhoto.is_hidden.is_(False))
+    .order_by(FountainPhoto.created_at.desc())
+    .limit(1).correlate(Fountain).scalar_subquery()
+)
+photo_count_sq = (
+    select(func.count()).select_from(FountainPhoto)
+    .where(FountainPhoto.fountain_id == Fountain.id, FountainPhoto.is_hidden.is_(False))
+    .correlate(Fountain).scalar_subquery()
+)
+```
+  Add `thumb_id_sq.label("thumb_id"), photo_count_sq.label("photo_count")` to the selected columns; then build `CityFountainPin(..., photo_count=row.photo_count, thumbnail_url=(f"/api/v1/photos/{row.thumb_id}/thumb" if row.thumb_id else None))`. Change the constructor from `FountainPin` to `CityFountainPin`. Because both are scalar subqueries (exactly one value per row), the page's row count/order/pagination are unchanged.
 
 - [ ] **Step 4: Run — expect PASS.** `cd backend && uv run pytest tests/test_city_photos.py -v`
 
@@ -599,7 +655,7 @@ Change `CityFountainsOut.fountains` type to `list[CityFountainPin]`.
 
 **Files:** Modify `infra/terraform/main.tf`
 
-- [ ] **Step 1:** Copy the `digitalocean_spaces_bucket.basemap` block (+ its project-resource registration) to a **private** `digitalocean_spaces_bucket.photos` gated by a new `variable "manage_photos_spaces" { default = false }`. **No** public CDN and **no** public-read; add it to `digitalocean_project_resources.main`. Keep the "Phase 4 photos bucket" comment updated to "landed".
+- [ ] **Step 1:** Copy the `digitalocean_spaces_bucket.basemap` block (+ its project-resource registration) to a **private** `digitalocean_spaces_bucket.photos` gated by a new `variable "manage_photos_spaces" { default = false }`. **No** public CDN and **no** public-read; add it to `digitalocean_project_resources.main`. Pin a concrete bucket name (`name = "fountainrank-photos"`) and reuse the existing region variable the basemap bucket uses. Add a short comment block documenting the **`production` GitHub environment secret names** that feed the backend's runtime settings so CI/deploy wiring isn't guesswork: `SPACES_ENDPOINT`, `SPACES_REGION`, `SPACES_BUCKET` (= `fountainrank-photos`), `SPACES_ACCESS_KEY`, `SPACES_SECRET_KEY` (these map to `config.py`'s `spaces_*` fields and the `secretKeyRef`s in I2). Update the "Phase 4 photos bucket" comment to "landed".
 
 - [ ] **Step 2: Validate (read-only).** Run: `cd infra/terraform && terraform init -backend=false && terraform fmt -check && terraform validate` Expected: valid, formatted. **Do not** `plan` against real creds or `apply`.
 
@@ -645,7 +701,7 @@ Change `CityFountainsOut.fountains` type to `list[CityFountainPin]`.
 
 **Interfaces — Produces:** `uploadPhoto(fountainId, formData) -> ActionResult`; `reportPhoto(fountainId, photoId, category, note?) -> ActionResult`; `deleteOwnPhoto(fountainId, photoId) -> ActionResult`.
 
-- [ ] **Step 1:** Implement `uploadPhoto` with a **raw fetch** (multipart): read the token via `getActionAccessToken(requestId)`, `fetch(\`${resolveApiBaseUrl()}/api/v1/fountains/${fountainId}/photos\`, { method:"POST", headers:{ Authorization:\`Bearer ${token}\`, "X-Request-ID":requestId }, body: formData })`, map status via the existing `mapStatus`, then `revalidatePath(\`/fountains/${fountainId}\`)`. `reportPhoto` uses the typed `run(...)` helper + `client.POST("/api/v1/fountains/{fountain_id}/photos/{photo_id}/report", { params, body:{category, note} })`. `deleteOwnPhoto` uses `run(...)` + `client.DELETE(".../photos/{photo_id}")`.
+- [ ] **Step 1:** Implement `uploadPhoto` with a **raw fetch** (multipart): read the token via `getActionAccessToken(requestId)`, `fetch(\`${resolveApiBaseUrl()}/api/v1/fountains/${fountainId}/photos\`, { method:"POST", headers:{ Authorization:\`Bearer ${token}\`, "X-Request-ID":requestId }, body: formData })`, then `revalidatePath(\`/fountains/${fountainId}\`)`. **409 handling:** the existing `mapStatus` maps every 409 → `needs_name`, but photo upload also returns 409 for `photo_limit_fountain`/`photo_limit_user`. Extend the `ContributeError` union with a `photo_limit` variant and, in `uploadPhoto`, inspect the JSON body's `detail` to distinguish `display_name_required` (→ `needs_name`) from `photo_limit_*` (→ `photo_limit`); also add `429` → a `rate_limited` variant. `reportPhoto` uses the typed `run(...)` helper + `client.POST("/api/v1/fountains/{fountain_id}/photos/{photo_id}/report", { params, body:{category, note} })` (map its `429` too). `deleteOwnPhoto` uses `run(...)` + `client.DELETE(".../photos/{photo_id}")`.
 
 - [ ] **Step 2:** Typecheck + any test. Run: `pnpm exec turbo run lint typecheck test --filter=web`
 
@@ -703,9 +759,9 @@ Change `CityFountainsOut.fountains` type to `list[CityFountainPin]`.
 
 **Files:** Create `web/lib/server/photo-reports.ts`; Modify `web/app/actions/admin.ts`
 
-**Interfaces — Produces:** `getPhotoReportsServer(requestId) -> {data, status}`; `getPendingReportCount(requestId) -> number`; actions `adminHidePhoto(photoId, isHidden)`, `adminDismissPhotoReports(photoId)`, `adminDeletePhoto(photoId)`.
+**Interfaces — Produces:** `getPhotoReportsServer(requestId) -> {data, status}` (server-only, for the RSC queue page); **`fetchPendingReportCount() -> number`** (a `"use server"` **action** in `web/app/actions/admin.ts`, for the client badge); actions `adminHidePhoto(photoId, isHidden)`, `adminDismissPhotoReports(photoId)`, `adminDeletePhoto(photoId)`.
 
-- [ ] **Step 1:** Create `web/lib/server/photo-reports.ts` mirroring `web/lib/server/admin.ts` (`getAuthedApiClient(requestId).GET("/api/v1/admin/photo-reports")` and `.../summary`). Add the three admin actions to `web/app/actions/admin.ts` using the existing `runAdminAction` helper + `client.PATCH/POST/DELETE`.
+- [ ] **Step 1:** Create `web/lib/server/photo-reports.ts` mirroring `web/lib/server/admin.ts` (`getAuthedApiClient(requestId).GET("/api/v1/admin/photo-reports")`). Add to `web/app/actions/admin.ts`: the three admin mutation actions (via the existing `runAdminAction` helper + `client.PATCH/POST/DELETE`), **and** a `"use server"` action `fetchPendingReportCount()` that generates a requestId, calls `getAuthedApiClientForAction(requestId).GET("/api/v1/admin/photo-reports/summary")`, and returns `pending_photo_count` — or **0** on any non-2xx (so a non-admin poll degrades quietly to 0, no noisy 403 surfaced to the client). This action is what the client badge polls; the server-only helper is not callable from a client component.
 
 - [ ] **Step 2: Typecheck.** `pnpm exec turbo run typecheck --filter=web`
 
@@ -729,7 +785,7 @@ Change `CityFountainsOut.fountains` type to `list[CityFountainPin]`.
 
 **Files:** Create `web/components/admin/ReportBadge.tsx`; Modify `web/components/SiteHeader.tsx`, `web/components/AuthControl.tsx`
 
-- [ ] **Step 1:** In `SiteHeader.tsx`, when `viewer.isAdmin`, compute the initial `getPendingReportCount(requestId)` and pass it through `AuthControl` → `UserMenu`. Create `ReportBadge.tsx` (`"use client"`) that renders a badge when count>0 and **polls a server action `getPendingReportCount`** on a ~60s interval (`useEffect` + `setInterval`; server action keeps the token server-side). Overlay it on the avatar button.
+- [ ] **Step 1:** In `SiteHeader.tsx`, when `viewer.isAdmin`, compute the initial count server-side via `getPhotoReportsServer`/the summary helper and pass it through `AuthControl` → `UserMenu` as the badge's initial value. Create `ReportBadge.tsx` (`"use client"`) that renders a badge when count>0 and **polls the `fetchPendingReportCount` server action** (from `web/app/actions/admin.ts`, W6) on a ~60s interval (`useEffect` + `setInterval`, cleared on unmount; the token stays server-side inside the action). Only mounted when `viewer.isAdmin`. Overlay it on the avatar button.
 
 - [ ] **Step 2: Build.** `pnpm exec turbo run lint typecheck test --filter=web` + `build --filter=web` (restore generated files).
 
@@ -763,17 +819,21 @@ Change `CityFountainsOut.fountains` type to `list[CityFountainPin]`.
 
 ---
 
-### Task M2: Multipart upload helper + authed routes
+### Task M2: Sanitized multipart upload method + authed routes
 
-**Files:** Create `mobile/lib/photo-upload.ts`; Modify `mobile/lib/api.ts`
+**Files:** Modify `mobile/lib/api.ts`; Test `mobile/lib/api.test.ts`
 
-**Interfaces — Produces:** `uploadFountainPhoto(apiBaseUrl, getToken, fountainId, asset) -> Promise<{status:number}>` (direct `fetch` with `FormData`, bypassing the facade).
+**Interfaces — Produces:** a new **`uploadMultipart(path, formData) -> Promise<{status:number}>`** method on the `MobileApiClient` facade that reuses the **same sanitized fetch** `createApiClient` already builds (strips any `x-dev*` header, attaches `Authorization: Bearer` via `getAccessToken`) — **not** a separate raw `fetch`, so there is no second unaudited network path for an authenticated write. Also add `/api/v1/admin/photo-reports` and `/api/v1/admin/photo-reports/summary` to the force-authed GET list in `isAuthenticatedApiRequest` (80-108).
 
-- [ ] **Step 1:** Implement `uploadFountainPhoto` doing a direct `fetch(\`${apiBaseUrl}/api/v1/fountains/${fountainId}/photos\`, { method:"POST", headers:{ Authorization:\`Bearer ${await getToken()}\` }, body: formData })` where `formData.append("file", { uri: asset.uri, name, type })`. In `mobile/lib/api.ts` `isAuthenticatedApiRequest` (80-108), add `/api/v1/admin/photo-reports` (and `/summary`) to the force-authed GET list.
+- [ ] **Step 1: Write failing tests** in `mobile/lib/api.test.ts` (mirror the existing sanitizer/classification tests): `uploadMultipart` sends the `FormData` body, attaches the bearer token, and **strips any `x-dev*` header** passed in; `isAuthenticatedApiRequest("/api/v1/admin/photo-reports")` and `.../summary` both return true (so the GET carries a token) while a public route stays false.
 
-- [ ] **Step 2: Typecheck.** `pnpm exec turbo run typecheck --filter=mobile`
+- [ ] **Step 2: Run — expect FAIL.** `pnpm exec turbo run test --filter=mobile`
 
-- [ ] **Step 3: Commit.** `git add mobile/lib/photo-upload.ts mobile/lib/api.ts && git commit -m "feat(mobile): multipart photo-upload helper + authed report routes"`
+- [ ] **Step 3: Implement** `uploadMultipart` inside `createApiClient` (it closes over the same sanitized `fetch` + `getAccessToken`): `const res = await sanitizedFetch(\`${baseUrl}${path}\`, { method:"POST", body: formData })` (let the sanitized fetch add auth; do **not** set `Content-Type` so RN sets the multipart boundary); return `{ status: res.status }`. Expose it on the narrowed facade (167-176) alongside GET/POST/etc. Add the two admin routes to `isAuthenticatedApiRequest`.
+
+- [ ] **Step 4: Run — expect PASS.**
+
+- [ ] **Step 5: Commit.** `git add mobile/lib/api.ts mobile/lib/api.test.ts && git commit -m "feat(mobile): sanitized uploadMultipart method + authed report routes"`
 
 ---
 
@@ -799,7 +859,7 @@ Change `CityFountainsOut.fountains` type to `list[CityFountainPin]`.
 
 **Files:** Modify `mobile/app/fountains/[id].tsx`, `mobile/components/fountain/FountainDetail.tsx`; Create `mobile/components/fountain/PhotoUploadButton.tsx`, `mobile/components/fountain/ReportPhotoButton.tsx`
 
-- [ ] **Step 1:** Add a `photosQuery` (`useQuery` → `client.GET(".../photos")`), a `photoUploadMutation` (calls `uploadFountainPhoto` with `expo-image-picker` result + `auth.getBackendAccessToken`, then `photosQuery.refetch()` + invalidate `["me","contributions"]`), and a `photoReportMutation` (`client.POST(".../report")`). Add a `photos` prop to `mobile/components/fountain/FountainDetail.tsx` (props 16-34) and render `<PhotoCarousel>` after `headerBlock` (~line 63). Add `PhotoUploadButton` into the contribution area and `ReportPhotoButton` per photo. Use `expo-image-picker` `launchImageLibraryAsync({mediaTypes:'images', quality:0.9})` (emits JPEG).
+- [ ] **Step 1:** Add a `photosQuery` (`useQuery` → `client.GET(".../photos")`), a `photoUploadMutation` that builds a `FormData` from the `expo-image-picker` asset (`formData.append("file", { uri, name, type })`) and calls **`client.uploadMultipart(\`/api/v1/fountains/${fountainId}/photos\`, formData)`** (M2), then `photosQuery.refetch()` + invalidate `["me","contributions"]` + map non-2xx via `handleMutationError`, and a `photoReportMutation` (`client.POST(".../report")`). Add a `photos` prop to `mobile/components/fountain/FountainDetail.tsx` (props 16-34) and render `<PhotoCarousel>` after `headerBlock` (~line 63). Add `PhotoUploadButton` into the contribution area and `ReportPhotoButton` per photo. Use `expo-image-picker` `launchImageLibraryAsync({mediaTypes:'images', quality:0.9})` (emits JPEG).
 
 - [ ] **Step 2: Typecheck.** `pnpm exec turbo run lint typecheck --filter=mobile`
 
@@ -811,7 +871,7 @@ Change `CityFountainsOut.fountains` type to `list[CityFountainPin]`.
 
 **Files:** Create `mobile/app/admin/reports.tsx`
 
-- [ ] **Step 1:** New route (auto-registered by the root `<Stack>`). Gate on `useQuery(["me"])` `is_admin` (redirect/empty if not). `useQuery` → `client.GET("/api/v1/admin/photo-reports")`; render a list with thumbnail (`expo-image`), report count/categories/notes, and **Hide** / **Reject** / **Delete** buttons wired to `client.PATCH("/api/v1/admin/photos/{photo_id}")`, `client.POST(".../dismiss-reports")`, `client.DELETE(".../{photo_id}")` mutations that invalidate the reports query + the summary query.
+- [ ] **Step 1:** Create the directory route `mobile/app/admin/reports.tsx` (Expo Router file-based; the root `<Stack>` in `mobile/app/_layout.tsx` auto-registers files, but **verify** the route resolves — add a `<Stack.Screen name="admin/reports" options={{ headerShown: true, title: "Reports" }} />` entry in `mobile/app/_layout.tsx` if the root Stack needs explicit screen options, and confirm `router.push("/admin/reports")` / `<Link href="/admin/reports">` from `account.tsx` (M6) navigates). Gate on `useQuery(["me"])` `is_admin` (render an empty/"not authorized" state + `router.back()` if not admin). `useQuery` → `client.GET("/api/v1/admin/photo-reports")`; render a list with thumbnail (`expo-image`, `apiBase + thumbnail_url`), report count/categories/notes, and **Hide** / **Reject** / **Delete** buttons wired to `client.PATCH("/api/v1/admin/photos/{photo_id}")`, `client.POST(".../dismiss-reports")`, `client.DELETE(".../{photo_id}")` mutations that invalidate the reports query + the `["admin","photo-reports","summary"]` query.
 
 - [ ] **Step 2: Typecheck.** `pnpm exec turbo run lint typecheck --filter=mobile`
 
@@ -835,11 +895,13 @@ Change `CityFountainsOut.fountains` type to `list[CityFountainPin]`.
 
 **Files:** Modify `mobile/components/nav/ProfileTabIcon.tsx`
 
-- [ ] **Step 1:** Add a `useQuery(["admin","photo-reports","summary"], …, { enabled: me.data?.is_admin === true, refetchInterval: 60_000 })` → `client.GET("/api/v1/admin/photo-reports/summary")`; when `pending_photo_count > 0`, overlay a small badge `View` (with count) on the avatar/glyph. Uses the existing `["me"]` subscription (line 45) for admin state.
+- [ ] **Step 1:** `ProfileTabIcon` has no `client` today — import `useApi` (for `client`) and `unwrap` (`mobile/lib/api.ts`). Add `useQuery(["admin","photo-reports","summary"], () => unwrap(client.GET("/api/v1/admin/photo-reports/summary")), { enabled: me.data?.is_admin === true, refetchInterval: 60_000, staleTime: 30_000 })` (reuse the existing `["me"]` subscription at line 45 for `is_admin`); when `pending_photo_count > 0`, overlay a small badge `View` (with count) on the avatar/glyph. The GET carries a token because M2 added `/summary` to `isAuthenticatedApiRequest`.
 
-- [ ] **Step 2: Typecheck.** `pnpm exec turbo run typecheck --filter=mobile`
+- [ ] **Step 2: Add a test** (in a mobile component test or `mobile/lib/api.test.ts` per M2): the badge query is disabled for a non-admin `me` (no fetch), enabled + renders the count for an admin. (M2 already tests the authed-route classification.)
 
-- [ ] **Step 3: Commit.** `git add mobile/components/nav/ProfileTabIcon.tsx && git commit -m "feat(mobile): pending-report badge on profile tab"`
+- [ ] **Step 3: Typecheck + test.** `pnpm exec turbo run typecheck test --filter=mobile`
+
+- [ ] **Step 4: Commit.** `git add mobile/components/nav/ProfileTabIcon.tsx && git commit -m "feat(mobile): pending-report badge on profile tab"`
 
 ---
 

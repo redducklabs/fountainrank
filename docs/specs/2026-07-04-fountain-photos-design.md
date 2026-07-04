@@ -197,8 +197,10 @@ Surface:
 - `put_object(key, data, content_type)` — uploads **private** (`ACL="private"`) with a
   `Cache-Control` (informational; objects are only reached via presigned URLs).
 - `delete_object(key)` — deletes one object; raises on failure (callers decide policy).
-- `presign_get(key, ttl)` — returns a presigned GET URL. To stay cache-friendly the expiry
-  is snapped to a fixed window boundary so the URL is stable within a window.
+- `presign_get(key)` — returns a presigned GET URL valid for `spaces_presign_ttl_seconds`.
+  (Cache-friendly *stable-within-a-window* URLs are a **deferred optimization**: SigV4
+  embeds the signing timestamp, so a truly stable URL string isn't simple with boto3; v1
+  uses the TTL directly and relies on the read endpoint's short `Cache-Control`.)
 - Keys are **server-generated only** (`fountains/{fountain_id}/{photo_id}.jpg` and
   `..._thumb.jpg`, all UUIDs); presign never takes untrusted input.
 
@@ -356,7 +358,9 @@ Public. Visible photos (`is_hidden=false`) ordered `created_at DESC` → `list[P
 ### 8.3 `DELETE /fountains/{fountain_id}/photos/{photo_id}` — delete own
 Auth `require_named_user`, **ownership enforced** (`photo.user_id == user.id`) → 403.
 Hard-deletes Spaces objects (raises → 5xx on failure), deletes the row, reverses the
-first-photo point if this was the awarded photo, resolves any pending reports. Returns 204.
+first-photo point if this was the awarded photo; the photo's pending reports are removed by
+the `ON DELETE CASCADE` on `photo_reports.photo_id` (not resolved with a moderation
+`resolution` value). Returns 204.
 
 ### 8.4 `PhotoOut`
 ```
