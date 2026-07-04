@@ -38,15 +38,13 @@ async def collect_locked_coverage(*, country: str | None = None) -> CoverageRepo
     """Run compute_coverage under the session advisory lock + one READ ONLY REPEATABLE READ txn."""
     engine = get_engine()
     async with engine.connect() as conn:
-        # (1) Acquire the SESSION lock, then COMMIT — the lock survives (session-scoped), and the
-        # commit clears the transaction so (a) isolation can be changed and (b) the next
-        # transaction's snapshot is fixed AFTER the lock wait completed (the load-bearing ordering).
-        await conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": ADD_FOUNTAIN_LOCK_KEY})
-        await conn.commit()
         try:
-            # (2) One READ ONLY REPEATABLE READ transaction — a single consistent snapshot.
-            # Isolation is set now that no transaction is active; the first read below
-            # autobegins it.
+            # Acquire the SESSION lock, then commit: a session-level lock survives the commit, and
+            # committing clears the transaction so (a) isolation can be changed and (b) the next
+            # transaction's read snapshot is fixed AFTER the lock wait completes. Inside try/finally
+            # so a failure of this commit still releases the lock in finally.
+            await conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": ADD_FOUNTAIN_LOCK_KEY})
+            await conn.commit()
             ro = await conn.execution_options(
                 isolation_level="REPEATABLE READ", postgresql_readonly=True
             )
