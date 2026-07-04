@@ -93,8 +93,12 @@ required, caller's own data only (mirrors `/me/contributions`).
 - **Join to fountains, exclude hidden:** join the distinct ids to `fountains` and
   filter `is_hidden = false` so moderated-hidden fountains never surface.
 - **Ordering:** **most-recent-contribution first** — order by the user's
-  `MAX(contribution_events.created_at)` per fountain, descending; tie-break on
-  `fountain.id` for determinism.
+  `MAX(contribution_events.created_at)` per fountain, descending. Because two events
+  can share a `created_at` (same-transaction writes, coarse timestamp granularity),
+  add a deterministic secondary key: `MAX(contribution_events.id)` descending, then
+  `fountain.id` ascending as a final total-order tiebreak. Tests set explicit,
+  distinct `created_at` values so the recency assertion never falls through to the
+  arbitrary id tiebreak.
 - **Serialization:** reuse the exact `FountainPin` shape the city list already uses
   (id, `location` via `latitude_of`/`longitude_of`, `is_working`, `average_rating`,
   `rating_count`, `current_status`, `last_verified_at`), so the web list reuses
@@ -107,17 +111,27 @@ required, caller's own data only (mirrors `/me/contributions`).
 - **Logging:** log the returned fountain count at INFO (no PII; user id only) so the
   path is diagnosable, per the logging standard.
 - **Pagination:** none this iteration. A contributor's own list is expected to be
-  small; if it grows we add `limit`/`offset` like the city endpoint. This cap is
-  called out here so it is a deliberate decision, not an oversight.
+  small; if it grows we add `limit`/`offset` like the city endpoint. As a guardrail
+  against an unbounded aggregate on a private per-user path, the query applies a
+  defensive `LIMIT` (`ME_FOUNTAINS_MAX = 500`) and logs a `WARNING` when the cap is
+  hit, so a power user can't silently produce a slow account page before pagination
+  is revisited. The supporting read is covered by the existing
+  `ix_contribution_events_user_id (user_id, created_at)` index.
 
 ### 3.2 Web: my-fountains page + account link
 
 - **Page** `web/app/account/fountains/page.tsx` — server component, `force-dynamic`,
-  auth-gated exactly like `web/app/account/page.tsx` (Logto context; unauthenticated
-  → the same sign-in prompt). Fetches `/api/v1/me/fountains` with the authed API
-  client and renders `FountainList`. Renders a friendly **empty state** ("You haven't
-  added or rated any fountains yet") when the list is empty, and a graceful
-  error state when the fetch fails (matching the account page's existing pattern).
+  reusing the **full** `web/app/account/page.tsx` auth path, not just a sign-in check:
+  Logto context → unauthenticated shows the same sign-in prompt; authenticated →
+  `syncProfile` best-effort → GET `/api/v1/me` → on profile-load failure render the
+  graceful "couldn't load your profile" state → **honor the `needs_name` first-sign-in
+  gate** (a name-less account is sent to `DisplayNameForm`, exactly as the account page
+  does, so this subpage can't bypass the hard name gate). Only past that gate does it
+  fetch `/api/v1/me/fountains` and render `FountainList`, with a friendly **empty
+  state** ("You haven't added or rated any fountains yet") and a graceful fetch-error
+  state. The shared account-auth preamble (sync + `/me` + `needs_name`) is factored
+  into a small reusable helper so both pages stay in lockstep rather than duplicating
+  the gate.
 - **Link** — add a **"My rated water fountains"** link on `web/app/account/page.tsx`
   (in the signed-in view) pointing to `/account/fountains`.
 - **Route choice:** `/account/fountains` (nested under the existing account section)
@@ -130,11 +144,20 @@ from the path: `activeId = activeIdFromPath(pathname)` (matches `/fountains/[id]
 and an effect sets the `selected-halo` / `selected-pin` MapLibre filters to that id.
 Separately, a `flyto`/`bbox` effect moves the camera and then strips those two params.
 
-Change: derive `activeId` from the new `focus` param **or** the path:
+Change: derive `activeId` from the new `focus` param **or** the path. The resolver
+(and the existing `activeIdFromPath`) move into a **pure, MapLibre-free module**
+`web/lib/map/active-id.ts` so it is unit-testable without importing `MapBrowser`'s
+`maplibre-gl`/CSS/asset graph into jsdom:
 
 ```ts
-const activeId = searchParams.get("focus") ?? activeIdFromPath(pathname);
+// web/lib/map/active-id.ts
+export const activeIdFromPath = (p: string | null) =>
+  p?.match(/^\/fountains\/([^/?#]+)/)?.[1] ?? "";
+export const resolveActiveId = (focus: string | null, pathname: string | null) =>
+  focus ?? activeIdFromPath(pathname);
 ```
+
+`MapBrowser` imports and calls it: `const activeId = resolveActiveId(searchParams.get("focus"), pathname);`
 
 - The existing halo/pin effect then highlights the focused fountain with **no other
   change**; the existing `flyto` effect flies the camera. The halo appears once the
@@ -166,9 +189,16 @@ The button already calls `navigator.share({ url })` and falls back to
 
 ### 5.2 Mobile — new Share button (`mobile/components/fountain/FountainDetail.tsx`)
 
-- Add a Share control to the mobile fountain-detail UI using React Native's
-  `Share.share({ url })` (iOS) / `{ message }` (Android) with the fountain's **web**
-  URL: `` `${webBaseUrl}/fountains/${id}` ``.
+- Add a Share control to the mobile fountain-detail UI using React Native's `Share`.
+  A small **platform-aware** helper builds the payload from the fountain's **web** URL
+  (`` `${webBaseUrl}/fountains/${id}` ``): `{ url }` on iOS (native URL slot) and
+  `{ message: url }` on Android (Android's share sheet ignores `url`, so the URL must
+  be in `message` or targets receive an empty share). The helper branches on
+  `Platform.OS` and is unit-tested for both branches.
+- **`webBaseUrl` threading:** `FountainDetail` is presentational and must not import
+  provider hooks. The screen that renders it (`mobile/app/fountains/[id].tsx`) already
+  has `config` via `useApi()`; it destructures `config.webBaseUrl` and passes it (or a
+  prebuilt `shareUrl`) to `FountainDetail` as a prop.
 - **`webBaseUrl` config:** mobile config exposes `apiBaseUrl` but no web URL. Add a
   `webBaseUrl` field to the mobile config (`mobile/lib/config.ts` + `app.config.ts`
   `extra`), overridable via `EXPO_PUBLIC_WEB_BASE_URL`, defaulting to the production
@@ -182,17 +212,23 @@ The button already calls `navigator.share({ url })` and falls back to
 - **Backend** (`backend/tests/`) — `GET /api/v1/me/fountains`: (a) returns the
   deduped set for a user with add + rate + note events on overlapping fountains
   (one row per fountain); (b) awarded-only (a reversed event does not surface);
-  (c) excludes `is_hidden` fountains; (d) orders most-recent-contribution first;
-  (e) 401 unauthenticated; (f) empty list → `{ fountains: [] }`.
+  (c) excludes `is_hidden` fountains; (d) orders most-recent-contribution first
+  (tests set **explicit, distinct `created_at`** values so recency doesn't fall
+  through to the id tiebreak); (e) **cross-user isolation** — another user's awarded
+  fountain is NOT returned (mirrors the existing `test_me_contributions.py` isolation
+  case); (f) 401 unauthenticated; (g) empty list → `{ fountains: [] }`. Tests use the
+  suite's real fixtures (`client`, `test_user`, `session`) and create reversed/hidden
+  rows via direct model writes with `session` (the API can't produce those states).
 - **Web** (`*.test.tsx` via Vitest) — `FountainListRow`: stars for a rated fountain,
   "Not yet rated" for `average_rating: null`, and the exact `See on Map` href
   (`/?flyto=<lng>,<lat>&focus=<id>`). `ShareButton`: with `navigator.share`
   undefined, clicking copies and shows the "Link copied!" state. `MapBrowser`:
   `activeId` prefers `focus` over the path (a focused pin is highlighted on `/`).
 - **Mobile** (Vitest pure-helper suite) — the web-URL builder
-  (`webBaseUrl` + id → `<host>/fountains/<id>`) and the `webBaseUrl` HTTPS-only config
-  validation. The `Share.share` call site is thin; assert it is invoked with the
-  built URL if the component is testable, otherwise cover the URL builder.
+  (`webBaseUrl` + id → `<host>/fountains/<id>`), the `webBaseUrl` HTTPS-only config
+  validation, and the **platform-aware share-payload helper**: asserts iOS yields
+  `{ url }` and Android yields `{ message }` both carrying the same web URL (mock
+  `Platform.OS`).
 - All of `./run.ps1 check` (backend + web + mobile) green before the PR.
 
 ## 7. Security & standards
