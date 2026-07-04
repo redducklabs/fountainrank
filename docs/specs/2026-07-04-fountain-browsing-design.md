@@ -93,12 +93,13 @@ required, caller's own data only (mirrors `/me/contributions`).
 - **Join to fountains, exclude hidden:** join the distinct ids to `fountains` and
   filter `is_hidden = false` so moderated-hidden fountains never surface.
 - **Ordering:** **most-recent-contribution first** — order by the user's
-  `MAX(contribution_events.created_at)` per fountain, descending. Because two events
-  can share a `created_at` (same-transaction writes, coarse timestamp granularity),
-  add a deterministic secondary key: `MAX(contribution_events.id)` descending, then
-  `fountain.id` ascending as a final total-order tiebreak. Tests set explicit,
-  distinct `created_at` values so the recency assertion never falls through to the
-  arbitrary id tiebreak.
+  `MAX(contribution_events.created_at)` per fountain, descending, with `fountain.id`
+  ascending as the deterministic total-order tiebreak. (We do **not** use
+  `MAX(contribution_events.id)`: `id` is a random `uuid4`, so it carries no recency
+  signal — it would just be an arbitrary tiebreak, and `fountain.id ASC` already gives
+  a stable one.) Two events sharing a `created_at` therefore fall back to the
+  arbitrary-but-stable `fountain.id` order; tests set explicit, distinct `created_at`
+  values so the recency assertion never depends on that fallback.
 - **Serialization:** reuse the exact `FountainPin` shape the city list already uses
   (id, `location` via `latitude_of`/`longitude_of`, `is_working`, `average_rating`,
   `rating_count`, `current_status`, `last_verified_at`), so the web list reuses

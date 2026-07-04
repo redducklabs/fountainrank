@@ -139,20 +139,22 @@ git commit -m "feat: add MyFountainsOut schema (#170)"
   **cross-user isolation**, 401, and empty. Sketch (uses real fixtures + direct writes):
 
 ```python
+import uuid
 from datetime import datetime, timedelta, timezone
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select, update
+from sqlalchemy import update
 from app.auth import get_current_user
 from app.main import app
 from app.models import ContributionEvent, Fountain, User
 
 BASE = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
-async def _add_fountain(client, lat, lng):
+async def _add_fountain(client, lat, lng) -> uuid.UUID:
+    # PgUUID(as_uuid=True) columns bind UUID objects, not strings — parse the API's string id.
     r = await client.post("/api/v1/fountains", json={"location": {"latitude": lat, "longitude": lng}})
     assert r.status_code in (200, 201)
-    return r.json()["id"]
+    return uuid.UUID(r.json()["id"])
 
 def _event(user_id, fountain_id, *, etype, status, when, key):
     return ContributionEvent(
@@ -174,7 +176,7 @@ async def test_me_fountains_dedupes_and_orders_recent_first(client, test_user, s
                        when=BASE + timedelta(minutes=5), key="dup-f_old-rate"))
     await session.commit()
     body = (await client.get("/api/v1/me/fountains")).json()
-    assert [f["id"] for f in body["fountains"]] == [f_new, f_old]  # recent-first, deduped
+    assert [f["id"] for f in body["fountains"]] == [str(f_new), str(f_old)]  # recent-first, deduped
 
 @pytest.mark.asyncio
 async def test_me_fountains_excludes_reversed_and_hidden(client, test_user, session):
@@ -249,7 +251,6 @@ async def get_my_fountains(
         select(
             ContributionEvent.fountain_id.label("fid"),
             func.max(ContributionEvent.created_at).label("last_at"),
-            func.max(ContributionEvent.id).label("last_id"),
         )
         .where(
             ContributionEvent.user_id == current_user.id,
@@ -274,12 +275,9 @@ async def get_my_fountains(
             )
             .join(last_touch, last_touch.c.fid == Fountain.id)
             .where(Fountain.is_hidden.is_(False))
-            # Recent-first; MAX(id) then fountain.id break created_at ties deterministically.
-            .order_by(
-                last_touch.c.last_at.desc(),
-                last_touch.c.last_id.desc(),
-                Fountain.id.asc(),
-            )
+            # Recent-first; fountain.id breaks created_at ties deterministically. (No MAX(id):
+            # contribution_events.id is a random uuid4, so it's not a recency signal.)
+            .order_by(last_touch.c.last_at.desc(), Fountain.id.asc())
             # Defensive guardrail (spec §3.1): bound an unpaginated per-user aggregate.
             .limit(ME_FOUNTAINS_MAX + 1)
         )
@@ -914,11 +912,12 @@ Expected: backend + web + mobile all green. Fix anything red and re-run.
 
 ## Testing summary
 
-- Backend: `tests/test_me_fountains.py` — dedup, awarded-only, excludes hidden, recent-first,
-  401, empty.
-- Web: `see-on-map.test.ts`, `FountainListRow.test.tsx`, `MapBrowser` `resolveActiveId` test,
-  `ShareButton.test.tsx`.
-- Mobile: `config.test.ts` (`webBaseUrl`), `share-url.test.ts`.
+- Backend: `tests/test_me_fountains.py` — dedup, recent-first (explicit distinct `created_at`),
+  awarded-only (reversed excluded), excludes hidden, **cross-user isolation**, 401, empty.
+- Web: `lib/fountain/see-on-map.test.ts`, `components/fountain/FountainListRow.test.tsx`,
+  `lib/map/active-id.test.ts` (pure `resolveActiveId`), `components/fountain/ShareButton.test.tsx`.
+- Mobile: `lib/config.test.ts` (`webBaseUrl` HTTPS-only), `lib/share-url.test.ts` +
+  `lib/share-url.android.test.ts` (URL builder + platform-aware `shareContent` iOS/Android).
 - Full `./run.ps1 check` green before the PR and before every push.
 
 ## Self-review notes (coverage vs spec)
