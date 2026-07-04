@@ -45,6 +45,8 @@ const config: ExpoConfig = {
   },
   extra: {
     apiBaseUrl: process.env.EXPO_PUBLIC_API_BASE_URL ?? "https://api.fountainrank.com",
+    // Public web origin for shareable fountain links (#168). Non-secret; overridable per build.
+    webBaseUrl: process.env.EXPO_PUBLIC_WEB_BASE_URL ?? "https://fountainrank.com",
     logtoEndpoint: process.env.EXPO_PUBLIC_LOGTO_ENDPOINT ?? "https://auth.fountainrank.com",
     logtoAudience: process.env.EXPO_PUBLIC_LOGTO_AUDIENCE ?? "https://api.fountainrank.com",
     authCallbackScheme: "com.redducklabs.fountainrank",

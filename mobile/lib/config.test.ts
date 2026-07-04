@@ -4,6 +4,7 @@ import { isAuthConfigured, isMapConfigured, parseMobileConfig } from "./config";
 
 const VALID = {
   apiBaseUrl: "https://api.fountainrank.com",
+  webBaseUrl: "https://fountainrank.com",
   logtoEndpoint: "https://auth.fountainrank.com",
   logtoAudience: "https://api.fountainrank.com",
   authCallbackScheme: "com.redducklabs.fountainrank",
@@ -48,6 +49,16 @@ describe("parseMobileConfig", () => {
   it("accepts an https host with hyphens (e.g. staging)", () => {
     const staging = { ...VALID, apiBaseUrl: "https://api-staging.fountainrank.com" };
     expect(parseMobileConfig(staging).apiBaseUrl).toBe("https://api-staging.fountainrank.com");
+  });
+
+  it("throws when webBaseUrl is absent", () => {
+    expect(() => parseMobileConfig({ ...VALID, webBaseUrl: undefined })).toThrow(/webBaseUrl/);
+  });
+
+  it("rejects a non-https webBaseUrl (HTTPS-only)", () => {
+    expect(() => parseMobileConfig({ ...VALID, webBaseUrl: "http://fountainrank.com" })).toThrow(
+      /https/,
+    );
   });
 
   it("rejects a non-https logtoEndpoint", () => {

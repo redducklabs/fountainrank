@@ -180,7 +180,7 @@ viewer/admin detail path, so a signed-in or admin viewer can't change the SEO ou
 - **Indexability:** the backend's single §7 predicate (a city resolves, not hidden, and rated OR
   working-and-not-broken) drives `noindex` — below the predicate is `{ index: false, follow: true }`
   (rendered but out of the index); a hidden / unknown / backend-down page is `{ index: false,
-  follow: false }`. Indexable fountains are listed in `/sitemaps/fountains.xml`.
+follow: false }`. Indexable fountains are listed in `/sitemaps/fountains.xml`.
 - **`h1`:** the shared `FountainDetail` takes an optional `locationLabel` so the heading reads
   "Public drinking fountain in {city}" on the public page; it falls back to "Public drinking
   fountain" when no city resolves or on the admin path (which doesn't fetch the public place).
@@ -293,6 +293,24 @@ choice is still pending **and** the app is in production on the canonical host.
 **Accessibility:** `role="region"` + `aria-label="Analytics consent"`; both actions are real
 `<button type="button">`s (keyboard-focusable with visible `focus-visible` rings); the bar does not
 trap focus or block the page — it is dismissed only by choosing Accept or Decline.
+
+---
+
+### Fountain share button (`web/components/fountain/ShareButton.tsx`, `mobile/components/fountain/FountainDetail.tsx`)
+
+Lets a viewer share a fountain's public URL from its detail page (#168).
+
+- **Web:** a pill button (`rounded-full border border-[#cdd6e6] bg-white text-[#0A357E]`). On tap it
+  uses the Web Share sheet when available (mobile browsers); on desktop it copies the canonical
+  fountain URL to the clipboard and **shows feedback** — the label swaps to "Link copied!" for ~2s
+  (or "Couldn't copy" on failure), so it never looks inert. `aria-live="polite"` announces the
+  change; a user-cancelled native share sheet (`AbortError`) stays silent.
+- **Mobile:** a secondary pill next to **Directions** in the detail actions row
+  (`colors.surface` fill, `colors.border` outline, `colors.brandBlue` text — the same shape as the
+  gold **Directions** button, in the secondary treatment). It invokes the native `Share.share` sheet
+  with the fountain's **web** URL (`<webBaseUrl>/fountains/<id>`); the payload is platform-aware —
+  `{ url }` on iOS, `{ message }` on Android (whose sheet ignores `url`). `accessibilityRole="button"`
+  - `accessibilityLabel="Share this fountain"`.
 
 ---
 
