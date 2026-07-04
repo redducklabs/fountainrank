@@ -1,18 +1,30 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 // The data chunks fetch the public place list — stub them, keep the real country/cityPath.
-const { getCountriesServer, getCountryCitiesServer, getFountainsByAttributeServer } = vi.hoisted(
-  () => ({
-    getCountriesServer: vi.fn(),
-    getCountryCitiesServer: vi.fn(),
-    getFountainsByAttributeServer: vi.fn(),
-  }),
-);
+const {
+  getCountriesServer,
+  getCountryCitiesServer,
+  getFountainsByAttributeServer,
+  getIndexableFountainsServer,
+  logFn,
+} = vi.hoisted(() => ({
+  getCountriesServer: vi.fn(),
+  getCountryCitiesServer: vi.fn(),
+  getFountainsByAttributeServer: vi.fn(),
+  getIndexableFountainsServer: vi.fn(),
+  logFn: vi.fn(),
+}));
 vi.mock("../lib/places", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/places")>();
-  return { ...actual, getCountriesServer, getCountryCitiesServer, getFountainsByAttributeServer };
+  return {
+    ...actual,
+    getCountriesServer,
+    getCountryCitiesServer,
+    getFountainsByAttributeServer,
+    getIndexableFountainsServer,
+  };
 });
-vi.mock("../lib/server/log", () => ({ log: vi.fn() }));
+vi.mock("../lib/server/log", () => ({ log: logFn }));
 
 import robots from "./robots";
 import { GET as indexGET } from "./sitemap.xml/route";
@@ -20,6 +32,7 @@ import { GET as attributesGET } from "./sitemaps/attributes.xml/route";
 import { GET as citiesGET } from "./sitemaps/cities.xml/route";
 import { GET as coreGET } from "./sitemaps/core.xml/route";
 import { GET as countriesGET } from "./sitemaps/countries.xml/route";
+import { GET as fountainsGET } from "./sitemaps/fountains.xml/route";
 
 const APEX = "https://fountainrank.com";
 
@@ -33,6 +46,47 @@ describe("sitemap index (/sitemap.xml)", () => {
     expect(xml).toContain(`<loc>${APEX}/sitemaps/countries.xml</loc>`);
     expect(xml).toContain(`<loc>${APEX}/sitemaps/cities.xml</loc>`);
     expect(xml).toContain(`<loc>${APEX}/sitemaps/attributes.xml</loc>`);
+    expect(xml).toContain(`<loc>${APEX}/sitemaps/fountains.xml</loc>`);
+  });
+});
+
+describe("fountains chunk (/sitemaps/fountains.xml)", () => {
+  it("lists /fountains/<id> for each indexable fountain", async () => {
+    getIndexableFountainsServer.mockResolvedValue({
+      data: { fountain_ids: ["f1", "f2"], total_count: 2 },
+      status: 200,
+    });
+    const xml = await (await fountainsGET()).text();
+    expect(xml).toContain(`<loc>${APEX}/fountains/f1</loc>`);
+    expect(xml).toContain(`<loc>${APEX}/fountains/f2</loc>`);
+  });
+
+  it("returns a transient, uncacheable 503 (not a cacheable empty sitemap) when the backend fails", async () => {
+    // A cacheable empty 200 would tell crawlers/CDNs "no indexable fountains" for a full hour on a
+    // transient outage. Instead: log it and 503 with no-store so crawlers retry (Codex pr-171-1).
+    getIndexableFountainsServer.mockResolvedValue({ data: undefined, status: 0 });
+    const res = await fountainsGET();
+    expect(res.status).toBe(503);
+    expect(res.headers.get("cache-control")).toContain("no-store");
+    expect(logFn).toHaveBeenCalledWith(
+      "error",
+      expect.stringMatching(/fountains sitemap/i),
+      expect.any(Object),
+    );
+  });
+
+  it("warns (never silently) when the indexable total exceeds the fetched page", async () => {
+    // total_count (50001) > returned ids (1) => the chunk dropped some; must log, not silently omit.
+    getIndexableFountainsServer.mockResolvedValue({
+      data: { fountain_ids: ["f1"], total_count: 50001 },
+      status: 200,
+    });
+    await fountainsGET();
+    expect(logFn).toHaveBeenCalledWith(
+      "warn",
+      expect.stringMatching(/cap|omitted/i),
+      expect.any(Object),
+    );
   });
 });
 

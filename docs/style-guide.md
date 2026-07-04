@@ -169,6 +169,22 @@ the map (which geolocates the visitor), followed by "Popular cities" (the busies
 cities) and a "Browse by country" wrap list — crawlable internal links. Degrades to just the CTA
 when no places are loaded.
 
+### Fountain-detail SEO metadata (`web/app/fountains/[id]/page.tsx`)
+
+The individual fountain detail page (#127 Slice 5) gains `generateMetadata` + a city-aware `h1`,
+both driven by the **public** `GET /api/v1/fountains/{id}/place` endpoint only — never the
+viewer/admin detail path, so a signed-in or admin viewer can't change the SEO output.
+
+- **Title / canonical:** `Drinking fountain in {city}` (or `Public drinking fountain` when no city
+  resolves) + `alternates.canonical = /fountains/[id]`, plus a matching description + OpenGraph.
+- **Indexability:** the backend's single §7 predicate (a city resolves, not hidden, and rated OR
+  working-and-not-broken) drives `noindex` — below the predicate is `{ index: false, follow: true }`
+  (rendered but out of the index); a hidden / unknown / backend-down page is `{ index: false,
+  follow: false }`. Indexable fountains are listed in `/sitemaps/fountains.xml`.
+- **`h1`:** the shared `FountainDetail` takes an optional `locationLabel` so the heading reads
+  "Public drinking fountain in {city}" on the public page; it falls back to "Public drinking
+  fountain" when no city resolves or on the admin path (which doesn't fetch the public place).
+
 ### Auth buttons (`web/components/SignInButton.tsx`, `SignOutButton.tsx`)
 
 Pill-shaped buttons that submit a Next.js server action (`<form action={...}>`).

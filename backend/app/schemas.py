@@ -354,3 +354,34 @@ class AttributeFountainsOut(BaseModel):
     fountains: list[FountainPin]
     total_count: int
     indexable: bool
+
+
+class FountainPlaceOut(BaseModel):
+    """One fountain's public place membership + indexability verdict (#127 Slice 5, spec §5/§7).
+
+    Computed from PUBLIC, non-hidden data only (never the viewer/admin path), so auth/admin state
+    can never influence indexability or SEO copy. ``city`` is the fountain's most-specific covering
+    city place — it shares its ``(country_code, slug)`` with the canonical city that owns the public
+    ``/[country]/[city]`` URL — and ``country`` is its country place; either is ``None`` when
+    unmatched. Read from the precomputed membership columns (never a live ST_Covers, spec §5).
+    ``indexable`` is the single server-side §7 predicate, so the web sets ``noindex`` from it
+    without re-deriving the rule.
+    """
+
+    fountain_id: uuid.UUID
+    city: PlaceOut | None
+    country: PlaceOut | None
+    indexable: bool
+
+
+class FountainSitemapOut(BaseModel):
+    """The indexable fountain ids for the fountains sitemap chunk (#127 Slice 5, spec §6/§7).
+
+    ``fountain_ids`` are the ids satisfying the single §7 indexing predicate, ordered by id for
+    stable pagination and capped by ``limit``. ``total_count`` is the full indexable total, so the
+    sitemap builder can log (never silently) when a chunk approaches the 50k-URL limit and must be
+    split.
+    """
+
+    fountain_ids: list[uuid.UUID]
+    total_count: int
