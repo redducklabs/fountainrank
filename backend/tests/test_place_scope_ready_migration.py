@@ -24,9 +24,18 @@ async def test_us_and_lu_seeded_city_routes_ready(session):
 
 @pytest.mark.asyncio
 async def test_model_roundtrip_defaults_false(session):
-    """A new row with no explicit flag defaults to NOT ready (server_default false)."""
+    """A new row with no explicit flag defaults to NOT ready (server_default false).
+
+    Self-cleaning: place_scope_config is a reference table that conftest's clean_db does
+    NOT truncate, so this deletes the temp 'zz' row before (idempotent re-runs) and after
+    (no pollution).
+    """
+    await session.execute(text("DELETE FROM place_scope_config WHERE country_code = 'zz'"))
+    await session.commit()
     session.add(PlaceScopeConfig(country_code="zz", eligible_city_subtypes=["locality"]))
     await session.commit()
     row = await session.get(PlaceScopeConfig, "zz")
     assert row is not None
     assert row.city_routes_ready is False
+    await session.execute(text("DELETE FROM place_scope_config WHERE country_code = 'zz'"))
+    await session.commit()
