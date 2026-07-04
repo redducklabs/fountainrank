@@ -2,6 +2,12 @@ packages:
   - "web"
   - "mobile"
   - "packages/*"
+overrides:
+  # Force expo-asset's transitive expo-constants up to the coordinated SDK-56.0.14 patch
+  # (~56.0.20 per expo@56.0.14) so pnpm keeps a single copy. Without this, pnpm preserves
+  # expo-asset's older 56.0.19 resolution and expo-doctor fails the duplicate-native-module
+  # check. Revisit/remove on the next Expo SDK bump.
+  'expo-asset>expo-constants': '56.0.20'
 allowBuilds:
   sharp: true
   unrs-resolver: true
