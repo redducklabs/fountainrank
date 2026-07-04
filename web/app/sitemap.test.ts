@@ -215,6 +215,32 @@ describe("cities chunk (/sitemaps/cities.xml)", () => {
     expect(xml).toContain("<urlset");
     expect(xml).not.toContain("<loc>");
   });
+
+  it("excludes a ready country's cities when its city list is empty (not-ready scope, #127 Slice 1e)", async () => {
+    // The readiness gate is entirely backend: a not-ready scope (e.g. an in-progress OSM import
+    // region) makes the backend return an empty city list for that country — behaviorally
+    // identical to a country with no city yet at K. The country itself is still ready/listed;
+    // only its cities are withheld.
+    getCountriesServer.mockResolvedValue({
+      data: [
+        {
+          id: "1",
+          country_code: "us",
+          slug: "united-states",
+          name: "United States",
+          subtype: "country",
+          fountain_count: 100,
+        },
+      ],
+      status: 200,
+    });
+    getCountryCitiesServer.mockResolvedValue({ data: [], status: 200 });
+    const xml = await (await citiesGET()).text();
+    expect(getCountryCitiesServer).toHaveBeenCalledWith("us", expect.any(String), 1000);
+    expect(xml).toContain("<urlset");
+    expect(xml).not.toContain(`${APEX}/drinking-fountains/us/`);
+    expect(xml).not.toContain("<loc>");
+  });
 });
 
 describe("robots", () => {

@@ -104,6 +104,9 @@ it("generateMetadata: title + canonical + indexable for a ready city", async () 
 });
 
 it("generateMetadata: noindex when below the thin-content gate", async () => {
+  // This also covers a not-ready scope (#127 Slice 1e): the readiness gate is entirely backend —
+  // a not-ready scope makes the backend return `indexable: false` on the exact same field, so it
+  // is behaviorally identical here to the below-K case. No separate web-side assertion is needed.
   getCityFountainsServer.mockResolvedValue({
     data: { ...CITY, indexable: false },
     status: 200,
