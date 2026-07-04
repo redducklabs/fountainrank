@@ -1,4 +1,9 @@
-import { cityPath, getCountriesServer, getCountryCitiesServer } from "../../../lib/places";
+import {
+  cityPath,
+  getCountriesServer,
+  getCountryCitiesServer,
+  SITEMAP_COUNTRY_CAP,
+} from "../../../lib/places";
 import { log } from "../../../lib/server/log";
 import { SITE_URL } from "../../../lib/seo/site";
 import { buildUrlset, sitemapResponse, type SitemapUrl } from "../../../lib/seo/sitemap";
@@ -15,7 +20,14 @@ const CHUNK_SOFT_LIMIT = 45000;
 
 export async function GET(): Promise<Response> {
   const requestId = crypto.randomUUID();
-  const { data: countries } = await getCountriesServer(requestId);
+  // Fetch ALL ready countries (the API max) so no country's cities are silently dropped; log if we
+  // ever hit the cap.
+  const { data: countries } = await getCountriesServer(requestId, SITEMAP_COUNTRY_CAP);
+  if (countries.length >= SITEMAP_COUNTRY_CAP) {
+    log("warn", "cities sitemap hit the country cap; some countries' cities omitted", {
+      cap: SITEMAP_COUNTRY_CAP,
+    });
+  }
 
   const perCountry = await Promise.all(
     countries.map(async (country) => {

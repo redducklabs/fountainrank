@@ -68,6 +68,8 @@ describe("countries chunk (/sitemaps/countries.xml)", () => {
       status: 200,
     });
     const xml = await (await countriesGET()).text();
+    // Fetch ALL countries at the API cap so none are silently dropped (not the helper's 200 default).
+    expect(getCountriesServer).toHaveBeenCalledWith(expect.any(String), 1000);
     expect(xml).toContain(`<loc>${APEX}/drinking-fountains/us</loc>`);
     expect(xml).toContain(`<loc>${APEX}/drinking-fountains/lu</loc>`);
   });
@@ -117,6 +119,7 @@ describe("cities chunk (/sitemaps/cities.xml)", () => {
       status: 200,
     });
     const xml = await (await citiesGET()).text();
+    expect(getCountriesServer).toHaveBeenCalledWith(expect.any(String), 1000);
     expect(getCountryCitiesServer).toHaveBeenCalledWith("us", expect.any(String), 1000);
     expect(xml).toContain(`<loc>${APEX}/drinking-fountains/us/san-diego</loc>`);
     expect(xml).toContain(`<loc>${APEX}/drinking-fountains/us/los-angeles</loc>`);

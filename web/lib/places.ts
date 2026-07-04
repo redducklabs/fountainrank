@@ -7,6 +7,11 @@ export type PlaceOut = components["schemas"]["PlaceOut"];
 
 export type PlacesResult = { data: PlaceOut[]; status: number };
 
+// The backend /api/v1/places `limit` hard cap (server enforces le=1000). Sitemap builders fetch at
+// this cap so they never silently drop rows, and log if a single call ever returns a full page
+// (a signal to paginate). Comfortably above the ~195 real countries.
+export const SITEMAP_COUNTRY_CAP = 1000;
+
 // Pure: the public route for a country page. The segment is the ISO-3166-1 alpha-2 code,
 // lowercased (the DB stores it lowercased and the canonical URL is lowercase).
 export function countryPath(countryCode: string): string {
