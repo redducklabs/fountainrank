@@ -1894,6 +1894,87 @@
         }
       }
     },
+    "/api/v1/places": {
+      "get": {
+        "tags": [
+          "places"
+        ],
+        "summary": "List Places",
+        "description": "List crawlable places, most-populous first.\n\nCountries when ``country`` is omitted; the cities of ``country`` otherwise. Only **canonical**\nplaces (one per ``(country_code, slug)``) with ``fountain_count >= seo_place_min_fountains``\nare returned \u2014 the thin-content gate (spec \u00a77). Hidden fountains are already excluded from\n``fountain_count`` (denormalized at membership refresh), so no per-row hidden filter is needed\nhere. Bounded by ``limit``/``offset`` and served with a public ``Cache-Control`` (both in the\ncontract, not just tests).",
+        "operationId": "list_places_api_v1_places_get",
+        "parameters": [
+          {
+            "name": "country",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 2,
+                  "maxLength": 2
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "ISO-3166-1 alpha-2 country code. Omit to list countries; provide it to list that country's cities (its canonical child places).",
+              "title": "Country"
+            },
+            "description": "ISO-3166-1 alpha-2 country code. Omit to list countries; provide it to list that country's cities (its canonical child places)."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 200,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PlaceOut"
+                  },
+                  "title": "Response List Places Api V1 Places Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/me": {
       "get": {
         "tags": [
@@ -3746,6 +3827,46 @@
           "observations"
         ],
         "title": "ObserveAttributesRequest"
+      },
+      "PlaceOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "country_code": {
+            "type": "string",
+            "title": "Country Code"
+          },
+          "slug": {
+            "type": "string",
+            "title": "Slug"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "subtype": {
+            "type": "string",
+            "title": "Subtype"
+          },
+          "fountain_count": {
+            "type": "integer",
+            "title": "Fountain Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "country_code",
+          "slug",
+          "name",
+          "subtype",
+          "fountain_count"
+        ],
+        "title": "PlaceOut",
+        "description": "A crawlable place (country or city) for the public SEO endpoints (#127, spec \u00a75).\n\nSerialized from ``PlaceBoundary`` (precomputed membership; never a live ST_Covers). The\npublic URL segment is ``country_code`` for a country (ISO-3166-1 alpha-2, lowercased) and\n``slug`` for a city \u2014 both are carried so the client can build either route. ``fountain_count``\nis the denormalized NON-HIDDEN count that drives the \"N fountains\" copy and the >= K gate."
       },
       "RateRequest": {
         "properties": {
