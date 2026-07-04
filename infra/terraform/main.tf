@@ -133,9 +133,23 @@ variable "kubernetes_version_prefix" {
 }
 
 variable "node_size" {
-  description = "DOKS worker node size (minimal default; tune before first apply)."
+  # Right-sized from the initial minimal s-2vcpu-2gb on 2026-07-04: both 2 GB nodes
+  # were ~90% memory-committed (node1 91% req / 133% lim) and node1 tripped DO's 70%
+  # disk-utilization alert (stale web image tags accumulating on a 60 GB fs). s-2vcpu-4gb
+  # doubles RAM (relieves the pressure) and gives an 80 GB fs.
+  #
+  # 🔴 ForceNew — CHANGING THIS RECREATES THE WHOLE CLUSTER. This value feeds the
+  # inline default node_pool of digitalocean_kubernetes_cluster.main, whose `size` the
+  # DO provider marks ForceNew (DO node-pool droplet size is immutable — there is no
+  # in-place resize). `terraform apply` therefore plans "1 to add, 1 to destroy" on the
+  # cluster: a destroy-and-recreate, NOT a rolling node replacement. The new cluster is
+  # empty, so a full deploy.yml redeploy is required afterward. No data loss: there are
+  # no PVCs in-cluster (Postgres/PostGIS is a DO Managed Database, external) and the LB
+  # IP / DNS / cert survive (only the cluster resource is replaced). Treat any change to
+  # this value as a planned maintenance event, not a routine apply.
+  description = "DOKS worker node size. ForceNew: changing it recreates the cluster (see comment)."
   type        = string
-  default     = "s-2vcpu-2gb"
+  default     = "s-2vcpu-4gb"
 }
 
 variable "node_min" {
