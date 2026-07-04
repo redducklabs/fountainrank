@@ -117,6 +117,37 @@ def attribute_consensus_match(key: str, value: str):
     return _attr_match(key, value, include_unknown=False)
 
 
+# The negative operational states for the indexing predicate (spec §7). A fountain in one of these
+# is not a serviceable fountain to index on its own. ``reported_issue`` is a NON-flipping advisory
+# (see app/conditions.py) — deliberately NOT a hard negative — and ``ok``/NULL are fine, so only the
+# two authoritative bad states below de-index an otherwise-working fountain. Single source of truth
+# so the SQL predicate can never drift from the documented rule.
+NEGATIVE_STATUS_VALUES: tuple[str, ...] = ("degraded", "not_working")
+
+
+def fountain_indexable_predicate():
+    """The single public §7 indexing predicate, as a SQL ``WHERE`` expression on ``Fountain``.
+
+    A fountain is indexable **iff** a city resolves (``city_place_id`` is set) **AND** it is not
+    hidden **AND** (it has ``rating_count >= 1`` **OR** it is a working fountain that is not in a
+    negative operational state — ``degraded`` / ``not_working``). Computed ONLY from public,
+    non-hidden, unauthenticated columns, so auth/admin data can never influence indexability or SEO
+    copy. Reused by BOTH the single ``/fountains/{id}/place`` verdict and the fountains sitemap
+    enumeration, so the two can never diverge (the spec's "one predicate" requirement).
+
+    ``current_status IS NULL`` is handled explicitly because ``NULL NOT IN (...)`` is SQL-unknown
+    (not true), so a NULL derived status must fall through to the ``is_working`` baseline.
+    """
+    working = Fountain.is_working.is_(True) & (
+        Fountain.current_status.is_(None) | Fountain.current_status.not_in(NEGATIVE_STATUS_VALUES)
+    )
+    return (
+        Fountain.city_place_id.is_not(None)
+        & Fountain.is_hidden.is_(False)
+        & ((Fountain.rating_count >= 1) | working)
+    )
+
+
 def apply_discovery_filters(
     stmt: Select, f: DiscoveryFilters, *, now: datetime | None = None
 ) -> Select:

@@ -35,6 +35,7 @@ from app.filters import (
     apply_discovery_filters,
     attribute_consensus_match,
     discovery_filters,
+    fountain_indexable_predicate,
 )
 from app.geo import latitude_of, longitude_of, point_geography
 from app.locks import ADD_FOUNTAIN_LOCK_KEY
@@ -46,6 +47,7 @@ from app.models import (
     Fountain,
     FountainAttributeConsensus,
     FountainNote,
+    PlaceBoundary,
     Rating,
     RatingType,
     User,
@@ -63,8 +65,11 @@ from app.schemas import (
     DuplicateFountainConflict,
     FountainDetail,
     FountainPin,
+    FountainPlaceOut,
+    FountainSitemapOut,
     NoteOut,
     ObserveAttributesRequest,
+    PlaceOut,
     RateRequest,
     RatingInput,
 )
@@ -578,6 +583,50 @@ async def fountains_by_attribute(
     )
 
 
+@router.get("/fountains/sitemap", response_model=FountainSitemapOut)
+async def fountains_sitemap(
+    response: Response,
+    limit: int = Query(default=50000, ge=1, le=50000),
+    offset: int = Query(default=0, ge=0),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> FountainSitemapOut:
+    """The indexable fountain ids for the fountains sitemap chunk (spec §6/§7).
+
+    Enumerates the fountains satisfying the single §7 indexing predicate — a city resolves, not
+    hidden, and (rated OR a working, non-degraded/broken fountain) — ordered by id for a stable,
+    deterministic page across offsets. Reads the precomputed membership (never a live ST_Covers)
+    plus the public status columns; unauthenticated + cacheable. ``total_count`` is the full
+    indexable total so the sitemap builder can log (never silently) when a chunk nears the 50k-URL
+    limit and must be split. Declared BEFORE ``/fountains/{fountain_id}`` so the literal ``sitemap``
+    path is not parsed as a UUID.
+    """
+    predicate = fountain_indexable_predicate()
+    total_count = (
+        await session.execute(select(func.count()).select_from(Fountain).where(predicate))
+    ).scalar_one()
+    ids = (
+        (
+            await session.execute(
+                select(Fountain.id)
+                .where(predicate)
+                .order_by(Fountain.id.asc())
+                .limit(limit)
+                .offset(offset)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    ttl = settings.seo_cache_max_age_seconds
+    response.headers["Cache-Control"] = f"public, max-age={ttl}, s-maxage={ttl}"
+    logger.info(
+        "fountains sitemap served",
+        extra={"total_count": total_count, "rows": len(ids), "limit": limit, "offset": offset},
+    )
+    return FountainSitemapOut(fountain_ids=list(ids), total_count=total_count)
+
+
 @router.get("/fountains/{fountain_id}", response_model=FountainDetail)
 async def fountain_detail(
     fountain_id: uuid.UUID,
@@ -592,6 +641,73 @@ async def fountain_detail(
     if fountain is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="fountain not found")
     return await serialize_fountain_detail(session, fountain, user_id=user.id if user else None)
+
+
+@router.get("/fountains/{fountain_id}/place", response_model=FountainPlaceOut)
+async def fountain_place(
+    fountain_id: uuid.UUID,
+    response: Response,
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> FountainPlaceOut:
+    """One fountain's PUBLIC place membership + the §7 indexing verdict (spec §5/§7).
+
+    Public + unauthenticated + cacheable, computed only from non-hidden columns (never the
+    viewer/admin detail path), so auth/admin state can never influence indexability or SEO copy.
+    Resolves the fountain's precomputed country/city place from the membership columns (never a
+    live ST_Covers). 404s a hidden or unknown fountain (matching the detail endpoint), so the web
+    page can ``noindex`` + ``notFound()``. ``indexable`` is the single §7 predicate, evaluated in
+    the same query that loads the row so it can never drift from the sitemap enumeration.
+    """
+    row = (
+        await session.execute(
+            select(Fountain, fountain_indexable_predicate().label("indexable")).where(
+                Fountain.id == fountain_id, Fountain.is_hidden.is_(False)
+            )
+        )
+    ).one_or_none()
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="fountain not found")
+    fountain, indexable = row[0], bool(row[1])
+
+    city = (
+        (
+            await session.execute(
+                select(PlaceBoundary).where(PlaceBoundary.id == fountain.city_place_id)
+            )
+        ).scalar_one_or_none()
+        if fountain.city_place_id is not None
+        else None
+    )
+    country = (
+        (
+            await session.execute(
+                select(PlaceBoundary).where(PlaceBoundary.id == fountain.country_place_id)
+            )
+        ).scalar_one_or_none()
+        if fountain.country_place_id is not None
+        else None
+    )
+
+    ttl = settings.seo_cache_max_age_seconds
+    response.headers["Cache-Control"] = f"public, max-age={ttl}, s-maxage={ttl}"
+    logger.info(
+        "fountain place served",
+        extra={
+            "fountain_id": str(fountain.id),
+            "city_place_id": str(fountain.city_place_id) if fountain.city_place_id else None,
+            "country_place_id": (
+                str(fountain.country_place_id) if fountain.country_place_id else None
+            ),
+            "indexable": indexable,
+        },
+    )
+    return FountainPlaceOut(
+        fountain_id=fountain.id,
+        city=PlaceOut.model_validate(city) if city is not None else None,
+        country=PlaceOut.model_validate(country) if country is not None else None,
+        indexable=indexable,
+    )
 
 
 @router.post(

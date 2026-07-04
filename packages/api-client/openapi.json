@@ -687,6 +687,63 @@
         }
       }
     },
+    "/api/v1/fountains/sitemap": {
+      "get": {
+        "tags": [
+          "fountains"
+        ],
+        "summary": "Fountains Sitemap",
+        "description": "The indexable fountain ids for the fountains sitemap chunk (spec \u00a76/\u00a77).\n\nEnumerates the fountains satisfying the single \u00a77 indexing predicate \u2014 a city resolves, not\nhidden, and (rated OR a working, non-degraded/broken fountain) \u2014 ordered by id for a stable,\ndeterministic page across offsets. Reads the precomputed membership (never a live ST_Covers)\nplus the public status columns; unauthenticated + cacheable. ``total_count`` is the full\nindexable total so the sitemap builder can log (never silently) when a chunk nears the 50k-URL\nlimit and must be split. Declared BEFORE ``/fountains/{fountain_id}`` so the literal ``sitemap``\npath is not parsed as a UUID.",
+        "operationId": "fountains_sitemap_api_v1_fountains_sitemap_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50000,
+              "minimum": 1,
+              "default": 50000,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FountainSitemapOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/fountains/{fountain_id}": {
       "get": {
         "tags": [
@@ -777,6 +834,50 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/FountainDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fountains/{fountain_id}/place": {
+      "get": {
+        "tags": [
+          "fountains"
+        ],
+        "summary": "Fountain Place",
+        "description": "One fountain's PUBLIC place membership + the \u00a77 indexing verdict (spec \u00a75/\u00a77).\n\nPublic + unauthenticated + cacheable, computed only from non-hidden columns (never the\nviewer/admin detail path), so auth/admin state can never influence indexability or SEO copy.\nResolves the fountain's precomputed country/city place from the membership columns (never a\nlive ST_Covers). 404s a hidden or unknown fountain (matching the detail endpoint), so the web\npage can ``noindex`` + ``notFound()``. ``indexable`` is the single \u00a77 predicate, evaluated in\nthe same query that loads the row so it can never drift from the sitemap enumeration.",
+        "operationId": "fountain_place_api_v1_fountains__fountain_id__place_get",
+        "parameters": [
+          {
+            "name": "fountain_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Fountain Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FountainPlaceOut"
                 }
               }
             }
@@ -3806,6 +3907,71 @@
           "rating_count"
         ],
         "title": "FountainPin"
+      },
+      "FountainPlaceOut": {
+        "properties": {
+          "fountain_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Fountain Id"
+          },
+          "city": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlaceOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "country": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlaceOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "indexable": {
+            "type": "boolean",
+            "title": "Indexable"
+          }
+        },
+        "type": "object",
+        "required": [
+          "fountain_id",
+          "city",
+          "country",
+          "indexable"
+        ],
+        "title": "FountainPlaceOut",
+        "description": "One fountain's public place membership + indexability verdict (#127 Slice 5, spec \u00a75/\u00a77).\n\nComputed from PUBLIC, non-hidden data only (never the viewer/admin path), so auth/admin state\ncan never influence indexability or SEO copy. ``city`` is the fountain's most-specific covering\ncity place \u2014 it shares its ``(country_code, slug)`` with the canonical city that owns the public\n``/[country]/[city]`` URL \u2014 and ``country`` is its country place; either is ``None`` when\nunmatched. Read from the precomputed membership columns (never a live ST_Covers, spec \u00a75).\n``indexable`` is the single server-side \u00a77 predicate, so the web sets ``noindex`` from it\nwithout re-deriving the rule."
+      },
+      "FountainSitemapOut": {
+        "properties": {
+          "fountain_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Fountain Ids"
+          },
+          "total_count": {
+            "type": "integer",
+            "title": "Total Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "fountain_ids",
+          "total_count"
+        ],
+        "title": "FountainSitemapOut",
+        "description": "The indexable fountain ids for the fountains sitemap chunk (#127 Slice 5, spec \u00a76/\u00a77).\n\n``fountain_ids`` are the ids satisfying the single \u00a77 indexing predicate, ordered by id for\nstable pagination and capped by ``limit``. ``total_count`` is the full indexable total, so the\nsitemap builder can log (never silently) when a chunk approaches the 50k-URL limit and must be\nsplit."
       },
       "GeocodeResponse": {
         "properties": {
