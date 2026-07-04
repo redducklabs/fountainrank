@@ -79,3 +79,46 @@ export async function getCityFountainsServer(
     return { data: undefined, status: 0 };
   }
 }
+
+// --- Attribute pages (#127 Slice 4, spec §4.5) -----------------------------------------------
+
+// The two crawlable attribute keys. Mirrors the backend `SeoAttribute` Literal (and the union the
+// generated client already enforces on the `attribute` query param) — a superset here would be a
+// compile error at the getFountainsByAttributeServer call site below.
+export type SeoAttributeKey = "bottle_filler" | "wheelchair_reachable";
+
+// A global attribute page's ranked fountains. `indexable` is the backend's thin-content verdict
+// (total_count >= K_attr); the page sets `noindex` from it without knowing the threshold.
+export type AttributeFountainsOut = components["schemas"]["AttributeFountainsOut"];
+
+// The attribute pages that appear in the sitemap, each with the API key that gates its indexability.
+// Their URLs are intentionally different shapes (one nested under /drinking-fountains, one top-level)
+// for the target search phrases, so they are separate static routes rather than one dynamic segment.
+export const ATTRIBUTE_PAGES: { path: string; attribute: SeoAttributeKey }[] = [
+  { path: "/drinking-fountains/bottle-fillers", attribute: "bottle_filler" },
+  { path: "/wheelchair-accessible-drinking-fountains", attribute: "wheelchair_reachable" },
+];
+
+// The static near-me hub page (always indexable — it links out to the map + top places).
+export const NEAR_ME_PATH = "/drinking-fountains-near-me";
+
+// Server-only fetch of a global attribute page's ranked fountains. A network error yields
+// `undefined` with status 0 (the page renders an error state rather than a false 404/noindex).
+export async function getFountainsByAttributeServer(
+  attribute: SeoAttributeKey,
+  requestId?: string,
+  limit = 100,
+): Promise<{ data: AttributeFountainsOut | undefined; status: number }> {
+  const headers: Record<string, string> = {};
+  if (requestId) headers["X-Request-ID"] = requestId;
+  const client = makeClient(resolveApiBaseUrl(), { headers });
+  try {
+    const { data, response } = await client.GET("/api/v1/fountains/by-attribute", {
+      params: { query: { attribute, limit } },
+    });
+    return { data, status: response?.status ?? 0 };
+  } catch {
+    // status 0 = no HTTP response (network error / backend down / DNS failure)
+    return { data: undefined, status: 0 };
+  }
+}

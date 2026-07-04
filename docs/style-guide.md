@@ -141,6 +141,34 @@ Crawlable, server-rendered directory pages for organic search (#127) — the **c
   a unique title/description + `alternates.canonical` (the sticky slug); a non-canonical city URL
   (e.g. wrong case) `permanentRedirect`s (301) to the canonical.
 
+### SEO attribute pages (`web/components/AttributePage.tsx`)
+
+Crawlable global pages for an attribute filter (#127 Slice 4) — **bottle fillers**
+(`/drinking-fountains/bottle-fillers`) and **wheelchair-accessible**
+(`/wheelchair-accessible-drinking-fountains`). Structurally identical, so they share one
+`AttributePage` component + `buildAttributeMetadata`; each route is a thin file supplying a config
+(attribute key, canonical path, heading, copy). The URLs are intentionally different shapes to match
+the target search phrase; `bottle-fillers` is a **static** segment so it wins over the sibling
+`/drinking-fountains/[country]` dynamic route.
+
+- **Shell / title / rows:** identical to the SEO place pages — the same white `max-w-2xl` reading
+  shell, "← Back to the map" link, `h1` in `text-2xl font-black text-[#0A357E]` (the page heading),
+  a `text-slate-600` lead with the live count, and the same `/fountains/[id]` ranked list rows
+  ("Drinking fountain" + `formatAverage`). Empty state: "No public fountains match this yet".
+- **Indexability:** the page always renders (200); the backend's `indexable` verdict (the single
+  source of `K_attr`) drives `noindex` — below the gate, zero matches, or a backend error are all
+  `noindex` (`{ index: false, follow: true }`) and omitted from the sitemap. Unique
+  title/description + `alternates.canonical`.
+
+### Near-me hub (`web/app/drinking-fountains-near-me/page.tsx`)
+
+A static hub (`/drinking-fountains-near-me`, #127 Slice 4) — always indexable, no per-place
+thin-content risk. Same reading shell. A prominent solid brand-blue CTA
+(`rounded-lg bg-[#0C44A0] px-4 py-2 font-bold text-white`, "Open the map near you") deep-links into
+the map (which geolocates the visitor), followed by "Popular cities" (the busiest country's top
+cities) and a "Browse by country" wrap list — crawlable internal links. Degrades to just the CTA
+when no places are loaded.
+
 ### Auth buttons (`web/components/SignInButton.tsx`, `SignOutButton.tsx`)
 
 Pill-shaped buttons that submit a Next.js server action (`<form action={...}>`).
