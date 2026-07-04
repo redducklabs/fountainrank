@@ -12,20 +12,26 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import RedirectResponse
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import require_named_user
+from app.auth import get_current_user, require_named_user
 from app.config import Settings, get_settings
-from app.contributions import ContributionSpec, dk_photo_first, record_contributions
+from app.contributions import (
+    ContributionSpec,
+    dk_photo_first,
+    record_contributions,
+    reverse_contribution_for_target,
+)
 from app.db import get_session
 from app.display import public_display_name
 from app.geo import latitude_of, longitude_of, point_geography
 from app.images import UnsupportedImage, process_image
-from app.models import Fountain, FountainPhoto, StorageCleanup, User
+from app.models import Fountain, FountainPhoto, PhotoReport, StorageCleanup, User
 from app.multipart_read import TooLarge, read_capped_multipart_file
-from app.rate_limit import RateLimited, finalize_upload, reserve_upload
-from app.schemas import DisplayNameRequiredConflict, PhotoOut
+from app.rate_limit import RateLimited, check_report_rate, finalize_upload, reserve_upload
+from app.schemas import DisplayNameRequiredConflict, PhotoOut, ReportPhotoRequest
 from app.storage import Storage, get_storage
 
 router = APIRouter(prefix="/api/v1", tags=["photos"])
@@ -417,4 +423,165 @@ async def upload_photo(
     return photo_out(
         photo,
         uploaded_by=public_display_name(user.display_name, user.logto_user_id, user.nickname),
+    )
+
+
+async def _load_scoped_photo(
+    session: AsyncSession, fountain_id: uuid.UUID, photo_id: uuid.UUID
+) -> FountainPhoto:
+    """Load a photo scoped to its parent fountain (mirrors `submit_note`/`list_notes`
+    nested-fountain scoping in `fountains.py`): a photo whose `fountain_id` doesn't match
+    the path 404s just like an unknown id — the nesting is authoritative, not cosmetic."""
+    photo = (
+        await session.execute(
+            select(FountainPhoto).where(
+                FountainPhoto.id == photo_id, FountainPhoto.fountain_id == fountain_id
+            )
+        )
+    ).scalar_one_or_none()
+    if photo is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="photo not found")
+    return photo
+
+
+@router.delete("/fountains/{fountain_id}/photos/{photo_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_own_photo(
+    fountain_id: uuid.UUID,
+    photo_id: uuid.UUID,
+    user: User = Depends(require_named_user),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> None:
+    """Owner self-delete (fountain-photos design §8.2): the uploader may remove their own
+    photo. Both storage objects are deleted before the row (best-effort with a durable
+    `storage_cleanup` fallback on failure); the still-awarded contribution point is reversed
+    BEFORE the row is deleted so the reversal can still find the event by `target_id`; the
+    row delete then cascades to any pending `photo_reports` (no `resolution` write — the
+    report simply no longer applies to a photo that no longer exists)."""
+    photo = await _load_scoped_photo(session, fountain_id, photo_id)
+    if photo.user_id != user.id:
+        logger.warning(
+            "photo delete forbidden: not the owner",
+            extra={
+                "fountain_id": str(fountain_id),
+                "photo_id": str(photo_id),
+                "user_id": str(user.id),
+            },
+        )
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="not_photo_owner")
+
+    storage = get_storage(settings)
+    if storage is None:
+        logger.warning(
+            "photo delete requested but storage is disabled/misconfigured",
+            extra={"fountain_id": str(fountain_id), "photo_id": str(photo_id)},
+        )
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="photo_delete_unavailable")
+
+    failed_keys: list[str] = []
+    for key in (photo.storage_key, photo.thumbnail_key):
+        try:
+            await run_in_threadpool(storage.delete_object, key)
+        except Exception:
+            logger.error(
+                "failed to delete photo object; recording for durable cleanup",
+                extra={
+                    "object_key": key,
+                    "fountain_id": str(fountain_id),
+                    "photo_id": str(photo_id),
+                },
+            )
+            failed_keys.append(key)
+
+    if failed_keys:
+        for key in failed_keys:
+            session.add(StorageCleanup(object_key=key, reason="moderation_delete"))
+        try:
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            logger.exception(
+                "failed to record storage_cleanup rows for photo delete failure",
+                extra={"fountain_id": str(fountain_id), "photo_id": str(photo_id)},
+            )
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, detail="photo_delete_failed")
+
+    # Reverse the still-awarded point BEFORE deleting the row: the reversal query finds the
+    # `awarded` contribution_events row by `target_id`, which must still make sense as "this
+    # photo's id" at the moment of the reversal (it doesn't require the row to still exist,
+    # but doing it first keeps the sequence obviously correct and matches the brief).
+    await reverse_contribution_for_target(session, "photo", photo_id)
+
+    # Deleting the row cascades to `photo_reports` (ON DELETE CASCADE) — no `resolution`
+    # write needed; a report on a photo that no longer exists simply ceases to exist too.
+    await session.execute(delete(FountainPhoto).where(FountainPhoto.id == photo_id))
+    await session.commit()
+
+    logger.info(
+        "photo deleted by owner",
+        extra={"fountain_id": str(fountain_id), "photo_id": str(photo_id), "user_id": str(user.id)},
+    )
+
+
+@router.post(
+    "/fountains/{fountain_id}/photos/{photo_id}/report", status_code=status.HTTP_204_NO_CONTENT
+)
+async def report_photo(
+    fountain_id: uuid.UUID,
+    photo_id: uuid.UUID,
+    payload: ReportPhotoRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    """Flag a photo for moderation (fountain-photos design §8.3). Any signed-in user may
+    report (a display name is NOT required — unlike contribution-earning actions); reporting
+    is idempotent — a duplicate pending report from the same reporter on the same photo is
+    silently accepted (204) rather than surfacing a conflict, so a double-tap in a flaky
+    client never poisons the async session with an unhandled IntegrityError."""
+    try:
+        await check_report_rate(session, user.id)
+    except RateLimited as exc:
+        await session.rollback()
+        logger.info(
+            "photo report rate limited",
+            extra={"user_id": str(user.id), "reason": exc.reason},
+        )
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=exc.reason,
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from exc
+
+    # Reports may target a hidden photo too (a moderator may still want more signal), so this
+    # deliberately does NOT reuse `_load_visible_photo` — only the nested fountain scoping.
+    photo = await _load_scoped_photo(session, fountain_id, photo_id)
+
+    stmt = (
+        pg_insert(PhotoReport)
+        .values(
+            photo_id=photo.id,
+            reporter_user_id=user.id,
+            category=payload.category,
+            note=payload.note,
+        )
+        .on_conflict_do_nothing(
+            index_elements=["photo_id", "reporter_user_id"],
+            index_where=(PhotoReport.status == "pending"),
+        )
+        .returning(PhotoReport.id)
+    )
+    result = await session.execute(stmt)
+    inserted = result.first() is not None
+    await session.commit()
+
+    # Deliberately logs only ids/category — NEVER the free-text note (may contain PII).
+    logger.info(
+        "photo reported",
+        extra={
+            "fountain_id": str(fountain_id),
+            "photo_id": str(photo_id),
+            "user_id": str(user.id),
+            "category": payload.category,
+            "inserted": inserted,
+        },
     )

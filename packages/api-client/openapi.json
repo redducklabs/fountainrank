@@ -1693,6 +1693,238 @@
         }
       }
     },
+    "/api/v1/fountains/{fountain_id}/photos/{photo_id}": {
+      "delete": {
+        "tags": [
+          "photos"
+        ],
+        "summary": "Delete Own Photo",
+        "description": "Owner self-delete (fountain-photos design \u00a78.2): the uploader may remove their own\nphoto. Both storage objects are deleted before the row (best-effort with a durable\n`storage_cleanup` fallback on failure); the still-awarded contribution point is reversed\nBEFORE the row is deleted so the reversal can still find the event by `target_id`; the\nrow delete then cascades to any pending `photo_reports` (no `resolution` write \u2014 the\nreport simply no longer applies to a photo that no longer exists).",
+        "operationId": "delete_own_photo_api_v1_fountains__fountain_id__photos__photo_id__delete",
+        "parameters": [
+          {
+            "name": "fountain_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Fountain Id"
+            }
+          },
+          {
+            "name": "photo_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Photo Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "X-Dev-User",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Dev-User"
+            }
+          },
+          {
+            "name": "X-Dev-Email",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Dev-Email"
+            }
+          },
+          {
+            "name": "X-Dev-Name",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Dev-Name"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fountains/{fountain_id}/photos/{photo_id}/report": {
+      "post": {
+        "tags": [
+          "photos"
+        ],
+        "summary": "Report Photo",
+        "description": "Flag a photo for moderation (fountain-photos design \u00a78.3). Any signed-in user may\nreport (a display name is NOT required \u2014 unlike contribution-earning actions); reporting\nis idempotent \u2014 a duplicate pending report from the same reporter on the same photo is\nsilently accepted (204) rather than surfacing a conflict, so a double-tap in a flaky\nclient never poisons the async session with an unhandled IntegrityError.",
+        "operationId": "report_photo_api_v1_fountains__fountain_id__photos__photo_id__report_post",
+        "parameters": [
+          {
+            "name": "fountain_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Fountain Id"
+            }
+          },
+          {
+            "name": "photo_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Photo Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "X-Dev-User",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Dev-User"
+            }
+          },
+          {
+            "name": "X-Dev-Email",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Dev-Email"
+            }
+          },
+          {
+            "name": "X-Dev-Name",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Dev-Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportPhotoRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/admin/fountains/{fountain_id}": {
       "get": {
         "tags": [
@@ -4838,6 +5070,37 @@
           "sf_to_nyc_m"
         ],
         "title": "ReadyzResponse"
+      },
+      "ReportPhotoRequest": {
+        "properties": {
+          "category": {
+            "type": "string",
+            "enum": [
+              "inappropriate",
+              "not_a_fountain",
+              "spam",
+              "other"
+            ],
+            "title": "Category"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "category"
+        ],
+        "title": "ReportPhotoRequest"
       },
       "SyncProfileRequest": {
         "properties": {
