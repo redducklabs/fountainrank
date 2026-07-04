@@ -929,8 +929,9 @@ Expected: backend + web + mobile all green. Fix anything red and re-run.
 - Codex spec/plan review 1 (all findings addressed): cross-user isolation test (Task 2);
   `/account/fountains` reuses the full account gate incl. `needs_name` via a shared helper
   (Task 9); `resolveActiveId` in a pure MapLibre-free module (Task 8); platform-aware mobile
-  share payload iOS/Android (Task 13); deterministic recency tiebreak `MAX(id)` + explicit
-  test timestamps (Tasks 2–3); real backend fixtures / direct `session` writes (Task 2);
+  share payload iOS/Android (Task 13); deterministic recency ordering `MAX(created_at) DESC,
+  fountain.id ASC` + explicit test timestamps (Tasks 2–3); real backend fixtures / direct
+  `session` writes (Task 2);
   api-client generated files are gitignored — regen is local-only, nothing committed (Task 4);
   responsive `FountainListRow` (Task 6); `webBaseUrl` threaded via the screen prop (Task 14);
   unpaginated guardrail = defensive `LIMIT 500` + `WARNING` (Task 3).
