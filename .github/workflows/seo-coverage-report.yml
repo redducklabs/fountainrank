@@ -1,0 +1,47 @@
+name: SEO coverage report
+
+# Read-only per-scope SEO coverage report (#127 Slice 1e, spec:
+# docs/specs/2026-07-04-seo-coverage-gate-design.md). Manual dispatch, NO inputs — always emits the
+# full report (a handful of scopes; no injectable input surface). kubectl-execs the deployed
+# seo_coverage_cli in the backend pod (the CI-only prod read path). The CLI itself takes the
+# membership advisory lock + a READ ONLY REPEATABLE READ snapshot; this workflow additionally SHARES
+# osm-boundary-load's concurrency group so a report can never interleave a boundary load's
+# between-batch (un-locked) window.
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: boundary-load-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CLUSTER_NAME: fountainrank-production-cluster
+  NAMESPACE: fountainrank
+
+jobs:
+  coverage:
+    name: SEO coverage report (read-only)
+    runs-on: ubuntu-latest # Class B: handles cluster credentials
+    environment: production
+    steps:
+      - uses: digitalocean/action-doctl@v2.5.2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: Save kubeconfig
+        run: doctl kubernetes cluster kubeconfig save "$CLUSTER_NAME"
+
+      - name: Run the SEO coverage report in the backend pod
+        run: |
+          set -euo pipefail
+          POD="$(kubectl -n "$NAMESPACE" get pod -l app=fountainrank-backend \
+            --field-selector=status.phase=Running \
+            -o jsonpath='{.items[0].metadata.name}')"
+          if [ -z "$POD" ]; then echo "::error::no Running backend pod found"; exit 1; fi
+          echo "backend pod: $POD"
+          echo "::group::seo coverage report (read-only)"
+          kubectl -n "$NAMESPACE" exec "$POD" -- python -m app.imports.seo_coverage_cli
+          echo "::endgroup::"
