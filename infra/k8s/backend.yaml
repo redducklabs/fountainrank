@@ -80,26 +80,31 @@ spec:
                 secretKeyRef:
                   name: fountainrank-secrets
                   key: spaces-endpoint
+                  optional: true
             - name: SPACES_REGION
               valueFrom:
                 secretKeyRef:
                   name: fountainrank-secrets
                   key: spaces-region
+                  optional: true
             - name: SPACES_BUCKET
               valueFrom:
                 secretKeyRef:
                   name: fountainrank-secrets
                   key: spaces-bucket
+                  optional: true
             - name: SPACES_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
                   name: fountainrank-secrets
                   key: spaces-access-key
+                  optional: true
             - name: SPACES_SECRET_KEY
               valueFrom:
                 secretKeyRef:
                   name: fountainrank-secrets
                   key: spaces-secret-key
+                  optional: true
             - name: GOOGLE_DELEGATED_USER
               value: "${GOOGLE_DELEGATED_USER}"
             - name: FROM_EMAIL
