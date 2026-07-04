@@ -177,6 +177,42 @@ class Settings(BaseSettings):
     def geocoding_enabled(self) -> bool:
         return bool(self.geocoding_api_key)
 
+    # --- DO Spaces (fountain photos) ---
+    # S3-compatible object storage for user-uploaded fountain photos. All default None ->
+    # feature disabled (fails closed, same idiom as email/geocoding) until an operator
+    # provisions a Space and sets all five.
+    spaces_endpoint: str | None = None
+    spaces_region: str | None = None
+    spaces_bucket: str | None = None
+    spaces_access_key: str | None = None
+    spaces_secret_key: str | None = None
+    # How long a presigned upload/download URL remains valid.
+    spaces_presign_ttl_seconds: int = 600
+    # How long a client-reserved (not-yet-confirmed) upload slot is held before expiring.
+    upload_reservation_ttl_seconds: int = 120
+
+    @field_validator("spaces_endpoint")
+    @classmethod
+    def _normalize_spaces_endpoint(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.rstrip("/")
+        if not v.startswith("https://"):
+            raise ValueError("spaces_endpoint must be https")
+        return v
+
+    @property
+    def photos_enabled(self) -> bool:
+        return all(
+            [
+                self.spaces_endpoint,
+                self.spaces_region,
+                self.spaces_bucket,
+                self.spaces_access_key,
+                self.spaces_secret_key,
+            ]
+        )
+
 
 @lru_cache
 def get_settings() -> Settings:
