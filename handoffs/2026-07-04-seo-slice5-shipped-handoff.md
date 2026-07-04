@@ -1,13 +1,24 @@
 # SEO crawlable pages — Slice 5 SHIPPED to `main` (2026-07-04)
 
 Self-contained handoff. This session shipped **Slice 5 (fountain-detail metadata + fountains
-sitemap)** for the crawlable-SEO effort (#127). You can continue from this file alone.
+sitemap)** for the crawlable-SEO effort (#127) and deployed+verified it live. You can continue from
+this file alone.
+
+> ## ▶ START HERE (next conversation): finish PR #163 (mobile-doctor)
+> **This is the requested pickup task.** #163 (`fix/mobile-expo-doctor-sdk56-patches`, lockfile-only)
+> was blocked all last session by CI's pnpm `minimumReleaseAge` (24h) gate. **That gate lifts at
+> `2026-07-04 08:52:15Z`** (precise — see §1), so by the next conversation it should be OPEN. The
+> job: re-run #163's CI, confirm `mobile-doctor` + `workspace-js` + `pnpm-audit` all go green, Codex
+> review it (lockfile-only → quick), and squash-merge. That turns `mobile-doctor` green for **all**
+> future PRs. **Full step-by-step runbook + definition-of-done is in §1.** Do NOT touch Slice 5 —
+> it's done + live.
 
 Plan of record: `docs/plans/2026-07-02-crawlable-seo-pages.md` (Slice 5). Spec:
 `docs/specs/2026-07-02-crawlable-seo-pages-design.md` (§5 Backend, §6 Sitemap, §7 Metadata &
 thin-content policy). Prior handoff (superseded for Slice 5): `handoffs/2026-07-04-seo-slice4-shipped-deployed-handoff.md`.
 
-`main` HEAD: `4420114 feat: fountain-detail SEO metadata + fountains sitemap (#127, Slice 5) (#171)`.
+`main` HEAD: `4420114 feat: fountain-detail SEO metadata + fountains sitemap (#127, Slice 5) (#171)`
+(plus the two `docs: handoff` commits on top).
 
 ---
 
@@ -25,24 +36,55 @@ resubmit in GSC+Bing (owner-local — now includes the fountains chunk).
 
 ---
 
-## 1. #163 (mobile-doctor) — READ FIRST, it's red on every PR
+## 1. #163 (mobile-doctor) — THE PICKUP TASK, full runbook
 
-**Unchanged.** `mobile-doctor` is RED on `main` (and every open PR) due to pre-existing Expo SDK-56
-patch drift + CI's pnpm `minimumReleaseAge` (~24h) gate — NOT any SEO work. PR #163
-(`fix/mobile-expo-doctor-sdk56-patches`, lockfile-only) is the correct bump; it can't pass CI until
-the patches cross 24h old: **~2026-07-04 08:53Z**. As of this session's end (~08:00Z) it was still
-gated — could not be finished.
+**What it is.** PR **#163** (`fix/mobile-expo-doctor-sdk56-patches`, head `32dff96`) is a
+**lockfile-only** bump adopting the Expo SDK-56 patch releases that fix `mobile-doctor`. It is NOT
+SEO work; it's the standing fix for the `mobile-doctor` red that shows on every PR (including the
+SEO slices, which merged past it via the documented owner override).
 
-**To finish #163 (once now ≥ 08:53Z):** re-run its CI (`gh pr checks 163 --watch`, or push an empty
-commit / re-run the workflow). **Watch `pnpm-audit`** — it was red alongside `mobile-doctor`/
-`workspace-js` on the last stale run; confirm it clears once the gate passes, else investigate.
-Once `mobile-doctor` + `workspace-js` + `pnpm-audit` are green, Codex-review it (lockfile-only) and
-squash-merge. Then `mobile-doctor` goes green for all future PRs. Do **NOT** commit
-`minimumReleaseAgeExclude` to force a <24h install. Memory: `fountainrank-ci-minimum-release-age-gate`.
+**Why it's been stuck (confirmed from the CI logs, not a guess).** Its last CI run (from
+~2026-07-03 23:47Z) failed THREE checks — `mobile-doctor`, `workspace-js`, `pnpm-audit` — all for
+the SAME root cause: CI's pnpm **`minimumReleaseAge` (24h)** gate. `workspace-js`'s "Install
+workspace deps" step errored with **`ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION`: 21 lockfile entries
+failed verification** (the SDK-56 patches were published ~2026-07-03 08:50–08:52Z, inside the 24h
+cutoff). `pnpm-audit` installs the same frozen lockfile, so it failed at install for the same reason
+(confirm on the fresh run). `backend`, CodeQL, `Analyze (*)`, `pip-audit`, `trivy-fs` were all green.
 
-Slice 5 (PR #171), like #164/#165/#166 before it, was squash-merged **past** the red `mobile-doctor`
-(documented owner override for SEO slices — the OTHER checks were green + Codex `APPROVED`). That
-override does NOT extend to unrelated red checks.
+**When the gate lifts — precise.** The latest-published blocked entry was at **2026-07-03
+08:52:15Z**, so all 21 entries cross 24h old at **`2026-07-04 08:52:15Z`**. After that, a fresh CI
+run installs cleanly and all three checks should go green. (This session ended ~08:22Z, ~30 min shy.)
+
+### Runbook (do this in order)
+
+1. **Confirm the gate has lifted:** `date -u` — proceed only if now ≥ `2026-07-04 08:52:15Z`.
+2. **Verify state + rebase if needed.** `gh pr view 163 --json headRefOid,mergeable,state` and
+   `gh pr checks 163`. `main` moved this session (Slice 5 + handoffs). If GitHub shows #163 behind
+   `main` / not mergeable, update the branch first:
+   `gh pr update-branch 163` (merges `main` in) — a lockfile-only PR shouldn't conflict.
+3. **Re-run its CI** (the stale run won't re-trigger itself): `gh pr checks 163 --watch`, or force a
+   fresh run — `gh run rerun <failed-run-id>` for the two run ids on the PR, or push an empty commit
+   to the branch (`git commit --allow-empty`). Simplest reliable path: check out the branch and
+   `gh pr update-branch 163` (step 2) which pushes a new head and triggers CI.
+4. **Confirm ALL of these are green:** `mobile-doctor`, `workspace-js`, `pnpm-audit` (plus the
+   already-green `backend`/CodeQL/Analyze/pip-audit/trivy-fs). If `pnpm-audit` is STILL red after the
+   gate lifts, it's a real advisory — read `gh run view <id> --log-failed`, and if it's a genuine
+   CVE, handle per SECURITY.md / `.trivyignore`-style justification (do NOT blanket-ignore).
+5. **Codex review loop** (`claude_help/codex-review-process.md`) — lockfile-only, so a quick pass:
+   bypass mode (`sandbox:"danger-full-access"`, `approval-policy:"never"`), MCP
+   `cwd = /mnt/d/repos/fountainrank`, repo-relative paths, write `temp/codex-reviews/pr-163-review-1.md`,
+   loop to `VERDICT: APPROVED`, address every PR comment.
+6. **Squash-merge:** `gh pr merge 163 --squash --delete-branch`.
+
+**Definition of done:** #163 merged with `mobile-doctor` + `workspace-js` + `pnpm-audit` green and
+Codex `APPROVED`. After merge, **`mobile-doctor` goes green on `main` and all future PRs** — the
+"documented override" for SEO slices is no longer needed.
+
+**Hard DON'T:** do NOT commit `minimumReleaseAgeExclude` (or otherwise force a <24h install) to rush
+it — that undermines a supply-chain security control. Just wait for the gate. Memory:
+`fountainrank-ci-minimum-release-age-gate`. Also verify code before assuming — Expo SDK patches are a
+coordinated set (memory `fountainrank-hoisted-linker-masks-expo-doctor-duplicates`); the lockfile in
+#163 is the coordinated bump, don't cherry-pick.
 
 ---
 
@@ -128,7 +170,8 @@ DOKS 1m13s; DB-migration step a **no-op** — Slice 5 adds no migration; rollout
 
 ## 4. Next tasks (recommended order)
 
-1. **Finish #163** once now ≥ 2026-07-04 08:53Z (see §1) — quick, unblocks `mobile-doctor` for all PRs.
+1. **Finish #163** (the requested pickup) once now ≥ `2026-07-04 08:52:15Z` — **full runbook in §1.**
+   Quick (lockfile-only) and unblocks `mobile-doctor` for all PRs.
 2. **Resubmit the sitemap in GSC + Bing** (spec §10) — **owner-local**; now includes the fountains
    chunk. `seo-mcp` tools (`gsc_sitemaps`, `gsc_search_analytics`, `bing_*`) available.
 3. **Slice 1e — coverage report/gate** (spec §4.2/§7). Per-scope stats (matched/unmatched, top
