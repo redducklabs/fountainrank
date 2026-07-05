@@ -71,19 +71,19 @@ export function ReportPhotoDialog({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="w-full max-w-sm rounded-lg bg-white p-4 shadow-xl">
-        <h2 className="text-base font-semibold text-[#0A357E]">Report photo</h2>
+      <div className="w-full max-w-sm rounded-lg bg-surface-raised p-4 shadow-xl">
+        <h2 className="text-base font-semibold text-brand">Report photo</h2>
 
         {alreadyReported ? (
           <>
-            <p className="mt-3 text-sm text-slate-600">
+            <p className="mt-3 text-sm text-muted">
               You&rsquo;ve already reported this photo. Thanks — our moderators will take a look.
             </p>
             <div className="mt-4 flex justify-end">
               <button
                 type="button"
                 onClick={onClose}
-                className="rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50"
+                className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-muted hover:bg-surface"
               >
                 Close
               </button>
@@ -93,7 +93,7 @@ export function ReportPhotoDialog({
           <>
             <label
               htmlFor="report-category"
-              className="mt-3 block text-sm font-medium text-slate-700"
+              className="mt-3 block text-sm font-medium text-foreground"
             >
               Reason
             </label>
@@ -102,7 +102,7 @@ export function ReportPhotoDialog({
               value={category}
               disabled={pending || submitted}
               onChange={(e) => setCategory(e.target.value as ReportCategory)}
-              className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm text-slate-700"
+              className="mt-1 w-full rounded border border-border px-3 py-2 text-sm text-foreground"
             >
               {CATEGORIES.map((c) => (
                 <option key={c.value} value={c.value}>
@@ -111,7 +111,7 @@ export function ReportPhotoDialog({
               ))}
             </select>
 
-            <label htmlFor="report-note" className="mt-3 block text-sm font-medium text-slate-700">
+            <label htmlFor="report-note" className="mt-3 block text-sm font-medium text-foreground">
               Note (optional)
             </label>
             <textarea
@@ -121,7 +121,7 @@ export function ReportPhotoDialog({
               value={note}
               disabled={pending || submitted}
               onChange={(e) => setNote(e.target.value)}
-              className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm break-words text-slate-700"
+              className="mt-1 w-full rounded border border-border px-3 py-2 text-sm break-words text-foreground"
             />
 
             <div className="mt-4 flex justify-end gap-2">
@@ -129,7 +129,7 @@ export function ReportPhotoDialog({
                 type="button"
                 onClick={onClose}
                 disabled={pending}
-                className="rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50"
+                className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-muted hover:bg-surface"
               >
                 Cancel
               </button>
@@ -137,7 +137,7 @@ export function ReportPhotoDialog({
                 type="button"
                 onClick={submit}
                 disabled={pending || submitted}
-                className="rounded-full bg-[#0C44A0] px-4 py-2 text-sm font-bold text-white hover:bg-[#0A357E] disabled:opacity-50"
+                className="rounded-full bg-brand-mid px-4 py-2 text-sm font-bold text-white hover:bg-brand disabled:opacity-50"
               >
                 {pending ? "Submitting…" : "Submit report"}
               </button>
@@ -149,7 +149,7 @@ export function ReportPhotoDialog({
           <p
             role="status"
             aria-live="polite"
-            className={`mt-2 text-sm ${msg.tone === "ok" ? "text-emerald-700" : "text-red-700"}`}
+            className={`mt-2 text-sm ${msg.tone === "ok" ? "text-emerald-700 dark:text-emerald-300" : "text-danger"}`}
           >
             {msg.text}
           </p>

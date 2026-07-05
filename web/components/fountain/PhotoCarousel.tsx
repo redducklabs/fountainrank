@@ -61,7 +61,7 @@ export function PhotoCarousel({
   const current = photos[safeIndex];
 
   return (
-    <div className="relative aspect-[4/3] w-full overflow-hidden rounded-lg bg-slate-100">
+    <div className="relative aspect-[4/3] w-full overflow-hidden rounded-lg bg-surface">
       <img
         src={resolvePhotoUrl(current.url)}
         alt=""
@@ -106,7 +106,7 @@ export function PhotoCarousel({
               <span
                 key={p.id}
                 data-dot
-                className={`h-1.5 w-1.5 rounded-full ${i === safeIndex ? "bg-white" : "bg-white/40"}`}
+                className={`h-1.5 w-1.5 rounded-full ${i === safeIndex ? "bg-white/100" : "bg-white/40"}`}
               />
             ))}
           </div>

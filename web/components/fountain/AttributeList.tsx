@@ -19,7 +19,7 @@ export function AttributeList({ attributes }: { attributes: Attr[] }) {
     <div className="space-y-3">
       {groups.map((g) => (
         <div key={g.category}>
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
             {formatCategory(g.category)}
           </h3>
           <div className="mt-1.5 flex flex-wrap gap-1.5">

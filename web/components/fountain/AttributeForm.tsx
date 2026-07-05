@@ -60,8 +60,8 @@ export function AttributeForm({ fountainId }: { fountainId: string }) {
     });
   }
 
-  if (loading) return <p className="text-sm text-slate-600">Loading detail options…</p>;
-  if (loadError) return <p className="text-sm text-red-700">Detail options could not load.</p>;
+  if (loading) return <p className="text-sm text-muted">Loading detail options…</p>;
+  if (loadError) return <p className="text-sm text-danger">Detail options could not load.</p>;
   if (groups.length === 0) return null;
 
   return (
@@ -78,7 +78,7 @@ export function AttributeForm({ fountainId }: { fountainId: string }) {
         type="button"
         disabled={pending || observations.length === 0}
         onClick={submit}
-        className="mt-3 rounded-full bg-[#0A357E] px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+        className="mt-3 rounded-full bg-brand px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
       >
         Save details
       </button>
@@ -86,7 +86,7 @@ export function AttributeForm({ fountainId }: { fountainId: string }) {
         <p
           role="status"
           aria-live="polite"
-          className={msg.tone === "ok" ? "text-emerald-700" : "text-red-700"}
+          className={msg.tone === "ok" ? "text-emerald-700 dark:text-emerald-300" : "text-danger"}
         >
           {msg.text}
         </p>

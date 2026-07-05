@@ -52,7 +52,7 @@ export function PhotoGallery({
         onReport={isAuthenticated ? (photo) => setReportPhotoId(photo.id) : undefined}
       />
       {deleteMsg && (
-        <p role="status" aria-live="polite" className="mt-1 text-sm text-red-700">
+        <p role="status" aria-live="polite" className="mt-1 text-sm text-danger">
           {deleteMsg}
         </p>
       )}

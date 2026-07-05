@@ -32,8 +32,8 @@ export function StarGroup({
               <label
                 htmlFor={inputId}
                 aria-hidden="true"
-                className={`cursor-pointer text-lg peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-[#0A357E] ${
-                  value >= n ? "text-[#F2C200]" : "text-slate-300"
+                className={`cursor-pointer text-lg peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-brand ${
+                  value >= n ? "text-accent-gold" : "text-star-empty"
                 }`}
               >
                 ★

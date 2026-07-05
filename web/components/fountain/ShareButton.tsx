@@ -36,7 +36,7 @@ export function ShareButton() {
     <button
       onClick={onClick}
       aria-live="polite"
-      className="rounded-full border border-[#cdd6e6] bg-white px-4 py-2 text-sm font-bold text-[#0A357E]"
+      className="rounded-full border border-border bg-surface-raised px-4 py-2 text-sm font-bold text-brand"
     >
       {label}
     </button>

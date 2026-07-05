@@ -33,27 +33,27 @@ export function NoteForm({ fountainId }: { fountainId: string }) {
 
   return (
     <div>
-      <h3 className="text-sm font-semibold text-slate-700">Your note</h3>
+      <h3 className="text-sm font-semibold text-foreground">Your note</h3>
       <textarea
         value={body}
         maxLength={1000}
         rows={3}
         aria-label="Your note"
         onChange={(e) => setBody(e.target.value)}
-        className="mt-1 w-full break-words rounded border border-slate-300 p-2 text-sm"
+        className="mt-1 w-full break-words rounded border border-border p-2 text-sm"
       />
       <div className="flex items-center justify-between">
-        <span className="text-xs text-slate-400">{body.length}/1000</span>
+        <span className="text-xs text-muted">{body.length}/1000</span>
         <button
           type="button"
           disabled={pending}
           onClick={submit}
-          className="rounded-full bg-[#0A357E] px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+          className="rounded-full bg-brand px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
         >
           Save note
         </button>
       </div>
-      <p className="text-xs text-slate-400">Submitting replaces any note you left here before.</p>
+      <p className="text-xs text-muted">Submitting replaces any note you left here before.</p>
       <div className="mt-3">
         <PointsPreview lines={notePointsPreview(trimmed.length > 0)} />
       </div>
@@ -61,7 +61,7 @@ export function NoteForm({ fountainId }: { fountainId: string }) {
         <p
           role="status"
           aria-live="polite"
-          className={msg.tone === "ok" ? "text-emerald-700" : "text-red-700"}
+          className={msg.tone === "ok" ? "text-emerald-700 dark:text-emerald-300" : "text-danger"}
         >
           {msg.text}
         </p>

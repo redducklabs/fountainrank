@@ -34,7 +34,7 @@ export function PhotoUpload({ fountainId }: { fountainId: string }) {
 
   return (
     <div>
-      <h3 className="text-sm font-semibold text-slate-700">Add a photo</h3>
+      <h3 className="text-sm font-semibold text-foreground">Add a photo</h3>
       <input
         ref={inputRef}
         type="file"
@@ -42,11 +42,11 @@ export function PhotoUpload({ fountainId }: { fountainId: string }) {
         aria-label="Add a photo"
         disabled={pending}
         onChange={handleChange}
-        className="mt-1 block w-full text-sm text-slate-600 file:mr-3 file:rounded-full file:border-0 file:bg-[#0A357E] file:px-4 file:py-1.5 file:text-sm file:font-semibold file:text-white file:disabled:opacity-50 disabled:opacity-50"
+        className="mt-1 block w-full text-sm text-muted file:mr-3 file:rounded-full file:border-0 file:bg-brand file:px-4 file:py-1.5 file:text-sm file:font-semibold file:text-white file:disabled:opacity-50 disabled:opacity-50"
       />
-      <p className="mt-1 text-xs text-slate-400">JPEG, PNG, or WebP, up to 10 MB.</p>
+      <p className="mt-1 text-xs text-muted">JPEG, PNG, or WebP, up to 10 MB.</p>
       {pending && (
-        <p role="status" aria-live="polite" className="mt-1 text-xs text-slate-500">
+        <p role="status" aria-live="polite" className="mt-1 text-xs text-muted">
           Uploading…
         </p>
       )}
@@ -54,7 +54,7 @@ export function PhotoUpload({ fountainId }: { fountainId: string }) {
         <p
           role="status"
           aria-live="polite"
-          className={msg.tone === "ok" ? "text-emerald-700" : "text-red-700"}
+          className={msg.tone === "ok" ? "text-emerald-700 dark:text-emerald-300" : "text-danger"}
         >
           {msg.text}
         </p>

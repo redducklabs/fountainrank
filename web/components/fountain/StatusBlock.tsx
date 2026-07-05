@@ -6,9 +6,9 @@ import {
 } from "../../lib/map/format";
 
 const CHIP: Record<StatusTone, string> = {
-  ok: "bg-emerald-100 text-emerald-800",
-  warn: "bg-amber-100 text-amber-800",
-  bad: "bg-red-100 text-red-800",
+  ok: "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300",
+  warn: "bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300",
+  bad: "bg-red-100 text-red-800 dark:bg-red-500/15 dark:text-red-300",
 };
 
 export function StatusBlock({
@@ -31,12 +31,12 @@ export function StatusBlock({
         {chipLabel}
       </span>
       {advisory && (
-        <p className="text-xs text-amber-700">
+        <p className="text-xs text-amber-700 dark:text-amber-300">
           <span aria-hidden="true">⚠ </span>
           {advisory}
         </p>
       )}
-      <p className="text-xs text-slate-400">
+      <p className="text-xs text-muted">
         {lastVerifiedAt ? (
           <span title={formatDateFull(lastVerifiedAt)}>
             Last verified {formatRelativeTime(lastVerifiedAt, now)}
