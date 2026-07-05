@@ -55,3 +55,22 @@ it("shows error message on server failure", async () => {
   fireEvent.click(screen.getByRole("button", { name: /i checked/i }));
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/couldn't save/i));
 });
+
+it("shows the ineligible warning when conditionPointsEligibleAt is in the future", () => {
+  const future = new Date(Date.now() + 3_600_000).toISOString();
+  render(<ConditionForm fountainId="fid" conditionPointsEligibleAt={future} />);
+  // Component text uses the codebase's curly-apostrophe convention (&rsquo; → ’ once JSX
+  // decodes it), so the regex must match that glyph rather than a straight apostrophe.
+  expect(screen.getByText(/won’t earn points/i)).toBeInTheDocument();
+  // Warn, don't block: the submit control stays enabled.
+  expect(screen.getByRole("button", { name: /i checked/i })).not.toBeDisabled();
+});
+
+it("celebrates the server's awarded points, not a client guess", async () => {
+  submitCondition.mockResolvedValue({ ok: true, pointsAwarded: 0 });
+  render(<ConditionForm fountainId="fid" />);
+  fireEvent.click(screen.getByRole("button", { name: /i checked/i }));
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent(/already counted recently/i),
+  );
+});

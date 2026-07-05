@@ -13,10 +13,12 @@ export function ContributeSection({
   fountainId,
   dimensions,
   isAuthenticated,
+  conditionPointsEligibleAt,
 }: {
   fountainId: string;
   dimensions: Dimension[];
   isAuthenticated: boolean;
+  conditionPointsEligibleAt?: string | null;
 }) {
   const [showMoreDetails, setShowMoreDetails] = useState(false);
   return (
@@ -49,7 +51,10 @@ export function ContributeSection({
             {showMoreDetails && (
               <div className="mt-3 space-y-4">
                 <AttributeForm fountainId={fountainId} />
-                <ConditionForm fountainId={fountainId} />
+                <ConditionForm
+                  fountainId={fountainId}
+                  conditionPointsEligibleAt={conditionPointsEligibleAt}
+                />
                 <NoteForm fountainId={fountainId} />
               </div>
             )}
