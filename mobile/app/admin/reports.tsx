@@ -33,8 +33,7 @@ export default function AdminReportsScreen() {
     queryFn: async (): Promise<MeResponse> => unwrap(await client.GET("/api/v1/me")),
   });
   const isAdmin = meQuery.data?.is_admin === true;
-  const viewerResolved =
-    auth.status !== "authenticated" || meQuery.isFetched || meQuery.isError;
+  const viewerResolved = auth.status !== "authenticated" || meQuery.isFetched || meQuery.isError;
 
   // Never render the queue for a resolved non-admin viewer (it carries admin-only report
   // notes) — bounce back to wherever the admin link was pushed from.

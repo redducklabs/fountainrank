@@ -29,7 +29,11 @@ import { apiErrorStatus, unwrap } from "../../lib/api";
 import type { ContributionError } from "../../lib/contributions/state";
 import { contributionErrorText, mapContributionError } from "../../lib/contributions/state";
 import { normalizeFountainId } from "../../lib/detail/id";
-import { buildPhotoFormData, mapPhotoUploadError, PhotoUploadError } from "../../lib/detail/photo-upload";
+import {
+  buildPhotoFormData,
+  mapPhotoUploadError,
+  PhotoUploadError,
+} from "../../lib/detail/photo-upload";
 import { useApi } from "../../providers/api-provider";
 import { useAuth } from "../../providers/auth-provider";
 import { colors, spacing, typography } from "../../theme";
@@ -69,9 +73,10 @@ export default function FountainDetailScreen() {
   const [celebrationKey, setCelebrationKey] = useState(0);
   const [celebrationPoints, setCelebrationPoints] = useState<number | null>(null);
   const [reportingPhoto, setReportingPhoto] = useState<PhotoOut | null>(null);
-  const [photoUploadMessage, setPhotoUploadMessage] = useState<
-    { tone: "ok" | "err"; text: string } | null
-  >(null);
+  const [photoUploadMessage, setPhotoUploadMessage] = useState<{
+    tone: "ok" | "err";
+    text: string;
+  } | null>(null);
   const { id } = useLocalSearchParams<{ id: string | string[] }>();
   // Reject absent/array/malformed (non-UUID) ids client-side — the backend route
   // param is a uuid.UUID, so a bad value would 422; show the honest not-found state.

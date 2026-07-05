@@ -118,9 +118,7 @@ export function ReportPhotoButton({
                 }}
                 style={[styles.primaryButton, pending ? styles.disabled : null]}
               >
-                <Text style={styles.primaryText}>
-                  {pending ? "Submitting…" : "Submit report"}
-                </Text>
+                <Text style={styles.primaryText}>{pending ? "Submitting…" : "Submit report"}</Text>
               </Pressable>
             ) : null}
           </View>

@@ -80,10 +80,7 @@ export function ProfileTabIcon({ focused }: { focused: boolean }) {
   const showImage = !imageErrored && profileTabIcon(avatarUrl, focused) === "image";
 
   const badge = showBadge ? (
-    <View
-      style={styles.badge}
-      accessibilityLabel={`${pendingCount} pending photo reports`}
-    >
+    <View style={styles.badge} accessibilityLabel={`${pendingCount} pending photo reports`}>
       <Text style={styles.badgeText} accessibilityElementsHidden importantForAccessibility="no">
         {formatBadgeCount(pendingCount as number)}
       </Text>

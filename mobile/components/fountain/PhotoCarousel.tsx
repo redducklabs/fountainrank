@@ -4,7 +4,11 @@ import { useCallback, useState } from "react";
 import type { ListRenderItemInfo, ViewToken } from "react-native";
 import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 
-import { clampPhotoIndex, resolvePhotoUrl, shouldShowDeleteControl } from "../../lib/detail/photo-carousel";
+import {
+  clampPhotoIndex,
+  resolvePhotoUrl,
+  shouldShowDeleteControl,
+} from "../../lib/detail/photo-carousel";
 import { colors, spacing, typography } from "../../theme";
 
 type PhotoOut = components["schemas"]["PhotoOut"];
@@ -28,10 +32,13 @@ export function PhotoCarousel({
 
   // FlatList's `pagingEnabled` gives native, gesture-handler-free horizontal swipe; track
   // which page is currently visible via the viewability callback rather than reanimated.
-  const onViewableItemsChanged = useCallback(({ viewableItems }: { viewableItems: ViewToken[] }) => {
-    const first = viewableItems.find((v) => v.isViewable);
-    if (first?.index != null) setActiveIndex(first.index);
-  }, []);
+  const onViewableItemsChanged = useCallback(
+    ({ viewableItems }: { viewableItems: ViewToken[] }) => {
+      const first = viewableItems.find((v) => v.isViewable);
+      if (first?.index != null) setActiveIndex(first.index);
+    },
+    [],
+  );
 
   const renderItem = useCallback(
     ({ item }: ListRenderItemInfo<PhotoOut>) => (
@@ -56,10 +63,7 @@ export function PhotoCarousel({
   const current = photos[safeIndex];
 
   return (
-    <View
-      style={styles.wrap}
-      onLayout={(e) => setWidth(e.nativeEvent.layout.width)}
-    >
+    <View style={styles.wrap} onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
       <FlatList
         data={photos}
         horizontal
@@ -80,7 +84,11 @@ export function PhotoCarousel({
           importantForAccessibility="no-hide-descendants"
         >
           {photos.map((p, i) => (
-            <View key={p.id} testID="photo-carousel-dot" style={[styles.dot, i === safeIndex && styles.dotActive]} />
+            <View
+              key={p.id}
+              testID="photo-carousel-dot"
+              style={[styles.dot, i === safeIndex && styles.dotActive]}
+            />
           ))}
         </View>
       )}
