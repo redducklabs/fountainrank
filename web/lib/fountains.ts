@@ -7,6 +7,7 @@ export type FountainPin = components["schemas"]["FountainPin"];
 export type FountainDetail = components["schemas"]["FountainDetail"];
 export type DimensionSummary = components["schemas"]["DimensionSummary"];
 export type NoteOut = components["schemas"]["NoteOut"];
+export type PhotoOut = components["schemas"]["PhotoOut"];
 export type BboxResult = { pins: FountainPin[]; truncated: boolean };
 
 export async function fetchBbox(params: BboxParams, requestId?: string): Promise<BboxResult> {
