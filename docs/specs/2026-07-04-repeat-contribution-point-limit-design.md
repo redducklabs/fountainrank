@@ -165,10 +165,12 @@ matching row. This is an **additive** Alembic migration (drift-free, reversible)
 no backfill.
 
 No new endpoints, and **no response-shape change**: both `GET /fountains/{id}` and the condition
-**POST** return `FountainDetail`. GET leaves the two new fields at their defaults; the POST fills
-`condition_points_eligible_at` (fresh) and `condition_points_awarded` (§2.5). So the caller gets a
-fresh eligibility signal on load and immediately after submitting (the warning appears the moment
-the user becomes ineligible), plus the authoritative awarded count on the POST.
+**POST** return `FountainDetail`. Authenticated GET **computes** `condition_points_eligible_at`
+(anonymous → `null`) and leaves `condition_points_awarded` at `null`; the condition POST returns
+**both** — a refreshed `condition_points_eligible_at` and the server-authoritative
+`condition_points_awarded` (§2.5). So the caller gets the pre-submit warning signal on load (the
+warning appears the moment the user is already ineligible) and, immediately after submitting, both
+the refreshed signal and the awarded count.
 
 ### 2.4 Client warning UX (web + mobile)
 
@@ -315,7 +317,8 @@ Tests drive the clock by passing an explicit `created_at`/`report_time` (the new
   condition POST body stays a `FountainDetail` — so there is **no breaking response-shape change**;
   deployed native clients that predate the fields simply ignore them.
 - **Regenerate the OpenAPI + api-client artifacts** (`packages/api-client/openapi.json`,
-  `packages/api-client/src/schema.d.ts`) so the typed clients see `condition_points_eligible_at`.
+  `packages/api-client/src/schema.d.ts`) so the typed clients see **both** new fields
+  (`condition_points_eligible_at`, `condition_points_awarded`).
 - Behavior change is a **tightening** of point awards for repeat condition reports only; no
   user loses previously banked points, and pre-existing condition events are honored by the
   new gate without backfill.
