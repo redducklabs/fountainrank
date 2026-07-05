@@ -61,3 +61,16 @@ export async function getFountainNotesServer(id: string, requestId: string) {
     return { data: undefined, status: 0 };
   }
 }
+
+export async function getFountainPhotosServer(id: string, requestId: string) {
+  const client = makeClient(resolveApiBaseUrl(), { headers: { "X-Request-ID": requestId } });
+  try {
+    const { data, response } = await client.GET("/api/v1/fountains/{fountain_id}/photos", {
+      params: { path: { fountain_id: id } },
+    });
+    return { data, status: response?.status ?? 0 };
+  } catch {
+    // status 0 = no HTTP response (network error / backend down / DNS failure)
+    return { data: undefined, status: 0 };
+  }
+}
