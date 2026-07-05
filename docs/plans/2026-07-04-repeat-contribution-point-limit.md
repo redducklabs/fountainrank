@@ -167,7 +167,7 @@ git commit -m "feat(backend): add ContributionSpec.created_at seam for single-cl
 ## Task 2: Condition point-window primitives
 
 **Files:**
-- Modify: `backend/app/contributions.py` (remove `dk_verify`/`dk_report_condition`; add `dk_condition_award`, `CONDITION_EVENT_TYPES`, `CONDITION_POINT_WINDOW`, `condition_points_eligible_at`, `latest_awarded_condition_at`)
+- Modify: `backend/app/contributions.py` (add `dk_condition_award`, `CONDITION_EVENT_TYPES`, `CONDITION_POINT_WINDOW`, `condition_points_eligible_at`, `latest_awarded_condition_at`; the old `dk_verify`/`dk_report_condition` are removed later in Task 5, atomically with the router import swap)
 - Test: `backend/tests/test_contributions.py`
 
 **Interfaces:**
@@ -541,7 +541,8 @@ git commit -m "feat(backend): expose per-viewer condition_points_eligible_at on 
 ## Task 5: `submit_condition` rolling gate + `condition_points_awarded`
 
 **Files:**
-- Modify: `backend/app/routers/fountains.py` (`submit_condition`, ~lines 964–1031; import swap)
+- Modify: `backend/app/routers/fountains.py` (`submit_condition`, ~lines 964–1031; `app.contributions` import swap)
+- Modify: `backend/app/contributions.py` (delete `dk_verify`/`dk_report_condition`, now that their only importer is rewritten here)
 - Test: `backend/tests/test_conditions_api.py`
 
 **Interfaces:**
