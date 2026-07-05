@@ -1,12 +1,20 @@
+import type { components } from "@fountainrank/api-client";
 import { Ionicons } from "@expo/vector-icons";
 import { skipToken, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { Image, StyleSheet, View } from "react-native";
+import { Image, StyleSheet, Text, View } from "react-native";
 
+import { unwrap } from "../../lib/api";
+import { formatBadgeCount, shouldShowBadge } from "../../lib/admin/reports";
 import { profileTabIcon } from "../../lib/auth/profile-tab-icon";
 import type { MeProfile } from "../../lib/auth/profile";
+import { useApi } from "../../providers/api-provider";
 import { useAuth } from "../../providers/auth-provider";
 import { colors } from "../../theme";
+
+type PhotoReportsSummary = components["schemas"]["PhotoReportsSummary"];
+
+const SUMMARY_QUERY_KEY = ["admin", "photo-reports", "summary"] as const;
 
 const ICON_SIZE = 24;
 const RING_WIDTH = 2;
@@ -39,38 +47,102 @@ const INACTIVE_COLOR = "#64748B";
  * sign-in. Since `auth.status` flips to a non-`"authenticated"` value synchronously on sign-out,
  * gating on it (rather than on the cached data alone) avoids showing the previous user's photo on a
  * shared device.
+ *
+ * Admins additionally get a small pending-photo-report count badge overlaid on the
+ * avatar/glyph (style guide "Pending-report badge"), fed by a `useQuery` polling
+ * `GET /api/v1/admin/photo-reports/summary` every 60s under the SAME query key
+ * (`["admin","photo-reports","summary"]`) the admin reports screen (M5) invalidates on
+ * every moderation action, so the badge updates live without waiting for its own poll
+ * tick. The query is `enabled` only for a confirmed admin (`me.data?.is_admin === true`)
+ * — never fetched or polled for a non-admin viewer, avoiding 403 spam from this
+ * persistent tab-bar component.
  */
 export function ProfileTabIcon({ focused }: { focused: boolean }) {
   const auth = useAuth();
+  const { client } = useApi();
   const me = useQuery<MeProfile>({ queryKey: ["me"], queryFn: skipToken });
+  const isAdmin = me.data?.is_admin === true;
+  // Admin-only, polled pending-photo-report count (style guide "Pending-report badge"):
+  // never fetched/polled for a non-admin viewer, so signed-in members never 403-spam this
+  // staff-only endpoint from the persistent tab bar.
+  const summary = useQuery<PhotoReportsSummary>({
+    queryKey: SUMMARY_QUERY_KEY,
+    queryFn: async () => unwrap(await client.GET("/api/v1/admin/photo-reports/summary")),
+    enabled: isAdmin,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+  const pendingCount = summary.data?.pending_photo_count;
+  const showBadge = isAdmin && shouldShowBadge(pendingCount);
   const avatarUrl = auth.status === "authenticated" ? me.data?.avatar_url : undefined;
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const imageErrored = failedUrl !== null && failedUrl === avatarUrl;
   const showImage = !imageErrored && profileTabIcon(avatarUrl, focused) === "image";
 
+  const badge = showBadge ? (
+    <View
+      style={styles.badge}
+      accessibilityLabel={`${pendingCount} pending photo reports`}
+    >
+      <Text style={styles.badgeText} accessibilityElementsHidden importantForAccessibility="no">
+        {formatBadgeCount(pendingCount as number)}
+      </Text>
+    </View>
+  ) : null;
+
   if (showImage) {
     return (
-      <View style={[styles.ring, focused && styles.ringFocused]}>
-        <Image
-          source={{ uri: avatarUrl as string }}
-          style={styles.avatar}
-          accessibilityIgnoresInvertColors
-          accessibilityLabel="Your profile photo"
-          onError={() => setFailedUrl(avatarUrl ?? null)}
-        />
+      <View style={styles.wrapper}>
+        <View style={[styles.ring, focused && styles.ringFocused]}>
+          <Image
+            source={{ uri: avatarUrl as string }}
+            style={styles.avatar}
+            accessibilityIgnoresInvertColors
+            accessibilityLabel="Your profile photo"
+            onError={() => setFailedUrl(avatarUrl ?? null)}
+          />
+        </View>
+        {badge}
       </View>
     );
   }
   return (
-    <Ionicons
-      name="person-circle"
-      color={focused ? colors.brandBlue : INACTIVE_COLOR}
-      size={ICON_SIZE}
-    />
+    <View style={styles.wrapper}>
+      <Ionicons
+        name="person-circle"
+        color={focused ? colors.brandBlue : INACTIVE_COLOR}
+        size={ICON_SIZE}
+      />
+      {badge}
+    </View>
   );
 }
 
+const BADGE_SIZE = 16;
+
 const styles = StyleSheet.create({
+  wrapper: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  badge: {
+    position: "absolute",
+    top: -4,
+    right: -6,
+    minWidth: BADGE_SIZE,
+    height: BADGE_SIZE,
+    borderRadius: BADGE_SIZE / 2,
+    paddingHorizontal: 3,
+    backgroundColor: colors.danger,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  badgeText: {
+    color: colors.onBrand,
+    fontSize: 10,
+    fontWeight: "700",
+    lineHeight: 12,
+  },
   ring: {
     width: RING_SIZE,
     height: RING_SIZE,

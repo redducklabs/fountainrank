@@ -21,3 +21,17 @@ export function nextHiddenState(photo: Pick<ReportedPhotoOut, "is_hidden">): boo
 export function isQueueEmpty(photos: ReportedPhotoOut[] | undefined): boolean {
   return (photos?.length ?? 0) === 0;
 }
+
+/** Whether the pending-report badge (profile tab icon / avatar overlay) should render —
+ *  never for an undefined/zero count (no empty badge, no "0"; style guide "Pending-report
+ *  badge"). */
+export function shouldShowBadge(pendingCount: number | undefined): boolean {
+  return (pendingCount ?? 0) > 0;
+}
+
+/** Format a pending-report count for the badge glyph: the raw count for 1-9, "9+" above
+ *  that — the badge never needs to fit more than two glyphs (style guide "Count
+ *  formatting"). Mirrors `web/components/admin/ReportBadge.tsx`'s formatting exactly. */
+export function formatBadgeCount(pendingCount: number): string {
+  return pendingCount > 9 ? "9+" : String(pendingCount);
+}

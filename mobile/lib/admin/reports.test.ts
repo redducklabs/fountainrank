@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { hideToggleLabel, isQueueEmpty, nextHiddenState } from "./reports";
+import {
+  formatBadgeCount,
+  hideToggleLabel,
+  isQueueEmpty,
+  nextHiddenState,
+  shouldShowBadge,
+} from "./reports";
 
 describe("hideToggleLabel", () => {
   it("reads 'Hide' for a visible photo", () => {
@@ -44,5 +50,29 @@ describe("isQueueEmpty", () => {
         },
       ]),
     ).toBe(false);
+  });
+});
+
+describe("shouldShowBadge", () => {
+  it("is false for undefined (query disabled/not yet resolved)", () => {
+    expect(shouldShowBadge(undefined)).toBe(false);
+  });
+  it("is false for zero", () => {
+    expect(shouldShowBadge(0)).toBe(false);
+  });
+  it("is true for any positive count", () => {
+    expect(shouldShowBadge(1)).toBe(true);
+    expect(shouldShowBadge(42)).toBe(true);
+  });
+});
+
+describe("formatBadgeCount", () => {
+  it("shows the raw count for 1-9", () => {
+    expect(formatBadgeCount(1)).toBe("1");
+    expect(formatBadgeCount(9)).toBe("9");
+  });
+  it("caps at '9+' above 9", () => {
+    expect(formatBadgeCount(10)).toBe("9+");
+    expect(formatBadgeCount(123)).toBe("9+");
   });
 });
