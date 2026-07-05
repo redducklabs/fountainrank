@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-05
 **Issue:** #18 — Dark mode (app-wide, incl. dark basemap flavor)
-**Status:** Draft (revised per spec-review-1; pending Codex re-review + owner review)
+**Status:** Codex-APPROVED (spec-review-2); pending owner review
 **Scope decision:** All-in-one — web UI, mobile UI, and the shared dark basemap in one spec.
 
 ---
@@ -379,8 +379,10 @@ blocked on the host, that exact step (and only that step) falls back to CI's `wo
 - **Web unit (vitest):** provider resolution (system/override/persist), toggle behavior + hydration
   safety, presence of token utilities, `styleUrlFor` derivation + fallback, theme-aware layer
   factories, and updated component tests asserting token classes instead of hex.
-- **Mobile:** `ThemeProvider` merge logic (system + persisted override), `useTheme` consumers,
-  type-check + lint via CI (mobile eslint/React-Compiler rules are CI-only).
+- **Mobile:** `ThemeProvider` merge logic (system + persisted override) and `useTheme` consumers,
+  covered by the local mirror `./run.ps1 check -Mobile` (`tsc --noEmit` + ESLint + `vitest` +
+  `expo-doctor`) plus CI; the strict mobile React-Compiler ESLint rules remain authoritative in CI's
+  `workspace-js` job, with CI fallback only for a host-blocked step (per the local-check policy above).
 - **Basemap:** the workflow smoke (§7.3) fetches the public `style.dark.json`, asserts its `sprite`
   ends with `/sprites/v4/dark` and that `glyphs` + `sources.protomaps.url` match light, and fetches
   `sprites/v4/dark.json` + `sprites/v4/dark.png` (200). A `style.dark.json` availability probe gates
