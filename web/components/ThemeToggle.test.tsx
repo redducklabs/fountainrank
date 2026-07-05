@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ThemeProvider } from "next-themes";
 import { beforeEach, describe, expect, it, vi } from "vitest";
