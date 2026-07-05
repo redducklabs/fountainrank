@@ -15,7 +15,7 @@ export function ConsentBanner({
     <div
       role="region"
       aria-label="Analytics consent"
-      className="fixed inset-x-0 bottom-0 z-50 border-t border-white/10 bg-[#0A357E] px-4 py-3 text-white shadow-[0_-4px_16px_rgba(0,0,0,0.25)]"
+      className="fixed inset-x-0 bottom-0 z-50 border-t border-white/10 bg-brand px-4 py-3 text-white shadow-[0_-4px_16px_rgba(0,0,0,0.25)]"
     >
       <div className="mx-auto flex max-w-4xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm leading-relaxed text-white/90">
@@ -40,7 +40,7 @@ export function ConsentBanner({
           <button
             type="button"
             onClick={onAccept}
-            className="rounded-full bg-[#F2C200] px-5 py-2 text-sm font-semibold text-[#0A357E] transition hover:bg-[#ffce1f] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#F2C200]"
+            className="rounded-full bg-accent-gold px-5 py-2 text-sm font-semibold text-brand transition hover:bg-accent-gold-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-gold"
           >
             Accept
           </button>

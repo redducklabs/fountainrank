@@ -18,7 +18,7 @@ export async function SiteHeader({ variant }: { variant: "hero" | "bar" }) {
       ? await getPendingReportCountServer(requestId)
       : null;
   return (
-    <header className="relative z-50 bg-gradient-to-b from-[#0A357E] to-[#0E4DA4] px-6 py-3 text-white">
+    <header className="relative z-50 bg-gradient-to-b from-brand to-brand-royal px-6 py-3 text-white">
       {/* Ever-present header search (design doc §4.1): a single flex row that reads
           logo - search - points/auth inline on md+ screens (search is `flex-1 max-w-md`
           between the two fixed-width clusters), and wraps the search onto its own full-width
