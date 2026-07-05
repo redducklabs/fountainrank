@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, fireEvent } from "@testing-library/react";
 
 vi.mock("../app/actions/auth", () => ({ signInWithReturn: vi.fn(), signOutAction: vi.fn() }));
+vi.mock("../app/actions/admin", () => ({ fetchPendingReportCount: vi.fn(async () => 0) }));
 vi.mock("next/navigation", () => ({
   usePathname: () => "/fountains/abc",
   useSearchParams: () => new URLSearchParams(""),
@@ -14,7 +15,7 @@ afterEach(cleanup);
 
 describe("AuthControl", () => {
   it("shows Sign in when anonymous", () => {
-    render(<AuthControl viewer={{ state: "anonymous" }} />);
+    render(<AuthControl viewer={{ state: "anonymous" }} initialPendingReportCount={null} />);
     expect(screen.getByRole("button", { name: /sign in/i })).toBeTruthy();
   });
 
@@ -28,6 +29,7 @@ describe("AuthControl", () => {
           isAdmin: false,
           needsName: true,
         }}
+        initialPendingReportCount={null}
       />,
     );
     const link = screen.getByRole("link", { name: /finish setup/i });
@@ -46,6 +48,7 @@ describe("AuthControl", () => {
           isAdmin: false,
           needsName: false,
         }}
+        initialPendingReportCount={null}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /open account menu/i }));
@@ -64,6 +67,7 @@ describe("AuthControl", () => {
           isAdmin: true,
           needsName: false,
         }}
+        initialPendingReportCount={null}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /open account menu/i }));
@@ -71,7 +75,7 @@ describe("AuthControl", () => {
   });
 
   it("error state shows a degraded menu without Admin", () => {
-    render(<AuthControl viewer={{ state: "error" }} />);
+    render(<AuthControl viewer={{ state: "error" }} initialPendingReportCount={null} />);
     fireEvent.click(screen.getByRole("button", { name: /open account menu/i }));
     expect(screen.queryByRole("menuitem", { name: /admin/i })).toBeNull();
     expect(screen.getByRole("menuitem", { name: /sign out/i })).toBeTruthy();
@@ -87,6 +91,7 @@ describe("AuthControl", () => {
           isAdmin: false,
           needsName: false,
         }}
+        initialPendingReportCount={null}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /open account menu/i }));
@@ -104,6 +109,7 @@ describe("AuthControl", () => {
           isAdmin: false,
           needsName: false,
         }}
+        initialPendingReportCount={null}
       />,
     );
     const button = screen.getByRole("button", { name: /open account menu/i });
@@ -112,5 +118,53 @@ describe("AuthControl", () => {
     fireEvent.mouseDown(document.body);
     expect(screen.queryByRole("menu")).toBeNull();
     expect(document.activeElement).toBe(button);
+  });
+
+  it("shows the pending-report badge for an admin with a positive initial count", () => {
+    render(
+      <AuthControl
+        viewer={{
+          state: "authed",
+          displayName: "Aron",
+          avatarUrl: null,
+          isAdmin: true,
+          needsName: false,
+        }}
+        initialPendingReportCount={3}
+      />,
+    );
+    expect(screen.getByText("3")).toBeTruthy();
+  });
+
+  it("shows no badge for an admin with a zero initial count", () => {
+    render(
+      <AuthControl
+        viewer={{
+          state: "authed",
+          displayName: "Aron",
+          avatarUrl: null,
+          isAdmin: true,
+          needsName: false,
+        }}
+        initialPendingReportCount={0}
+      />,
+    );
+    expect(screen.queryByText("0")).toBeNull();
+  });
+
+  it("never shows the badge for a non-admin, even with a nonzero count", () => {
+    render(
+      <AuthControl
+        viewer={{
+          state: "authed",
+          displayName: "Aron",
+          avatarUrl: null,
+          isAdmin: false,
+          needsName: false,
+        }}
+        initialPendingReportCount={3}
+      />,
+    );
+    expect(screen.queryByText("3")).toBeNull();
   });
 });

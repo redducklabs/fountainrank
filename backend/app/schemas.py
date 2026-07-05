@@ -352,6 +352,10 @@ class PhotoOut(BaseModel):
     height: int
     uploaded_by: str | None
     created_at: datetime
+    # True only when the requesting viewer is the uploader (the list endpoint enriches this via
+    # the optional-auth seam). Unauthenticated callers, and any code path that doesn't know the
+    # viewer, get the safe default False — never a false "you own this".
+    is_own: bool = False
 
 
 class ReportPhotoRequest(BaseModel):

@@ -26,6 +26,15 @@ export async function getAuthedApiClientForAction(requestId: string): Promise<Ap
   return makeClient(resolveApiBaseUrl(), { headers: authedClientHeaders(token, requestId) });
 }
 
+// Raw Logto access token via the Server-Action variant (can persist a refreshed token to
+// the writable action cookie store, unlike the RSC variant). Needed by callers that issue
+// a raw `fetch` themselves (e.g. multipart photo upload) instead of going through the
+// generated api-client. Token never leaves the server — `server-only` guards this file.
+export async function getActionAccessToken(requestId: string): Promise<string> {
+  void requestId;
+  return getAccessToken(getLogtoConfig(), API_RESOURCE);
+}
+
 // The viewer's backend access token for enriching a PUBLIC read with their identity
 // (e.g. #65 `your_rating` on the fountain detail), or null when anonymous / on any
 // session-or-token error. RSC-only (read-only cookies; no refresh persisted). Callers

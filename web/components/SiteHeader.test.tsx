@@ -3,13 +3,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import type { Viewer } from "../lib/server/viewer";
 
-const { getViewer, getViewerTotalPoints } = vi.hoisted(() => ({
+const { getViewer, getViewerTotalPoints, getPendingReportCountServer } = vi.hoisted(() => ({
   getViewer: vi.fn<() => Promise<Viewer>>(async () => ({ state: "anonymous" })),
   getViewerTotalPoints: vi.fn(async () => 0),
+  getPendingReportCountServer: vi.fn(async () => 0),
 }));
 vi.mock("../lib/server/viewer", () => ({
   getViewer,
   getViewerTotalPoints,
+}));
+vi.mock("../lib/server/photo-reports", () => ({
+  getPendingReportCountServer,
 }));
 vi.mock("./AuthControl", () => ({ AuthControl: () => <div data-testid="auth-control" /> }));
 vi.mock("./HeaderPoints", () => ({
@@ -60,5 +64,29 @@ describe("SiteHeader", () => {
 
     expect(screen.getByTestId("header-points")).toHaveTextContent("196");
     expect(screen.getByTestId("header-points").parentElement).toHaveClass("ml-auto");
+  });
+
+  it("reads the pending report count only for an admin viewer", async () => {
+    getViewer.mockResolvedValue({
+      state: "authed",
+      displayName: "A",
+      avatarUrl: null,
+      isAdmin: false,
+      needsName: false,
+    });
+    render(await SiteHeader({ variant: "bar" }));
+    expect(getPendingReportCountServer).not.toHaveBeenCalled();
+
+    cleanup();
+    vi.clearAllMocks();
+    getViewer.mockResolvedValue({
+      state: "authed",
+      displayName: "A",
+      avatarUrl: null,
+      isAdmin: true,
+      needsName: false,
+    });
+    render(await SiteHeader({ variant: "bar" }));
+    expect(getPendingReportCountServer).toHaveBeenCalled();
   });
 });

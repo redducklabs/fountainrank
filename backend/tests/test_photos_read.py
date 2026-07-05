@@ -14,6 +14,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 import app.routers.photos as photos_module
+from app.config import Settings, get_settings
 from app.main import app
 
 
@@ -120,6 +121,50 @@ async def test_list_returns_only_visible_newest_first(session, api, fake_storage
     assert [p["id"] for p in body] == [str(visible2), str(visible1)]
     assert body[0]["url"] == f"/api/v1/photos/{visible2}"
     assert body[0]["thumbnail_url"] == f"/api/v1/photos/{visible2}/thumb"
+
+
+@pytest.mark.asyncio
+async def test_list_is_own_true_for_viewer_own_photo_false_for_others(session, api, fake_storage):
+    """W4 review fix: the list response must let each viewer tell their own photos apart from
+    everyone else's (`is_own`), so the web carousel can gate the Delete affordance per-photo
+    instead of showing it on every photo once the viewer owns *any* one of them."""
+    fid = await _add_fountain(session)
+    owner = await _add_user(session, suffix="-owner")
+    other = await _add_user(session, suffix="-other")
+    owner_photo = await _add_photo(session, fid, owner)
+    other_photo = await _add_photo(session, fid, other)
+    await session.commit()
+
+    # The list endpoint's optional-auth enrichment goes through the real dev-auth seam
+    # (`X-Dev-User`), which requires `dev_auth_enabled=True` (default False in prod).
+    app.dependency_overrides[get_settings] = lambda: Settings(dev_auth_enabled=True)
+    try:
+        async with api as client:
+            as_owner = await client.get(
+                f"/api/v1/fountains/{fid}/photos",
+                headers={"X-Dev-User": f"lid-{owner}-owner"},
+            )
+            as_other = await client.get(
+                f"/api/v1/fountains/{fid}/photos",
+                headers={"X-Dev-User": f"lid-{other}-other"},
+            )
+            anonymous = await client.get(f"/api/v1/fountains/{fid}/photos")
+    finally:
+        app.dependency_overrides.pop(get_settings, None)
+
+    for resp in (as_owner, as_other, anonymous):
+        assert resp.status_code == 200
+        assert resp.headers["cache-control"] == "private, no-store"
+
+    by_id_as_owner = {p["id"]: p["is_own"] for p in as_owner.json()}
+    assert by_id_as_owner[str(owner_photo)] is True
+    assert by_id_as_owner[str(other_photo)] is False
+
+    by_id_as_other = {p["id"]: p["is_own"] for p in as_other.json()}
+    assert by_id_as_other[str(owner_photo)] is False
+    assert by_id_as_other[str(other_photo)] is True
+
+    assert all(p["is_own"] is False for p in anonymous.json())
 
 
 @pytest.mark.asyncio

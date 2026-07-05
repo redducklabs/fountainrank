@@ -3,9 +3,18 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { signInWithReturn, signOutAction } from "../app/actions/auth";
+import { ReportBadge } from "./admin/ReportBadge";
 import type { Viewer } from "../lib/server/viewer";
 
-export function AuthControl({ viewer }: { viewer: Viewer }) {
+export function AuthControl({
+  viewer,
+  initialPendingReportCount,
+}: {
+  viewer: Viewer;
+  // Server-rendered initial count for the admin-only pending-report badge (W8); null for
+  // non-admins/anonymous/error viewers, who never see or poll for it.
+  initialPendingReportCount: number | null;
+}) {
   const pathname = usePathname();
   const search = useSearchParams();
   const returnTo = pathname + (search?.toString() ? `?${search.toString()}` : "");
@@ -45,6 +54,7 @@ export function AuthControl({ viewer }: { viewer: Viewer }) {
       avatarUrl={avatarUrl}
       isAdmin={isAdmin}
       degraded={viewer.state === "error"}
+      pendingReportCount={isAdmin ? initialPendingReportCount : null}
     />
   );
 }
@@ -54,11 +64,13 @@ function UserMenu({
   avatarUrl,
   isAdmin,
   degraded,
+  pendingReportCount,
 }: {
   name: string;
   avatarUrl: string | null;
   isAdmin: boolean;
   degraded: boolean;
+  pendingReportCount: number | null;
 }) {
   const [open, setOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -93,22 +105,25 @@ function UserMenu({
   const initial = (name || "?").trim().charAt(0).toUpperCase() || "?";
   return (
     <div className="relative">
-      <button
-        ref={buttonRef}
-        type="button"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label="Open account menu"
-        onClick={() => setOpen((v) => !v)}
-        className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-white/20 text-sm font-semibold text-white"
-      >
-        {avatarUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element -- arbitrary external avatar host
-          <img src={avatarUrl} alt="" width={36} height={36} className="h-9 w-9 object-cover" />
-        ) : (
-          <span aria-hidden="true">{initial}</span>
-        )}
-      </button>
+      <span className="relative inline-block">
+        <button
+          ref={buttonRef}
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          aria-label="Open account menu"
+          onClick={() => setOpen((v) => !v)}
+          className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-white/20 text-sm font-semibold text-white"
+        >
+          {avatarUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element -- arbitrary external avatar host
+            <img src={avatarUrl} alt="" width={36} height={36} className="h-9 w-9 object-cover" />
+          ) : (
+            <span aria-hidden="true">{initial}</span>
+          )}
+        </button>
+        {isAdmin && pendingReportCount != null && <ReportBadge initialCount={pendingReportCount} />}
+      </span>
       {open && (
         <div
           ref={menuRef}
@@ -127,13 +142,22 @@ function UserMenu({
             Your account
           </Link>
           {isAdmin && (
-            <Link
-              role="menuitem"
-              href="/admin"
-              className="block px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
-            >
-              Admin
-            </Link>
+            <>
+              <Link
+                role="menuitem"
+                href="/admin"
+                className="block px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+              >
+                Admin
+              </Link>
+              <Link
+                role="menuitem"
+                href="/admin/reports"
+                className="block px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+              >
+                Reports
+              </Link>
+            </>
           )}
           <div className="my-1 border-t border-slate-100" />
           <form action={signOutAction}>
