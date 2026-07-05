@@ -127,13 +127,22 @@ function UserMenu({
             Your account
           </Link>
           {isAdmin && (
-            <Link
-              role="menuitem"
-              href="/admin"
-              className="block px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
-            >
-              Admin
-            </Link>
+            <>
+              <Link
+                role="menuitem"
+                href="/admin"
+                className="block px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+              >
+                Admin
+              </Link>
+              <Link
+                role="menuitem"
+                href="/admin/reports"
+                className="block px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+              >
+                Reports
+              </Link>
+            </>
           )}
           <div className="my-1 border-t border-slate-100" />
           <form action={signOutAction}>
