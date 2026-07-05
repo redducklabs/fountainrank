@@ -217,7 +217,7 @@ Expected: FAIL — `ImportError` (names not defined).
 
 - [ ] **Step 3: Implement the primitives**
 
-In `backend/app/contributions.py`: (a) add `select` to the SQLAlchemy import — `from sqlalchemy import func, select, update`; (b) **remove** the `dk_verify` and `dk_report_condition` functions; (c) add near the other `dk_*` builders:
+In `backend/app/contributions.py`: (a) add `select` to the SQLAlchemy import — `from sqlalchemy import func, select, update`; (b) add `dk_condition_award` near the other `dk_*` builders. **Do NOT remove `dk_verify`/`dk_report_condition` yet** — the router still imports them, and `backend/tests/conftest.py` imports `app.main` → the router, so removing them now fails Task 2's own pytest at import time. Their removal is done atomically with the router rewrite in Task 5.
 
 ```python
 def dk_condition_award(report_id: uuid.UUID) -> str:
@@ -225,9 +225,6 @@ def dk_condition_award(report_id: uuid.UUID) -> str:
     # exact double-processing of one report row (ON CONFLICT DO NOTHING).
     return f"cond_award:{report_id}"
 ```
-
-Before removing the two old builders, sweep for references so nothing breaks at import time:
-`grep -rn "dk_verify\|dk_report_condition" backend` — expect hits only in `app/routers/fountains.py` (rewritten in Task 5) and possibly a unit test in `backend/tests/test_contributions.py`; update or delete any such test (the per-day-key behavior is replaced by the rolling gate, covered by the new tests here and in Task 5).
 
 (d) add module constants near `POINTS`:
 
@@ -278,7 +275,9 @@ Add to `backend/tests/test_contributions.py`:
 
 ```python
 async def test_latest_awarded_condition_at_reads_legacy_keys(session, test_user):
-    fid = uuid.uuid4()
+    # `contribution_events.fountain_id` is a real FK, so use the module's fountain helper
+    # (`_mk_fountain(session, test_user)` in test_contributions.py) — never a bare uuid4().
+    fountain = await _mk_fountain(session, test_user)
     # Simulate a legacy calendar-day-keyed award row (old dk_verify shape).
     t = datetime(2026, 5, 1, 9, 0, tzinfo=UTC)
     await record_contributions(
@@ -287,23 +286,23 @@ async def test_latest_awarded_condition_at_reads_legacy_keys(session, test_user)
             ContributionSpec(
                 user_id=test_user.id,
                 event_type="verify_working",
-                dedup_key=f"verify:{test_user.id}:{fid}:20260501",
-                fountain_id=fid,
+                dedup_key=f"verify:{test_user.id}:{fountain.id}:20260501",
+                fountain_id=fountain.id,
                 target_type="condition_report",
                 target_id=uuid.uuid4(),
                 created_at=t,
             )
         ],
     )
-    assert await latest_awarded_condition_at(session, test_user.id, fid) == t
+    assert await latest_awarded_condition_at(session, test_user.id, fountain.id) == t
 ```
 
-Note: this test inserts with a raw `fountain_id`/`target_id` (no FK enforcement on `contribution_events.target_id`; `fountain_id` is a real FK, so create a fountain first if the FK bites — if it does, add `fid = await _make_fountain(session)` using the existing fountain-creation helper in this test module, or insert a `Fountain` row directly).
+Note: if `_mk_fountain` has a different name/signature in the current `test_contributions.py`, use whatever fountain-creation helper that module already defines — the point is a **real** `fountains` row (the FK is enforced). `contribution_events.target_id` has no FK, so a bare `uuid.uuid4()` there is fine.
 
 - [ ] **Step 5: Run tests to verify pass**
 
 Run: `cd backend && uv run pytest tests/test_contributions.py -v`
-Expected: PASS. (If the `fountain_id` FK rejects a random UUID, create a fountain row first as noted, then re-run.)
+Expected: PASS.
 
 - [ ] **Step 6: Commit**
 
@@ -445,22 +444,41 @@ git commit -m "feat(backend): add partial index for condition point-window lookb
 Add to `backend/tests/test_conditions_api.py` (it already has `_add_fountain`, `_report`, the `client`, `test_user`, `session` fixtures; add `from datetime import UTC, datetime, timedelta` and `from app.models import ContributionEvent` if not present):
 
 ```python
-async def test_detail_exposes_condition_points_eligible_at(client, test_user):
+async def test_detail_condition_points_eligible_at_authenticated(client, test_user):
+    # The detail GET resolves its viewer via get_optional_user, NOT the get_current_user the
+    # `client` fixture overrides — and the fixture sends no auth header, so get_optional_user
+    # returns None by default. To exercise the AUTHENTICATED eligibility branch we must
+    # override get_optional_user (same pattern as test_fountains_detail.py /
+    # test_gamification_api.py: app.dependency_overrides[get_optional_user] = lambda: test_user).
+    from app.auth import get_optional_user
+    from app.main import app
+
     fid = await _add_fountain(client)
-    # Before any condition report: eligible now -> null.
-    before = (await client.get(f"/api/v1/fountains/{fid}")).json()
-    assert before["condition_points_eligible_at"] is None
-    assert before["condition_points_awarded"] is None
-    # After a working report: eligible-again timestamp in the future.
-    await _report(client, fid, "working")
-    after = (await client.get(f"/api/v1/fountains/{fid}")).json()
-    assert after["condition_points_eligible_at"] is not None
-    assert after["condition_points_awarded"] is None  # GET never sets the award count
+    app.dependency_overrides[get_optional_user] = lambda: test_user
+    try:
+        before = (await client.get(f"/api/v1/fountains/{fid}")).json()
+        assert before["condition_points_eligible_at"] is None
+        assert before["condition_points_awarded"] is None  # GET never sets the award count
+        await _report(client, fid, "working")
+        after = (await client.get(f"/api/v1/fountains/{fid}")).json()
+        assert after["condition_points_eligible_at"] is not None
+        assert after["condition_points_awarded"] is None
+    finally:
+        app.dependency_overrides.pop(get_optional_user, None)
+
+
+async def test_detail_condition_points_eligible_at_anonymous(client):
+    # No get_optional_user override + no auth header => anonymous viewer, so eligibility is
+    # always null even immediately after a report (spec: null for anonymous callers).
+    fid = await _add_fountain(client)
+    await _report(client, fid, "working")  # report is attributed to test_user via the write seam
+    detail = (await client.get(f"/api/v1/fountains/{fid}")).json()
+    assert detail["condition_points_eligible_at"] is None
 ```
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `cd backend && uv run pytest tests/test_conditions_api.py::test_detail_exposes_condition_points_eligible_at -v`
+Run: `cd backend && uv run pytest tests/test_conditions_api.py -k condition_points_eligible_at -v`
 Expected: FAIL — `KeyError: 'condition_points_eligible_at'` (field absent).
 
 - [ ] **Step 3: Add the schema fields**
@@ -610,6 +628,13 @@ async def test_legacy_calendar_key_blocks_new_award(client, test_user, session):
     await session.commit()
     r = await _report(client, fid, "working")
     assert r.json()["condition_points_awarded"] == 0
+
+
+async def test_first_problem_report_awards_two(client):
+    # The non-working (report_condition) award path is a public contract: 2 points.
+    fid = await _add_fountain(client)
+    r = await _report(client, fid, "broken")
+    assert r.json()["condition_points_awarded"] == 2
 ```
 
 - [ ] **Step 2: Run to verify they fail**
@@ -617,9 +642,13 @@ async def test_legacy_calendar_key_blocks_new_award(client, test_user, session):
 Run: `cd backend && uv run pytest tests/test_conditions_api.py -k "repeat_condition or after_window or legacy_calendar" -v`
 Expected: FAIL — `condition_points_awarded` is `None`/absent and repeat still awards (old per-day dedup).
 
-- [ ] **Step 3: Swap imports**
+- [ ] **Step 3: Swap imports and retire the old builders (atomic)**
 
-In `backend/app/routers/fountains.py`, update the `from app.contributions import (...)` block: **remove** `dk_report_condition`, `dk_verify`; **add** `condition_points_eligible_at`, `dk_condition_award`, `latest_awarded_condition_at`, `points_for` (keep `ContributionSpec`, `record_contributions`, and the other `dk_*` used elsewhere).
+This step removes `dk_verify`/`dk_report_condition` and their only importer together, so the tree never has a dangling import:
+
+1. In `backend/app/routers/fountains.py`, update the `from app.contributions import (...)` block: **remove** `dk_report_condition`, `dk_verify`; **add** `condition_points_eligible_at`, `dk_condition_award`, `latest_awarded_condition_at`, `points_for` (keep `ContributionSpec`, `record_contributions`, and the other `dk_*` used elsewhere).
+2. In `backend/app/contributions.py`, **delete** the `dk_verify` and `dk_report_condition` function definitions (added-in-Task-2 `dk_condition_award` replaces them).
+3. Sweep for any remaining references: `grep -rn "dk_verify\|dk_report_condition" backend`. Expect **no hits** after steps 1–2 except possibly a unit test in `backend/tests/test_contributions.py` — if one exists (e.g. asserting the old `verify:`/`cond:` key shape), delete it; that per-day-key behavior is replaced by the rolling gate, covered by the new tests in Task 2 and this task.
 
 - [ ] **Step 4: Rewrite the gate in `submit_condition`**
 
@@ -800,21 +829,33 @@ git commit -m "feat(contributions): add conditionPointsBlocked pre-submit hint h
 
 In `web/app/actions/contribute.ts`:
 
-Change the success type and `mapStatus` to accept an optional awarded count:
+Change the success type to carry an optional awarded count:
 
 ```ts
 export type ActionResult = { ok: true; pointsAwarded?: number } | { ok: false; error: ContributeError };
 ```
 
-In `run()`, read the response body and thread the award count. Change the `call` return type and the destructure:
+`run()` is shared by rating/condition/note/attributes, whose response bodies differ (`FountainDetail` vs `NoteOut`). Keep the helper **endpoint-agnostic**: type `data` as `unknown` (every body is assignable to `unknown` — a narrow `{ condition_points_awarded?: ... }` target would reject `NoteOut` under strict TS) and read the field through a guard. Change the `call` return type:
 
 ```ts
     call: (
       client: Awaited<ReturnType<typeof getAuthedApiClientForAction>>,
-    ) => Promise<{ response?: { status: number }; data?: { condition_points_awarded?: number | null } }>,
+    ) => Promise<{ response?: { status: number }; data?: unknown }>,
 ```
 
-and in the `try`:
+Add a module-level extractor (near `mapStatus`):
+
+```ts
+function readPointsAwarded(data: unknown): number | undefined {
+  if (data && typeof data === "object" && "condition_points_awarded" in data) {
+    const value = (data as { condition_points_awarded?: unknown }).condition_points_awarded;
+    return typeof value === "number" ? value : undefined;
+  }
+  return undefined;
+}
+```
+
+And in the `try`, destructure `data` and thread it (non-condition endpoints have no such field → `undefined`, harmless):
 
 ```ts
       const { response, data } = await call(client);
@@ -822,12 +863,8 @@ and in the `try`:
       if (status >= 200 && status < 300) {
         revalidatePath(`/fountains/${fountainId}`);
         revalidatePath("/");
-        const pointsAwarded =
-          typeof data?.condition_points_awarded === "number"
-            ? data.condition_points_awarded
-            : undefined;
         log("info", "contribute action", { requestId, action, fountainId, status });
-        return { ok: true, pointsAwarded };
+        return { ok: true, pointsAwarded: readPointsAwarded(data) };
       }
       const result = mapStatus(status);
       log("warn", "contribute action", { requestId, action, fountainId, status });
