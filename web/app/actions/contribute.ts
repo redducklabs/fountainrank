@@ -6,11 +6,7 @@ import { log } from "../../lib/server/log";
 
 type ConditionStatus = components["schemas"]["ConditionReportRequest"]["status"];
 export type ContributeError =
-  | "unauthenticated"
-  | "validation"
-  | "not_found"
-  | "needs_name"
-  | "server";
+  "unauthenticated" | "validation" | "not_found" | "needs_name" | "server";
 export type ActionResult = { ok: true } | { ok: false; error: ContributeError };
 
 const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;

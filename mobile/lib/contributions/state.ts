@@ -8,12 +8,7 @@ export {
 } from "./conditions";
 
 export type ContributionError =
-  | "unauthenticated"
-  | "validation"
-  | "not_found"
-  | "needs_name"
-  | "network"
-  | "server";
+  "unauthenticated" | "validation" | "not_found" | "needs_name" | "network" | "server";
 
 export type ContributionGate =
   | { state: "ready" }

@@ -114,9 +114,7 @@ export async function resolveCurrentPosition(
 }
 
 export type FetchOutcome =
-  | { kind: "granted"; coords: Coords }
-  | { kind: "denied" }
-  | { kind: "failed" };
+  { kind: "granted"; coords: Coords } | { kind: "denied" } | { kind: "failed" };
 
 /**
  * Requests foreground permission (if needed) and fetches the current position.
