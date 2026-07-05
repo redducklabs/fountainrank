@@ -74,6 +74,11 @@ submission. The `app-store-6-9/` PNGs are still generated mockups and must be
 replaced with real iPhone 6.9" captures (see the Android capture recipe below for
 the equivalent iOS flow on a physical device).
 
+Until then, the two iOS sets differ in screen line-up: the real `app-store-6-5/`
+set shows map / detail / **search** / add-fountain / **rankings**, while the
+`app-store-6-9/` mockups still show map / detail / **contribute** / add-fountain /
+**account-diagnostics**. Re-align them when the real 6.9" set is captured.
+
 The map/search/detail-view/rankings screens are public-read, so the emulator
 captures are pixel-identical to the production store build for those screens.
 Rating and ranking values shown are from seed/test accounts, not organic user
