@@ -5,6 +5,7 @@ import { SiteHeader } from "../../../components/SiteHeader";
 import { ReportedPhotoActions } from "../../../components/admin/ReportedPhotoActions";
 import { getViewer } from "../../../lib/server/viewer";
 import { getPhotoReportsServer } from "../../../lib/server/photo-reports";
+import { log } from "../../../lib/server/log";
 import { resolveApiBaseUrl } from "../../../lib/api";
 import { signInWithReturn } from "../../actions/auth";
 
@@ -106,7 +107,12 @@ export default async function AdminReportsPage() {
   }
   if (!viewer.isAdmin) notFound();
 
-  const { data: photos } = await getPhotoReportsServer(crypto.randomUUID());
+  const requestId = crypto.randomUUID();
+  const { data: photos, status } = await getPhotoReportsServer(requestId);
+  const reportsOk = status >= 200 && status < 300;
+  if (!reportsOk) {
+    log("warn", "failed to load photo reports", { requestId, status });
+  }
 
   return (
     <>
@@ -116,7 +122,11 @@ export default async function AdminReportsPage() {
         <p className="mt-2 text-slate-600">
           Review photos flagged by the community and hide, dismiss, or delete them.
         </p>
-        {photos && photos.length > 0 ? (
+        {!reportsOk ? (
+          <p className="mt-6 text-sm text-red-700">
+            Couldn&rsquo;t load reports right now — please retry.
+          </p>
+        ) : photos && photos.length > 0 ? (
           <ul className="mt-6 space-y-3">
             {photos.map((photo) => (
               <ReportedPhotoRow key={photo.photo_id} photo={photo} />
