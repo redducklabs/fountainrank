@@ -50,4 +50,20 @@ describe("pinsToFeatureCollection", () => {
     ]);
     expect(fc.features[0].properties.pill).toBeNull();
   });
+  it("dark theme suffixes the feature icon", () => {
+    const fc = pinsToFeatureCollection(
+      [
+        {
+          id: "c",
+          location: { latitude: 1, longitude: 2 },
+          is_working: true,
+          average_rating: null,
+          rating_count: 0,
+          ranking_score: null,
+        },
+      ],
+      "dark",
+    );
+    expect(fc.features[0].properties.icon).toBe("pin-unrated-dark");
+  });
 });
