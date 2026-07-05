@@ -44,9 +44,9 @@ export function LeaderboardRows({
   return (
     <div className="mt-4 pb-24">
       {rows.length === 0 ? (
-        <p className="text-center text-slate-500">No contributors yet.</p>
+        <p className="text-center text-muted">No contributors yet.</p>
       ) : (
-        <ol className="divide-y divide-slate-100">
+        <ol className="divide-y divide-border">
           {rows.map((row) => (
             <Row
               key={`${row.rank}-${row.display_name}`}
@@ -61,7 +61,7 @@ export function LeaderboardRows({
         <div
           role="region"
           aria-label="Your current ranking"
-          className="fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white/95 shadow-[0_-2px_8px_rgba(0,0,0,0.06)] backdrop-blur"
+          className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-white/95 shadow-[0_-2px_8px_rgba(0,0,0,0.06)] backdrop-blur"
         >
           <div className="mx-auto max-w-2xl px-6 py-2">
             <YouRow you={you} sort={sort} />
@@ -88,11 +88,11 @@ function Row({
       ref={innerRef}
       className={
         "flex items-center gap-3 px-3 py-3 " +
-        (row.is_you ? "rounded-lg bg-[#EAF1FF] ring-1 ring-[#0C44A0]" : "")
+        (row.is_you ? "rounded-lg bg-accent-subtle ring-1 ring-brand-mid" : "")
       }
     >
       <RankCell rank={`${row.rank}`} you={row.is_you} />
-      <span className="min-w-0 flex-1 truncate font-semibold text-slate-800">
+      <span className="min-w-0 flex-1 truncate font-semibold text-foreground">
         {isLeader ? <CrownIcon /> : null}
         {row.display_name}
         {row.is_you ? <YouTag /> : null}
@@ -108,12 +108,12 @@ function Row({
 function YouRow({ you, sort }: { you: YourStanding; sort: LeaderboardSort }) {
   const ranked = you.rank != null;
   return (
-    <div className="flex items-center gap-3 rounded-lg bg-[#EAF1FF] px-3 py-3 ring-1 ring-[#0C44A0]">
+    <div className="flex items-center gap-3 rounded-lg bg-accent-subtle px-3 py-3 ring-1 ring-brand-mid">
       <RankCell rank={ranked ? `${you.rank}` : "—"} you />
-      <span className="min-w-0 flex-1 font-semibold text-slate-800">
+      <span className="min-w-0 flex-1 font-semibold text-foreground">
         You
         {ranked ? null : (
-          <span className="ml-2 text-xs font-normal text-slate-500">Not yet ranked</span>
+          <span className="ml-2 text-xs font-normal text-muted">Not yet ranked</span>
         )}
       </span>
       <Metric
@@ -129,7 +129,7 @@ function RankCell({ rank, you }: { rank: string; you: boolean }) {
     <span
       className={
         "w-8 shrink-0 text-right text-sm font-bold tabular-nums " +
-        (you ? "text-[#0A357E]" : "text-slate-400")
+        (you ? "text-brand" : "text-muted")
       }
     >
       {rank}
@@ -140,17 +140,17 @@ function RankCell({ rank, you }: { rank: string; you: boolean }) {
 function Metric({ value, caption }: { value: number; caption: string }) {
   return (
     <span className="shrink-0 text-right">
-      <span className="block text-base font-black tabular-nums text-[#0A357E]">
+      <span className="block text-base font-black tabular-nums text-brand">
         {value.toLocaleString()}
       </span>
-      <span className="block text-[11px] text-slate-500">{caption}</span>
+      <span className="block text-[11px] text-muted">{caption}</span>
     </span>
   );
 }
 
 function YouTag() {
   return (
-    <span className="ml-2 rounded bg-[#0A357E] px-1.5 py-0.5 text-[10px] font-bold uppercase text-white">
+    <span className="ml-2 rounded bg-brand px-1.5 py-0.5 text-[10px] font-bold uppercase text-white">
       You
     </span>
   );

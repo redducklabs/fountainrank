@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = {
   alternates: { canonical: "/leaderboard" },
 };
-const shell = "mx-auto min-h-dvh max-w-2xl bg-white px-6 py-10";
+const shell = "mx-auto min-h-dvh max-w-2xl bg-surface-raised px-6 py-10";
 
 export default async function LeaderboardPage({
   searchParams,
@@ -36,11 +36,11 @@ export default async function LeaderboardPage({
     <>
       <SiteHeader variant="bar" />
       <main className={shell}>
-        <Link href="/" className="text-sm text-[#0C44A0] underline">
+        <Link href="/" className="text-sm text-brand-mid underline">
           ← Back to the map
         </Link>
-        <h1 className="mt-6 text-2xl font-black text-[#0A357E]">Leaderboard</h1>
-        <p className="mt-1 text-sm text-slate-500">
+        <h1 className="mt-6 text-2xl font-black text-brand">Leaderboard</h1>
+        <p className="mt-1 text-sm text-muted">
           {state.scope === "near"
             ? "Top contributors near this part of the map."
             : "Top contributors everywhere."}
@@ -51,7 +51,7 @@ export default async function LeaderboardPage({
         {data ? (
           <LeaderboardRows rows={data.rows} you={data.you ?? null} sort={state.sort} />
         ) : (
-          <p className="mt-8 text-center text-slate-500">
+          <p className="mt-8 text-center text-muted">
             Couldn&rsquo;t load the leaderboard. Please try again.
           </p>
         )}

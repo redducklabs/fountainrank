@@ -16,7 +16,7 @@ export function LeaderboardControls({ state }: { state: ParsedLeaderboard }) {
       <div
         role="group"
         aria-label="Leaderboard scope"
-        className="inline-flex rounded-full border border-slate-200 bg-slate-50 p-1"
+        className="inline-flex rounded-full border border-border bg-surface p-1"
       >
         <ScopeLink state={state} scope="global" label="Global" />
         {state.center ? <ScopeLink state={state} scope="near" label="Near here" /> : null}
@@ -32,8 +32,8 @@ export function LeaderboardControls({ state }: { state: ParsedLeaderboard }) {
               className={
                 "rounded-full border px-3 py-1.5 text-sm font-semibold transition " +
                 (active
-                  ? "border-[#0A357E] bg-[#0A357E] text-white"
-                  : "border-slate-200 bg-white text-slate-600 hover:border-[#0C44A0] hover:text-[#0C44A0]")
+                  ? "border-brand bg-brand text-white"
+                  : "border-border bg-surface-raised text-muted hover:border-brand-mid hover:text-brand-mid")
               }
             >
               {SORT_LABELS[sort]}
@@ -61,7 +61,7 @@ function ScopeLink({
       aria-current={active ? "true" : undefined}
       className={
         "rounded-full px-4 py-1.5 text-sm font-semibold transition " +
-        (active ? "bg-[#0A357E] text-white" : "text-slate-600 hover:text-[#0A357E]")
+        (active ? "bg-brand text-white" : "text-muted hover:text-brand")
       }
     >
       {label}
