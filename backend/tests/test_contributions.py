@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import func, select
@@ -424,3 +425,27 @@ async def test_reverse_no_events_is_noop(session):
     reversed_count = await reverse_contributions(session, fountain.id)
 
     assert reversed_count == 0
+
+
+async def test_created_at_override_is_persisted(session, test_user):
+    pinned = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    await record_contributions(
+        session,
+        [
+            ContributionSpec(
+                user_id=test_user.id,
+                event_type="add_note",
+                dedup_key="created-at-override-test",
+                target_type="note",
+                created_at=pinned,
+            )
+        ],
+    )
+    got = (
+        await session.execute(
+            select(ContributionEvent.created_at).where(
+                ContributionEvent.dedup_key == "created-at-override-test"
+            )
+        )
+    ).scalar_one()
+    assert got == pinned

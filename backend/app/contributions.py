@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 
 from sqlalchemy import func, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -83,6 +84,10 @@ class ContributionSpec:
     target_id: uuid.UUID | None = None
     event_metadata: dict | None = None
     parent_event_id: uuid.UUID | None = None
+    # Optional authoritative timestamp. When set, record_contributions writes it to
+    # ContributionEvent.created_at instead of the DB server_default — so the condition
+    # point-window gate (#124) compares one clock (report_time), not insert-time skew.
+    created_at: datetime | None = None
 
 
 # --- dedup-key builders (spec §8) -------------------------------------------------
@@ -152,21 +157,24 @@ async def record_contributions(
 
     inserted: list = []
     for spec in specs:
+        values = dict(
+            id=uuid.uuid4(),
+            user_id=spec.user_id,
+            fountain_id=spec.fountain_id,
+            target_type=spec.target_type,
+            target_id=spec.target_id,
+            event_type=spec.event_type,
+            points=points_for(spec.event_type),
+            location=spec.location,
+            dedup_key=spec.dedup_key,
+            event_metadata=spec.event_metadata,
+            parent_event_id=spec.parent_event_id,
+        )
+        if spec.created_at is not None:
+            values["created_at"] = spec.created_at
         stmt = (
             pg_insert(ContributionEvent)
-            .values(
-                id=uuid.uuid4(),
-                user_id=spec.user_id,
-                fountain_id=spec.fountain_id,
-                target_type=spec.target_type,
-                target_id=spec.target_id,
-                event_type=spec.event_type,
-                points=points_for(spec.event_type),
-                location=spec.location,
-                dedup_key=spec.dedup_key,
-                event_metadata=spec.event_metadata,
-                parent_event_id=spec.parent_event_id,
-            )
+            .values(**values)
             .on_conflict_do_nothing(index_elements=["dedup_key"])
             .returning(
                 ContributionEvent.id,
