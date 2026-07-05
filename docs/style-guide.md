@@ -1503,6 +1503,352 @@ Renders one `StarGroup` per `RatingTypeOut` in the add-fountain details step.
 
 ---
 
+## Fountain photos (PR 2)
+
+Pre-UI spec for the photo carousel, report dialog, list-row thumbnail, admin moderation
+queue, and pending-report badge (`docs/specs/2026-07-04-fountain-photos-design.md` §11–13).
+Written **before** the components (W3–W8) per the style-guide house rule; reuses the
+existing detail-panel, form, and admin-controls tokens above — no new design language.
+
+### Photo carousel (`web/components/fountain/PhotoCarousel.tsx`)
+
+A client component slotted near the top of `FountainDetail` (above the status block),
+showing a fountain's photos with overlaid left/right navigation. Uses the gated read paths
+(`/api/v1/photos/{id}` / `.../thumb`), never a durable object URL.
+
+**Image area:**
+
+```tsx
+<div className="relative aspect-[4/3] w-full overflow-hidden rounded-lg bg-slate-100">
+  <img
+    src={photos[index].url}
+    alt=""
+    loading="lazy"
+    className="h-full w-full object-cover"
+  />
+  {/* left/right arrows, index dots — see below */}
+</div>
+```
+
+- Fixed `aspect-[4/3]` frame (`bg-slate-100` while the image loads) so the panel doesn't
+  jump as photos change; `object-cover` fills the frame without distortion.
+- Photo `alt=""` (decorative) — the meaningful content is the fountain itself, not the
+  image; the current index is announced separately (see indicator below).
+
+**Overlaid arrow buttons** — absolutely positioned, vertically centered on the image's left
+and right edges, one per side, hidden when there is only one photo:
+
+```tsx
+<button
+  type="button"
+  aria-label="Previous photo"
+  className="absolute inset-y-0 left-0 flex items-center px-2 text-white outline-none"
+>
+  <span
+    aria-hidden="true"
+    className="flex h-8 w-8 items-center justify-center rounded-full bg-black/40 text-lg hover:bg-black/60 focus-visible:ring-2 focus-visible:ring-white"
+  >
+    ‹
+  </span>
+</button>
+<button
+  type="button"
+  aria-label="Next photo"
+  className="absolute inset-y-0 right-0 flex items-center px-2 text-white outline-none"
+>
+  <span
+    aria-hidden="true"
+    className="flex h-8 w-8 items-center justify-center rounded-full bg-black/40 text-lg hover:bg-black/60 focus-visible:ring-2 focus-visible:ring-white"
+  >
+    ›
+  </span>
+</button>
+```
+
+- **Position:** `absolute inset-y-0 left-0` / `right-0` on the `<button>` itself (full
+  image height, vertically centered content via `flex items-center`), with the visible
+  32px circular glyph (`h-8 w-8 rounded-full`) inset by the button's `px-2` padding so it
+  never touches the image edge.
+- **Color:** translucent black chip (`bg-black/40`, `hover:bg-black/60`) with white glyph —
+  legible over any photo without needing a light/dark variant per image.
+- **Focus ring:** `focus-visible:ring-2 focus-visible:ring-white` on the glyph (white reads
+  on any photo background; the outer button itself has `outline-none` so only the visible
+  ring shows).
+- **Glyph:** `‹`/`›` are `aria-hidden`; the accessible name comes from the button's
+  `aria-label` ("Previous photo" / "Next photo").
+- **Wrapping:** Next from the last photo wraps to the first (and vice versa) — same
+  behavior on click and keyboard (Left/Right arrow keys when the carousel has focus).
+
+**Index / dot indicator:**
+
+```tsx
+<div className="absolute inset-x-0 bottom-2 flex justify-center gap-1.5" aria-hidden="true">
+  {photos.map((_, i) => (
+    <span
+      key={i}
+      className={`h-1.5 w-1.5 rounded-full ${i === index ? "bg-white" : "bg-white/40"}`}
+    />
+  ))}
+</div>
+<p className="sr-only" aria-live="polite">
+  Photo {index + 1} of {photos.length}
+</p>
+```
+
+- Dots are decorative (`aria-hidden`); a `sr-only` live region announces "Photo N of M" for
+  screen-reader users, updating as the index changes.
+- Active dot: solid white (`bg-white`); inactive: translucent white (`bg-white/40`) — reads
+  over any photo without a separate background chip.
+
+**Empty state:** when a fountain has no photos, the carousel **renders nothing** (`return
+null`) — no placeholder frame, no "no photos" message, consistent with the other
+graceful-skip sections in this document (rating fields, attribute controls).
+
+### Photo report dialog (`web/components/fountain/ReportPhotoDialog.tsx`)
+
+Lets a signed-in user flag a photo. Trigger is a small "Report" control on each carousel
+photo; the dialog itself follows the existing modal shell used by the detail overlay and
+add-fountain panel.
+
+**Trigger** — a low-emphasis text affordance in the photo's bottom-right corner, matching
+the translucent-chip treatment of the arrow buttons:
+
+```tsx
+<button
+  type="button"
+  aria-label="Report this photo"
+  className="absolute bottom-2 right-2 rounded-full bg-black/40 px-2.5 py-1 text-xs font-semibold text-white hover:bg-black/60 focus-visible:ring-2 focus-visible:ring-white"
+>
+  Report
+</button>
+```
+
+**Dialog:**
+
+```tsx
+<div
+  role="dialog"
+  aria-label="Report photo"
+  tabIndex={-1}
+  className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
+>
+  <div className="w-full max-w-sm rounded-lg bg-white p-4 shadow-xl">
+    <h2 className="text-base font-semibold text-[#0A357E]">Report photo</h2>
+
+    <label htmlFor="report-category" className="mt-3 block text-sm font-medium text-slate-700">
+      Reason
+    </label>
+    <select
+      id="report-category"
+      className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm text-slate-700"
+    >
+      <option value="inappropriate">Inappropriate</option>
+      <option value="not_a_fountain">Not a fountain</option>
+      <option value="spam">Spam</option>
+      <option value="other">Other</option>
+    </select>
+
+    <label htmlFor="report-note" className="mt-3 block text-sm font-medium text-slate-700">
+      Note (optional)
+    </label>
+    <textarea
+      id="report-note"
+      maxLength={500}
+      rows={3}
+      className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm text-slate-700 break-words"
+    />
+
+    <div className="mt-4 flex justify-end gap-2">
+      <button
+        type="button"
+        className="rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50"
+      >
+        Cancel
+      </button>
+      <button
+        type="submit"
+        className="rounded-full bg-[#0C44A0] px-4 py-2 text-sm font-bold text-white hover:bg-[#0A357E] disabled:opacity-50"
+      >
+        Submit report
+      </button>
+    </div>
+  </div>
+</div>
+```
+
+- Same centered-overlay shell family as the fountain-detail dialog/panel (`role="dialog"`,
+  backdrop `bg-black/30`, `tabIndex={-1}` + focus-on-mount, `Escape` dismisses, focus
+  trapped inside, focus restored to the trigger on close).
+- **Category `<select>`** — required, four options in the fixed order Inappropriate / Not a
+  fountain / Spam / Other (`inappropriate` / `not_a_fountain` / `spam` / `other`), same
+  select styling as the Condition form's problem-status select.
+- **Note `<textarea>`** — optional, `maxLength={500}`, `break-words` (user-generated text
+  convention). No live character counter needed at this length (unlike the 1000-char note
+  form).
+- **Submit** — royal-blue pill (`bg-[#0C44A0]`, same as the Condition/Note form submit
+  buttons), disabled while pending.
+- **States:** idle → pending (`disabled`, "Submitting…") → success (dialog closes; the
+  trigger becomes a disabled "Reported" label) → already-reported (trigger reads "Already
+  reported", disabled, no dialog) → error (inline `role="status"` message inside the
+  dialog, same convention as the other Contribute forms).
+- Auth-gated: the Report control only renders for a signed-in viewer (signed-out visitors
+  see no report affordance on photos, matching the rest of Contribute).
+
+### List-row thumbnail (`web/components/fountain/FountainListRow.tsx`)
+
+Extends the existing city fountain-list row (rendered on the SEO city page, see "SEO place
+pages" above) with a small leading photo thumbnail and an optional photo-count label,
+driven by the new `CityFountainPin.thumbnail_url` / `photo_count` fields.
+
+```tsx
+<li className="flex items-center gap-3 py-3">
+  {thumbnail_url ? (
+    <img
+      src={thumbnail_url}
+      alt=""
+      loading="lazy"
+      className="h-12 w-12 shrink-0 rounded-md object-cover"
+    />
+  ) : (
+    <span
+      aria-hidden="true"
+      className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-slate-100 text-slate-300"
+    >
+      {/* neutral placeholder glyph */}
+    </span>
+  )}
+  <div className="min-w-0 flex-1">{/* existing row content: label, stars, See on Map */}</div>
+</li>
+```
+
+- **Size / shape:** `h-12 w-12` (48px), `rounded-md` (matches the softer card radius used
+  elsewhere, distinct from the fully-round pills), `shrink-0` so a long fountain label never
+  compresses it.
+- **Fit:** `object-cover` so non-square source thumbnails (backend-generated, max long edge
+  400px) fill the box without distortion.
+- **Loading:** `loading="lazy"` — city lists can be long; only thumbnails near the viewport
+  fetch eagerly.
+- **Placeholder (no photo):** a neutral `bg-slate-100` box with a muted `text-slate-300`
+  glyph, `aria-hidden` — same neutral-empty-state tone as the map's placeholder frame; no
+  broken-image icon is ever shown.
+- **Photo count label:** when `photo_count > 0`, an "N photos" caption
+  (`text-xs text-slate-400`) sits under the thumbnail or inline after the row label —
+  small, low-emphasis, never competing with the rating/See-on-Map metadata.
+- **Alt text:** the thumbnail image itself carries `alt=""` (decorative — the row's own link
+  text already names the fountain); it is not a substitute for descriptive content.
+
+### Admin moderation queue row (`web/app/admin/reports/page.tsx`)
+
+The reported-photos list on the new `/admin/reports` page (admin-gated, linked from the
+account page's "Reports" link for admins). Follows the same card-row density and button
+hierarchy as `FountainAdminControls`.
+
+```tsx
+<li className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:flex-row sm:items-start">
+  <img
+    src={thumbnail_url}
+    alt=""
+    loading="lazy"
+    className="h-16 w-16 shrink-0 rounded-md object-cover"
+  />
+  <div className="min-w-0 flex-1">
+    <div className="flex flex-wrap items-center gap-1.5">
+      <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-bold text-red-800">
+        {report_count} report{report_count > 1 ? "s" : ""}
+      </span>
+      {categories.map((c) => (
+        <span
+          key={c}
+          className="rounded-full bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-600"
+        >
+          {c}
+        </span>
+      ))}
+    </div>
+    <ul className="mt-2 space-y-1 text-xs text-slate-500">
+      {notes.map((n, i) => (
+        <li key={i} className="truncate break-words">
+          {n}
+        </li>
+      ))}
+    </ul>
+  </div>
+  <div className="flex shrink-0 gap-2">
+    <button className="rounded-full border border-[#0A357E] px-3 py-1.5 text-xs font-semibold text-[#0A357E] hover:bg-[#0A357E]/5">
+      Hide
+    </button>
+    <button className="rounded-full border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100">
+      Reject
+    </button>
+    <button className="rounded-full border border-red-600 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50">
+      Delete
+    </button>
+  </div>
+</li>
+```
+
+- **Thumbnail:** `h-16 w-16 rounded-md object-cover` — one size step up from the list-row
+  thumbnail (this is a dense admin surface with fewer rows per screen, not a long scan
+  list).
+- **Report count chip:** `rounded-full bg-red-100 text-red-800` — same danger-tone chip
+  family as the "Out of order" status chip, sized down (`text-xs`) for a metadata row.
+- **Category chips:** neutral gray pills (`bg-slate-200 text-slate-600`), one per distinct
+  reported category (`inappropriate` / `not_a_fountain` / `spam` / `other`), plain lowercase
+  values (no title-casing needed at this density).
+- **Notes:** up to 3 most-recent report notes, each already truncated to 200 chars
+  server-side; rendered `truncate break-words text-xs text-slate-500` so a single note never
+  wraps the row taller than the thumbnail. Notes are shown to admins only and are never
+  logged (see Logging & Observability in `CLAUDE.md`).
+- **Actions**, same three-tier hierarchy as `FountainAdminControls`:
+  - **Hide** — navy outline (`border-[#0A357E] text-[#0A357E]`), the non-destructive
+    corrective action (photo stops being served; can be unhidden later).
+  - **Reject** — neutral slate outline, dismisses the reports without hiding the photo
+    (false-positive report).
+  - **Delete** — red outline, **two-step confirm** before the destructive call fires:
+    first click swaps the button to a solid red "Confirm delete" (matching the two-step
+    delete pattern already documented under Admin moderation controls); the object/row is
+    only removed on the second click.
+- Each row's actions are disabled while their mutation is pending, and the row is removed
+  from the list (or its report chip cleared) on success — no manual page refresh needed.
+
+### Pending-report badge (`web/components/AuthControl.tsx`, `mobile/components/nav/ProfileTabIcon.tsx`)
+
+A small count badge overlaid on the header profile avatar (web) / profile tab icon
+(mobile), shown only to admins, when `GET /admin/photo-reports/summary` reports
+`pending_photo_count > 0`. Polled on a ~60s interval; never shown to non-admins.
+
+```tsx
+<span className="relative inline-block">
+  {/* existing avatar button */}
+  <span
+    aria-hidden="true"
+    className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-bold leading-none text-white"
+  >
+    {pending_photo_count > 9 ? "9+" : pending_photo_count}
+  </span>
+  <span className="sr-only">, {pending_photo_count} pending photo reports</span>
+</span>
+```
+
+- **Color:** solid red (`bg-red-600` / white text) — the same danger tone as the two-step
+  delete confirm and the "Out of order" chip, reserved for attention-worthy admin state.
+- **Position:** top-right corner overlay (`absolute -right-1 -top-1`), same corner
+  convention as a standard notification badge; does not shift the avatar's own layout.
+- **Min size:** `h-4 min-w-4` (16px) circle that grows to fit two digits without clipping;
+  `px-1` gives single- and double-digit counts equal breathing room.
+- **Count formatting:** the raw count for 1–9; **`9+`** for any value above 9 — the badge
+  never needs to fit more than two glyphs.
+- **Accessibility:** the numeral badge itself is `aria-hidden` (decorative glyph); a
+  `sr-only` suffix appended to the avatar button's accessible name announces the pending
+  count (e.g. "Open account menu, 3 pending photo reports") so screen-reader users get the
+  same information sighted admins see from the badge. Mobile: the tab icon badge is a
+  sibling `View` positioned the same way, with the count folded into the tab's
+  `accessibilityLabel`.
+- Hidden entirely (no empty badge, no `0`) when `pending_photo_count === 0` or the viewer is
+  not an admin.
+
+---
+
 ## Mobile (React Native)
 
 The mobile app (Expo / React Native) has its own component system (slice 6e-2).
