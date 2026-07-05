@@ -868,14 +868,14 @@ A small stack under the detail heading: a status **chip**, an optional **advisor
 
 - **Chip** — driven by the fountain's `current_status` for the corroborated categories, and by the
   `is_working` baseline otherwise:
-  | `current_status` | Label | Tone |
-  | --- | --- | --- |
-  | `ok` | "Verified working" | emerald (`bg-emerald-100 text-emerald-800`) |
-  | `degraded` | "Working — issues reported" | amber (`bg-amber-100 text-amber-800`) |
-  | `not_working` | "Not working" | red (`bg-red-100 text-red-800`) |
-  | `reported_issue` | baseline ("Working" / "Out of order") | emerald / red |
-  | `null` / unexpected | baseline ("Working" / "Out of order") | emerald / red |
-  Chip shape: `rounded-full px-2.5 py-0.5 text-xs font-bold`.
+  | `current_status`                                            | Label                                 | Tone                                        |
+  | ----------------------------------------------------------- | ------------------------------------- | ------------------------------------------- |
+  | `ok`                                                        | "Verified working"                    | emerald (`bg-emerald-100 text-emerald-800`) |
+  | `degraded`                                                  | "Working — issues reported"           | amber (`bg-amber-100 text-amber-800`)       |
+  | `not_working`                                               | "Not working"                         | red (`bg-red-100 text-red-800`)             |
+  | `reported_issue`                                            | baseline ("Working" / "Out of order") | emerald / red                               |
+  | `null` / unexpected                                         | baseline ("Working" / "Out of order") | emerald / red                               |
+  | Chip shape: `rounded-full px-2.5 py-0.5 text-xs font-bold`. |
 - **Advisory line** — only for `reported_issue` (a non-flipping advisory): `text-xs text-amber-700`
   with a decorative `aria-hidden` ⚠, "Issue reported recently — not yet confirmed". The baseline
   chip is preserved so the working/out-of-order distinction is never lost.
@@ -1505,28 +1505,34 @@ Renders one `StarGroup` per `RatingTypeOut` in the add-fountain details step.
 
 ## Fountain photos (PR 2)
 
-Pre-UI spec for the photo carousel, report dialog, list-row thumbnail, admin moderation
-queue, and pending-report badge (`docs/specs/2026-07-04-fountain-photos-design.md` §11–13).
-Written **before** the components (W3–W8) per the style-guide house rule; reuses the
-existing detail-panel, form, and admin-controls tokens above — no new design language.
+Spec for the photo carousel, report dialog, list-row thumbnail, admin moderation queue, and
+pending-report badge (`docs/specs/2026-07-04-fountain-photos-design.md` §11–13). Drafted
+**before** the components (W2b) per the style-guide house rule, then reconciled (W9) against
+the shipped W3–W8 implementation — the markup/classes below are what actually ships, not the
+pre-UI draft. Reuses the existing detail-panel, form, and admin-controls tokens above — no
+new design language.
 
 ### Photo carousel (`web/components/fountain/PhotoCarousel.tsx`)
 
-A client component slotted near the top of `FountainDetail` (above the status block),
-showing a fountain's photos with overlaid left/right navigation. Uses the gated read paths
-(`/api/v1/photos/{id}` / `.../thumb`), never a durable object URL.
+A client component slotted near the top of `FountainDetail` (above the status block, via the
+`PhotoGallery` bridge — see below), showing a fountain's photos with overlaid left/right
+navigation. `PhotoOut.url`/`thumbnail_url` are the gated read paths (`/api/v1/photos/{id}` /
+`.../thumb`), API-relative rather than a durable object URL; the web app and API are served
+from different origins, so a local `resolvePhotoUrl()` helper prefixes the path with
+`resolveApiBaseUrl()` before it goes into `<img src>` — the same pattern `MapBrowser` and
+`FountainListRow` use.
 
 **Image area:**
 
 ```tsx
 <div className="relative aspect-[4/3] w-full overflow-hidden rounded-lg bg-slate-100">
   <img
-    src={photos[index].url}
+    src={resolvePhotoUrl(current.url)}
     alt=""
     loading="lazy"
     className="h-full w-full object-cover"
   />
-  {/* left/right arrows, index dots — see below */}
+  {/* left/right arrows, index dots, report/delete buttons — see below */}
 </div>
 ```
 
@@ -1583,9 +1589,10 @@ and right edges, one per side, hidden when there is only one photo:
 
 ```tsx
 <div className="absolute inset-x-0 bottom-2 flex justify-center gap-1.5" aria-hidden="true">
-  {photos.map((_, i) => (
+  {photos.map((p, i) => (
     <span
-      key={i}
+      key={p.id}
+      data-dot
       className={`h-1.5 w-1.5 rounded-full ${i === index ? "bg-white" : "bg-white/40"}`}
     />
   ))}
@@ -1598,7 +1605,58 @@ and right edges, one per side, hidden when there is only one photo:
 - Dots are decorative (`aria-hidden`); a `sr-only` live region announces "Photo N of M" for
   screen-reader users, updating as the index changes.
 - Active dot: solid white (`bg-white`); inactive: translucent white (`bg-white/40`) — reads
-  over any photo without a separate background chip.
+  over any photo without a separate background chip. Keyed on `photo.id` (not array index)
+  and marked with a `data-dot` attribute for test targeting.
+
+**Report / Delete buttons** — both bottom-right, same translucent-chip family as the
+arrows, stacked so they never overlap:
+
+```tsx
+{
+  onReport && (
+    <button
+      type="button"
+      aria-label="Report this photo"
+      onClick={() => onReport(current)}
+      className="absolute bottom-2 right-2 rounded-full bg-black/40 px-2.5 py-1 text-xs font-semibold text-white hover:bg-black/60 focus-visible:ring-2 focus-visible:ring-white"
+    >
+      Report
+    </button>
+  );
+}
+
+{
+  current.is_own && onDelete && (
+    <button
+      type="button"
+      aria-label="Delete this photo"
+      onClick={() => onDelete(current)}
+      className={`absolute bottom-2 rounded-full bg-black/40 px-2.5 py-1 text-xs font-semibold text-white hover:bg-black/60 focus-visible:ring-2 focus-visible:ring-white ${
+        onReport ? "right-20" : "right-2"
+      }`}
+    >
+      Delete
+    </button>
+  );
+}
+```
+
+- **Report** — renders whenever the caller passes an `onReport` handler (gated upstream on
+  `isAuthenticated` by `PhotoGallery`, the client bridge between `PhotoCarousel` and the
+  report/delete server actions); always pinned `bottom-2 right-2`.
+- **Delete** — per-photo, not per-carousel: it only renders for the **current** photo when
+  `current.is_own` is true (the viewer uploaded it) _and_ an `onDelete` handler was passed.
+  Its horizontal offset depends on whether Report is also showing for this viewer: `right-20`
+  when both buttons are present (so Delete clears the wider Report chip), `right-2` when
+  Delete is the only button (e.g. an unauthenticated context wouldn't reach here, but a
+  future caller that omits `onReport` still lands correctly against the edge). Both buttons
+  share the same visual chip — same size, color, hover, and focus ring as the arrow glyphs.
+- Neither button is shown for photos the viewer doesn't own/can't act on — no disabled
+  placeholder chip.
+- **Delete confirmation:** `PhotoGallery` gates the actual `deleteOwnPhoto` call behind a
+  native `window.confirm("Delete this photo? This can't be undone.")` — no custom confirm
+  dialog for this destructive action (unlike the two-step button pattern used elsewhere in
+  this document); declining the browser confirm is a no-op.
 
 **Empty state:** when a fountain has no photos, the carousel **renders nothing** (`return
 null`) — no placeholder frame, no "no photos" message, consistent with the other
@@ -1606,40 +1664,33 @@ graceful-skip sections in this document (rating fields, attribute controls).
 
 ### Photo report dialog (`web/components/fountain/ReportPhotoDialog.tsx`)
 
-Lets a signed-in user flag a photo. Trigger is a small "Report" control on each carousel
-photo; the dialog itself follows the existing modal shell used by the detail overlay and
-add-fountain panel.
-
-**Trigger** — a low-emphasis text affordance in the photo's bottom-right corner, matching
-the translucent-chip treatment of the arrow buttons:
-
-```tsx
-<button
-  type="button"
-  aria-label="Report this photo"
-  className="absolute bottom-2 right-2 rounded-full bg-black/40 px-2.5 py-1 text-xs font-semibold text-white hover:bg-black/60 focus-visible:ring-2 focus-visible:ring-white"
->
-  Report
-</button>
-```
-
-**Dialog:**
+Lets a signed-in user flag a photo. `PhotoGallery` (the client bridge described above) owns
+the "which photo is being reported" and "which photos has this viewer already reported
+this session" state and mounts this dialog on demand when the carousel's Report button (see
+above) is clicked; the dialog itself follows the existing modal shell used by the detail
+overlay and add-fountain panel.
 
 ```tsx
 <div
   role="dialog"
   aria-label="Report photo"
   tabIndex={-1}
-  className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
+  className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 outline-none"
+  onClick={(e) => {
+    if (e.target === e.currentTarget) onClose();
+  }}
 >
   <div className="w-full max-w-sm rounded-lg bg-white p-4 shadow-xl">
     <h2 className="text-base font-semibold text-[#0A357E]">Report photo</h2>
+
+    {/* alreadyReported branch — see below — replaces everything from here down */}
 
     <label htmlFor="report-category" className="mt-3 block text-sm font-medium text-slate-700">
       Reason
     </label>
     <select
       id="report-category"
+      disabled={pending || submitted}
       className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm text-slate-700"
     >
       <option value="inappropriate">Inappropriate</option>
@@ -1655,42 +1706,68 @@ the translucent-chip treatment of the arrow buttons:
       id="report-note"
       maxLength={500}
       rows={3}
-      className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm text-slate-700 break-words"
+      disabled={pending || submitted}
+      className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm break-words text-slate-700"
     />
 
     <div className="mt-4 flex justify-end gap-2">
       <button
         type="button"
+        disabled={pending}
         className="rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50"
       >
         Cancel
       </button>
       <button
-        type="submit"
+        type="button"
+        disabled={pending || submitted}
         className="rounded-full bg-[#0C44A0] px-4 py-2 text-sm font-bold text-white hover:bg-[#0A357E] disabled:opacity-50"
       >
-        Submit report
+        {pending ? "Submitting…" : "Submit report"}
       </button>
     </div>
+
+    {msg && (
+      <p
+        role="status"
+        aria-live="polite"
+        className={`mt-2 text-sm ${msg.tone === "ok" ? "text-emerald-700" : "text-red-700"}`}
+      >
+        {msg.text}
+      </p>
+    )}
   </div>
 </div>
 ```
 
 - Same centered-overlay shell family as the fountain-detail dialog/panel (`role="dialog"`,
-  backdrop `bg-black/30`, `tabIndex={-1}` + focus-on-mount, `Escape` dismisses, focus
-  trapped inside, focus restored to the trigger on close).
+  backdrop `bg-black/30`, `tabIndex={-1}` + focus-on-mount, `Escape` dismisses). Clicking the
+  backdrop (a click whose `target === currentTarget`) also dismisses, same as `DetailOverlay`;
+  clicks inside the white card do not bubble to the backdrop handler because the inner `<div>`
+  is a separate element.
+- **`alreadyReported`** — `PhotoGallery` tracks reported photo ids client-side (session-only;
+  there is no "did I already report this" read endpoint) and passes `alreadyReported` in when
+  reopening the dialog for a photo the viewer already reported this session. When true, the
+  dialog **replaces the whole form** with a read-only notice ("You've already reported this
+  photo. Thanks — our moderators will take a look.") and a single "Close" button — no
+  category/note fields render at all, and no request is made.
 - **Category `<select>`** — required, four options in the fixed order Inappropriate / Not a
   fountain / Spam / Other (`inappropriate` / `not_a_fountain` / `spam` / `other`), same
-  select styling as the Condition form's problem-status select.
+  select styling as the Condition form's problem-status select; disabled while pending or
+  after a successful submit.
 - **Note `<textarea>`** — optional, `maxLength={500}`, `break-words` (user-generated text
-  convention). No live character counter needed at this length (unlike the 1000-char note
-  form).
+  convention); disabled while pending or after a successful submit. No live character
+  counter needed at this length (unlike the 1000-char note form).
 - **Submit** — royal-blue pill (`bg-[#0C44A0]`, same as the Condition/Note form submit
-  buttons), disabled while pending.
-- **States:** idle → pending (`disabled`, "Submitting…") → success (dialog closes; the
-  trigger becomes a disabled "Reported" label) → already-reported (trigger reads "Already
-  reported", disabled, no dialog) → error (inline `role="status"` message inside the
-  dialog, same convention as the other Contribute forms).
+  buttons), disabled while pending or after a successful submit; label swaps to
+  "Submitting…" while pending.
+- **States:** idle → pending (fields + Submit `disabled`, "Submitting…") → success (fields
+  stay disabled, an inline `role="status"` success message appears below the form, and the
+  photo id is added to `PhotoGallery`'s reported-ids set — the dialog does **not**
+  auto-close; the viewer dismisses it via Cancel/backdrop/Escape) → error (fields re-enable,
+  inline `role="status"` error message, same convention as the other Contribute forms). A
+  reopen for the same photo id short-circuits straight to the `alreadyReported` branch
+  instead of replaying pending/idle.
 - Auth-gated: the Report control only renders for a signed-in viewer (signed-out visitors
   see no report affordance on photos, matching the rest of Contribute).
 
@@ -1743,19 +1820,28 @@ The reported-photos list on the new `/admin/reports` page (admin-gated, linked f
 account page's "Reports" link for admins). Follows the same card-row density and button
 hierarchy as `FountainAdminControls`.
 
+The row markup lives in `page.tsx` (thumbnail + chips + notes); the action buttons are a
+separate client component, `ReportedPhotoActions`, so only that slice needs to be
+interactive.
+
 ```tsx
 <li className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:flex-row sm:items-start">
   <img
-    src={thumbnail_url}
+    src={resolvePhotoUrl(photo.thumbnail_url)}
     alt=""
     loading="lazy"
     className="h-16 w-16 shrink-0 rounded-md object-cover"
   />
   <div className="min-w-0 flex-1">
-    <div className="flex flex-wrap items-center gap-1.5">
+    <div className="mt-1 flex flex-wrap items-center gap-1.5">
       <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-bold text-red-800">
         {report_count} report{report_count > 1 ? "s" : ""}
       </span>
+      {is_hidden && (
+        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-800">
+          Hidden
+        </span>
+      )}
       {categories.map((c) => (
         <span
           key={c}
@@ -1765,57 +1851,104 @@ hierarchy as `FountainAdminControls`.
         </span>
       ))}
     </div>
-    <ul className="mt-2 space-y-1 text-xs text-slate-500">
-      {notes.map((n, i) => (
-        <li key={i} className="truncate break-words">
-          {n}
-        </li>
-      ))}
-    </ul>
+    {notes.length > 0 && (
+      <ul className="mt-2 space-y-1 text-xs text-slate-500">
+        {notes.map((n, i) => (
+          <li key={i} className="truncate break-words">
+            {n}
+          </li>
+        ))}
+      </ul>
+    )}
   </div>
-  <div className="flex shrink-0 gap-2">
-    <button className="rounded-full border border-[#0A357E] px-3 py-1.5 text-xs font-semibold text-[#0A357E] hover:bg-[#0A357E]/5">
-      Hide
-    </button>
-    <button className="rounded-full border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100">
-      Reject
-    </button>
-    <button className="rounded-full border border-red-600 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50">
-      Delete
-    </button>
+  <div className="flex shrink-0 flex-col items-end gap-1">
+    <div className="flex gap-2">
+      <button
+        disabled={pending}
+        className="rounded-full border border-[#0A357E] px-3 py-1.5 text-xs font-semibold text-[#0A357E] hover:bg-[#0A357E]/5 disabled:opacity-60"
+      >
+        {isHidden ? "Unhide" : "Hide"}
+      </button>
+      <button
+        disabled={pending}
+        className="rounded-full border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:opacity-60"
+      >
+        Reject
+      </button>
+      {confirmDelete ? (
+        <>
+          <button
+            disabled={pending}
+            className="rounded-full bg-red-700 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+          >
+            Confirm delete
+          </button>
+          <button
+            disabled={pending}
+            className="rounded-full border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 disabled:opacity-60"
+          >
+            Cancel
+          </button>
+        </>
+      ) : (
+        <button
+          disabled={pending}
+          className="rounded-full border border-red-600 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
+        >
+          Delete
+        </button>
+      )}
+    </div>
+    {message && <p className="text-xs text-red-700">{message}</p>}
   </div>
 </li>
 ```
 
 - **Thumbnail:** `h-16 w-16 rounded-md object-cover` — one size step up from the list-row
   thumbnail (this is a dense admin surface with fewer rows per screen, not a long scan
-  list).
+  list). Same API-relative `resolvePhotoUrl()` prefixing as the carousel/list-row.
 - **Report count chip:** `rounded-full bg-red-100 text-red-800` — same danger-tone chip
   family as the "Out of order" status chip, sized down (`text-xs`) for a metadata row.
+- **Hidden chip:** `rounded-full bg-amber-100 text-amber-800`, shown only while
+  `photo.is_hidden` is true, sitting between the report-count chip and the category chips —
+  the row's at-a-glance signal that a photo is already actioned, without leaving the queue
+  (it stays listed, with reports still attached, until Rejected or Deleted).
 - **Category chips:** neutral gray pills (`bg-slate-200 text-slate-600`), one per distinct
   reported category (`inappropriate` / `not_a_fountain` / `spam` / `other`), plain lowercase
   values (no title-casing needed at this density).
 - **Notes:** up to 3 most-recent report notes, each already truncated to 200 chars
   server-side; rendered `truncate break-words text-xs text-slate-500` so a single note never
-  wraps the row taller than the thumbnail. Notes are shown to admins only and are never
-  logged (see Logging & Observability in `CLAUDE.md`).
-- **Actions**, same three-tier hierarchy as `FountainAdminControls`:
-  - **Hide** — navy outline (`border-[#0A357E] text-[#0A357E]`), the non-destructive
-    corrective action (photo stops being served; can be unhidden later).
+  wraps the row taller than the thumbnail; the `<ul>` is omitted entirely when there are no
+  notes. Notes are shown to admins only and are never logged (see Logging & Observability in
+  `CLAUDE.md`).
+- **Actions**, same three-tier hierarchy as `FountainAdminControls`, rendered by
+  `ReportedPhotoActions` in a `flex-col items-end` stack (buttons row, then an optional error
+  line below):
+  - **Hide / Unhide** — navy outline (`border-[#0A357E] text-[#0A357E]`), a single toggle
+    button whose label and call flip with the photo's current `is_hidden` state (Hide when
+    visible, Unhide when hidden) — the non-destructive corrective action.
   - **Reject** — neutral slate outline, dismisses the reports without hiding the photo
     (false-positive report).
-  - **Delete** — red outline, **two-step confirm** before the destructive call fires:
-    first click swaps the button to a solid red "Confirm delete" (matching the two-step
-    delete pattern already documented under Admin moderation controls); the object/row is
-    only removed on the second click.
-- Each row's actions are disabled while their mutation is pending, and the row is removed
-  from the list (or its report chip cleared) on success — no manual page refresh needed.
+  - **Delete** — red outline, **two-step confirm** before the destructive call fires: first
+    click swaps the single button for a solid red "Confirm delete" _plus_ a slate "Cancel"
+    button (matching the two-step delete pattern already documented under Admin moderation
+    controls); Cancel reverts to the single outlined "Delete" button without calling the API;
+    the object/row is only removed on "Confirm delete".
+- Each row's buttons are `disabled` while their own mutation is pending; on success the page
+  is refreshed (`router.refresh()`) so the row updates (chip cleared, row removed, or Hidden
+  chip toggled) from fresh server data — no optimistic row removal. On failure, a
+  role-appropriate message (e.g. "This account does not have admin access.", "This photo no
+  longer exists.") renders as `text-xs text-red-700` under the button row.
 
-### Pending-report badge (`web/components/AuthControl.tsx`, `mobile/components/nav/ProfileTabIcon.tsx`)
+### Pending-report badge (`web/components/admin/ReportBadge.tsx`, `mobile/components/nav/ProfileTabIcon.tsx`)
 
 A small count badge overlaid on the header profile avatar (web) / profile tab icon
-(mobile), shown only to admins, when `GET /admin/photo-reports/summary` reports
-`pending_photo_count > 0`. Polled on a ~60s interval; never shown to non-admins.
+(mobile), shown only to admins, when `GET /api/v1/admin/photo-reports/summary` reports
+`pending_photo_count > 0`. On web, the markup below is its own component (`ReportBadge`),
+rendered inside `AuthControl`'s existing `<span className="relative inline-block">` avatar
+wrapper — server-seeded with the initial count, then polled client-side on a ~60s interval
+via the `fetchPendingReportCount` server action (keeps the Logto access token server-side).
+Never shown to non-admins; renders nothing at count 0 (not an empty badge).
 
 ```tsx
 <span className="relative inline-block">
