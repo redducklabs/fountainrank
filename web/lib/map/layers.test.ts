@@ -12,9 +12,13 @@ import {
   clusterCountLayer,
   selectedHaloLayer,
   selectedPinLayer,
-  SELECTED_ICON_EXPR,
+  selectedIconExpr,
 } from "./layers";
+import { mapColorsFor } from "./colors";
 import { CLUSTER_MAX_ZOOM, CLUSTER_RADIUS, PILL_MIN_ZOOM } from "./constants";
+
+const light = mapColorsFor("light");
+const dark = mapColorsFor("dark");
 
 describe("fountainsSource", () => {
   it("clusters", () => {
@@ -33,32 +37,51 @@ describe("pinLayer", () => {
     expect(JSON.stringify(l.filter)).toContain("point_count"); // !has point_count
   });
 });
+describe("cluster layers", () => {
+  it("count uses point_count_abbreviated", () => {
+    expect(clusterCountLayer(light).layout!["text-field"]).toEqual([
+      "get",
+      "point_count_abbreviated",
+    ]);
+    expect(JSON.stringify(clusterCircleLayer(light).filter)).toContain("point_count");
+  });
+  it("dark uses brightened circle paint", () => {
+    expect(clusterCircleLayer(dark).paint!["circle-color"]).toBe("#4C82F0");
+    expect(clusterCircleLayer(dark).paint!["circle-stroke-color"]).toBe("#0B1220");
+  });
+});
+
 describe("pillLayer", () => {
   it("is a zoom-gated icon-text-fit pill excluding null pills + clusters", () => {
-    const l = pillLayer();
+    const l = pillLayer(light);
     expect(l.minzoom).toBe(PILL_MIN_ZOOM);
     expect(l.layout!["icon-image"]).toBe("pill-bg");
     expect(l.layout!["icon-text-fit"]).toBe("both");
     expect(l.layout!["text-field"]).toEqual(["get", "pill"]);
     expect(JSON.stringify(l.filter)).toContain("pill");
   });
-});
-describe("cluster layers", () => {
-  it("count uses point_count_abbreviated", () => {
-    expect(clusterCountLayer().layout!["text-field"]).toEqual(["get", "point_count_abbreviated"]);
-    expect(JSON.stringify(clusterCircleLayer().filter)).toContain("point_count");
+  it("dark uses the dark pill image + light pill text", () => {
+    const l = pillLayer(dark);
+    expect(l.layout!["icon-image"]).toBe("pill-bg-dark");
+    expect(l.paint!["text-color"]).toBe("#E7F0FF");
   });
 });
+
 describe("selected layers", () => {
   it("halo + pin filter by id and swap icon for working non-gold", () => {
-    expect(JSON.stringify(selectedHaloLayer("abc").filter)).toContain("abc");
-    const sp = selectedPinLayer("abc");
+    expect(JSON.stringify(selectedHaloLayer("abc", light).filter)).toContain("abc");
+    const sp = selectedPinLayer("abc", light.selectedPin);
     expect(JSON.stringify(sp.layout!["icon-image"])).toContain("pin-selected");
+  });
+  it("dark selected pin uses the -dark asset name + brightened halo", () => {
+    expect(selectedHaloLayer("abc", dark).paint!["circle-color"]).toBe("#5FC5F0");
+    const sp = selectedPinLayer("abc", dark.selectedPin);
+    expect(JSON.stringify(sp.layout!["icon-image"])).toContain("pin-selected-dark");
   });
 });
 
 /**
- * Behavioral cross-check: evaluates SELECTED_ICON_EXPR (the shipping MapLibre
+ * Behavioral cross-check: evaluates selectedIconExpr (the shipping MapLibre
  * expression) over a property matrix and asserts it agrees with the selection
  * rule.  selectedSwapIcon() in pins.ts is the readable TS mirror of that rule;
  * this test guards the two implementations against divergence.
@@ -68,7 +91,7 @@ describe("selected layers", () => {
  * otherwise (broken, gold, or unrated) it falls back to the feature's own
  * `icon` property.
  */
-describe("SELECTED_ICON_EXPR behavioral matrix", () => {
+describe("selectedIconExpr behavioral matrix", () => {
   const globals: GlobalProperties = { zoom: 0 };
 
   function evalExpr(props: {
@@ -78,7 +101,7 @@ describe("SELECTED_ICON_EXPR behavioral matrix", () => {
   }): string {
     // Pass null for propertySpec — the second arg is optional; null skips
     // property-type constraints while still parsing the expression fully.
-    const parsed = createExpression(SELECTED_ICON_EXPR, null);
+    const parsed = createExpression(selectedIconExpr("pin-selected"), null);
     if (parsed.result !== "success") {
       throw new Error(`Failed to parse SELECTED_ICON_EXPR: ${JSON.stringify(parsed.value)}`);
     }
