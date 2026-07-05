@@ -131,7 +131,12 @@ export default function MapBrowser({
   // theme aborts once it sees a newer generation (prevents seeding the new overlay with stale data
   // or installing layers on a superseded style).
   const styleGenRef = useRef(0);
-  const installedThemeRef = useRef<"light" | "dark" | null>(null);
+  // Tracks the theme the basemap style was last setStyle-targeted to (set at map-init and on every
+  // theme-swap setStyle call) — NOT the theme of the last *installed* overlay (installOverlay can
+  // still be in flight when a rapid toggle fires). Guarding the swap effect on this instead of an
+  // "installed" marker prevents a stale-read early-return that would strand the basemap on the
+  // wrong theme mid-swap.
+  const styleThemeRef = useRef<"light" | "dark">("light");
   const placementRef = useRef<PlacementMap | null>(null);
   const [pins, setPins] = useState<FountainPin[]>([]);
   const [status, setStatus] = useState<Status>("idle");
@@ -195,6 +200,7 @@ export default function MapBrowser({
       return;
     }
     mapRef.current = map;
+    styleThemeRef.current = themeRef.current; // basemap was built targeting themeRef's theme
     // Capture MapLibre's own errors (tile fetch/decode failures, WebGL/render errors) — these
     // are otherwise only console-logged by MapLibre and invisible to us. This is how a
     // mobile-only "gray basemap" (tiles never paint) surfaces a concrete cause.
@@ -338,7 +344,6 @@ export default function MapBrowser({
         if (!m.getLayer(l.id)) m.addLayer(l);
       });
       applyActiveFilter(m, activeIdRef.current);
-      installedThemeRef.current = theme;
 
       // Placement map: create ONCE (first install — matches the old "after load" timing that
       // useAddFountainMode/flyto depend on); re-establish its themed ring/marker on later swaps.
@@ -427,7 +432,6 @@ export default function MapBrowser({
       placementRef.current = null;
       map.remove();
       mapRef.current = null;
-      installedThemeRef.current = null;
       setPlacementMap(null);
     };
     // resolvedTheme is intentionally NOT a dependency: after build, a theme change swaps the style
@@ -443,8 +447,9 @@ export default function MapBrowser({
     const theme = resolveTheme(resolvedTheme);
     themeRef.current = theme;
     const m = mapRef.current;
-    if (!m || installedThemeRef.current === null) return; // map not built / first install pending
-    if (installedThemeRef.current === theme) return; // already showing this theme
+    if (!m) return;
+    if (styleThemeRef.current === theme) return; // basemap already targeting this theme
+    styleThemeRef.current = theme;
     styleGenRef.current += 1;
     m.setStyle(styleUrlFor(theme));
   }, [resolvedTheme]);
