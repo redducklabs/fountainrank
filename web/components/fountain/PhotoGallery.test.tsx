@@ -22,6 +22,7 @@ function makePhoto(overrides: Partial<PhotoOut> = {}): PhotoOut {
     height: 600,
     uploaded_by: "Sam",
     created_at: "2026-07-01T00:00:00Z",
+    is_own: false,
     ...overrides,
   };
 }
@@ -51,24 +52,22 @@ describe("PhotoGallery", () => {
     render(
       <PhotoGallery
         fountainId="fid"
-        photos={[makePhoto({ uploaded_by: "Someone Else" })]}
+        photos={[makePhoto({ uploaded_by: "Someone Else", is_own: false })]}
         isAuthenticated={true}
-        viewerDisplayName="Sam"
       />,
     );
     expect(screen.getByRole("button", { name: /report this photo/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /delete this photo/i })).not.toBeInTheDocument();
   });
 
-  it("signed-in owner (matching display name) sees Delete and it calls deleteOwnPhoto", async () => {
+  it("signed-in owner (is_own) sees Delete and it calls deleteOwnPhoto", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     deleteOwnPhoto.mockResolvedValue({ ok: true });
     render(
       <PhotoGallery
         fountainId="fid"
-        photos={[makePhoto({ id: "p1", uploaded_by: "Sam" })]}
+        photos={[makePhoto({ id: "p1", uploaded_by: "Sam", is_own: true })]}
         isAuthenticated={true}
-        viewerDisplayName="Sam"
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /delete this photo/i }));
@@ -76,13 +75,12 @@ describe("PhotoGallery", () => {
     await waitFor(() => expect(refresh).toHaveBeenCalled());
   });
 
-  it("never treats a shared 'Anonymous' display name as ownership", () => {
+  it("does not show Delete for a non-own photo even when another photo in the gallery is_own", () => {
     render(
       <PhotoGallery
         fountainId="fid"
-        photos={[makePhoto({ uploaded_by: "Anonymous" })]}
+        photos={[makePhoto({ id: "p1", uploaded_by: "Someone Else", is_own: false })]}
         isAuthenticated={true}
-        viewerDisplayName="Anonymous"
       />,
     );
     expect(screen.queryByRole("button", { name: /delete this photo/i })).not.toBeInTheDocument();
@@ -90,12 +88,7 @@ describe("PhotoGallery", () => {
 
   it("clicking Report opens the dialog for that photo", () => {
     render(
-      <PhotoGallery
-        fountainId="fid"
-        photos={[makePhoto({ id: "p1" })]}
-        isAuthenticated={true}
-        viewerDisplayName="Sam"
-      />,
+      <PhotoGallery fountainId="fid" photos={[makePhoto({ id: "p1" })]} isAuthenticated={true} />,
     );
     fireEvent.click(screen.getByRole("button", { name: /report this photo/i }));
     expect(screen.getByRole("dialog", { name: /report photo/i })).toBeInTheDocument();

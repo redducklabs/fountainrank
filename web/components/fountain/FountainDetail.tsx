@@ -15,7 +15,6 @@ export function FountainDetail({
   photos = [],
   now,
   isAuthenticated,
-  viewerDisplayName,
   adminControls,
   locationLabel,
 }: {
@@ -24,9 +23,6 @@ export function FountainDetail({
   photos?: PhotoOut[];
   now?: Date;
   isAuthenticated: boolean;
-  // The viewer's own public display name (see `PhotoGallery`'s `isOwnedByViewer` for why this
-  // is a best-effort UI signal, not an authoritative ownership check). Undefined when signed out.
-  viewerDisplayName?: string | null;
   adminControls?: React.ReactNode;
   // The public h1 label, e.g. "Public drinking fountain in Manhattan" — resolved server-side from
   // the fountain's public city (spec §7). Falls back to the generic label when no city resolves (or
@@ -50,12 +46,7 @@ export function FountainDetail({
           now={renderNow}
         />
       </div>
-      <PhotoGallery
-        fountainId={detail.id}
-        photos={photos}
-        isAuthenticated={isAuthenticated}
-        viewerDisplayName={viewerDisplayName}
-      />
+      <PhotoGallery fountainId={detail.id} photos={photos} isAuthenticated={isAuthenticated} />
       {detail.average_rating != null ? (
         <div className="flex items-center gap-3">
           <span className="text-3xl font-extrabold leading-none text-[#0A357E]">

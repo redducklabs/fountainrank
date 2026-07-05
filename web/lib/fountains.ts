@@ -63,8 +63,20 @@ export async function getFountainNotesServer(id: string, requestId: string) {
   }
 }
 
-export async function getFountainPhotosServer(id: string, requestId: string) {
-  const client = makeClient(resolveApiBaseUrl(), { headers: { "X-Request-ID": requestId } });
+// `token` (the viewer's backend access token, when signed in) enriches each photo with
+// `is_own` (the per-viewer ownership flag the web carousel uses to gate the Delete button —
+// see `PhotoGallery`/`PhotoCarousel`). Mirrors `getFountainDetailServer`'s token plumbing; a
+// null/absent token yields the anonymous response (every `is_own` false) unchanged. The list
+// endpoint responds `Cache-Control: private, no-store` precisely because the response now
+// varies per viewer.
+export async function getFountainPhotosServer(
+  id: string,
+  requestId: string,
+  token?: string | null,
+) {
+  const headers: Record<string, string> = { "X-Request-ID": requestId };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const client = makeClient(resolveApiBaseUrl(), { headers });
   try {
     const { data, response } = await client.GET("/api/v1/fountains/{fountain_id}/photos", {
       params: { path: { fountain_id: id } },

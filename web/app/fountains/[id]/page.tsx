@@ -65,19 +65,20 @@ export default async function FountainPage({ params }: { params: Promise<{ id: s
   const isAuthenticated = viewer.state === "authed";
   const isAdmin = viewer.state === "authed" && viewer.isAdmin;
   const adminRes = isAdmin ? await getAdminFountainDetailServer(id, requestId) : null;
-  // Authenticate the public detail fetch when signed in so `your_rating` comes back (#65
-  // web parity, #114). Admins use the admin detail endpoint instead so hidden notes and
-  // hidden fountains are reachable.
+  // Authenticate the public detail + photos fetches when signed in so `your_rating` (#65 web
+  // parity, #114) and each photo's `is_own` (per-photo Delete gating) come back correctly.
+  // Admins use the admin detail endpoint instead so hidden notes and hidden fountains are
+  // reachable, but still authenticate the photos fetch so an admin's own photos show `is_own`.
   const [{ data, status }, notesRes, photosRes] = adminRes
     ? [
         { data: adminRes.data, status: adminRes.status },
         { data: adminRes.data?.notes, status: adminRes.status },
-        await getFountainPhotosServer(id, requestId),
+        await getViewerAccessToken().then((token) => getFountainPhotosServer(id, requestId, token)),
       ]
     : await Promise.all([
         getViewerAccessToken().then((token) => getFountainDetailServer(id, requestId, token)),
         getFountainNotesServer(id, requestId),
-        getFountainPhotosServer(id, requestId),
+        getViewerAccessToken().then((token) => getFountainPhotosServer(id, requestId, token)),
       ]);
 
   if (status === 404) {
@@ -128,7 +129,6 @@ export default async function FountainPage({ params }: { params: Promise<{ id: s
             notes={notes}
             photos={photos}
             isAuthenticated={isAuthenticated}
-            viewerDisplayName={viewer.state === "authed" ? viewer.displayName : undefined}
             adminControls={adminRes?.data ? <FountainAdminControls detail={adminRes.data} /> : null}
             locationLabel={locationLabel}
           />

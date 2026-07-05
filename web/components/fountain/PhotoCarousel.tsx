@@ -13,12 +13,10 @@ function resolvePhotoUrl(path: string): string {
 
 export function PhotoCarousel({
   photos,
-  isOwner,
   onDelete,
   onReport,
 }: {
   photos: PhotoOut[];
-  isOwner?: boolean;
   onDelete?: (photo: PhotoOut) => void;
   onReport?: (photo: PhotoOut) => void;
 }) {
@@ -109,7 +107,7 @@ export function PhotoCarousel({
         </button>
       )}
 
-      {isOwner && onDelete && (
+      {current.is_own && onDelete && (
         <button
           type="button"
           aria-label="Delete this photo"

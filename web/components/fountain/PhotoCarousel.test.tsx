@@ -16,6 +16,7 @@ function makePhoto(overrides: Partial<PhotoOut> = {}): PhotoOut {
     height: 600,
     uploaded_by: "user-1",
     created_at: "2026-07-01T00:00:00Z",
+    is_own: false,
     ...overrides,
   };
 }
@@ -99,16 +100,27 @@ describe("PhotoCarousel", () => {
     expect(screen.queryByRole("button", { name: /report/i })).toBeNull();
   });
 
-  it("renders a delete button only when isOwner is true, and calls onDelete", () => {
+  it("renders a delete button only when the current photo is_own is true, and calls onDelete", () => {
     const onDelete = vi.fn();
-    const photos = [makePhoto({ id: "p1" }), makePhoto({ id: "p2" })];
-    const { rerender } = render(
-      <PhotoCarousel photos={photos} isOwner onDelete={onDelete} />,
-    );
+    const photos = [makePhoto({ id: "p1", is_own: true }), makePhoto({ id: "p2", is_own: false })];
+    render(<PhotoCarousel photos={photos} onDelete={onDelete} />);
     fireEvent.click(screen.getByRole("button", { name: /delete/i }));
     expect(onDelete).toHaveBeenCalledWith(photos[0]);
+  });
 
-    rerender(<PhotoCarousel photos={photos} onDelete={onDelete} />);
+  it("hides the delete button once navigating to a photo the viewer doesn't own", () => {
+    const onDelete = vi.fn();
+    const photos = [makePhoto({ id: "p1", is_own: true }), makePhoto({ id: "p2", is_own: false })];
+    render(<PhotoCarousel photos={photos} onDelete={onDelete} />);
+    expect(screen.getByRole("button", { name: /delete/i })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Next photo" }));
+    expect(screen.queryByRole("button", { name: /delete/i })).toBeNull();
+  });
+
+  it("never renders a delete button when onDelete is not provided, even for an is_own photo", () => {
+    const photos = [makePhoto({ id: "p1", is_own: true })];
+    render(<PhotoCarousel photos={photos} />);
     expect(screen.queryByRole("button", { name: /delete/i })).toBeNull();
   });
 });
