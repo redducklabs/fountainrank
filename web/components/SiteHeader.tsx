@@ -3,6 +3,7 @@ import Link from "next/link";
 import { AuthControl } from "./AuthControl";
 import { HeaderPoints } from "./HeaderPoints";
 import { HeaderSearch } from "./HeaderSearch";
+import ThemeToggle from "./ThemeToggle";
 import { getViewer, getViewerTotalPoints } from "../lib/server/viewer";
 import { getPendingReportCountServer } from "../lib/server/photo-reports";
 
@@ -40,6 +41,7 @@ export async function SiteHeader({ variant }: { variant: "hero" | "bar" }) {
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-3">
           {totalPoints != null && <HeaderPoints initialTotalPoints={totalPoints} />}
+          <ThemeToggle />
           <AuthControl viewer={viewer} initialPendingReportCount={pendingReportCount} />
         </div>
       </div>

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import { AnalyticsConsent } from "../components/analytics/AnalyticsConsent";
 import { SITE_URL } from "../lib/seo/site";
+import { Providers } from "./providers";
 import "./globals.css";
 
 const title = "FountainRank — Find drinking fountains near you";
@@ -28,11 +29,13 @@ export default function RootLayout({
   modal: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body>
-        {children}
-        {modal}
-        <AnalyticsConsent />
+        <Providers>
+          {children}
+          {modal}
+          <AnalyticsConsent />
+        </Providers>
       </body>
     </html>
   );

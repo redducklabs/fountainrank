@@ -4,6 +4,7 @@ import { DisplayNameForm } from "../../components/account/DisplayNameForm";
 import { SignInButton } from "../../components/SignInButton";
 import { SignOutButton } from "../../components/SignOutButton";
 import { SiteHeader } from "../../components/SiteHeader";
+import ThemeToggle from "../../components/ThemeToggle";
 import { resolveAccountGate } from "../../lib/server/account-gate";
 import { isDisplayableEmail } from "../../lib/email";
 
@@ -90,6 +91,10 @@ export default async function AccountPage({
           )}
         </dl>
         <DisplayNameForm initialValue={profile.display_name} required={false} />
+        <div className="flex items-center gap-3">
+          <span className="text-sm font-semibold text-white/90">Appearance</span>
+          <ThemeToggle />
+        </div>
         <Link href="/account/fountains" className="text-sm font-semibold text-white underline">
           My rated water fountains
         </Link>
