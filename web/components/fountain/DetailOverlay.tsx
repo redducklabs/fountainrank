@@ -1,20 +1,23 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 export function DetailOverlay({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const ref = useRef<HTMLDivElement>(null);
+  const closingRef = useRef(false);
   const [open, setOpen] = useState(false);
+  const requestClose = useCallback(() => {
+    if (closingRef.current) return;
+    closingRef.current = true;
+    setOpen(false);
+    window.setTimeout(() => router.back(), 200);
+  }, [router]);
 
   useEffect(() => {
     const panel = ref.current;
     const prevFocus = document.activeElement as HTMLElement | null;
     const frame = window.requestAnimationFrame(() => setOpen(true));
     panel?.focus();
-    const close = () => {
-      setOpen(false);
-      window.setTimeout(() => router.back(), 180);
-    };
     const focusables = () =>
       panel
         ? Array.from(
@@ -25,7 +28,7 @@ export function DetailOverlay({ children }: { children: React.ReactNode }) {
         : [];
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        close();
+        requestClose();
         return;
       }
       if (e.key !== "Tab") return; // trap Tab within the dialog
@@ -52,16 +55,12 @@ export function DetailOverlay({ children }: { children: React.ReactNode }) {
       document.removeEventListener("keydown", onKey);
       prevFocus?.focus?.();
     }; // restore focus
-  }, [router]);
-  const requestClose = () => {
-    setOpen(false);
-    window.setTimeout(() => router.back(), 180);
-  };
+  }, [requestClose]);
   return (
     <div className="fixed inset-0 z-50">
       <div
         className={`absolute inset-0 bg-black/30 transition-opacity duration-200 ${
-          open ? "opacity-100" : "opacity-0"
+          open ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
         }`}
         onClick={requestClose}
         aria-hidden
