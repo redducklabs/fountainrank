@@ -18,6 +18,16 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    # Hold ESLint at 9.x. ESLint 10 removed the `context.getFilename()` API that
+    # `eslint-plugin-react@7.37.5` still calls (pulled in transitively via
+    # `eslint-config-expo`), so `eslint@10 + eslint-plugin-react@7.37.5` crashes the
+    # `mobile:lint`/`workspace-js` CI jobs ("contextOrFilename.getFilename is not a
+    # function"). eslint-config-expo/next both peer-accept eslint >=9, so everything
+    # else can still update. Revisit (drop this ignore) once the React/Expo lint stack
+    # ships an ESLint 10-compatible eslint-plugin-react.
+    ignore:
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
     groups:
       frontend-js:
         patterns: ["*"]
