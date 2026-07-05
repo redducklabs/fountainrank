@@ -22,6 +22,22 @@ export function PhotoCarousel({
 }) {
   const [index, setIndex] = useState(0);
 
+  // If a router.refresh() (e.g. after an owner delete or an admin hide) hands us a
+  // shorter `photos` array while `index` still points past the end, reset the state
+  // during render (React's documented "adjusting state when props change" pattern —
+  // https://react.dev/learn/you-might-not-need-an-effect) so subsequent prev/next
+  // navigation stays consistent. This intentionally is NOT a useEffect: calling
+  // setState from an effect after commit would flash the stale photo first and trips
+  // the react-hooks/set-state-in-effect lint rule; adjusting during render bails out
+  // before paint instead.
+  const [prevPhotosLength, setPrevPhotosLength] = useState(photos.length);
+  if (photos.length !== prevPhotosLength) {
+    setPrevPhotosLength(photos.length);
+    if (index >= photos.length) {
+      setIndex(Math.max(0, photos.length - 1));
+    }
+  }
+
   const goPrev = () => setIndex((i) => (i - 1 + photos.length) % photos.length);
   const goNext = () => setIndex((i) => (i + 1) % photos.length);
 
@@ -38,7 +54,11 @@ export function PhotoCarousel({
 
   if (photos.length === 0) return null;
 
-  const current = photos[index];
+  // Guard against the render that happens *before* the effect above runs:
+  // `photos` can shrink (owner delete, admin hide, concurrent update) while
+  // `index` still references the old, now out-of-range position.
+  const safeIndex = index < photos.length ? index : photos.length - 1;
+  const current = photos[safeIndex];
 
   return (
     <div className="relative aspect-[4/3] w-full overflow-hidden rounded-lg bg-slate-100">
@@ -86,12 +106,12 @@ export function PhotoCarousel({
               <span
                 key={p.id}
                 data-dot
-                className={`h-1.5 w-1.5 rounded-full ${i === index ? "bg-white" : "bg-white/40"}`}
+                className={`h-1.5 w-1.5 rounded-full ${i === safeIndex ? "bg-white" : "bg-white/40"}`}
               />
             ))}
           </div>
           <p className="sr-only" aria-live="polite">
-            Photo {index + 1} of {photos.length}
+            Photo {safeIndex + 1} of {photos.length}
           </p>
         </>
       )}

@@ -123,4 +123,73 @@ describe("PhotoCarousel", () => {
     render(<PhotoCarousel photos={photos} />);
     expect(screen.queryByRole("button", { name: /delete/i })).toBeNull();
   });
+
+  // Regression: after a `router.refresh()` (e.g. following an owner delete or an admin
+  // hide), Next.js re-renders this client component with a shorter `photos` prop while
+  // preserving its existing `index` state. If `index` still pointed at the old last photo,
+  // `photos[index]` used to be `undefined` and the render crashed dereferencing
+  // `current.url`/`current.is_own`.
+  it("does not crash and clamps to the last photo when photos shrinks while on the last photo", () => {
+    const onDelete = vi.fn();
+    const onReport = vi.fn();
+    const photos = [
+      makePhoto({ id: "p1", is_own: false }),
+      makePhoto({ id: "p2", is_own: false }),
+      makePhoto({ id: "p3", is_own: true }),
+    ];
+    const { container, rerender } = render(
+      <PhotoCarousel photos={photos} onDelete={onDelete} onReport={onReport} />,
+    );
+
+    // Navigate to the last photo (p3), which is the one about to be "deleted".
+    const next = screen.getByRole("button", { name: "Next photo" });
+    fireEvent.click(next);
+    fireEvent.click(next);
+    expect(currentImg(container).src).toContain("/api/v1/photos/p3");
+
+    // Simulate the owner deleting p3 and router.refresh() handing back a shorter list,
+    // with p2 now is_own so the delete gating can be observed on the new current photo.
+    const shrunk = [
+      makePhoto({ id: "p1", is_own: false }),
+      makePhoto({ id: "p2", is_own: true }),
+    ];
+    expect(() => rerender(<PhotoCarousel photos={shrunk} onDelete={onDelete} onReport={onReport} />)).not.toThrow();
+
+    // Clamped to the new last photo (p2) rather than crashing on the stale index.
+    expect(currentImg(container).src).toContain("/api/v1/photos/p2");
+    expect(container.querySelectorAll("[data-dot]").length).toBe(2);
+
+    fireEvent.click(screen.getByRole("button", { name: /delete/i }));
+    expect(onDelete).toHaveBeenCalledWith(shrunk[1]);
+
+    // Subsequent navigation still works correctly against the clamped, now-persisted state.
+    fireEvent.click(screen.getByRole("button", { name: "Next photo" }));
+    expect(currentImg(container).src).toContain("/api/v1/photos/p1");
+  });
+
+  it("does not crash and clamps to index 0 when photos shrinks to a single photo", () => {
+    const onDelete = vi.fn();
+    const photos = [
+      makePhoto({ id: "p1", is_own: false }),
+      makePhoto({ id: "p2", is_own: false }),
+      makePhoto({ id: "p3", is_own: true }),
+    ];
+    const { container, rerender } = render(<PhotoCarousel photos={photos} onDelete={onDelete} />);
+
+    const next = screen.getByRole("button", { name: "Next photo" });
+    fireEvent.click(next);
+    fireEvent.click(next);
+    expect(currentImg(container).src).toContain("/api/v1/photos/p3");
+
+    const shrunk = [makePhoto({ id: "p1", is_own: true })];
+    expect(() => rerender(<PhotoCarousel photos={shrunk} onDelete={onDelete} />)).not.toThrow();
+
+    expect(currentImg(container).src).toContain("/api/v1/photos/p1");
+    // A single photo hides the nav/dots entirely.
+    expect(screen.queryByRole("button", { name: "Next photo" })).toBeNull();
+    expect(container.querySelectorAll("[data-dot]").length).toBe(0);
+
+    fireEvent.click(screen.getByRole("button", { name: /delete/i }));
+    expect(onDelete).toHaveBeenCalledWith(shrunk[0]);
+  });
 });
