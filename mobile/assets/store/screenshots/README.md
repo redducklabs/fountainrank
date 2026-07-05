@@ -7,10 +7,15 @@ FountainRank store submissions.
   app running on an Android emulator (San Diego basemap, production API), status
   bar in demo mode, at Google Play's `1080x1920` phone size. These reflect the
   shipped native UI.
-- **`app-store-6-9/` and `app-store-6-5/` (iOS): generated mockups.** Still built
-  from the committed FountainRank logo/pin assets by
-  `scripts/generate-store-screenshots.mjs`, pending real iPhone captures (no macOS
-  in the build environment, so the iOS simulator cannot be driven here).
+- **`app-store-6-5/` (iOS 6.5"): real device captures.** Taken from the release
+  build running on a physical iPhone via TestFlight, at Apple's `1242x2688` 6.5"
+  portrait size. These reflect the shipped native UI. (The status bar shows the
+  TestFlight label — re-capture with a clean status bar before final public
+  submission.)
+- **`app-store-6-9/` (iOS 6.9"): generated mockups.** Still built from the committed
+  FountainRank logo/pin assets by `scripts/generate-store-screenshots.mjs`, pending
+  real iPhone 6.9" captures (no macOS in the build environment, so the iOS simulator
+  cannot be driven here).
 
 ## App Store Connect
 
@@ -28,13 +33,13 @@ slot:
 If App Store Connect specifically prompts for the iPhone 6.5" Display slot, use
 the PNGs in `app-store-6-5/`:
 
-| File                                       | Size              | Screen                  |
-| ------------------------------------------ | ----------------- | ----------------------- |
-| `app-store-6-5/01-map-discovery.png`       | 1242x2688 RGB PNG | Map discovery           |
-| `app-store-6-5/02-fountain-detail.png`     | 1242x2688 RGB PNG | Fountain detail         |
-| `app-store-6-5/03-contribute.png`          | 1242x2688 RGB PNG | Contribution flow       |
-| `app-store-6-5/04-add-fountain.png`        | 1242x2688 RGB PNG | Add fountain            |
-| `app-store-6-5/05-account-diagnostics.png` | 1242x2688 RGB PNG | Account and diagnostics |
+| File                                   | Size              | Screen                             |
+| -------------------------------------- | ----------------- | ---------------------------------- |
+| `app-store-6-5/01-map-discovery.png`   | 1242x2688 RGB PNG | Map discovery (pins + ratings)     |
+| `app-store-6-5/02-fountain-detail.png` | 1242x2688 RGB PNG | Fountain detail (ratings, notes)   |
+| `app-store-6-5/03-search.png`          | 1242x2688 RGB PNG | Address/city search results        |
+| `app-store-6-5/04-add-fountain.png`    | 1242x2688 RGB PNG | Add a fountain                     |
+| `app-store-6-5/05-rankings.png`        | 1242x2688 RGB PNG | Contributor rankings / leaderboard |
 
 Apple's current screenshot specification lists `1290x2796` as an accepted 6.9"
 portrait size and `1242x2688` as an accepted 6.5" portrait size:
@@ -61,11 +66,13 @@ The committed store feature graphic is already cropped to Google's required
 
 ## Review note
 
-The `play-store/` PNGs are literal captures of the release-config app and match
-the shipped native UI. The `app-store-6-9/` and `app-store-6-5/` PNGs are still
-generated mockups and must be replaced with real iPhone captures before final
-public submission (see the Android capture recipe below for the equivalent iOS
-flow on a physical device).
+The `play-store/` and `app-store-6-5/` PNGs are literal captures of the release
+app and match the shipped native UI. The `app-store-6-5/` set was taken on a
+physical iPhone via TestFlight, so its status bar shows the TestFlight label —
+re-capture with a clean status bar (and add a real 6.9" set) before final public
+submission. The `app-store-6-9/` PNGs are still generated mockups and must be
+replaced with real iPhone 6.9" captures (see the Android capture recipe below for
+the equivalent iOS flow on a physical device).
 
 The map/search/detail-view/rankings screens are public-read, so the emulator
 captures are pixel-identical to the production store build for those screens.
@@ -74,18 +81,18 @@ data.
 
 ## Regeneration
 
-### iOS mockups (`app-store-6-9/`, `app-store-6-5/`)
+### iOS mockups (`app-store-6-9/` only)
 
-The source generator is `scripts/generate-store-screenshots.mjs`. Regenerate the
-iOS mockup sets only — **do not** regenerate `play-store/`, which now holds real
-device captures the generator would overwrite with mockups:
+The source generator is `scripts/generate-store-screenshots.mjs` (it emits SVGs for
+every size into `temp/`, but only the 6.9" set is converted below). Regenerate the
+**6.9" mockup set only** — **do not** regenerate `play-store/` or `app-store-6-5/`,
+which now hold real device captures the generator would overwrite with mockups:
 
 ```bash
-rm -rf temp/store-screenshot-build/svg mobile/assets/store/screenshots/app-store-6-9 mobile/assets/store/screenshots/app-store-6-5
+rm -rf temp/store-screenshot-build/svg mobile/assets/store/screenshots/app-store-6-9
 node scripts/generate-store-screenshots.mjs
-mkdir -p mobile/assets/store/screenshots/app-store-6-9 mobile/assets/store/screenshots/app-store-6-5
+mkdir -p mobile/assets/store/screenshots/app-store-6-9
 pnpm dlx sharp-cli -i 'temp/store-screenshot-build/svg/app-store-6-9/*.svg' -o mobile/assets/store/screenshots/app-store-6-9 -f png --density 72 flatten '#ffffff' -- toColourspace srgb
-pnpm dlx sharp-cli -i 'temp/store-screenshot-build/svg/app-store-6-5/*.svg' -o mobile/assets/store/screenshots/app-store-6-5 -f png --density 72 flatten '#ffffff' -- toColourspace srgb
 ```
 
 ### Android real captures (`play-store/`)
