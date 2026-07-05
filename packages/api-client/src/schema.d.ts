@@ -756,6 +756,10 @@ export interface components {
              * @default []
              */
             attributes: components["schemas"]["AttributeConsensusOut"][];
+            /** Condition Points Eligible At */
+            condition_points_eligible_at?: string | null;
+            /** Condition Points Awarded */
+            condition_points_awarded?: number | null;
             /** Is Hidden */
             is_hidden: boolean;
             /** Notes */
@@ -1109,6 +1113,10 @@ export interface components {
              * @default []
              */
             attributes: components["schemas"]["AttributeConsensusOut"][];
+            /** Condition Points Eligible At */
+            condition_points_eligible_at?: string | null;
+            /** Condition Points Awarded */
+            condition_points_awarded?: number | null;
         };
         /** FountainPin */
         FountainPin: {
