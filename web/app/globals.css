@@ -1,5 +1,69 @@
 @import "tailwindcss";
 
+/* Class-based dark variant — overrides Tailwind v4's default prefers-color-scheme so
+   `dark:` utilities key off the `.dark` class next-themes sets on <html>. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --background: #ffffff;
+  --surface: #f8fafc;
+  --surface-raised: #ffffff;
+  --foreground: #0f172a;
+  --muted: #475569;
+  --border: #e2e8f0;
+  --brand: #0a357e;
+  --brand-mid: #0c44a0;
+  --brand-royal: #0e4da4;
+  --accent-gold: #f2c200;
+  --accent-gold-hover: #ffce1f;
+  --accent-subtle: #e7f0ff;
+  --water: #5fc5f0;
+  --danger: #b91c1c;
+  --on-brand: #ffffff;
+  --map-canvas: #e9efe7;
+  --star-empty: #cbd5e1;
+}
+
+.dark {
+  --background: #0b1220;
+  --surface: #111a2e;
+  --surface-raised: #16213a;
+  --foreground: #e6edf7;
+  --muted: #9fb0c7;
+  --border: #26324a;
+  --brand: #0a357e;
+  --brand-mid: #2a5cc0;
+  --brand-royal: #2a5cc0;
+  --accent-gold: #f2c200;
+  --accent-gold-hover: #ffce1f;
+  --accent-subtle: #1e2e4a;
+  --water: #5fc5f0;
+  --danger: #f87171;
+  --on-brand: #ffffff;
+  --map-canvas: #0b1220;
+  --star-empty: #3a4a66;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --color-brand: var(--brand);
+  --color-brand-mid: var(--brand-mid);
+  --color-brand-royal: var(--brand-royal);
+  --color-accent-gold: var(--accent-gold);
+  --color-accent-gold-hover: var(--accent-gold-hover);
+  --color-accent-subtle: var(--accent-subtle);
+  --color-water: var(--water);
+  --color-danger: var(--danger);
+  --color-on-brand: var(--on-brand);
+  --color-map-canvas: var(--map-canvas);
+  --color-star-empty: var(--star-empty);
+}
+
 @keyframes points-pop {
   0% {
     transform: scale(0.94);
@@ -32,7 +96,7 @@
   height: 14px;
   border: 1px solid white;
   border-radius: 9999px;
-  background: #5fc5f0;
+  background: var(--water);
   animation: water-squirt 900ms ease-out both;
 }
 
