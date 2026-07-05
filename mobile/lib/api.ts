@@ -67,10 +67,13 @@ export function unwrap<T>(result: FetchResult<T>): T {
 export type MobileApiClient = Pick<ApiClient, "GET" | "POST" | "PUT" | "PATCH" | "DELETE"> & {
   /**
    * Multipart upload (e.g. fountain photos). openapi-fetch's typed client doesn't
-   * fit multipart/form-data bodies, so this builds a `Request` directly and routes
-   * it through the SAME sanitizing fetch every other verb uses - there is no second,
-   * unaudited network path for an authenticated write. Do not set `Content-Type`;
-   * React Native sets the multipart boundary itself.
+   * fit multipart/form-data bodies, AND React Native's fetch only streams a file
+   * FormData when it is passed directly as `fetch(url, { body: formData })` - not
+   * wrapped in a `new Request(...)` - so this method cannot reuse `sanitizingFetch`
+   * (every other verb's shared path) without breaking the upload. It instead builds
+   * its own headers using the SAME `getAccessToken`/`buildAuthHeaders` auth path (no
+   * second, unaudited auth mechanism) and calls the raw fetch directly. Do not set
+   * `Content-Type`; React Native sets the multipart boundary itself.
    */
   uploadMultipart(path: string, formData: FormData): Promise<{ status: number; detail?: unknown }>;
 };
@@ -202,8 +205,38 @@ export function createApiClient(
     path: string,
     formData: FormData,
   ): Promise<{ status: number; detail?: unknown }> => {
-    const req = new Request(`${baseUrl}${path}`, { method: "POST", body: formData });
-    const res = await sanitizingFetch(req);
+    const url = `${baseUrl}${path}`;
+    // React Native's fetch only streams a multipart file FormData (the
+    // `{ uri, name, type }` file-part shape) when the FormData is passed DIRECTLY
+    // as `fetch(url, { body: formData })`. Wrapping the FormData in a `new
+    // Request(...)` (as every other verb does via `sanitizingFetch`) breaks RN's
+    // native multipart handling: the file body is silently dropped and the
+    // request never leaves the device. So this method builds its own headers
+    // (mirroring `sanitizingFetch`'s auth-attach + x-dev-strip behavior) and
+    // calls the raw fetch in the `(url, init)` form instead of going through
+    // `sanitizingFetch`/`new Request`. Do not "simplify" this back to
+    // `sanitizingFetch` - that reintroduces the bug.
+    const headers: Record<string, string> = {};
+    if (getAccessToken && shouldAttachAuth(new Request(url, { method: "POST" }))) {
+      let token: string | null | undefined;
+      try {
+        token = await getAccessToken();
+      } catch (error) {
+        throw new AuthSessionError("token_unavailable", { cause: error });
+      }
+      Object.assign(headers, buildAuthHeaders(token));
+    }
+    // No x-dev-strip step is needed here: this method builds `headers` itself
+    // from scratch (only ever an Authorization header), so an x-dev* header can
+    // never appear - there is no caller-supplied header channel to sanitize.
+    // Do NOT set Content-Type; React Native derives the multipart boundary from
+    // the FormData itself.
+    // `clientOptions.fetch` is typed narrowly (`(input: Request) => Promise<Response>`)
+    // to match openapi-fetch's `ClientOptions`, but the value actually configured
+    // (real `globalThis.fetch`, or a test mock standing in for it) always supports
+    // the standard `(url, init)` calling form - it is only ever used that way here.
+    const rawFetch = (clientOptions.fetch as typeof fetch | undefined) ?? globalThis.fetch;
+    const res = await rawFetch(url, { method: "POST", body: formData, headers });
     if (res.ok) {
       return { status: res.status };
     }

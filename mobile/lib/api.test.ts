@@ -452,15 +452,17 @@ describe("isAuthenticatedApiRequest - admin photo-reports + photo list", () => {
 });
 
 describe("createApiClient.uploadMultipart", () => {
-  it("sends the FormData body and attaches the bearer token through the sanitizer", async () => {
-    let receivedBody: unknown = null;
-    let receivedContentType: string | null = "unset";
-    let authorization: string | null = null;
-    const fetchMock: typeof fetch = async (input) => {
-      const req = input instanceof Request ? input : new Request(String(input));
-      authorization = req.headers.get("authorization");
-      receivedContentType = req.headers.get("content-type");
-      receivedBody = await req.formData();
+  it("sends the FormData body DIRECTLY (not wrapped in a Request) and attaches the bearer token", async () => {
+    // Regression guard for the RN multipart bug: React Native's fetch only streams
+    // a file FormData when it is passed as `fetch(url, init)` with `init.body` set
+    // to the SAME FormData instance directly - wrapping it in `new Request(...)`
+    // silently drops the file body. Assert on `init` directly (not by reconstructing
+    // a Request from `input`), since reconstructing would mask exactly this bug.
+    let receivedInput: unknown = null;
+    let receivedInit: RequestInit | undefined;
+    const fetchMock: typeof fetch = async (input, init) => {
+      receivedInput = input;
+      receivedInit = init;
       return new Response(JSON.stringify({ id: "photo-1" }), {
         status: 201,
         headers: { "content-type": "application/json" },
@@ -480,20 +482,51 @@ describe("createApiClient.uploadMultipart", () => {
     );
 
     expect(result).toEqual({ status: 201 });
-    expect(authorization).toBe("Bearer token123");
-    expect(receivedBody).toBeInstanceOf(FormData);
+    expect(receivedInput).toBe(
+      "https://api.fountainrank.com/api/v1/fountains/123e4567-e89b-12d3-a456-426614174000/photos",
+    );
+    // The exact same FormData instance, passed as `init.body` - NOT wrapped in a
+    // `new Request(...)`, which is what broke RN's native multipart handling.
+    expect(receivedInit?.body).toBe(formData);
+    const headers = new Headers(receivedInit?.headers);
+    expect(headers.get("authorization")).toBe("Bearer token123");
     // Content-Type is left for the runtime (React Native) to set the multipart
     // boundary; the client must not hardcode it.
-    expect(receivedContentType === null || receivedContentType.includes("multipart")).toBe(true);
+    expect(headers.has("content-type")).toBe(false);
+    expect([...headers.keys()].some((k) => k.toLowerCase().startsWith("x-dev"))).toBe(false);
   });
 
-  it("strips an x-dev* header on the shared sanitizing fetch that uploadMultipart also uses", async () => {
-    // uploadMultipart(path, formData) has NO caller header channel - it can never be
-    // asked to send an x-dev* header itself. What it DOES share with every other verb
-    // is `sanitizingFetch`, which strips x-dev* from whatever Request reaches it
-    // regardless of where the header came from (generated params, middleware, ...).
-    // Exercise that shared path directly with a constructed Request carrying an
-    // x-dev* header, proving it is stripped before any network I/O happens.
+  it("does not call the underlying fetch when the token provider fails - raises AuthSessionError instead", async () => {
+    let fetchCalled = false;
+    const fetchMock: typeof fetch = async () => {
+      fetchCalled = true;
+      return new Response(null, { status: 200 });
+    };
+    const client = createApiClient("https://api.fountainrank.com", {
+      fetch: fetchMock,
+      getAccessToken: async () => {
+        throw new Error("expired");
+      },
+    });
+
+    const formData = new FormData();
+    formData.append("file", new Blob(["data"], { type: "image/jpeg" }), "photo.jpg");
+
+    await expect(
+      client.uploadMultipart(
+        "/api/v1/fountains/123e4567-e89b-12d3-a456-426614174000/photos",
+        formData,
+      ),
+    ).rejects.toBeInstanceOf(AuthSessionError);
+    expect(fetchCalled).toBe(false);
+  });
+
+  it("strips an x-dev* header on the shared sanitizing fetch that other verbs use", async () => {
+    // uploadMultipart no longer shares `sanitizingFetch` (it builds its own headers
+    // from scratch and so can never carry an x-dev* header), but every other verb
+    // still routes through `sanitizingFetch`, which strips x-dev* from whatever
+    // Request reaches it regardless of where the header came from (generated
+    // params, middleware, ...). Exercise that shared path directly.
     let sentKeys: string[] = [];
     const fetchMock: typeof fetch = async (input) => {
       const req = input instanceof Request ? input : new Request(String(input));
