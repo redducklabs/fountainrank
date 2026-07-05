@@ -13,6 +13,7 @@ const config: ExpoConfig = {
   icon: "./assets/icon.png",
   plugins: [
     "expo-router",
+    "expo-image",
     "@maplibre/maplibre-react-native",
     [
       "expo-splash-screen",
