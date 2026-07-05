@@ -8,8 +8,7 @@ type ConditionStatus = components["schemas"]["ConditionReportRequest"]["status"]
 export type ContributeError =
   "unauthenticated" | "validation" | "not_found" | "needs_name" | "server";
 export type ActionResult =
-  | { ok: true; pointsAwarded?: number }
-  | { ok: false; error: ContributeError };
+  { ok: true; pointsAwarded?: number } | { ok: false; error: ContributeError };
 
 const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 const CONDITION_STATUSES: ReadonlySet<string> = new Set([
