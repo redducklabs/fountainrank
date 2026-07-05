@@ -6,8 +6,16 @@ import type { FountainDetail as Detail } from "../../lib/fountains";
 import { FountainDetail } from "./FountainDetail";
 
 vi.mock("./ContributeSection", () => ({
-  ContributeSection: ({ isAuthenticated }: { isAuthenticated: boolean }) => (
-    <div data-testid="contribute-section">{isAuthenticated ? "authed" : "anon"}</div>
+  ContributeSection: ({
+    isAuthenticated,
+    variant,
+  }: {
+    isAuthenticated: boolean;
+    variant?: string;
+  }) => (
+    <div data-testid="contribute-section" data-variant={variant}>
+      {isAuthenticated ? "authed" : "anon"}
+    </div>
   ),
 }));
 vi.mock("./PhotoGallery", () => ({
@@ -36,6 +44,12 @@ const base: Detail = {
 };
 
 describe("FountainDetail", () => {
+  it("renders the prominent Info, Details, and Photos tabs", () => {
+    render(<FountainDetail detail={base} notes={[]} now={now} isAuthenticated={false} />);
+    expect(screen.getByRole("tab", { name: "Info" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Details" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Photos" })).toBeInTheDocument();
+  });
   it("working + overall + votes (graphical hero + dimension stars)", () => {
     render(<FountainDetail detail={base} notes={[]} now={now} isAuthenticated={false} />);
     expect(screen.getByText("Working")).toBeInTheDocument();
@@ -211,10 +225,19 @@ describe("FountainDetail", () => {
   });
   it("signed-out: renders contribute section as anon", () => {
     render(<FountainDetail detail={base} notes={[]} now={now} isAuthenticated={false} />);
-    expect(screen.getByTestId("contribute-section")).toHaveTextContent("anon");
+    const sections = screen.getAllByTestId("contribute-section");
+    expect(sections).toHaveLength(3);
+    expect(sections.map((section) => section.getAttribute("data-variant"))).toEqual([
+      "primary",
+      "details",
+      "photos",
+    ]);
+    sections.forEach((section) => expect(section).toHaveTextContent("anon"));
   });
   it("signed-in: renders contribute section as authed", () => {
     render(<FountainDetail detail={base} notes={[]} now={now} isAuthenticated={true} />);
-    expect(screen.getByTestId("contribute-section")).toHaveTextContent("authed");
+    screen
+      .getAllByTestId("contribute-section")
+      .forEach((section) => expect(section).toHaveTextContent("authed"));
   });
 });

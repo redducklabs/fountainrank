@@ -1,4 +1,8 @@
-import { getFountainDetailServer, getFountainNotesServer } from "../../../../lib/fountains";
+import {
+  getFountainDetailServer,
+  getFountainNotesServer,
+  getFountainPhotosServer,
+} from "../../../../lib/fountains";
 import { getAdminFountainDetailServer } from "../../../../lib/server/admin";
 import { getViewerAccessToken } from "../../../../lib/server/api";
 import { log } from "../../../../lib/server/log";
@@ -16,16 +20,18 @@ export default async function FountainModal({ params }: { params: Promise<{ id: 
   const isAuthenticated = viewer.state === "authed";
   const isAdmin = viewer.state === "authed" && viewer.isAdmin;
   const adminRes = isAdmin ? await getAdminFountainDetailServer(id, requestId) : null;
-  // Authenticate the public detail fetch when signed in so `your_rating` comes back (#65
-  // web parity, #114). Admins use the admin detail endpoint to include hidden notes.
-  const [{ data, status }, notesRes] = adminRes
+  // Authenticate the public detail + photos fetches when signed in so `your_rating` comes back
+  // (#65 web parity, #114) and owner photo controls are available.
+  const [{ data, status }, notesRes, photosRes] = adminRes
     ? [
         { data: adminRes.data, status: adminRes.status },
         { data: adminRes.data?.notes, status: adminRes.status },
+        await getViewerAccessToken().then((token) => getFountainPhotosServer(id, requestId, token)),
       ]
     : await Promise.all([
         getViewerAccessToken().then((token) => getFountainDetailServer(id, requestId, token)),
         getFountainNotesServer(id, requestId),
+        getViewerAccessToken().then((token) => getFountainPhotosServer(id, requestId, token)),
       ]);
 
   if (status === 404) {
@@ -53,11 +59,21 @@ export default async function FountainModal({ params }: { params: Promise<{ id: 
     });
   }
   const notes = notesOk && notesRes.data ? notesRes.data : [];
+  const photosOk = photosRes.status >= 200 && photosRes.status < 300;
+  if (!photosOk) {
+    log("warn", "failed to load fountain photos (overlay)", {
+      requestId,
+      id,
+      status: photosRes.status,
+    });
+  }
+  const photos = photosOk && photosRes.data ? photosRes.data : [];
   return (
     <DetailOverlay>
       <FountainDetail
         detail={data}
         notes={notes}
+        photos={photos}
         isAuthenticated={isAuthenticated}
         adminControls={adminRes?.data ? <FountainAdminControls detail={adminRes.data} /> : null}
       />
