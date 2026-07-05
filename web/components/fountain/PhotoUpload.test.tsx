@@ -39,9 +39,7 @@ describe("PhotoUpload", () => {
     render(<PhotoUpload fountainId="fid" />);
     const input = screen.getByLabelText(/add a photo/i) as HTMLInputElement;
     selectFile(input, new File(["bytes"], "photo.jpg", { type: "image/jpeg" }));
-    await waitFor(() =>
-      expect(screen.getByRole("status")).toHaveTextContent(/photo uploaded/i),
-    );
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/photo uploaded/i));
     expect(refresh).toHaveBeenCalled();
   });
 
@@ -51,21 +49,15 @@ describe("PhotoUpload", () => {
 
     uploadPhoto.mockResolvedValueOnce({ ok: false, error: "photo_limit" });
     selectFile(input, new File(["bytes"], "a.jpg", { type: "image/jpeg" }));
-    await waitFor(() =>
-      expect(screen.getByRole("status")).toHaveTextContent(/photo limit/i),
-    );
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/photo limit/i));
 
     uploadPhoto.mockResolvedValueOnce({ ok: false, error: "rate_limited" });
     selectFile(input, new File(["bytes"], "b.jpg", { type: "image/jpeg" }));
-    await waitFor(() =>
-      expect(screen.getByRole("status")).toHaveTextContent(/doing that a lot/i),
-    );
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/doing that a lot/i));
 
     uploadPhoto.mockResolvedValueOnce({ ok: false, error: "file_invalid" });
     selectFile(input, new File(["bytes"], "c.jpg", { type: "image/jpeg" }));
-    await waitFor(() =>
-      expect(screen.getByRole("status")).toHaveTextContent(/supported photo/i),
-    );
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/supported photo/i));
   });
 
   it("resets the input value after each attempt so re-selecting the same file re-fires", async () => {

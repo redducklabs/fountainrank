@@ -27,7 +27,10 @@ export function PhotoGallery({
   if (photos.length === 0) return null;
 
   function handleDelete(photo: PhotoOut) {
-    if (typeof window !== "undefined" && !window.confirm("Delete this photo? This can't be undone.")) {
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm("Delete this photo? This can't be undone.")
+    ) {
       return;
     }
     setDeleteMsg(null);

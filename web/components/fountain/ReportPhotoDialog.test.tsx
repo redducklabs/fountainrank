@@ -48,9 +48,7 @@ describe("ReportPhotoDialog", () => {
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /submit report/i }));
-    await waitFor(() =>
-      expect(screen.getByRole("status")).toHaveTextContent(/couldn't save/i),
-    );
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/couldn't save/i));
     expect(onReported).not.toHaveBeenCalled();
   });
 

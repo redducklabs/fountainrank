@@ -122,9 +122,7 @@ function UserMenu({
             <span aria-hidden="true">{initial}</span>
           )}
         </button>
-        {isAdmin && pendingReportCount != null && (
-          <ReportBadge initialCount={pendingReportCount} />
-        )}
+        {isAdmin && pendingReportCount != null && <ReportBadge initialCount={pendingReportCount} />}
       </span>
       {open && (
         <div

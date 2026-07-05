@@ -41,9 +41,7 @@ describe("PhotoGallery", () => {
   });
 
   it("no report/delete affordances for a signed-out viewer", () => {
-    render(
-      <PhotoGallery fountainId="fid" photos={[makePhoto()]} isAuthenticated={false} />,
-    );
+    render(<PhotoGallery fountainId="fid" photos={[makePhoto()]} isAuthenticated={false} />);
     expect(screen.queryByRole("button", { name: /report/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /delete/i })).not.toBeInTheDocument();
   });
