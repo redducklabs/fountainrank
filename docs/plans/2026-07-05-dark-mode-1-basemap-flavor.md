@@ -99,17 +99,23 @@ Add a new step immediately after `Smoke test — origin size + CDN range` (no `i
       - name: Validate dark basemap flavor
         run: |
           set -o pipefail
-          echo "Fetching dark style + asserting invariants…"
+          echo "Fetching light + dark styles; asserting parity + dark sprite…"
+          curl -sf -m 30 "https://${CDN_HOST}/style.light.json" -o style.light.check.json \
+            || { echo "::error::style.light.json not reachable on CDN"; exit 1; }
           curl -sf -m 30 "https://${CDN_HOST}/style.dark.json" -o style.dark.check.json \
             || { echo "::error::style.dark.json not reachable on CDN"; exit 1; }
           python3 - <<'PY'
           import json
-          d = json.load(open("style.dark.check.json"))
-          assert d.get("sprite", "").endswith("/sprites/v4/dark"), f"sprite ref: {d.get('sprite')!r}"
-          assert d.get("glyphs", "").endswith("/fonts/{fontstack}/{range}.pbf"), "glyphs changed"
-          assert d["sources"]["protomaps"]["url"].endswith("/tiles/planet.json"), "source url changed"
-          assert isinstance(d.get("layers"), list) and d["layers"], "no layers"
-          print(f"style.dark.json OK ({len(d['layers'])} layers)")
+          light = json.load(open("style.light.check.json"))
+          dark = json.load(open("style.dark.check.json"))
+          assert dark.get("sprite", "").endswith("/sprites/v4/dark"), f"dark sprite ref: {dark.get('sprite')!r}"
+          assert light.get("sprite", "").endswith("/sprites/v4/light"), f"light sprite ref: {light.get('sprite')!r}"
+          # spec §7: glyphs + source must be byte-identical between flavors — compare exactly, not by suffix.
+          assert dark["glyphs"] == light["glyphs"], f"glyphs differ: {dark['glyphs']!r} vs {light['glyphs']!r}"
+          assert dark["sources"]["protomaps"]["url"] == light["sources"]["protomaps"]["url"], \
+              "protomaps source url differs between flavors"
+          assert isinstance(dark.get("layers"), list) and dark["layers"], "no dark layers"
+          print(f"dark style OK ({len(dark['layers'])} layers); glyphs + source match light")
           PY
           for f in dark.json dark.png; do
             st=$(curl -s -o /dev/null -w '%{http_code}' -m 30 "https://${CDN_HOST}/sprites/v4/${f}")
@@ -121,7 +127,7 @@ Add a new step immediately after `Smoke test — origin size + CDN range` (no `i
 - [ ] **Step 4: Lint the workflow**
 
 Run: `actionlint .github/workflows/basemap-upload.yml`
-Expected: no errors. (If `actionlint` is not installed, install the pinned binary used elsewhere in the repo under `temp/actionlint`, or `go run github.com/rhysd/actionlint/cmd/actionlint@latest`.)
+Expected: no errors. (If `actionlint` is not installed, use the repo's pinned version — the binary under `temp/actionlint`, or `go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12` — not `@latest`, to keep lint reproducible.)
 
 - [ ] **Step 5: Commit**
 
@@ -152,10 +158,12 @@ gh workflow run basemap-upload.yml --ref feat/18-dark-mode -f upload_assets=true
 
 - [ ] **Step 2: Watch the run to completion**
 
-Run:
+Run (filter to the just-dispatched run on this branch — not merely the newest run globally, which could be a schedule or another owner's dispatch):
 
 ```bash
-RID=$(gh run list --workflow=basemap-upload.yml --limit 1 --json databaseId --jq '.[0].databaseId')
+sleep 8  # let the dispatched run register
+RID=$(gh run list --workflow=basemap-upload.yml --branch feat/18-dark-mode --event workflow_dispatch \
+       --limit 1 --json databaseId --jq '.[0].databaseId')
 gh run watch "$RID" --exit-status --interval 30
 ```
 
@@ -163,17 +171,19 @@ Expected: the run succeeds, including the new `Validate dark basemap flavor` ste
 
 - [ ] **Step 3: Independently verify the dark style + sprite are served**
 
-Run:
+Run (fail-fast — every fetch must succeed or the check exits non-zero):
 
 ```bash
+set -e
 CDN=fountainrank-basemap.sfo3.cdn.digitaloceanspaces.com
-curl -s -o /dev/null -w "style.dark.json -> %{http_code}\n" -m 30 "https://$CDN/style.dark.json"
-curl -s -m 30 "https://$CDN/style.dark.json" | python -c "import sys,json;d=json.load(sys.stdin);print('sprite=',d['sprite']);print('layers=',len(d['layers']))"
-curl -s -o /dev/null -w "sprites/v4/dark.json -> %{http_code}\n" -m 30 "https://$CDN/sprites/v4/dark.json"
-curl -s -o /dev/null -w "sprites/v4/dark.png  -> %{http_code}\n" -m 30 "https://$CDN/sprites/v4/dark.png"
+curl -fsS -m 30 "https://$CDN/style.dark.json" -o /tmp/style.dark.json
+python -c "import json;d=json.load(open('/tmp/style.dark.json'));assert d['sprite'].endswith('/sprites/v4/dark'),d['sprite'];print('sprite=',d['sprite'],'layers=',len(d['layers']))"
+curl -fsS -o /dev/null -m 30 "https://$CDN/sprites/v4/dark.json"
+curl -fsS -o /dev/null -m 30 "https://$CDN/sprites/v4/dark.png"
+echo "dark style + sprite verified (all 200)"
 ```
 
-Expected: `style.dark.json -> 200`, `sprite= https://…/sprites/v4/dark`, a non-zero layer count, and both sprite files `-> 200`.
+Expected: the `python` line prints `sprite= https://…/sprites/v4/dark` and a non-zero layer count, and the script ends with `dark style + sprite verified (all 200)` (any 404/500 makes `curl -fsS` fail and `set -e` aborts).
 
 - [ ] **Step 4: Open the PR**
 
