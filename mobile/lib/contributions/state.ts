@@ -8,7 +8,19 @@ export {
 } from "./conditions";
 
 export type ContributionError =
-  "unauthenticated" | "validation" | "not_found" | "needs_name" | "network" | "server";
+  | "unauthenticated"
+  | "validation"
+  | "not_found"
+  | "needs_name"
+  | "network"
+  | "server"
+  // Photo-upload-only conflict: `photo_limit_fountain`/`photo_limit_user` (distinct from the
+  // shared `needs_name` 409 gate) — see `mapPhotoUploadError` in `lib/detail/photo-upload.ts`.
+  | "photo_limit"
+  | "rate_limited"
+  // Photo-upload-only: 413 (too large) / 415 (unsupported type) — a client-input problem, but
+  // distinct from `validation` (422) so the UI can show file-specific guidance.
+  | "file_invalid";
 
 export type ContributionGate =
   | { state: "ready" }
@@ -27,6 +39,7 @@ export function mapContributionError(error: unknown): ContributionError {
     if (error.status === 422) return "validation";
     // These detail writes have only ONE 409 shape — the name gate (require_named_user).
     if (error.status === 409) return "needs_name";
+    if (error.status === 429) return "rate_limited";
     return "server";
   }
   if (error instanceof TypeError) {
@@ -52,6 +65,12 @@ export function contributionErrorText(error: ContributionError): string {
       return "Check your connection and try again.";
     case "server":
       return "Couldn't save. Please try again.";
+    case "photo_limit":
+      return "This fountain (or your uploads here) has reached the photo limit.";
+    case "rate_limited":
+      return "You're doing that a lot — please wait a bit and try again.";
+    case "file_invalid":
+      return "That file isn't a supported photo (JPEG, PNG, or WebP, up to 10 MB).";
   }
 }
 

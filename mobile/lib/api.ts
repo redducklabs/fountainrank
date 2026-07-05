@@ -72,7 +72,7 @@ export type MobileApiClient = Pick<ApiClient, "GET" | "POST" | "PUT" | "PATCH" |
    * unaudited network path for an authenticated write. Do not set `Content-Type`;
    * React Native sets the multipart boundary itself.
    */
-  uploadMultipart(path: string, formData: FormData): Promise<{ status: number }>;
+  uploadMultipart(path: string, formData: FormData): Promise<{ status: number; detail?: unknown }>;
 };
 
 type MakeClientOptions = Parameters<typeof makeClient>[1];
@@ -201,10 +201,24 @@ export function createApiClient(
   const uploadMultipart = async (
     path: string,
     formData: FormData,
-  ): Promise<{ status: number }> => {
+  ): Promise<{ status: number; detail?: unknown }> => {
     const req = new Request(`${baseUrl}${path}`, { method: "POST", body: formData });
     const res = await sanitizingFetch(req);
-    return { status: res.status };
+    if (res.ok) {
+      return { status: res.status };
+    }
+    // On failure, best-effort read the JSON body's `detail` field (e.g. the upload
+    // endpoint's two distinct 409 shapes - `display_name_required` vs
+    // `photo_limit_fountain`/`photo_limit_user` - are only distinguishable this way; see
+    // `mapPhotoUploadError`). A non-JSON or empty error body must never throw here.
+    let detail: unknown;
+    try {
+      const body: unknown = await res.json();
+      detail = (body as { detail?: unknown } | null)?.detail;
+    } catch {
+      detail = undefined;
+    }
+    return { status: res.status, detail };
   };
 
   return {

@@ -7,11 +7,13 @@ import { fountainShareUrl, shareContent } from "../../lib/share-url";
 import { colors, spacing, typography } from "../../theme";
 import { AttributeList } from "./AttributeList";
 import { NotesList } from "./NotesList";
+import { PhotoCarousel } from "./PhotoCarousel";
 import { Stars } from "./Stars";
 import { StatusBlock } from "./StatusBlock";
 
 type FountainDetailT = components["schemas"]["FountainDetail"];
 type NoteOut = components["schemas"]["NoteOut"];
+type PhotoOut = components["schemas"]["PhotoOut"];
 
 export function FountainDetail({
   detail,
@@ -22,6 +24,10 @@ export function FountainDetail({
   contribution,
   now,
   webBaseUrl,
+  photos,
+  apiBaseUrl,
+  onReportPhoto,
+  onDeletePhoto,
 }: {
   detail: FountainDetailT;
   notes: NoteOut[];
@@ -31,6 +37,10 @@ export function FountainDetail({
   contribution?: React.ReactNode;
   now: Date;
   webBaseUrl: string;
+  photos?: PhotoOut[];
+  apiBaseUrl: string;
+  onReportPhoto?: (photo: PhotoOut) => void;
+  onDeletePhoto?: (photo: PhotoOut) => void;
 }) {
   const { latitude, longitude } = detail.location;
   const contextComment = detail.comments || detail.placement_note;
@@ -61,6 +71,15 @@ export function FountainDetail({
           now={now}
         />
       </View>
+
+      {photos && photos.length > 0 ? (
+        <PhotoCarousel
+          photos={photos}
+          apiBaseUrl={apiBaseUrl}
+          onReport={onReportPhoto}
+          onDelete={onDeletePhoto}
+        />
+      ) : null}
 
       {detail.average_rating != null ? (
         <View style={styles.heroRow}>

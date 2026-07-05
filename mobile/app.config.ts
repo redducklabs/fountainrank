@@ -16,6 +16,12 @@ const config: ExpoConfig = {
     "expo-image",
     "@maplibre/maplibre-react-native",
     [
+      "expo-image-picker",
+      {
+        photosPermission: "Allow FountainRank to add photos of drinking fountains you choose.",
+      },
+    ],
+    [
       "expo-splash-screen",
       {
         image: "./assets/splash-icon.png",
