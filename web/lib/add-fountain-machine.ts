@@ -4,13 +4,7 @@ import { clampToBound, type Bound, type LngLat } from "./map/placement";
 export const NUDGE_STEP_M = 5;
 
 export type AddPhase =
-  | "idle"
-  | "placing"
-  | "details"
-  | "submitting"
-  | "done"
-  | "duplicate"
-  | "error";
+  "idle" | "placing" | "details" | "submitting" | "done" | "duplicate" | "error";
 
 export type AddState = {
   phase: AddPhase;

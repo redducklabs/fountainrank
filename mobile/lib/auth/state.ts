@@ -1,10 +1,5 @@
 export type AuthStatus =
-  | "unconfigured"
-  | "initializing"
-  | "signedOut"
-  | "signingIn"
-  | "authenticated"
-  | "reauthRequired";
+  "unconfigured" | "initializing" | "signedOut" | "signingIn" | "authenticated" | "reauthRequired";
 
 export type SignInOutcome =
   | { status: "success" }

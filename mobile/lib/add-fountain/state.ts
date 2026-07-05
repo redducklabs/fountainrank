@@ -4,11 +4,7 @@ import { normalizeFountainId } from "../detail/id";
 import { clampToBound, nudgePoint, type Bound, type LngLat } from "./placement";
 
 export type AddFountainError =
-  | "unauthenticated"
-  | "validation"
-  | "needs_name"
-  | "network"
-  | "server";
+  "unauthenticated" | "validation" | "needs_name" | "network" | "server";
 export type DuplicateConflict = { fountain_id?: unknown };
 export type AddFountainResult =
   | { ok: true; fountainId: string }

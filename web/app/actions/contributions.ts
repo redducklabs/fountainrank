@@ -4,8 +4,7 @@ import { getTotalPointsFromClient } from "../../lib/server/contributions";
 import { log } from "../../lib/server/log";
 
 export type ContributionStatsResult =
-  | { ok: true; totalPoints: number }
-  | { ok: false; error: "unauthenticated" | "server" };
+  { ok: true; totalPoints: number } | { ok: false; error: "unauthenticated" | "server" };
 
 export async function getMyContributionStats(): Promise<ContributionStatsResult> {
   const requestId = crypto.randomUUID();

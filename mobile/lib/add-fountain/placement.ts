@@ -12,8 +12,7 @@ export type Bound =
   | { kind: "circle"; center: LngLat; radiusM: number }
   | { kind: "viewport"; bounds: ViewportBounds };
 export type GpsFix =
-  | { ok: true; latitude: number; longitude: number; accuracy: number | null }
-  | { ok: false };
+  { ok: true; latitude: number; longitude: number; accuracy: number | null } | { ok: false };
 
 const EARTH_R = 6371008.8;
 const toRad = (d: number) => (d * Math.PI) / 180;
