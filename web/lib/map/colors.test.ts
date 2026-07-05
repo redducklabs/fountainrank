@@ -9,6 +9,9 @@ describe("MAP_COLORS", () => {
     expect(MAP_COLORS.light.pillBg).toBe("pill-bg");
     expect(MAP_COLORS.light.selectedPin).toBe("pin-selected");
     expect(MAP_COLORS.light.halo).toBe("#0C44A0");
+    expect(MAP_COLORS.light.clusterCount).toBe("#FFFFFF");
+    expect(MAP_COLORS.light.ring).toBe("#0A357E");
+    expect(MAP_COLORS.light.marker).toBe("#0A357E");
   });
   it("dark brightens paint + uses -dark asset names", () => {
     expect(MAP_COLORS.dark.cluster).toBe("#4C82F0");
@@ -17,6 +20,9 @@ describe("MAP_COLORS", () => {
     expect(MAP_COLORS.dark.pillBg).toBe("pill-bg-dark");
     expect(MAP_COLORS.dark.selectedPin).toBe("pin-selected-dark");
     expect(MAP_COLORS.dark.halo).toBe("#5FC5F0");
+    expect(MAP_COLORS.dark.clusterCount).toBe("#FFFFFF");
+    expect(MAP_COLORS.dark.ring).toBe("#4C82F0");
+    expect(MAP_COLORS.dark.marker).toBe("#4C82F0");
   });
   it("mapColorsFor selects by theme", () => {
     expect(mapColorsFor("light")).toBe(MAP_COLORS.light);
