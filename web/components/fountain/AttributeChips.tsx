@@ -8,7 +8,8 @@ const STYLE: Record<ChipVariant, string> = {
   positive: "bg-accent-subtle text-brand ring-1 ring-brand-royal/20 dark:ring-brand-royal/30",
   neutral: "bg-accent-subtle text-brand ring-1 ring-brand-royal/20 dark:ring-brand-royal/30",
   negative: "bg-surface text-muted ring-1 ring-border",
-  mixed: "bg-amber-50 text-amber-700 ring-1 ring-amber-200 dark:bg-amber-500/10 dark:text-amber-300",
+  mixed:
+    "bg-amber-50 text-amber-700 ring-1 ring-amber-200 dark:bg-amber-500/10 dark:text-amber-300",
   muted: "bg-surface text-muted ring-1 ring-border",
 };
 const GLYPH: Record<ChipVariant, string> = {

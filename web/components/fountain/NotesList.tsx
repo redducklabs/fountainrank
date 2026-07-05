@@ -5,9 +5,7 @@ export function NotesList({ notes, now }: { notes: NoteOut[]; now: Date }) {
   if (notes.length === 0) return null;
   return (
     <section className="space-y-2">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
-        Community notes
-      </h3>
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">Community notes</h3>
       <ul className="space-y-2">
         {notes.map((note) => {
           const edited = new Date(note.updated_at).getTime() > new Date(note.created_at).getTime();

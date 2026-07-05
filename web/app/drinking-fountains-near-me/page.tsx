@@ -80,7 +80,10 @@ export default async function NearMePage() {
             <ul className="mt-3 flex flex-wrap gap-x-4 gap-y-1">
               {countries.map((country) => (
                 <li key={country.id}>
-                  <Link href={countryPath(country.country_code)} className="text-brand-mid underline">
+                  <Link
+                    href={countryPath(country.country_code)}
+                    className="text-brand-mid underline"
+                  >
                     {country.name}
                   </Link>
                 </li>

@@ -60,9 +60,7 @@ export async function AttributePage(config: AttributePageConfig) {
           <Link href="/" className="text-sm text-brand-mid underline">
             ← Back to the map
           </Link>
-          <h1 className="mt-6 text-lg font-bold text-brand">
-            Couldn&rsquo;t load these fountains
-          </h1>
+          <h1 className="mt-6 text-lg font-bold text-brand">Couldn&rsquo;t load these fountains</h1>
           <p className="mt-2 text-muted">Please try again.</p>
         </main>
       </>
