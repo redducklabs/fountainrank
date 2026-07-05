@@ -111,7 +111,8 @@ export function ConditionForm({
         {blocked ? (
           <p className="rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs font-semibold text-amber-800">
             You&rsquo;ve earned points for updating this fountain recently — you can still update
-            its status, but it won&rsquo;t earn points again{eligibleIn ? ` for ${eligibleIn}` : ""}.
+            its status, but it won&rsquo;t earn points again{eligibleIn ? ` for ${eligibleIn}` : ""}
+            .
           </p>
         ) : (
           <PointsPreview lines={conditionPointsPreview(showProblems ? "problem" : "working")} />

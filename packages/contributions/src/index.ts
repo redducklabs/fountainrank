@@ -67,10 +67,7 @@ export function totalPreviewPoints(lines: PointsLine[]): number {
  * fountain within the last 24h, so a new condition report will earn 0. Best-effort — the
  * server is authoritative for the actual award (condition_points_awarded on the POST).
  */
-export function conditionPointsBlocked(
-  eligibleAt: string | null | undefined,
-  now: Date,
-): boolean {
+export function conditionPointsBlocked(eligibleAt: string | null | undefined, now: Date): boolean {
   return eligibleAt != null && new Date(eligibleAt).getTime() > now.getTime();
 }
 

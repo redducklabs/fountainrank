@@ -64,8 +64,8 @@ export function ConditionContributionForm({
       />
       {blocked ? (
         <Text style={styles.limitNote}>
-          You&rsquo;ve earned points for updating this fountain recently — you can still update
-          its status, but it won&rsquo;t earn points again{eligibleIn ? ` for ${eligibleIn}` : ""}.
+          You&rsquo;ve earned points for updating this fountain recently — you can still update its
+          status, but it won&rsquo;t earn points again{eligibleIn ? ` for ${eligibleIn}` : ""}.
         </Text>
       ) : (
         <PointsPreview lines={conditionPointsPreview("working")} />
