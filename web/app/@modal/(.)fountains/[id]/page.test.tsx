@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const getDetail = vi.fn();
 const getAdminDetail = vi.fn();
 const getNotes = vi.fn();
+const getPhotos = vi.fn();
 const getViewerFn = vi.fn();
 const getTokenFn = vi.fn();
 const logFn = vi.fn();
@@ -13,6 +14,7 @@ const logFn = vi.fn();
 vi.mock("../../../../lib/fountains", () => ({
   getFountainDetailServer: (...a: unknown[]) => getDetail(...a),
   getFountainNotesServer: (...a: unknown[]) => getNotes(...a),
+  getFountainPhotosServer: (...a: unknown[]) => getPhotos(...a),
 }));
 vi.mock("../../../../lib/server/admin", () => ({
   getAdminFountainDetailServer: (...a: unknown[]) => getAdminDetail(...a),
@@ -35,15 +37,18 @@ vi.mock("../../../../components/admin/FountainAdminControls", () => ({
 vi.mock("../../../../components/fountain/FountainDetail", () => ({
   FountainDetail: ({
     notes,
+    photos,
     isAuthenticated,
     adminControls,
   }: {
     notes: unknown[];
+    photos: unknown[];
     isAuthenticated: boolean;
     adminControls?: ReactNode;
   }) => (
     <div data-testid="detail" data-authed={String(isAuthenticated)}>
       notes:{notes.length}
+      photos:{photos.length}
       {adminControls}
     </div>
   ),
@@ -57,11 +62,13 @@ beforeEach(() => {
   getDetail.mockReset();
   getAdminDetail.mockReset();
   getNotes.mockReset();
+  getPhotos.mockReset();
   getViewerFn.mockReset();
   getTokenFn.mockReset();
   logFn.mockReset();
   getViewerFn.mockResolvedValue({ state: "anonymous" });
   getTokenFn.mockResolvedValue(null);
+  getPhotos.mockResolvedValue({ data: [], status: 200 });
 });
 
 describe("FountainModal route (overlay)", () => {
@@ -71,6 +78,13 @@ describe("FountainModal route (overlay)", () => {
     render(await FountainModal({ params }));
     expect(await screen.findByTestId("detail")).toHaveTextContent("notes:1");
     expect(logFn).not.toHaveBeenCalled();
+  });
+  it("passes fetched photos through on success", async () => {
+    getDetail.mockResolvedValue({ data: { id: "f1" }, status: 200 });
+    getNotes.mockResolvedValue({ data: [], status: 200 });
+    getPhotos.mockResolvedValue({ data: [{ id: "p1" }, { id: "p2" }], status: 200 });
+    render(await FountainModal({ params }));
+    expect(await screen.findByTestId("detail")).toHaveTextContent("photos:2");
   });
   it("non-fatal notes: 503 renders detail with notes=[] + constrained warn log", async () => {
     getDetail.mockResolvedValue({ data: { id: "f1" }, status: 200 });
@@ -126,6 +140,7 @@ describe("FountainModal route (overlay)", () => {
     getTokenFn.mockResolvedValue("tok-xyz");
     render(await FountainModal({ params }));
     expect(getDetail).toHaveBeenCalledWith("f1", expect.any(String), "tok-xyz");
+    expect(getPhotos).toHaveBeenCalledWith("f1", expect.any(String), "tok-xyz");
   });
   it("fetches the detail anonymously (null token) when signed out (#114)", async () => {
     getDetail.mockResolvedValue({ data: { id: "f1" }, status: 200 });

@@ -1,6 +1,5 @@
 "use client";
 import type { components } from "@fountainrank/api-client";
-import { useState } from "react";
 import { signInWithReturn } from "../../app/actions/auth";
 import { AttributeForm } from "./AttributeForm";
 import { RatingForm } from "./RatingForm";
@@ -15,21 +14,24 @@ export function ContributeSection({
   dimensions,
   isAuthenticated,
   conditionPointsEligibleAt,
+  variant = "primary",
 }: {
   fountainId: string;
   dimensions: Dimension[];
   isAuthenticated: boolean;
   conditionPointsEligibleAt?: string | null;
+  variant?: "primary" | "details" | "photos";
 }) {
-  const [showMoreDetails, setShowMoreDetails] = useState(false);
+  const signInMessage =
+    variant === "photos"
+      ? "Sign in to add a photo to this fountain."
+      : "Sign in to rate this fountain, report its status, or leave a note.";
   return (
     <section className="border-t border-slate-100 pt-4">
       <h2 className="text-sm font-bold text-[#0A357E]">Contribute</h2>
       {!isAuthenticated ? (
         <form action={signInWithReturn.bind(null, `/fountains/${fountainId}`)} className="mt-2">
-          <p className="text-sm text-slate-600">
-            Sign in to rate this fountain, report its status, or leave a note.
-          </p>
+          <p className="text-sm text-slate-600">{signInMessage}</p>
           <button
             type="submit"
             className="mt-2 rounded-full bg-[#F2C200] px-4 py-2 text-sm font-bold text-[#0A357E]"
@@ -39,28 +41,23 @@ export function ContributeSection({
         </form>
       ) : (
         <div className="mt-2 space-y-4">
-          <RatingForm fountainId={fountainId} dimensions={dimensions} />
-          <div>
-            <button
-              type="button"
-              aria-expanded={showMoreDetails}
-              onClick={() => setShowMoreDetails((current) => !current)}
-              className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-semibold text-[#0A357E]"
-            >
-              {showMoreDetails ? "Hide More details" : "More details"}
-            </button>
-            {showMoreDetails && (
-              <div className="mt-3 space-y-4">
-                <AttributeForm fountainId={fountainId} />
-                <ConditionForm
-                  fountainId={fountainId}
-                  conditionPointsEligibleAt={conditionPointsEligibleAt}
-                />
-                <NoteForm fountainId={fountainId} />
-                <PhotoUpload fountainId={fountainId} />
-              </div>
-            )}
-          </div>
+          {variant === "primary" ? (
+            <>
+              <RatingForm fountainId={fountainId} dimensions={dimensions} />
+              <PhotoUpload fountainId={fountainId} />
+            </>
+          ) : variant === "photos" ? (
+            <PhotoUpload fountainId={fountainId} />
+          ) : (
+            <>
+              <AttributeForm fountainId={fountainId} />
+              <ConditionForm
+                fountainId={fountainId}
+                conditionPointsEligibleAt={conditionPointsEligibleAt}
+              />
+              <NoteForm fountainId={fountainId} />
+            </>
+          )}
         </div>
       )}
     </section>

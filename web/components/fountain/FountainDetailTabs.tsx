@@ -1,0 +1,65 @@
+"use client";
+
+import type React from "react";
+import { useId, useState } from "react";
+
+export type FountainDetailTab = {
+  id: "primary" | "details" | "photos";
+  label: string;
+  content: React.ReactNode;
+};
+
+export function FountainDetailTabs({ tabs }: { tabs: FountainDetailTab[] }) {
+  const baseId = useId();
+  const [active, setActive] = useState<FountainDetailTab["id"]>(tabs[0]?.id ?? "primary");
+  const activeTab = tabs.find((tab) => tab.id === active) ?? tabs[0];
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div
+        role="tablist"
+        aria-label="Fountain detail sections"
+        className="mr-14 grid grid-cols-3 border-b border-slate-200 bg-white"
+      >
+        {tabs.map((tab) => {
+          const selected = tab.id === activeTab.id;
+          const tabId = `${baseId}-${tab.id}-tab`;
+          const panelId = `${baseId}-${tab.id}-panel`;
+          return (
+            <button
+              key={tab.id}
+              id={tabId}
+              type="button"
+              role="tab"
+              aria-selected={selected}
+              aria-controls={panelId}
+              onClick={() => setActive(tab.id)}
+              className={`min-h-12 border-b-2 px-2 text-sm font-bold outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#0A357E] focus-visible:ring-inset ${
+                selected
+                  ? "border-[#0A357E] bg-slate-50 text-[#0A357E]"
+                  : "border-transparent text-slate-500 hover:bg-slate-50 hover:text-slate-800"
+              }`}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
+      {tabs.map((tab) => {
+        const selected = tab.id === activeTab.id;
+        return (
+          <div
+            key={tab.id}
+            id={`${baseId}-${tab.id}-panel`}
+            role="tabpanel"
+            aria-labelledby={`${baseId}-${tab.id}-tab`}
+            hidden={!selected}
+            className="min-h-0 flex-1 overflow-y-auto px-5 py-4"
+          >
+            {tab.content}
+          </div>
+        );
+      })}
+    </div>
+  );
+}

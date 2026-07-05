@@ -8,6 +8,7 @@ import { AttributeList } from "./AttributeList";
 import { NotesList } from "./NotesList";
 import { ContributeSection } from "./ContributeSection";
 import { PhotoGallery } from "./PhotoGallery";
+import { FountainDetailTabs } from "./FountainDetailTabs";
 
 export function FountainDetail({
   detail,
@@ -33,7 +34,7 @@ export function FountainDetail({
   const { latitude, longitude } = detail.location;
   const contextComment = detail.comments || detail.placement_note;
   const dir = `https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}`;
-  return (
+  const primary = (
     <div className="space-y-4">
       <div>
         <h1 className="text-lg font-bold text-[#0A357E]">
@@ -46,7 +47,6 @@ export function FountainDetail({
           now={renderNow}
         />
       </div>
-      <PhotoGallery fountainId={detail.id} photos={photos} isAuthenticated={isAuthenticated} />
       {detail.average_rating != null ? (
         <div className="flex items-center gap-3">
           <span className="text-3xl font-extrabold leading-none text-[#0A357E]">
@@ -101,7 +101,33 @@ export function FountainDetail({
           </div>
         ))}
       </dl>
+      <ContributeSection
+        fountainId={detail.id}
+        dimensions={detail.dimensions}
+        isAuthenticated={isAuthenticated}
+        variant="primary"
+      />
+      <div className="flex gap-2">
+        <a
+          href={dir}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="rounded-full bg-[#F2C200] px-4 py-2 text-sm font-bold text-[#0A357E]"
+        >
+          Directions
+        </a>
+        <ShareButton />
+      </div>
+    </div>
+  );
+  const details = (
+    <div className="space-y-4">
       <AttributeList attributes={detail.attributes} />
+      {detail.attributes.length === 0 ? (
+        <p className="text-sm text-slate-500">
+          No additional fountain details have been added yet.
+        </p>
+      ) : null}
       {contextComment && (
         <div>
           <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm break-words text-slate-700">
@@ -117,22 +143,39 @@ export function FountainDetail({
         dimensions={detail.dimensions}
         isAuthenticated={isAuthenticated}
         conditionPointsEligibleAt={detail.condition_points_eligible_at}
+        variant="details"
       />
       <p className="text-xs text-slate-400">
         Added {formatDate(detail.created_at)}
         {detail.last_rated_at ? ` · Last rated ${formatDate(detail.last_rated_at)}` : ""}
       </p>
-      <div className="flex gap-2">
-        <a
-          href={dir}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="rounded-full bg-[#F2C200] px-4 py-2 text-sm font-bold text-[#0A357E]"
-        >
-          Directions
-        </a>
-        <ShareButton />
-      </div>
     </div>
+  );
+  const photoTab = (
+    <div className="space-y-4">
+      <PhotoGallery fountainId={detail.id} photos={photos} isAuthenticated={isAuthenticated} />
+      {photos.length === 0 ? (
+        <p className="text-sm text-slate-500">No photos have been added yet.</p>
+      ) : null}
+      <ContributeSection
+        fountainId={detail.id}
+        dimensions={detail.dimensions}
+        isAuthenticated={isAuthenticated}
+        variant="photos"
+      />
+    </div>
+  );
+  return (
+    <FountainDetailTabs
+      tabs={[
+        { id: "primary", label: "Info", content: primary },
+        { id: "details", label: "Details", content: details },
+        {
+          id: "photos",
+          label: `Photos${photos.length > 0 ? ` (${photos.length})` : ""}`,
+          content: photoTab,
+        },
+      ]}
+    />
   );
 }

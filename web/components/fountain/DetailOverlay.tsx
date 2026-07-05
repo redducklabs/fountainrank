@@ -1,12 +1,22 @@
 "use client";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 export function DetailOverlay({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const ref = useRef<HTMLDivElement>(null);
+  const closingRef = useRef(false);
+  const [open, setOpen] = useState(false);
+  const requestClose = useCallback(() => {
+    if (closingRef.current) return;
+    closingRef.current = true;
+    setOpen(false);
+    window.setTimeout(() => router.back(), 200);
+  }, [router]);
+
   useEffect(() => {
     const panel = ref.current;
     const prevFocus = document.activeElement as HTMLElement | null;
+    const frame = window.requestAnimationFrame(() => setOpen(true));
     panel?.focus();
     const focusables = () =>
       panel
@@ -18,7 +28,7 @@ export function DetailOverlay({ children }: { children: React.ReactNode }) {
         : [];
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        router.back();
+        requestClose();
         return;
       }
       if (e.key !== "Tab") return; // trap Tab within the dialog
@@ -41,24 +51,35 @@ export function DetailOverlay({ children }: { children: React.ReactNode }) {
     };
     document.addEventListener("keydown", onKey);
     return () => {
+      window.cancelAnimationFrame(frame);
       document.removeEventListener("keydown", onKey);
       prevFocus?.focus?.();
     }; // restore focus
-  }, [router]);
+  }, [requestClose]);
   return (
     <div className="fixed inset-0 z-50">
-      <div className="absolute inset-0 bg-black/30" onClick={() => router.back()} aria-hidden />
+      <div
+        className={`absolute inset-0 bg-black/30 transition-opacity duration-200 ${
+          open ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
+        }`}
+        onClick={requestClose}
+        aria-hidden
+      />
       <div
         ref={ref}
         tabIndex={-1}
         role="dialog"
         aria-label="Fountain detail"
-        className="absolute inset-x-0 bottom-0 max-h-[85vh] overflow-auto rounded-t-2xl bg-white p-5 shadow-xl md:inset-y-0 md:left-auto md:right-0 md:w-96 md:rounded-none"
+        className={`absolute inset-y-0 right-0 flex h-dvh w-full max-w-full flex-col bg-white shadow-xl transition-transform duration-200 ease-out md:w-[28rem] ${
+          open
+            ? "translate-y-0 md:translate-x-0"
+            : "translate-y-full md:translate-x-full md:translate-y-0"
+        }`}
       >
         <button
-          onClick={() => router.back()}
+          onClick={requestClose}
           aria-label="Close"
-          className="absolute right-4 top-4 h-7 w-7 rounded-full bg-slate-100 text-slate-600"
+          className="absolute right-4 top-3 z-10 h-8 w-8 rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200 focus-visible:ring-2 focus-visible:ring-[#0A357E]"
         >
           ×
         </button>

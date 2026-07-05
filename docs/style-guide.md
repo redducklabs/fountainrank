@@ -185,6 +185,20 @@ follow: false }`. Indexable fountains are listed in `/sitemaps/fountains.xml`.
   "Public drinking fountain in {city}" on the public page; it falls back to "Public drinking
   fountain" when no city resolves or on the admin path (which doesn't fetch the public place).
 
+### Fountain detail drawer (`web/components/fountain/DetailOverlay.tsx`)
+
+The intercepted map detail route (`web/app/@modal/(.)fountains/[id]/page.tsx`) uses a full-height
+drawer over the map, not a centered modal. The drawer is `h-dvh`, slides in/out with a short
+transform transition, and closes from Escape, the close button, or a click/tap on the map backdrop.
+On desktop it anchors to the right at a readable fixed width; on narrow screens it occupies the full
+viewport width so the same drawer structure carries to mobile web.
+
+The drawer body starts with prominent top tabs (`FountainDetailTabs`): **Info** for the primary
+status, rating summary, rating controls, add-photo control, directions, and sharing; **Details** for
+attributes, placement context, notes, admin controls, and secondary contribution forms; **Photos**
+for the gallery plus another add-photo control. Tab panels own their scrolling so the tabs and close
+button stay available throughout long content.
+
 ### Auth buttons (`web/components/SignInButton.tsx`, `SignOutButton.tsx`)
 
 Pill-shaped buttons that submit a Next.js server action (`<form action={...}>`).
