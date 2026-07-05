@@ -35,10 +35,15 @@ updates:
       # duplicate native modules and SDK-mismatch failures (e.g. expo-constants
       # installed twice, async-storage overshooting the SDK-pinned version).
       # Upgrade the whole SDK deliberately via `expo install --fix`, on-device
-      # tested — never piecemeal. (react/react-dom versions are dictated by the
-      # SDK, so they move with it.)
+      # tested — never piecemeal. `@expo/*` covers scoped SDK-bundled packages
+      # (e.g. @expo/vector-icons) that `expo-*` would miss.
+      # NOTE: react/react-dom are SDK-dictated on mobile, so they move with the
+      # SDK; because this root npm entry also spans web/package.json, web React
+      # minor/patch updates are held too — revisit if web React ever needs to
+      # move independently of the mobile Expo SDK.
       - dependency-name: "expo"
       - dependency-name: "expo-*"
+      - dependency-name: "@expo/*"
       - dependency-name: "babel-preset-expo"
       - dependency-name: "eslint-config-expo"
       - dependency-name: "react-native"
