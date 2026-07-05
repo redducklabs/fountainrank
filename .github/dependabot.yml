@@ -18,15 +18,40 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
-    # Hold ESLint at 9.x. ESLint 10 removed the `context.getFilename()` API that
-    # `eslint-plugin-react@7.37.5` still calls (pulled in transitively via
-    # `eslint-config-expo`), so `eslint@10 + eslint-plugin-react@7.37.5` crashes the
-    # `mobile:lint`/`workspace-js` CI jobs ("contextOrFilename.getFilename is not a
-    # function"). eslint-config-expo/next both peer-accept eslint >=9, so everything
-    # else can still update. Revisit (drop this ignore) once the React/Expo lint stack
-    # ships an ESLint 10-compatible eslint-plugin-react.
+    # These holds keep the weekly frontend-js batch small and mergeable.
+    # Framework/SDK majors are deliberate, on-device-tested migrations — they
+    # must NOT ride in on an automated batch (Dependabot bumps each package to
+    # its latest independently, which breaks coordinated version sets).
     ignore:
+      # ESLint: held at 9.x. ESLint 10 removed the `context.getFilename()` API
+      # that `eslint-plugin-react@7.37.5` still calls (pulled in transitively via
+      # `eslint-config-expo`), so `eslint@10 + eslint-plugin-react@7.37.5` crashes
+      # the `mobile:lint`/`workspace-js` jobs. Revisit once the React/Expo lint
+      # stack ships an ESLint 10-compatible eslint-plugin-react.
       - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
+      # Expo SDK + React Native are a coordinated version set. `expo-doctor`
+      # enforces the matched set, so an individual Dependabot bump produces
+      # duplicate native modules and SDK-mismatch failures (e.g. expo-constants
+      # installed twice, async-storage overshooting the SDK-pinned version).
+      # Upgrade the whole SDK deliberately via `expo install --fix`, on-device
+      # tested — never piecemeal. (react/react-dom versions are dictated by the
+      # SDK, so they move with it.)
+      - dependency-name: "expo"
+      - dependency-name: "expo-*"
+      - dependency-name: "babel-preset-expo"
+      - dependency-name: "eslint-config-expo"
+      - dependency-name: "react-native"
+      - dependency-name: "react-native-*"
+      - dependency-name: "@react-native-*"
+      - dependency-name: "react"
+      - dependency-name: "react-dom"
+      # TypeScript and @types/node majors are compiler-/runtime-level jumps
+      # (e.g. TS 6, Node 26 types) that can break the build; take them
+      # deliberately, not in an automated batch. Minor/patch still flow.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
     groups:
       frontend-js:
