@@ -10,6 +10,9 @@ vi.mock("./ContributeSection", () => ({
     <div data-testid="contribute-section">{isAuthenticated ? "authed" : "anon"}</div>
   ),
 }));
+vi.mock("./PhotoGallery", () => ({
+  PhotoGallery: () => <div data-testid="photo-gallery" />,
+}));
 
 const now = new Date("2026-06-22T12:00:00Z");
 const base: Detail = {

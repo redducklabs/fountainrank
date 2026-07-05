@@ -27,6 +27,43 @@ describe("FountainListRow", () => {
   it("shows 'Not yet rated' and no stars when unrated", () => {
     render(<FountainListRow fountain={{ ...base, average_rating: null, rating_count: 0 }} />);
     expect(screen.getByText(/Not yet rated/i)).toBeDefined();
-    expect(screen.queryByRole("img")).toBeNull();
+    expect(screen.queryByRole("img", { name: /Rated/ })).toBeNull();
+  });
+
+  it("renders a lazy-loaded thumbnail prefixed with the API base when thumbnail_url is set", () => {
+    render(
+      <FountainListRow
+        fountain={{ ...base, thumbnail_url: "/api/v1/photos/p1/thumb", photo_count: 2 }}
+      />,
+    );
+    const thumb = screen.getByRole("presentation");
+    expect(thumb.tagName).toBe("IMG");
+    expect(thumb.getAttribute("alt")).toBe("");
+    expect(thumb.getAttribute("loading")).toBe("lazy");
+    expect(thumb.getAttribute("src")).toBe("http://localhost:3021/api/v1/photos/p1/thumb");
+  });
+
+  it("renders a neutral placeholder (no broken img) when thumbnail_url is null", () => {
+    const { container } = render(
+      <FountainListRow fountain={{ ...base, thumbnail_url: null, photo_count: 0 }} />,
+    );
+    expect(container.querySelector("img")).toBeNull();
+    const placeholder = container.querySelector('span[aria-hidden="true"]');
+    expect(placeholder).not.toBeNull();
+    expect(placeholder?.querySelector("svg")).not.toBeNull();
+  });
+
+  it("shows a photo count label when photo_count > 0", () => {
+    render(
+      <FountainListRow
+        fountain={{ ...base, thumbnail_url: "/api/v1/photos/p1/thumb", photo_count: 3 }}
+      />,
+    );
+    expect(screen.getByText("3 photos")).toBeDefined();
+  });
+
+  it("omits the photo count label when photo_count is 0 or absent", () => {
+    render(<FountainListRow fountain={base} />);
+    expect(screen.queryByText(/photos?$/)).toBeNull();
   });
 });

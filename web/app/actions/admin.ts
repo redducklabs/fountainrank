@@ -165,3 +165,77 @@ export async function adminSetNoteHidden(
     return result;
   });
 }
+
+export async function adminHidePhoto(
+  photoId: string,
+  isHidden: boolean,
+): Promise<AdminActionResult> {
+  if (!UUID_RE.test(photoId)) return fail("validation");
+  return runAdminAction(isHidden ? "hide_photo" : "unhide_photo", photoId, async (client) => {
+    const { response } = await client.PATCH("/api/v1/admin/photos/{photo_id}", {
+      params: { path: { photo_id: photoId } },
+      body: { is_hidden: isHidden },
+    });
+    return { response };
+  }).then((result) => {
+    if (result.ok) {
+      revalidatePath("/admin/reports");
+    }
+    return result;
+  });
+}
+
+export async function adminDismissPhotoReports(photoId: string): Promise<AdminActionResult> {
+  if (!UUID_RE.test(photoId)) return fail("validation");
+  return runAdminAction("dismiss_photo_reports", photoId, async (client) => {
+    const { response } = await client.POST("/api/v1/admin/photos/{photo_id}/dismiss-reports", {
+      params: { path: { photo_id: photoId } },
+    });
+    return { response };
+  }).then((result) => {
+    if (result.ok) {
+      revalidatePath("/admin/reports");
+    }
+    return result;
+  });
+}
+
+export async function adminDeletePhoto(photoId: string): Promise<AdminActionResult> {
+  if (!UUID_RE.test(photoId)) return fail("validation");
+  return runAdminAction("delete_photo", photoId, async (client) => {
+    const { response } = await client.DELETE("/api/v1/admin/photos/{photo_id}", {
+      params: { path: { photo_id: photoId } },
+    });
+    return { response };
+  }).then((result) => {
+    if (result.ok) {
+      revalidatePath("/admin/reports");
+    }
+    return result;
+  });
+}
+
+// Polled by the client-side badge (W8): keeps the Logto access token server-side. Any
+// non-2xx (unauthenticated, forbidden, or a transient server error) degrades quietly to 0
+// rather than surfacing a noisy error to a client component that polls unconditionally.
+export async function fetchPendingReportCount(): Promise<number> {
+  const requestId = crypto.randomUUID();
+  try {
+    const client = await getAuthedApiClientForAction(requestId);
+    const { data, response } = await client.GET("/api/v1/admin/photo-reports/summary", {});
+    const status = response?.status ?? 0;
+    if (status < 200 || status >= 300 || !data) {
+      if (status !== 401 && status !== 403) {
+        log("warn", "pending report count non-2xx", { requestId, status });
+      }
+      return 0;
+    }
+    return data.pending_photo_count;
+  } catch (err) {
+    log("warn", "pending report count error", {
+      requestId,
+      reason: (err as Error).name,
+    });
+    return 0;
+  }
+}

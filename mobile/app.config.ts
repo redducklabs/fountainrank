@@ -13,7 +13,14 @@ const config: ExpoConfig = {
   icon: "./assets/icon.png",
   plugins: [
     "expo-router",
+    "expo-image",
     "@maplibre/maplibre-react-native",
+    [
+      "expo-image-picker",
+      {
+        photosPermission: "Allow FountainRank to add photos of drinking fountains you choose.",
+      },
+    ],
     [
       "expo-splash-screen",
       {

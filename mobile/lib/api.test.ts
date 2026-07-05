@@ -420,6 +420,100 @@ describe("createApiClient", () => {
   });
 });
 
+describe("isAuthenticatedApiRequest - admin photo-reports + photo list", () => {
+  it("force-authenticates the admin photo-reports queue and its summary", () => {
+    expect(
+      isAuthenticatedApiRequest(
+        new Request("https://api.fountainrank.com/api/v1/admin/photo-reports"),
+      ),
+    ).toBe(true);
+    expect(
+      isAuthenticatedApiRequest(
+        new Request("https://api.fountainrank.com/api/v1/admin/photo-reports/summary"),
+      ),
+    ).toBe(true);
+  });
+
+  it("attaches a token to the per-fountain photo list so is_own is computed", () => {
+    expect(
+      isAuthenticatedApiRequest(
+        new Request(
+          "https://api.fountainrank.com/api/v1/fountains/123e4567-e89b-12d3-a456-426614174000/photos",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not over-match a public route by prefix", () => {
+    expect(
+      isAuthenticatedApiRequest(new Request("https://api.fountainrank.com/api/v1/fountains/bbox")),
+    ).toBe(false);
+  });
+});
+
+describe("createApiClient.uploadMultipart", () => {
+  it("sends the FormData body and attaches the bearer token through the sanitizer", async () => {
+    let receivedBody: unknown = null;
+    let receivedContentType: string | null = "unset";
+    let authorization: string | null = null;
+    const fetchMock: typeof fetch = async (input) => {
+      const req = input instanceof Request ? input : new Request(String(input));
+      authorization = req.headers.get("authorization");
+      receivedContentType = req.headers.get("content-type");
+      receivedBody = await req.formData();
+      return new Response(JSON.stringify({ id: "photo-1" }), {
+        status: 201,
+        headers: { "content-type": "application/json" },
+      });
+    };
+    const client = createApiClient("https://api.fountainrank.com", {
+      fetch: fetchMock,
+      getAccessToken: async () => "token123",
+    });
+
+    const formData = new FormData();
+    formData.append("file", new Blob(["data"], { type: "image/jpeg" }), "photo.jpg");
+
+    const result = await client.uploadMultipart(
+      "/api/v1/fountains/123e4567-e89b-12d3-a456-426614174000/photos",
+      formData,
+    );
+
+    expect(result).toEqual({ status: 201 });
+    expect(authorization).toBe("Bearer token123");
+    expect(receivedBody).toBeInstanceOf(FormData);
+    // Content-Type is left for the runtime (React Native) to set the multipart
+    // boundary; the client must not hardcode it.
+    expect(receivedContentType === null || receivedContentType.includes("multipart")).toBe(true);
+  });
+
+  it("strips an x-dev* header on the shared sanitizing fetch that uploadMultipart also uses", async () => {
+    // uploadMultipart(path, formData) has NO caller header channel - it can never be
+    // asked to send an x-dev* header itself. What it DOES share with every other verb
+    // is `sanitizingFetch`, which strips x-dev* from whatever Request reaches it
+    // regardless of where the header came from (generated params, middleware, ...).
+    // Exercise that shared path directly with a constructed Request carrying an
+    // x-dev* header, proving it is stripped before any network I/O happens.
+    let sentKeys: string[] = [];
+    const fetchMock: typeof fetch = async (input) => {
+      const req = input instanceof Request ? input : new Request(String(input));
+      sentKeys = [...req.headers.keys()].map((k) => k.toLowerCase());
+      return new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+    const client = createApiClient("https://api.fountainrank.com", { fetch: fetchMock });
+
+    await client.POST("/api/v1/fountains", {
+      body: { latitude: 0, longitude: 0 } as never,
+      params: { header: { "X-Dev-User": "evil" } } as never,
+    });
+
+    expect(sentKeys.some((k) => k.startsWith("x-dev"))).toBe(false);
+  });
+});
+
 describe("apiErrorStatus", () => {
   it("returns the numeric status of an ApiError", () => {
     expect(apiErrorStatus(new ApiError(404))).toBe(404);

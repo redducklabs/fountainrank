@@ -1303,6 +1303,11 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /**
+             * Is Own
+             * @default false
+             */
+            is_own: boolean;
         };
         /** PhotoReportsSummary */
         PhotoReportsSummary: {
@@ -2034,7 +2039,12 @@ export interface operations {
     list_photos_api_v1_fountains__fountain_id__photos_get: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                authorization?: string | null;
+                "X-Dev-User"?: string | null;
+                "X-Dev-Email"?: string | null;
+                "X-Dev-Name"?: string | null;
+            };
             path: {
                 fountain_id: string;
             };

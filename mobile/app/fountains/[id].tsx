@@ -20,19 +20,28 @@ import { ConditionContributionForm } from "../../components/fountain/ConditionCo
 import { ContributePanel } from "../../components/fountain/ContributePanel";
 import { FountainDetail } from "../../components/fountain/FountainDetail";
 import { NoteContributionForm } from "../../components/fountain/NoteContributionForm";
+import { PhotoUploadButton } from "../../components/fountain/PhotoUploadButton";
 import { RatingContributionForm } from "../../components/fountain/RatingContributionForm";
+import { ReportPhotoButton } from "../../components/fountain/ReportPhotoButton";
 import { ScreenContainer } from "../../components/ScreenContainer";
 import { QueryStateView } from "../../components/states/QueryStateView";
 import { apiErrorStatus, unwrap } from "../../lib/api";
 import type { ContributionError } from "../../lib/contributions/state";
-import { mapContributionError } from "../../lib/contributions/state";
+import { contributionErrorText, mapContributionError } from "../../lib/contributions/state";
 import { normalizeFountainId } from "../../lib/detail/id";
+import {
+  buildPhotoFormData,
+  mapPhotoUploadError,
+  PhotoUploadError,
+} from "../../lib/detail/photo-upload";
 import { useApi } from "../../providers/api-provider";
 import { useAuth } from "../../providers/auth-provider";
 import { colors, spacing, typography } from "../../theme";
 
 type FountainDetailT = components["schemas"]["FountainDetail"];
 type NoteOut = components["schemas"]["NoteOut"];
+type PhotoOut = components["schemas"]["PhotoOut"];
+type ReportPhotoRequest = components["schemas"]["ReportPhotoRequest"];
 type AdminFountainDetail = components["schemas"]["AdminFountainDetail"];
 type AdminFountainPatch = components["schemas"]["AdminFountainPatch"];
 type AdminNoteOut = components["schemas"]["AdminNoteOut"];
@@ -63,6 +72,11 @@ export default function FountainDetailScreen() {
   const [showMoreDetails, setShowMoreDetails] = useState(false);
   const [celebrationKey, setCelebrationKey] = useState(0);
   const [celebrationPoints, setCelebrationPoints] = useState<number | null>(null);
+  const [reportingPhoto, setReportingPhoto] = useState<PhotoOut | null>(null);
+  const [photoUploadMessage, setPhotoUploadMessage] = useState<{
+    tone: "ok" | "err";
+    text: string;
+  } | null>(null);
   const { id } = useLocalSearchParams<{ id: string | string[] }>();
   // Reject absent/array/malformed (non-UUID) ids client-side — the backend route
   // param is a uuid.UUID, so a bad value would 422; show the honest not-found state.
@@ -122,6 +136,22 @@ export default function FountainDetailScreen() {
   const adminDetail =
     isAdmin && detailQuery.data && "is_hidden" in detailQuery.data ? detailQuery.data : null;
 
+  // Keyed on auth like `detailQuery`: the list is public, but the backend only computes each
+  // photo's viewer-specific `is_own` (needed for the mobile per-photo delete gate) when the
+  // request carries a token, so signed-in and anonymous reads must be distinct cache entries.
+  const photosQuery = useQuery({
+    queryKey: ["fountain", fountainId, "photos", auth.status === "authenticated"],
+    enabled: fountainId != null,
+    queryFn: async (): Promise<PhotoOut[]> => {
+      if (fountainId == null) throw new Error("missing fountain id");
+      return unwrap(
+        await client.GET("/api/v1/fountains/{fountain_id}/photos", {
+          params: { path: { fountain_id: fountainId } },
+        }),
+      );
+    },
+  });
+
   const attributeTypesQuery = useQuery({
     queryKey: ["attribute-types"],
     enabled: fountainId != null && auth.status === "authenticated" && showMoreDetails,
@@ -162,6 +192,66 @@ export default function FountainDetailScreen() {
       router.navigate("/account");
     }
     return { ok: false, error: mapped };
+  };
+
+  const handlePhotoUploadError = (error: unknown): void => {
+    const mapped = mapPhotoUploadError(error);
+    if (mapped === "unauthenticated") {
+      auth.markReauthRequired();
+    }
+    if (mapped === "needs_name") {
+      router.navigate("/account");
+    }
+    setPhotoUploadMessage({ tone: "err", text: contributionErrorText(mapped) });
+  };
+
+  const pickAndUploadPhoto = async (asset: {
+    uri: string;
+    fileName?: string | null;
+    mimeType?: string | null;
+  }) => {
+    setPhotoUploadMessage(null);
+    try {
+      await photoUploadMutation.mutateAsync(asset);
+    } catch (error) {
+      handlePhotoUploadError(error);
+    }
+  };
+
+  const submitPhotoReport = async (
+    photoId: string,
+    category: ReportPhotoRequest["category"],
+    note: string | undefined,
+  ): Promise<SubmitResult> => {
+    try {
+      await photoReportMutation.mutateAsync({ photoId, category, note });
+      return { ok: true };
+    } catch (error) {
+      return handleMutationError(error);
+    }
+  };
+
+  const confirmDeletePhoto = (photo: PhotoOut) => {
+    Alert.alert("Delete photo?", "This can't be undone.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: () => {
+          photoDeleteMutation.mutate(photo.id, {
+            onError: (error) => {
+              const status = apiErrorStatus(error);
+              Alert.alert(
+                "Couldn't delete this photo",
+                status === 403
+                  ? "Only the photo's owner can delete it."
+                  : "Please try again in a moment.",
+              );
+            },
+          });
+        },
+      },
+    ]);
   };
 
   const ratingMutation = useMutation({
@@ -224,6 +314,56 @@ export default function FountainDetailScreen() {
       void queryClient.invalidateQueries({ queryKey: ["me", "contributions"] });
       setCelebrationPoints(CONTRIBUTION_POINTS.add_note);
       setCelebrationKey((key) => key + 1);
+    },
+  });
+
+  const photoUploadMutation = useMutation({
+    mutationFn: async (asset: {
+      uri: string;
+      fileName?: string | null;
+      mimeType?: string | null;
+    }): Promise<void> => {
+      if (fountainId == null) throw new Error("missing fountain id");
+      const formData = buildPhotoFormData(asset);
+      const result = await client.uploadMultipart(
+        `/api/v1/fountains/${fountainId}/photos`,
+        formData,
+      );
+      if (result.status < 200 || result.status >= 300) {
+        throw new PhotoUploadError(result.status, result.detail);
+      }
+    },
+    onSuccess: () => {
+      setPhotoUploadMessage({ tone: "ok", text: "Photo added. Thanks for contributing!" });
+      void photosQuery.refetch();
+      void queryClient.invalidateQueries({ queryKey: ["me", "contributions"] });
+    },
+  });
+
+  const photoReportMutation = useMutation({
+    mutationFn: async (body: ReportPhotoRequest & { photoId: string }): Promise<void> => {
+      if (fountainId == null) throw new Error("missing fountain id");
+      unwrap(
+        await client.POST("/api/v1/fountains/{fountain_id}/photos/{photo_id}/report", {
+          params: { path: { fountain_id: fountainId, photo_id: body.photoId } },
+          body: { category: body.category, note: body.note },
+        }),
+      );
+    },
+  });
+
+  const photoDeleteMutation = useMutation({
+    mutationFn: async (photoId: string): Promise<void> => {
+      if (fountainId == null) throw new Error("missing fountain id");
+      unwrap(
+        await client.DELETE("/api/v1/fountains/{fountain_id}/photos/{photo_id}", {
+          params: { path: { fountain_id: fountainId, photo_id: photoId } },
+        }),
+      );
+    },
+    onSuccess: () => {
+      void photosQuery.refetch();
+      void queryClient.invalidateQueries({ queryKey: ["me", "contributions"] });
     },
   });
 
@@ -312,6 +452,12 @@ export default function FountainDetailScreen() {
               notes={displayNotes}
               notesError={notesQuery.isError}
               onRetryNotes={() => void notesQuery.refetch()}
+              photos={photosQuery.data}
+              apiBaseUrl={config.apiBaseUrl}
+              onReportPhoto={
+                auth.status === "authenticated" ? (photo) => setReportingPhoto(photo) : undefined
+              }
+              onDeletePhoto={auth.status === "authenticated" ? confirmDeletePhoto : undefined}
               adminControls={
                 adminDetail ? (
                   <AdminControls
@@ -378,6 +524,13 @@ export default function FountainDetailScreen() {
                       }
                     }}
                   />
+                  <PhotoUploadButton
+                    pending={photoUploadMutation.isPending}
+                    message={photoUploadMessage}
+                    onPick={(asset) => {
+                      void pickAndUploadPhoto(asset);
+                    }}
+                  />
                   <Pressable
                     accessibilityRole="button"
                     onPress={() => setShowMoreDetails((current) => !current)}
@@ -414,6 +567,16 @@ export default function FountainDetailScreen() {
         </ScrollView>
         <WaterCelebration triggerKey={celebrationKey} points={celebrationPoints} />
       </QueryStateView>
+      <ReportPhotoButton
+        key={reportingPhoto?.id ?? "closed"}
+        photo={reportingPhoto}
+        pending={photoReportMutation.isPending}
+        onSubmit={async (category, note) => {
+          if (reportingPhoto == null) return { ok: false, error: "server" };
+          return submitPhotoReport(reportingPhoto.id, category, note);
+        }}
+        onClose={() => setReportingPhoto(null)}
+      />
     </ScreenContainer>
   );
 }

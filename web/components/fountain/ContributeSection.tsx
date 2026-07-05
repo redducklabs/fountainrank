@@ -6,6 +6,7 @@ import { AttributeForm } from "./AttributeForm";
 import { RatingForm } from "./RatingForm";
 import { ConditionForm } from "./ConditionForm";
 import { NoteForm } from "./NoteForm";
+import { PhotoUpload } from "./PhotoUpload";
 
 type Dimension = components["schemas"]["DimensionSummary"];
 
@@ -56,6 +57,7 @@ export function ContributeSection({
                   conditionPointsEligibleAt={conditionPointsEligibleAt}
                 />
                 <NoteForm fountainId={fountainId} />
+                <PhotoUpload fountainId={fountainId} />
               </div>
             )}
           </div>

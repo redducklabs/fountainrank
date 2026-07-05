@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const getDetail = vi.fn();
 const getAdminDetail = vi.fn();
 const getNotes = vi.fn();
+const getPhotos = vi.fn();
 const getPlaceFn = vi.fn();
 const getViewerFn = vi.fn();
 const getTokenFn = vi.fn();
@@ -17,6 +18,7 @@ const notFoundFn = vi.fn(() => {
 vi.mock("../../../lib/fountains", () => ({
   getFountainDetailServer: (...a: unknown[]) => getDetail(...a),
   getFountainNotesServer: (...a: unknown[]) => getNotes(...a),
+  getFountainPhotosServer: (...a: unknown[]) => getPhotos(...a),
 }));
 // Keep the real pure helpers (fountainPath); stub only the public place fetch.
 vi.mock("../../../lib/places", async (importOriginal) => {
@@ -92,6 +94,7 @@ beforeEach(() => {
   getDetail.mockReset();
   getAdminDetail.mockReset();
   getNotes.mockReset();
+  getPhotos.mockReset();
   getPlaceFn.mockReset();
   getViewerFn.mockReset();
   getTokenFn.mockReset();
@@ -99,6 +102,7 @@ beforeEach(() => {
   notFoundFn.mockClear();
   getViewerFn.mockResolvedValue({ state: "anonymous" });
   getTokenFn.mockResolvedValue(null);
+  getPhotos.mockResolvedValue({ data: [], status: 200 });
   // Default: no place resolved (backend down / no city) — the h1 falls back, metadata noindexes.
   getPlaceFn.mockResolvedValue({ data: undefined, status: 0 });
 });

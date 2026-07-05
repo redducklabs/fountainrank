@@ -9,14 +9,14 @@ storage backend on an otherwise-valid, visible photo must 503 rather than masque
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import RedirectResponse
 from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import get_current_user, require_named_user
+from app.auth import get_current_user, get_optional_user, require_named_user
 from app.config import Settings, get_settings
 from app.contributions import (
     ContributionSpec,
@@ -51,7 +51,9 @@ MAX_PHOTOS_PER_FOUNTAIN = 20
 MAX_PHOTOS_PER_USER_PER_FOUNTAIN = 5
 
 
-def photo_out(photo: FountainPhoto, *, uploaded_by: str | None) -> PhotoOut:
+def photo_out(
+    photo: FountainPhoto, *, uploaded_by: str | None, viewer_user_id: uuid.UUID | None = None
+) -> PhotoOut:
     return PhotoOut(
         id=photo.id,
         url=f"/api/v1/photos/{photo.id}",
@@ -60,14 +62,23 @@ def photo_out(photo: FountainPhoto, *, uploaded_by: str | None) -> PhotoOut:
         height=photo.height,
         uploaded_by=uploaded_by,
         created_at=photo.created_at,
+        is_own=viewer_user_id is not None and photo.user_id == viewer_user_id,
     )
 
 
 @router.get("/fountains/{fountain_id}/photos", response_model=list[PhotoOut])
 async def list_photos(
     fountain_id: uuid.UUID,
+    response: Response,
     session: AsyncSession = Depends(get_session),
+    viewer: User | None = Depends(get_optional_user),
 ) -> list[PhotoOut]:
+    # The response is viewer-dependent (`is_own` varies per caller) even though the endpoint
+    # stays PUBLIC (no auth required) — so it must never be shared-cached (a CDN/proxy caching
+    # one viewer's `is_own=true` response and serving it to another viewer would be a real
+    # ownership leak, not just a cosmetic bug).
+    response.headers["Cache-Control"] = "private, no-store"
+
     # Parent-scoped 404 (mirrors list_notes): a missing/hidden fountain 404s rather than
     # returning an empty list, so the client can distinguish "no photos" from "no fountain".
     exists = (
@@ -98,6 +109,7 @@ async def list_photos(
         photo_out(
             photo,
             uploaded_by=public_display_name(display_name, logto_user_id, nickname),
+            viewer_user_id=viewer.id if viewer else None,
         )
         for (photo, display_name, logto_user_id, nickname) in rows
     ]
@@ -435,6 +447,7 @@ async def upload_photo(
     return photo_out(
         photo,
         uploaded_by=public_display_name(user.display_name, user.logto_user_id, user.nickname),
+        viewer_user_id=user.id,
     )
 
 

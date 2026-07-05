@@ -64,7 +64,16 @@ export function unwrap<T>(result: FetchResult<T>): T {
  * The mobile-safe API surface: only the HTTP verbs the app uses, with NO access
  * to openapi-fetch's `use`/`eject` middleware hooks.
  */
-export type MobileApiClient = Pick<ApiClient, "GET" | "POST" | "PUT" | "PATCH" | "DELETE">;
+export type MobileApiClient = Pick<ApiClient, "GET" | "POST" | "PUT" | "PATCH" | "DELETE"> & {
+  /**
+   * Multipart upload (e.g. fountain photos). openapi-fetch's typed client doesn't
+   * fit multipart/form-data bodies, so this builds a `Request` directly and routes
+   * it through the SAME sanitizing fetch every other verb uses - there is no second,
+   * unaudited network path for an authenticated write. Do not set `Content-Type`;
+   * React Native sets the multipart boundary itself.
+   */
+  uploadMultipart(path: string, formData: FormData): Promise<{ status: number; detail?: unknown }>;
+};
 
 type MakeClientOptions = Parameters<typeof makeClient>[1];
 export type CreateApiClientOptions = MakeClientOptions & {
@@ -102,6 +111,18 @@ export function isAuthenticatedApiRequest(input: Request): boolean {
   // only the single-id route, boundary-safely, so future admin subresources are not
   // accidentally force-authenticated by a loose prefix.
   if (/^\/api\/v1\/admin\/fountains\/[^/]+$/.test(path)) {
+    return true;
+  }
+  // The admin photo-reports queue and its unread-count summary are staff-only surfaces
+  // (moderation queue + badge count) and must always carry a token.
+  if (path === "/api/v1/admin/photo-reports" || path === "/api/v1/admin/photo-reports/summary") {
+    return true;
+  }
+  // The per-fountain photo list is public, but attach the token when signed in so the
+  // backend can compute the caller's own `is_own` flag on each photo (needed for the
+  // mobile per-photo delete gating). Boundary-safe: matches only the list route itself,
+  // not sibling sub-resources.
+  if (/^\/api\/v1\/fountains\/[^/]+\/photos$/.test(path)) {
     return true;
   }
   return false;
@@ -177,11 +198,35 @@ export function createApiClient(
     return wrapped as unknown as ApiClient[V];
   };
 
+  const uploadMultipart = async (
+    path: string,
+    formData: FormData,
+  ): Promise<{ status: number; detail?: unknown }> => {
+    const req = new Request(`${baseUrl}${path}`, { method: "POST", body: formData });
+    const res = await sanitizingFetch(req);
+    if (res.ok) {
+      return { status: res.status };
+    }
+    // On failure, best-effort read the JSON body's `detail` field (e.g. the upload
+    // endpoint's two distinct 409 shapes - `display_name_required` vs
+    // `photo_limit_fountain`/`photo_limit_user` - are only distinguishable this way; see
+    // `mapPhotoUploadError`). A non-JSON or empty error body must never throw here.
+    let detail: unknown;
+    try {
+      const body: unknown = await res.json();
+      detail = (body as { detail?: unknown } | null)?.detail;
+    } catch {
+      detail = undefined;
+    }
+    return { status: res.status, detail };
+  };
+
   return {
     GET: guard("GET"),
     POST: guard("POST"),
     PUT: guard("PUT"),
     PATCH: guard("PATCH"),
     DELETE: guard("DELETE"),
+    uploadMultipart,
   };
 }

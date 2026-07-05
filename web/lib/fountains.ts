@@ -7,6 +7,7 @@ export type FountainPin = components["schemas"]["FountainPin"];
 export type FountainDetail = components["schemas"]["FountainDetail"];
 export type DimensionSummary = components["schemas"]["DimensionSummary"];
 export type NoteOut = components["schemas"]["NoteOut"];
+export type PhotoOut = components["schemas"]["PhotoOut"];
 export type BboxResult = { pins: FountainPin[]; truncated: boolean };
 
 export async function fetchBbox(params: BboxParams, requestId?: string): Promise<BboxResult> {
@@ -53,6 +54,31 @@ export async function getFountainNotesServer(id: string, requestId: string) {
   const client = makeClient(resolveApiBaseUrl(), { headers: { "X-Request-ID": requestId } });
   try {
     const { data, response } = await client.GET("/api/v1/fountains/{fountain_id}/notes", {
+      params: { path: { fountain_id: id } },
+    });
+    return { data, status: response?.status ?? 0 };
+  } catch {
+    // status 0 = no HTTP response (network error / backend down / DNS failure)
+    return { data: undefined, status: 0 };
+  }
+}
+
+// `token` (the viewer's backend access token, when signed in) enriches each photo with
+// `is_own` (the per-viewer ownership flag the web carousel uses to gate the Delete button —
+// see `PhotoGallery`/`PhotoCarousel`). Mirrors `getFountainDetailServer`'s token plumbing; a
+// null/absent token yields the anonymous response (every `is_own` false) unchanged. The list
+// endpoint responds `Cache-Control: private, no-store` precisely because the response now
+// varies per viewer.
+export async function getFountainPhotosServer(
+  id: string,
+  requestId: string,
+  token?: string | null,
+) {
+  const headers: Record<string, string> = { "X-Request-ID": requestId };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const client = makeClient(resolveApiBaseUrl(), { headers });
+  try {
+    const { data, response } = await client.GET("/api/v1/fountains/{fountain_id}/photos", {
       params: { path: { fountain_id: id } },
     });
     return { data, status: response?.status ?? 0 };
