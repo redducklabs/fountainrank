@@ -204,6 +204,11 @@ function SignedInProfile({
           <Text style={styles.name}>{profile.display_name}</Text>
           {email ? <Text style={styles.note}>{email}</Text> : null}
           {profile.is_admin ? <Text style={styles.meta}>Admin</Text> : null}
+          {profile.is_admin ? (
+            <Link href="/admin/reports" style={styles.link}>
+              Reports
+            </Link>
+          ) : null}
         </View>
       </View>
       {contributions ? (
