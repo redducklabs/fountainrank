@@ -133,14 +133,6 @@ def dk_observe_attr(user_id: uuid.UUID, fountain_id: uuid.UUID, attribute_type_i
     return f"attr:{user_id}:{fountain_id}:{attribute_type_id}"
 
 
-def dk_verify(user_id: uuid.UUID, fountain_id: uuid.UUID, day: str) -> str:
-    return f"verify:{user_id}:{fountain_id}:{day}"
-
-
-def dk_report_condition(user_id: uuid.UUID, fountain_id: uuid.UUID, day: str) -> str:
-    return f"cond:{user_id}:{fountain_id}:{day}"
-
-
 def dk_condition_award(report_id: uuid.UUID) -> str:
     # Per-report key: the rolling-24h query (#124) is the real limiter, so this only guards
     # exact double-processing of one report row (ON CONFLICT DO NOTHING).

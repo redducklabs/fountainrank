@@ -17,15 +17,15 @@ from app.contributions import (
     ContributionSpec,
     condition_points_eligible_at,
     dk_add_fountain,
+    dk_condition_award,
     dk_first_fountain,
     dk_first_in_area,
     dk_first_rating,
     dk_note,
     dk_observe_attr,
     dk_rate,
-    dk_report_condition,
-    dk_verify,
     latest_awarded_condition_at,
+    points_for,
     record_contributions,
 )
 from app.db import get_session
@@ -984,7 +984,7 @@ async def submit_condition(
     user: User = Depends(require_named_user),
 ) -> FountainDetail:
     # One captured timestamp drives the row created_at, the status recompute window, and the
-    # per-day dedup key — so they can never straddle a UTC-midnight boundary.
+    # rolling-24h condition point-window gate (#124) — so they can never straddle a boundary.
     report_time = datetime.now(tz=UTC)
     fountain = (
         await session.execute(
@@ -1015,36 +1015,43 @@ async def submit_condition(
             )
         )
     ).one()
-    day = report_time.strftime("%Y%m%d")
     is_verify = payload.status == "working"
-    spec = ContributionSpec(
-        user_id=user.id,
-        event_type="verify_working" if is_verify else "report_condition",
-        dedup_key=(
-            dk_verify(user.id, fountain.id, day)
-            if is_verify
-            else dk_report_condition(user.id, fountain.id, day)
-        ),
-        fountain_id=fountain.id,
-        location=point_geography(float(lat), float(lng)),
-        target_type="condition_report",
-        target_id=report.id,
-        event_metadata={"status": payload.status},
-    )
-    inserted = await record_contributions(session, [spec])
+    # Rolling-24h, coalesced point gate (#124). The Fountain FOR UPDATE lock above serialises
+    # condition writes per fountain, so a single user cannot race two awards past this check.
+    last_awarded_at = await latest_awarded_condition_at(session, user.id, fountain.id)
+    eligible = condition_points_eligible_at(last_awarded_at, report_time) is None
+    points_awarded = 0
+    if eligible:
+        event_type = "verify_working" if is_verify else "report_condition"
+        spec = ContributionSpec(
+            user_id=user.id,
+            event_type=event_type,
+            dedup_key=dk_condition_award(report.id),
+            fountain_id=fountain.id,
+            location=point_geography(float(lat), float(lng)),
+            target_type="condition_report",
+            target_id=report.id,
+            event_metadata={"status": payload.status},
+            created_at=report_time,
+        )
+        inserted = await record_contributions(session, [spec])
+        points_awarded = points_for(event_type) if inserted else 0
     await session.commit()
     await session.refresh(fountain)
     logger.info(
-        "condition reported fountain=%s user=%s report=%s status=%s current_status=%s->%s event=%s",
+        "condition reported fountain=%s user=%s report=%s status=%s current_status=%s->%s "
+        "points_awarded=%d",
         fountain.id,
         user.id,
         report.id,
         payload.status,
         prev_status,
         fountain.current_status,
-        "inserted" if inserted else "deduped",
+        points_awarded,
     )
-    return await serialize_fountain_detail(session, fountain, user_id=user.id)
+    return await serialize_fountain_detail(
+        session, fountain, user_id=user.id, condition_points_awarded=points_awarded
+    )
 
 
 @router.post(
