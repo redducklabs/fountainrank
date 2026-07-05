@@ -15,6 +15,7 @@ from app.config import Settings, get_settings
 from app.consensus import recompute_attribute_consensus
 from app.contributions import (
     ContributionSpec,
+    condition_points_eligible_at,
     dk_add_fountain,
     dk_first_fountain,
     dk_first_in_area,
@@ -24,6 +25,7 @@ from app.contributions import (
     dk_rate,
     dk_report_condition,
     dk_verify,
+    latest_awarded_condition_at,
     record_contributions,
 )
 from app.db import get_session
@@ -260,7 +262,10 @@ async def _upsert_attribute_observations(
 
 
 async def serialize_fountain_detail(
-    session: AsyncSession, fountain: Fountain, user_id: uuid.UUID | None = None
+    session: AsyncSession,
+    fountain: Fountain,
+    user_id: uuid.UUID | None = None,
+    condition_points_awarded: int | None = None,
 ) -> FountainDetail:
     # The caller's own stars per dimension, so the rating UI can pre-fill and show
     # "already rated" (#65). Only fetched when authenticated; anonymous -> all None.
@@ -276,6 +281,15 @@ async def serialize_fountain_detail(
                 )
             ).all()
         }
+    # Per-viewer condition-points eligibility hint (#124): when the caller has awarded
+    # condition points on this fountain within the rolling window, tell them when they'll
+    # be eligible again. Only computed when authenticated; anonymous -> always None.
+    condition_points_eligible = None
+    if user_id is not None:
+        condition_points_eligible = condition_points_eligible_at(
+            await latest_awarded_condition_at(session, user_id, fountain.id),
+            datetime.now(tz=UTC),
+        )
     lat, lng = (
         await session.execute(
             select(latitude_of(Fountain.location), longitude_of(Fountain.location)).where(
@@ -366,6 +380,8 @@ async def serialize_fountain_detail(
         placement_note=fountain.placement_note,
         dimensions=dimensions,
         attributes=attributes,
+        condition_points_eligible_at=condition_points_eligible,
+        condition_points_awarded=condition_points_awarded,
     )
 
 

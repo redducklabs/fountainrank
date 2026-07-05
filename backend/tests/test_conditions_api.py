@@ -146,3 +146,37 @@ async def test_conditions_requires_auth(settings_override):
             f"/api/v1/fountains/{uuid.uuid4()}/conditions", json={"status": "working"}
         )
     assert r.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_detail_condition_points_eligible_at_authenticated(client, test_user):
+    # The detail GET resolves its viewer via get_optional_user, NOT the get_current_user the
+    # `client` fixture overrides — and the fixture sends no auth header, so get_optional_user
+    # returns None by default. To exercise the AUTHENTICATED eligibility branch we must
+    # override get_optional_user (same pattern as test_fountains_detail.py /
+    # test_gamification_api.py: app.dependency_overrides[get_optional_user] = lambda: test_user).
+    from app.auth import get_optional_user
+    from app.main import app
+
+    fid = await _add_fountain(client)
+    app.dependency_overrides[get_optional_user] = lambda: test_user
+    try:
+        before = (await client.get(f"/api/v1/fountains/{fid}")).json()
+        assert before["condition_points_eligible_at"] is None
+        assert before["condition_points_awarded"] is None  # GET never sets the award count
+        await _report(client, fid, "working")
+        after = (await client.get(f"/api/v1/fountains/{fid}")).json()
+        assert after["condition_points_eligible_at"] is not None
+        assert after["condition_points_awarded"] is None
+    finally:
+        app.dependency_overrides.pop(get_optional_user, None)
+
+
+@pytest.mark.asyncio
+async def test_detail_condition_points_eligible_at_anonymous(client):
+    # No get_optional_user override + no auth header => anonymous viewer, so eligibility is
+    # always null even immediately after a report (spec: null for anonymous callers).
+    fid = await _add_fountain(client)
+    await _report(client, fid, "working")  # report is attributed to test_user via the write seam
+    detail = (await client.get(f"/api/v1/fountains/{fid}")).json()
+    assert detail["condition_points_eligible_at"] is None
