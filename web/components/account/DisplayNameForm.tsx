@@ -70,7 +70,7 @@ export function DisplayNameForm({
       <button
         type="submit"
         disabled={pending || value.trim().length === 0}
-        className="rounded-full bg-[#F2C200] px-5 py-2 text-sm font-bold text-[#0A357E] disabled:opacity-50"
+        className="rounded-full bg-accent-gold px-5 py-2 text-sm font-bold text-brand disabled:opacity-50"
       >
         {pending ? "Saving…" : required ? "Continue" : "Save"}
       </button>

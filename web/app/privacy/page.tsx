@@ -87,24 +87,24 @@ const sections = [
 
 export default function PrivacyPolicy() {
   return (
-    <main className="min-h-dvh bg-white px-6 py-10 text-slate-900 sm:py-14">
+    <main className="min-h-dvh bg-surface-raised px-6 py-10 text-foreground sm:py-14">
       <article className="mx-auto max-w-3xl">
         <Link
-          className="text-sm font-medium text-[#0C44A0] underline-offset-4 hover:underline"
+          className="text-sm font-medium text-brand-mid underline-offset-4 hover:underline"
           href="/"
         >
           FountainRank
         </Link>
 
-        <header className="mt-10 border-b border-slate-200 pb-8">
-          <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#0C44A0]">
+        <header className="mt-10 border-b border-border pb-8">
+          <p className="text-sm font-semibold uppercase tracking-[0.18em] text-brand-mid">
             Privacy Policy
           </p>
-          <h1 className="mt-3 text-4xl font-bold tracking-normal text-slate-950">
+          <h1 className="mt-3 text-4xl font-bold tracking-normal text-foreground">
             FountainRank Privacy Policy
           </h1>
-          <p className="mt-4 text-sm text-slate-600">Last updated: {lastUpdated}</p>
-          <p className="mt-6 text-base leading-7 text-slate-700">
+          <p className="mt-4 text-sm text-muted">Last updated: {lastUpdated}</p>
+          <p className="mt-6 text-base leading-7 text-foreground">
             FountainRank is a community-built map for finding, rating, and sharing public drinking
             fountains. This policy explains what information we collect, how we use it, and the
             choices you have.
@@ -114,8 +114,8 @@ export default function PrivacyPolicy() {
         <div className="mt-8 space-y-8">
           {sections.map((section) => (
             <section key={section.title}>
-              <h2 className="text-xl font-semibold text-slate-950">{section.title}</h2>
-              <ul className="mt-3 list-disc space-y-2 pl-6 text-base leading-7 text-slate-700">
+              <h2 className="text-xl font-semibold text-foreground">{section.title}</h2>
+              <ul className="mt-3 list-disc space-y-2 pl-6 text-base leading-7 text-foreground">
                 {section.body.map((item) => (
                   <li key={item}>{item}</li>
                 ))}

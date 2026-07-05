@@ -11,7 +11,7 @@ import { isDisplayableEmail } from "../../lib/email";
 export const dynamic = "force-dynamic";
 
 const shell =
-  "relative flex min-h-dvh flex-col items-center justify-center gap-6 bg-gradient-to-b from-[#0A357E] via-[#0C44A0] to-[#0E4DA4] px-6 py-16 text-center text-white";
+  "relative flex min-h-dvh flex-col items-center justify-center gap-6 bg-gradient-to-b from-brand via-brand-mid to-brand-royal px-6 py-16 text-center text-white";
 
 export default async function AccountPage({
   searchParams,

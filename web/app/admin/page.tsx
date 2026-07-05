@@ -15,12 +15,12 @@ export default async function AdminPage() {
       <>
         <SiteHeader variant="bar" />
         <main className="mx-auto max-w-2xl px-6 py-10">
-          <h1 className="text-lg font-bold text-[#0A357E]">Admin</h1>
-          <p className="mt-2 text-slate-600">Sign in to access the admin tools.</p>
+          <h1 className="text-lg font-bold text-brand">Admin</h1>
+          <p className="mt-2 text-muted">Sign in to access the admin tools.</p>
           <form action={signInWithReturn.bind(null, "/admin")} className="mt-3">
             <button
               type="submit"
-              className="rounded-full bg-[#F2C200] px-4 py-2 text-sm font-bold text-[#0A357E]"
+              className="rounded-full bg-accent-gold px-4 py-2 text-sm font-bold text-brand"
             >
               Sign in
             </button>
@@ -34,8 +34,8 @@ export default async function AdminPage() {
       <>
         <SiteHeader variant="bar" />
         <main className="mx-auto max-w-2xl px-6 py-10">
-          <h1 className="text-lg font-bold text-[#0A357E]">Couldn&rsquo;t verify admin access</h1>
-          <p className="mt-2 text-slate-600">Please try again in a moment.</p>
+          <h1 className="text-lg font-bold text-brand">Couldn&rsquo;t verify admin access</h1>
+          <p className="mt-2 text-muted">Please try again in a moment.</p>
         </main>
       </>
     );
@@ -45,11 +45,11 @@ export default async function AdminPage() {
     <>
       <SiteHeader variant="bar" />
       <main className="mx-auto max-w-2xl px-6 py-10">
-        <h1 className="text-lg font-bold text-[#0A357E]">Admin</h1>
-        <p className="mt-2 text-slate-600">
+        <h1 className="text-lg font-bold text-brand">Admin</h1>
+        <p className="mt-2 text-muted">
           Moderation controls live inline on each fountain detail page.
         </p>
-        <p className="mt-4 text-sm text-slate-500">
+        <p className="mt-4 text-sm text-muted">
           Open a fountain from the map to edit location, status, placement text, visibility,
           deletion, and community-note visibility.
         </p>

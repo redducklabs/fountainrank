@@ -24,7 +24,7 @@ export type AttributePageConfig = {
   metaDescription: (count: number) => string;
 };
 
-const shell = "mx-auto min-h-dvh max-w-2xl bg-white px-6 py-10";
+const shell = "mx-auto min-h-dvh max-w-2xl bg-surface-raised px-6 py-10";
 
 // cache() dedupes the fetch between generateMetadata() and the page render within one request.
 const loadAttribute = cache((attribute: SeoAttributeKey) => {
@@ -57,13 +57,13 @@ export async function AttributePage(config: AttributePageConfig) {
       <>
         <SiteHeader variant="bar" />
         <main className={shell}>
-          <Link href="/" className="text-sm text-[#0C44A0] underline">
+          <Link href="/" className="text-sm text-brand-mid underline">
             ← Back to the map
           </Link>
-          <h1 className="mt-6 text-lg font-bold text-[#0A357E]">
+          <h1 className="mt-6 text-lg font-bold text-brand">
             Couldn&rsquo;t load these fountains
           </h1>
-          <p className="mt-2 text-slate-600">Please try again.</p>
+          <p className="mt-2 text-muted">Please try again.</p>
         </main>
       </>
     );
@@ -74,24 +74,24 @@ export async function AttributePage(config: AttributePageConfig) {
     <>
       <SiteHeader variant="bar" />
       <main className={shell}>
-        <Link href="/" className="text-sm text-[#0C44A0] underline">
+        <Link href="/" className="text-sm text-brand-mid underline">
           ← Back to the map
         </Link>
-        <h1 className="mt-6 text-2xl font-black text-[#0A357E]">{config.heading}</h1>
-        <p className="mt-2 text-slate-600">{config.intro(total_count)}</p>
+        <h1 className="mt-6 text-2xl font-black text-brand">{config.heading}</h1>
+        <p className="mt-2 text-muted">{config.intro(total_count)}</p>
 
         {fountains.length > 0 ? (
-          <ul className="mt-6 divide-y divide-slate-100">
+          <ul className="mt-6 divide-y divide-border">
             {fountains.map((f) => (
               <li key={f.id}>
                 <Link
                   href={`/fountains/${f.id}`}
-                  className="flex items-center justify-between py-3 hover:bg-slate-50"
+                  className="flex items-center justify-between py-3 hover:bg-surface"
                 >
-                  <span className="text-[#0C44A0] underline">
+                  <span className="text-brand-mid underline">
                     Drinking fountain{f.is_working ? "" : " · Out of order"}
                   </span>
-                  <span className="text-sm text-slate-500">
+                  <span className="text-sm text-muted">
                     {formatAverage(f.average_rating ?? null)}
                     {f.rating_count ? ` · ${f.rating_count} ratings` : ""}
                   </span>
@@ -100,9 +100,7 @@ export async function AttributePage(config: AttributePageConfig) {
             ))}
           </ul>
         ) : (
-          <p className="mt-6 text-slate-500">
-            No public fountains match this yet — check back soon.
-          </p>
+          <p className="mt-6 text-muted">No public fountains match this yet — check back soon.</p>
         )}
       </main>
     </>

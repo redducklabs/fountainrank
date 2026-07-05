@@ -18,7 +18,7 @@ import { FountainDetail } from "../../../components/fountain/FountainDetail";
 import { SiteHeader } from "../../../components/SiteHeader";
 
 export const dynamic = "force-dynamic";
-const shell = "mx-auto min-h-dvh max-w-2xl bg-white px-6 py-10";
+const shell = "mx-auto min-h-dvh max-w-2xl bg-surface-raised px-6 py-10";
 
 // cache() dedupes the PUBLIC place fetch between generateMetadata() and the page render within one
 // request. It drives BOTH the indexing verdict (spec §7) and the city h1 label from public,
@@ -91,13 +91,11 @@ export default async function FountainPage({ params }: { params: Promise<{ id: s
       <>
         <SiteHeader variant="bar" />
         <main className={shell}>
-          <Link href="/" className="text-sm text-[#0C44A0] underline">
+          <Link href="/" className="text-sm text-brand-mid underline">
             ← Back to the map
           </Link>
-          <h1 className="mt-6 text-lg font-bold text-[#0A357E]">
-            Couldn&rsquo;t load this fountain
-          </h1>
-          <p className="mt-2 text-slate-600">Please try again.</p>
+          <h1 className="mt-6 text-lg font-bold text-brand">Couldn&rsquo;t load this fountain</h1>
+          <p className="mt-2 text-muted">Please try again.</p>
         </main>
       </>
     );
@@ -120,7 +118,7 @@ export default async function FountainPage({ params }: { params: Promise<{ id: s
       <SiteHeader variant="bar" />
       {isAuthenticated ? <ContributionStatusOverlay /> : null}
       <main className={shell}>
-        <Link href="/" className="text-sm text-[#0C44A0] underline">
+        <Link href="/" className="text-sm text-brand-mid underline">
           ← Back to the map
         </Link>
         <div className="mt-6">

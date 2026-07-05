@@ -56,7 +56,7 @@ export function ReportedPhotoActions({
           type="button"
           disabled={pending}
           onClick={() => run(() => adminHidePhoto(photoId, !isHidden))}
-          className="rounded-full border border-[#0A357E] px-3 py-1.5 text-xs font-semibold text-[#0A357E] hover:bg-[#0A357E]/5 disabled:opacity-60"
+          className="rounded-full border border-brand px-3 py-1.5 text-xs font-semibold text-brand hover:bg-brand/5 disabled:opacity-60"
         >
           {isHidden ? "Unhide" : "Hide"}
         </button>
@@ -64,7 +64,7 @@ export function ReportedPhotoActions({
           type="button"
           disabled={pending}
           onClick={() => run(() => adminDismissPhotoReports(photoId))}
-          className="rounded-full border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:opacity-60"
+          className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold text-muted hover:bg-surface disabled:opacity-60"
         >
           Reject
         </button>
@@ -74,7 +74,7 @@ export function ReportedPhotoActions({
               type="button"
               disabled={pending}
               onClick={() => run(() => adminDeletePhoto(photoId))}
-              className="rounded-full bg-red-700 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+              className="rounded-full bg-red-700 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60 dark:bg-red-500"
             >
               Confirm delete
             </button>
@@ -82,7 +82,7 @@ export function ReportedPhotoActions({
               type="button"
               disabled={pending}
               onClick={() => setConfirmDelete(false)}
-              className="rounded-full border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 disabled:opacity-60"
+              className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold text-muted disabled:opacity-60"
             >
               Cancel
             </button>
@@ -92,13 +92,13 @@ export function ReportedPhotoActions({
             type="button"
             disabled={pending}
             onClick={() => setConfirmDelete(true)}
-            className="rounded-full border border-red-600 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
+            className="rounded-full border border-danger px-3 py-1.5 text-xs font-semibold text-danger hover:bg-red-50 disabled:opacity-60 dark:hover:bg-red-500/10"
           >
             Delete
           </button>
         )}
       </div>
-      {message ? <p className="text-xs text-red-700">{message}</p> : null}
+      {message ? <p className="text-xs text-danger">{message}</p> : null}
     </div>
   );
 }
