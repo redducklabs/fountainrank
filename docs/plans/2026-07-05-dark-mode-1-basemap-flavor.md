@@ -112,8 +112,8 @@ Add a new step immediately after `Smoke test — origin size + CDN range` (no `i
           assert light.get("sprite", "").endswith("/sprites/v4/light"), f"light sprite ref: {light.get('sprite')!r}"
           # spec §7: glyphs + source must be byte-identical between flavors — compare exactly, not by suffix.
           assert dark["glyphs"] == light["glyphs"], f"glyphs differ: {dark['glyphs']!r} vs {light['glyphs']!r}"
-          assert dark["sources"]["protomaps"]["url"] == light["sources"]["protomaps"]["url"], \
-              "protomaps source url differs between flavors"
+          assert dark["sources"]["protomaps"] == light["sources"]["protomaps"], \
+              "protomaps source (type/url/attribution) differs between flavors"
           assert isinstance(dark.get("layers"), list) and dark["layers"], "no dark layers"
           print(f"dark style OK ({len(dark['layers'])} layers); glyphs + source match light")
           PY
