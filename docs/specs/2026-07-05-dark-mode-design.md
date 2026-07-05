@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-05
 **Issue:** #18 — Dark mode (app-wide, incl. dark basemap flavor)
-**Status:** Draft (pending Codex review + owner review)
+**Status:** Draft (revised per spec-review-1; pending Codex re-review + owner review)
 **Scope decision:** All-in-one — web UI, mobile UI, and the shared dark basemap in one spec.
 
 ---
@@ -119,7 +119,7 @@ dark mode they are **retained** (optionally deepened one step). Dark mode primar
   --background: #ffffff;
   --surface: #f8fafc;
   --foreground: #0f172a;
-  /* ...all semantic + map tokens (light values)... */
+  /* ...all semantic tokens (light values). Map paint colors live in TS (§3.1), not here. */
 }
 
 .dark {
@@ -179,39 +179,68 @@ Existing component tests that assert on `bg-[#...]` class strings are updated to
 
 ### 5.1 Style URL derivation (`web/lib/map/style.ts`)
 
-`BASEMAP.styleUrl` (from `NEXT_PUBLIC_BASEMAP_STYLE_URL`) points at `…/style.light.json?v=N`. Add:
+`BASEMAP.styleUrl` (from `NEXT_PUBLIC_BASEMAP_STYLE_URL`) points at `…/style.light.json?v=N`. Add a
+helper that parses with `new URL` and swaps **only** an exact `style.light.json` basename (preserving
+the `?v=` cache-bust query), rather than a stringly `.replace()`:
 
 ```ts
 export function styleUrlFor(theme: "light" | "dark"): string {
-  // derive dark URL from the configured light URL by filename convention,
-  // preserving the ?v= cache-bust query
-  return BASEMAP.styleUrl.replace("style.light.json", `style.${theme}.json`);
+  if (theme === "light") return BASEMAP.styleUrl;
+  try {
+    const u = new URL(BASEMAP.styleUrl);
+    if (u.pathname.endsWith("/style.light.json")) {
+      u.pathname = u.pathname.replace(/style\.light\.json$/, "style.dark.json");
+      return u.toString(); // query (?v=) preserved
+    }
+  } catch {
+    /* fall through to fallback */
+  }
+  // Non-matching config (e.g. a custom local/dev style): keep light AND surface a diagnostic, so a
+  // "dark requested but not derivable" state is visible rather than a silent light basemap under a
+  // dark UI.
+  logMapError("dark-style-derivation-fallback", { styleUrl: BASEMAP.styleUrl });
+  return BASEMAP.styleUrl;
 }
 ```
 
-No second env var; the dark URL is the light URL with the flavor filename swapped. If the configured
-URL does not contain `style.light.json`, `styleUrlFor("dark")` returns the original (safe fallback →
-light basemap), so a misconfiguration degrades gracefully rather than 404-ing the map.
+No second env var; the dark URL is the light URL with only the flavor basename swapped. A
+non-matching URL degrades to the light basemap **and logs** the fallback (§7 adds a runtime deploy
+gate so this fallback is not silently relied on in production).
 
-### 5.2 `installOverlay` extraction + `setStyle`
+### 5.2 One-time wiring vs per-style install (`setStyle`)
 
-Refactor the current `map.on("load")` body in `web/components/map/MapBrowser.tsx` into a reusable
-`installOverlay(map, resolvedTheme)` that:
+MapLibre `setStyle` removes **style-owned** sources/layers/images but **not** arbitrary JS listeners.
+The current `map.on("load")` body dangerously mixes long-lived handlers with source/layer/image
+creation (`web/components/map/MapBrowser.tsx:198-270`), so a naive "re-run it on theme change" would
+double-register handlers. The setup MUST be split:
 
-1. loads the theme-appropriate pin images + pill-bg and `addImage`s them,
-2. adds the `fountains` source (re-applying the current `pins` FeatureCollection),
-3. adds all layers (cluster/count/pins/pill/halo/selected) built from theme-aware factories,
-4. re-wires click/hover handlers and the active-id filter.
+- **One-time wiring (registered once per map; removed with `off` on unmount):** the `click`
+  (`clusters`/`pins`/`selected-pin`), `mouseenter`/`mouseleave`, and `moveend` listeners, geolocation,
+  and the nav/geolocate controls. These bind to layer *ids* (stable across style swaps) and must be
+  attached **exactly once** — re-attaching per toggle would double route pushes, cluster expansion,
+  cursor work, and bbox loads.
+- **Per-style install — `installOverlay(map, mapColors, theme)`:** load the theme-appropriate pin
+  images + pill-bg and `addImage` them; add the `fountains` source seeded from the **latest** pins;
+  add all layers from theme-aware factories (§5.3); **immediately** reapply the active-id filter to
+  `selected-halo`/`selected-pin`. Runs on the initial `style.load` and again after each `setStyle`.
 
-On initial map creation it runs on `load` (as today). On **theme change**, a new effect calls
-`map.setStyle(styleUrlFor(resolvedTheme))` and re-runs `installOverlay` on the next `style.load`
-(MapLibre `setStyle` wipes custom sources/layers/images). Camera (center/zoom/bearing/pitch) is
-preserved across `setStyle`. The map is **not** rebuilt, so no flash and no geolocation re-trigger.
+**Surviving data + selection across `setStyle` (fixes the current stale-closure hazards):**
 
-- The resolved theme comes from `next-themes` `useTheme().resolvedTheme` (so `system` resolves to
-  light/dark). The map effect depends on `resolvedTheme`.
-- Guard against `setStyle` races: track a style-generation counter (mirroring the existing
-  `loadSeqRef` pattern) so a rapid light→dark→light toggle can't re-install stale layers.
+- Keep **refs** for the latest `pins` FeatureCollection and latest `activeId`. Today `load()` closes
+  over first-render `pins` and the active-id effect only reapplies if `selected-halo` already exists
+  (`MapBrowser.tsx:273-355`); after a swap those would install an empty/stale source or drop the
+  highlight. `installOverlay` seeds the source from the pins ref and applies the activeId ref inline.
+- Use `map.on("style.load")` (fires after both the initial load **and** each `setStyle`) as the single
+  source-ready signal that triggers `installOverlay`; **after install, kick a `load()`** so any pan/
+  zoom that happened during the swap is reconciled.
+- **Sequence across swaps + loads:** add a `styleGenRef` counter bumped on each `setStyle` (alongside
+  the existing `loadSeqRef`); `installOverlay` and any in-flight `load()` check the current generation
+  and abort if superseded, so a rapid light→dark→light toggle (or a bbox response arriving mid-swap)
+  can't install stale layers/data.
+
+On **theme change**, an effect keyed on `next-themes` `useTheme().resolvedTheme` (so `system` resolves
+to light/dark) calls `map.setStyle(styleUrlFor(resolvedTheme))`. Camera (center/zoom/bearing/pitch) is
+preserved by `setStyle`; the map is **not** rebuilt — no flash, no geolocation re-trigger.
 
 ### 5.3 Theme-aware layer factories (`web/lib/map/layers.ts`)
 
@@ -230,8 +259,9 @@ factories stay pure and unit-testable with no `getComputedStyle`/DOM dependency.
 - Split `mobile/theme.ts` into `lightColors` / `darkColors` (same keys), keep `spacing`/`typography`
   shared.
 - Add a `ThemeProvider` (React context) that merges `useColorScheme()` (react-native OS setting)
-  with a persisted override (AsyncStorage key `theme`), exposing `useTheme(): { colors, spacing,
-  typography, scheme, preference, setPreference }`.
+  with a persisted override (native **AsyncStorage** key `theme` — isolated from web `localStorage`;
+  the two clients persist independently), exposing `useTheme(): { colors, spacing, typography, scheme,
+  preference, setPreference }`.
 - Rewire the 37 direct importers of `colors`/`typography` to `useTheme()`. Since `StyleSheet.create`
   is static, components read colors from the hook and either build styles inline or via a
   `makeStyles(theme)` helper.
@@ -240,8 +270,12 @@ factories stay pure and unit-testable with no `getComputedStyle`/DOM dependency.
 
 - `StatusBar` (`mobile/app/_layout.tsx`) becomes theme-aware (`style` from resolved scheme; the two
   hardcoded `style="dark"` usages).
-- React Navigation `ThemeProvider` gets `DarkTheme`/`DefaultTheme` (or custom equivalents) so
-  navigators, headers, and the tab bar honor the theme; `TAB_INACTIVE_COLOR` moves into the palette.
+- The root today is an Expo Router `Stack` with **no** navigation-theme wrapper
+  (`mobile/app/_layout.tsx:43-50`). Insert the new `ThemeProvider` there as the **outermost** provider,
+  wrapping the existing `SafeAreaProvider` / `QueryClientProvider` / `AuthProvider` / `ApiProvider` so
+  every consumer (and the tab bar) reads it. Optionally pass a matching React Navigation
+  `DarkTheme`/`DefaultTheme` to the router so header/tab chrome honors the theme; `TAB_INACTIVE_COLOR`
+  moves into the palette.
 - Splash/adaptive-icon backgrounds in `app.config.ts` (`#ffffff`) are left as-is for launch (native
   splash can't be themed at runtime) unless a trivial dark launch background is warranted — flagged
   as a low-priority tuning item, not a blocker.
@@ -250,33 +284,55 @@ factories stay pure and unit-testable with no `getComputedStyle`/DOM dependency.
 
 A theme control (System / Light / Dark) on the account/profile tab, using `useTheme().setPreference`.
 
-### 6.4 Mobile map (`mobile/components/map/FountainMap.tsx`, `app.config.ts`)
+### 6.4 Mobile maps (`FountainMap.tsx` **and** `add-fountain/AddFountainMap.tsx`, `app.config.ts`)
 
-- `app.config.ts` `basemapStyleUrl` stays the light URL; mobile derives the dark URL by the same
-  filename convention (a shared helper mirroring web's `styleUrlFor`).
-- `FountainMap` selects `mapStyle` by resolved scheme and re-renders on change; MapLibre-RN handles
-  the style swap. Layer colors (cluster/pill/halo/search-marker) read from `useTheme().colors` map
-  tokens. Pin `require()`s (`mobile/assets/pins/*.png`) become theme-keyed (`*-dark.png`).
+There are **two** native MapLibre surfaces; both must theme, or the add-fountain flow keeps a light
+basemap/pin/ring inside a dark app:
+
+- **Browse map (`mobile/components/map/FountainMap.tsx`):** selects `mapStyle` by resolved scheme and
+  re-renders on change (MapLibre-RN handles the swap). Layer colors (cluster/pill/halo/search-marker)
+  read from `useTheme().colors` map tokens; pin `require()`s (`mobile/assets/pins/*.png`) become
+  theme-keyed (`*-dark.png`).
+- **Add-fountain map (`mobile/components/add-fountain/AddFountainMap.tsx`):** accepts a `styleUrl`,
+  registers `pin-standard`, and paints the add-bound ring with `colors.brandBlue`
+  (`AddFountainMap.tsx:28-30,63-106`). Its parent screen must pass the dark style URL + dark pin, and
+  the ring color must come from theme tokens. Included in the mobile map tests.
+- **Style URL:** `app.config.ts` `basemapStyleUrl` stays the light URL; both maps derive the dark URL
+  via a mobile helper mirroring web's `styleUrlFor` (same `new URL` basename swap + logged fallback).
 
 ---
 
 ## 7. Shared basemap pipeline (`.github/workflows/basemap-upload.yml`)
 
-- Add a **dark flavor pass** to the existing style-generation step: run the Node generator a second
-  time with `namedFlavor("dark")`, emitting `style.dark.json`, and set its `sprite` to
-  `https://${CDN_HOST}/sprites/v4/dark`.
-- Generate + upload a **dark sprite** (`sprites/v4/dark`) alongside the existing light sprite.
-- Upload `style.dark.json` to the Spaces bucket next to `style.light.json` (both public-read → CDN).
-- The vector source (`/tiles/planet.json`) is unchanged and shared by both styles.
-- The existing `BASEMAP_STYLE_VER` cache-bust applies to both style files (clients request
-  `style.<flavor>.json?v=N`).
-- `basemap-janitor.yml` cleanup is extended to keep both flavors.
+Only the **style JSON** differs by flavor; the vector source (`/tiles/planet.json` from
+`planet.pmtiles`) and glyphs are shared. Crucially, the existing "Upload fonts and sprites" step
+already syncs the **entire** sprite tree recursively (`aws s3 cp .../sprites/ --recursive`,
+`basemap-upload.yml:180-185`), so `sprites/v4/dark.json` + `sprites/v4/dark.png` are **already on the
+CDN** — no new sprite generation is needed. The dark work is additive to `basemap-upload.yml`. (The
+janitor is unrelated: `basemap-janitor.yml:37-73` only reaps stale droplets/SSH keys, never Spaces
+objects — do **not** touch it.)
 
-**Rollout ordering:** the basemap workflow must run and publish `style.dark.json` **before** a web
-image that can request it reaches users. Because the dark URL is derived at runtime (not baked), a
-web deploy that ships the toggle before `style.dark.json` exists would 404 the dark basemap; the
-`styleUrlFor` fallback (§5.1) covers a misconfigured URL but not a missing dark file. The plan
-sequences the basemap upload first.
+1. **Generate + upload `style.dark.json`** — add a step mirroring "Generate and upload Light style
+   JSON" (`basemap-upload.yml:189-228`) that runs the same Node generator with `namedFlavor("dark")`
+   and `sprite: https://${CDN_HOST}/sprites/v4/dark`, then
+   `aws s3 cp style.dark.json "${BUCKET}/style.dark.json" --acl public-read`. `glyphs` and
+   `sources.protomaps.url` stay byte-identical to light.
+2. **Extend the CDN purge** (`basemap-upload.yml:354-367`) to also flush `/style.dark.json` (and, for
+   completeness, `/sprites/v4/dark.json,/sprites/v4/dark.png`).
+3. **Extend the smoke test** (`basemap-upload.yml:389-411`) to validate the dark flavor: fetch the
+   public `…/style.dark.json`, assert `sprite` ends with `/sprites/v4/dark`, assert `glyphs` and
+   `sources.protomaps.url` match the light style, and fetch `…/sprites/v4/dark.json` +
+   `…/sprites/v4/dark.png` (expect 200) — so the workflow can't pass with a broken dark sprite
+   reference that only fails in clients.
+4. `BASEMAP_STYLE_VER` cache-bust already applies to both (clients request `style.<flavor>.json?v=N`).
+
+**Rollout gate (not just sequencing):** because the dark URL is derived at runtime (not baked), a web
+image shipping the toggle before `style.dark.json` exists would 404 the dark basemap — the
+`styleUrlFor` fallback (§5.1) covers a *misconfigured* URL, not a *missing* dark file. The plan
+therefore (a) runs + verifies the basemap-upload dark step **before** the web/mobile theming lands,
+and (b) adds a lightweight **availability probe** — a `curl` of `…/style.dark.json` expecting `200`
+— as a gate in `deploy.yml` (or a preceding manual check), so a bundle that can request the dark
+basemap is never shipped before the file is live.
 
 ---
 
@@ -286,8 +342,11 @@ sequences the basemap upload first.
   contrast outline so pins pop on dark land. Output `pin-standard-dark.png`, `pin-selected-dark.png`
   (web only), `pin-gold-dark.png`, `pin-broken-dark.png`, `pin-unrated-dark.png`, and
   `pill-bg-dark.png`.
-- Commit regenerated assets to **both** `web/public/pins/` and `mobile/assets/pins/` (mobile has no
-  `pin-selected`). Because they are script-generated, the light and dark sets stay in sync.
+- Commit regenerated assets to `web/public/pins/` (`pin-*-dark.png` **and** `pill-bg-dark.png`) and
+  the pin PNGs to `mobile/assets/pins/` (`pin-*-dark.png`). **`pill-bg-dark.png` is web-only** — the
+  mobile rating pill is text + halo paint with no background image (`FountainMap.tsx:215-238`), and
+  mobile has no `pin-selected`, so mobile gets neither (generating them would be dead files). Because
+  they are script-generated, the light and dark sets stay in sync.
 - The broken-slash and crown remain baked per-variant (still shape-encoded for status), just
   re-toned for dark contrast.
 
@@ -307,17 +366,25 @@ sequences the basemap upload first.
 
 ## 10. Testing & verification
 
-**Host constraint:** JS local checks are blocked on the Windows dev host
-(`ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`); `CI=true` must never be set (destructive purge). Web
-+ mobile JS is verified via **CI's `workspace-js` job** and browser-visual in CI, not locally.
+**Local verification (repo standard):** run the local CI mirror before opening the PR —
+`./run.ps1 check -Web` (ESLint + Prettier + `tsc --noEmit` + `vitest run` + `next build`) and
+`./run.ps1 check -Mobile` (`tsc --noEmit` + ESLint + `vitest run` + `expo-doctor`), per
+`claude_help/testing-ci.md`. The **only** known host hazard is that a bare `pnpm run …` (or setting
+`CI=true`) on this Windows box triggers a destructive `node_modules` purge
+(`ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`); `run.ps1 check` restores the skipped files and is the
+sanctioned path, and Codex can run scoped checks from WSL. If a *specific* invocation is genuinely
+blocked on the host, that exact step (and only that step) falls back to CI's `workspace-js` /
+`web-build` jobs — never a blanket "verify via CI only," and **never set `CI=true`**.
 
 - **Web unit (vitest):** provider resolution (system/override/persist), toggle behavior + hydration
   safety, presence of token utilities, `styleUrlFor` derivation + fallback, theme-aware layer
   factories, and updated component tests asserting token classes instead of hex.
 - **Mobile:** `ThemeProvider` merge logic (system + persisted override), `useTheme` consumers,
   type-check + lint via CI (mobile eslint/React-Compiler rules are CI-only).
-- **Basemap:** the workflow change produces a syntactically valid `style.dark.json` (JSON parse +
-  spec sanity) and a dark sprite.
+- **Basemap:** the workflow smoke (§7.3) fetches the public `style.dark.json`, asserts its `sprite`
+  ends with `/sprites/v4/dark` and that `glyphs` + `sources.protomaps.url` match light, and fetches
+  `sprites/v4/dark.json` + `sprites/v4/dark.png` (200). A `style.dark.json` availability probe gates
+  the web deploy (§7).
 - **Backend:** untouched — existing suite unaffected; no api-client regen.
 - **Manual/CI visual:** light and dark screenshots of `/`, detail panel, leaderboard, and the map
   (both basemaps + pins) to confirm contrast and the no-flash behavior.
@@ -328,8 +395,9 @@ sequences the basemap upload first.
 
 Ordered so each step is independently reviewable and the basemap exists before clients request it:
 
-1. **Basemap dark flavor** — `basemap-upload.yml` generates + uploads `style.dark.json` + dark
-   sprite; janitor updated. (Ships first.)
+1. **Basemap dark flavor** — `basemap-upload.yml` generates + uploads `style.dark.json` (the dark
+   sprite is already synced by the existing recursive sprite upload); extend the CDN purge + smoke to
+   cover the dark flavor; add a `style.dark.json` availability probe as a deploy gate. (Ships first.)
 2. **Dark pin assets** — extend generators; commit dark PNGs to web + mobile.
 3. **Web token layer** — `globals.css` `@custom-variant` + `:root`/`.dark` + `@theme inline`;
    style-guide token table.
@@ -340,7 +408,8 @@ Ordered so each step is independently reviewable and the basemap exists before c
    layer factories + dark pins.
 7. **Mobile palette split + provider** — `theme.ts` light/dark, `ThemeProvider`, `useTheme`, rewire
    37 importers, StatusBar + React Navigation.
-8. **Mobile map theming** — dark basemap derivation, layer tokens, dark pins.
+8. **Mobile map theming** — dark basemap derivation + theme-keyed pins/layer tokens in **both**
+   `FountainMap.tsx` and `add-fountain/AddFountainMap.tsx` (the add-fountain basemap/pin/ring themes too).
 9. **A11y/contrast pass** — verify + tune all token pairs and map colors to AA against screenshots.
 10. **Docs** — `docs/style-guide.md` (dark tokens, ThemeToggle), update the dark-mode-ready notes.
 
@@ -356,8 +425,10 @@ Ordered so each step is independently reviewable and the basemap exists before c
   and staged tasks (token layer landing before the sweep).
 - **Mobile splash can't theme at runtime** — accepted; launch splash stays light, in-app chrome
   themes.
-- **New dependency (`next-themes`)** — pinned `0.4.6`, React 19 compatible, well past the CI
-  minimum-release-age gate; subject to pnpm-audit like any dep.
+- **New dependency (`next-themes`)** — pinned `0.4.6`, React 19 compatible. This checkout has **no**
+  active `minimumReleaseAge` gate (only vestigial `minimumReleaseAgeExclude` entries in
+  `pnpm-workspace.yaml`), so the dep is protected by version pinning, `pnpm-lock.yaml` review,
+  Dependabot, and the security-audit `pnpm audit` gate — not an age gate.
 
 ---
 
