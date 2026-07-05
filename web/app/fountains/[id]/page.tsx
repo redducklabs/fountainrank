@@ -2,7 +2,11 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { cache } from "react";
-import { getFountainDetailServer, getFountainNotesServer } from "../../../lib/fountains";
+import {
+  getFountainDetailServer,
+  getFountainNotesServer,
+  getFountainPhotosServer,
+} from "../../../lib/fountains";
 import { fountainPath, getFountainPlaceServer } from "../../../lib/places";
 import { getAdminFountainDetailServer } from "../../../lib/server/admin";
 import { getViewerAccessToken } from "../../../lib/server/api";
@@ -64,14 +68,16 @@ export default async function FountainPage({ params }: { params: Promise<{ id: s
   // Authenticate the public detail fetch when signed in so `your_rating` comes back (#65
   // web parity, #114). Admins use the admin detail endpoint instead so hidden notes and
   // hidden fountains are reachable.
-  const [{ data, status }, notesRes] = adminRes
+  const [{ data, status }, notesRes, photosRes] = adminRes
     ? [
         { data: adminRes.data, status: adminRes.status },
         { data: adminRes.data?.notes, status: adminRes.status },
+        await getFountainPhotosServer(id, requestId),
       ]
     : await Promise.all([
         getViewerAccessToken().then((token) => getFountainDetailServer(id, requestId, token)),
         getFountainNotesServer(id, requestId),
+        getFountainPhotosServer(id, requestId),
       ]);
 
   if (status === 404) {
@@ -100,6 +106,11 @@ export default async function FountainPage({ params }: { params: Promise<{ id: s
     log("warn", "failed to load fountain notes", { requestId, id, status: notesRes.status });
   }
   const notes = notesOk && notesRes.data ? notesRes.data : [];
+  const photosOk = photosRes.status >= 200 && photosRes.status < 300;
+  if (!photosOk) {
+    log("warn", "failed to load fountain photos", { requestId, id, status: photosRes.status });
+  }
+  const photos = photosOk && photosRes.data ? photosRes.data : [];
   // The PUBLIC city label for the h1 (spec §7): cached, so this reuses generateMetadata's fetch.
   const { data: placeData } = await loadFountainPlace(id);
   const locationLabel = cityLabel(placeData?.city?.name);
@@ -115,7 +126,9 @@ export default async function FountainPage({ params }: { params: Promise<{ id: s
           <FountainDetail
             detail={data}
             notes={notes}
+            photos={photos}
             isAuthenticated={isAuthenticated}
+            viewerDisplayName={viewer.state === "authed" ? viewer.displayName : undefined}
             adminControls={adminRes?.data ? <FountainAdminControls detail={adminRes.data} /> : null}
             locationLabel={locationLabel}
           />

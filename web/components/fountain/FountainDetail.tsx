@@ -1,5 +1,5 @@
 import type React from "react";
-import type { FountainDetail as Detail, NoteOut } from "../../lib/fountains";
+import type { FountainDetail as Detail, NoteOut, PhotoOut } from "../../lib/fountains";
 import { formatAverage, formatDate, formatVotes } from "../../lib/map/format";
 import { ShareButton } from "./ShareButton";
 import { Stars } from "./Stars";
@@ -7,19 +7,26 @@ import { StatusBlock } from "./StatusBlock";
 import { AttributeList } from "./AttributeList";
 import { NotesList } from "./NotesList";
 import { ContributeSection } from "./ContributeSection";
+import { PhotoGallery } from "./PhotoGallery";
 
 export function FountainDetail({
   detail,
   notes,
+  photos = [],
   now,
   isAuthenticated,
+  viewerDisplayName,
   adminControls,
   locationLabel,
 }: {
   detail: Detail;
   notes: NoteOut[];
+  photos?: PhotoOut[];
   now?: Date;
   isAuthenticated: boolean;
+  // The viewer's own public display name (see `PhotoGallery`'s `isOwnedByViewer` for why this
+  // is a best-effort UI signal, not an authoritative ownership check). Undefined when signed out.
+  viewerDisplayName?: string | null;
   adminControls?: React.ReactNode;
   // The public h1 label, e.g. "Public drinking fountain in Manhattan" — resolved server-side from
   // the fountain's public city (spec §7). Falls back to the generic label when no city resolves (or
@@ -43,6 +50,12 @@ export function FountainDetail({
           now={renderNow}
         />
       </div>
+      <PhotoGallery
+        fountainId={detail.id}
+        photos={photos}
+        isAuthenticated={isAuthenticated}
+        viewerDisplayName={viewerDisplayName}
+      />
       {detail.average_rating != null ? (
         <div className="flex items-center gap-3">
           <span className="text-3xl font-extrabold leading-none text-[#0A357E]">
