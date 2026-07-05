@@ -17,7 +17,7 @@ export function FountainsInViewList({
   return (
     <nav
       aria-label="Fountains in view"
-      className="absolute bottom-10 left-2 right-2 max-h-40 overflow-auto rounded-lg bg-white/95 p-2 shadow md:bottom-4 md:left-4 md:right-auto md:w-72"
+      className="absolute bottom-10 left-2 right-2 max-h-40 overflow-auto rounded-lg bg-surface-raised/95 p-2 shadow md:bottom-4 md:left-4 md:right-auto md:w-72"
     >
       <ul className="space-y-1">
         {pins.map((p) => {
