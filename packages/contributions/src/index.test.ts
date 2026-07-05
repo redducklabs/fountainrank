@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   addFountainPointsPreview,
   attributePointsPreview,
+  conditionPointsBlocked,
   conditionPointsPreview,
   notePointsPreview,
   ratingPointsPreview,
@@ -38,5 +39,20 @@ describe("points previews", () => {
       { label: "Working verification", points: 3 },
     ]);
     expect(conditionPointsPreview("problem")).toEqual([{ label: "Condition report", points: 2 }]);
+  });
+});
+
+describe("conditionPointsBlocked", () => {
+  const now = new Date("2026-06-01T12:00:00Z");
+  it("is false when eligibility is null/undefined (eligible now)", () => {
+    expect(conditionPointsBlocked(null, now)).toBe(false);
+    expect(conditionPointsBlocked(undefined, now)).toBe(false);
+  });
+  it("is true when eligibility is in the future", () => {
+    expect(conditionPointsBlocked("2026-06-01T18:00:00Z", now)).toBe(true);
+  });
+  it("is false when eligibility is now or in the past", () => {
+    expect(conditionPointsBlocked("2026-06-01T12:00:00Z", now)).toBe(false);
+    expect(conditionPointsBlocked("2026-06-01T06:00:00Z", now)).toBe(false);
   });
 });

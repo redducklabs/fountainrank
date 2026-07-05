@@ -62,6 +62,18 @@ export function totalPreviewPoints(lines: PointsLine[]): number {
   return lines.reduce((sum, line) => sum + line.points, 0);
 }
 
+/**
+ * Pre-submit hint (#124): true when the viewer already earned condition points on this
+ * fountain within the last 24h, so a new condition report will earn 0. Best-effort — the
+ * server is authoritative for the actual award (condition_points_awarded on the POST).
+ */
+export function conditionPointsBlocked(
+  eligibleAt: string | null | undefined,
+  now: Date,
+): boolean {
+  return eligibleAt != null && new Date(eligibleAt).getTime() > now.getTime();
+}
+
 function countedLine(label: string, count: number, pointsEach: number): PointsLine[] {
   return count > 0 ? [{ label, points: count * pointsEach }] : [];
 }
