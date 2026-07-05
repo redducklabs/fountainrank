@@ -44,7 +44,14 @@ signal so clients can warn. The already-safe flows are left untouched.
   **unconditionally** — data always persists; only the points event is gated.
 - A per-viewer **pre-submit eligibility signal** on the fountain-detail response so web +
   mobile can warn the user *before* they submit that the update will not earn points.
-- Web + mobile **non-blocking warning** in the condition-report UI.
+- One **additive index migration** to keep the per-detail eligibility lookback fast for
+  high-volume contributors (see §2.3).
+- Regeneration of the **OpenAPI schema + shared TypeScript api-client**
+  (`packages/api-client/openapi.json`, `packages/api-client/src/schema.d.ts`) for the new
+  `FountainDetail` field.
+- Web + mobile **non-blocking warning** in the condition-report UI, **and** correcting the
+  existing client point-feedback surfaces so an ineligible (0-point) submit never implies
+  points were awarded (see §2.4).
 - Backend + client tests.
 
 **Out of scope (explicitly):**
@@ -55,7 +62,8 @@ signal so clients can warn. The already-safe flows are left untouched.
 - A coarse "one point per fountain per 24h across *all* action types" cap. Rejected in
   brainstorming: it would reduce points for legitimate first-time thorough contributions
   (e.g. a new visitor rating all four dimensions in one submission).
-- Any schema/migration change (the new field is derived; no new column).
+- Any **new column or data backfill**. The eligibility value is derived, not stored, and no
+  existing rows are rewritten — the only schema change is the additive index above.
 - Reworking the leaderboard, ranking, or the reversal paths.
 
 ## 2. Design
@@ -64,38 +72,52 @@ signal so clients can warn. The already-safe flows are left untouched.
 
 Inside `submit_condition` — which already holds the fountain row `FOR UPDATE`, serializing
 all condition writes for a fountain (so a single user cannot race two submits past the
-gate) — award eligibility is decided by a single indexed lookback **before** recording the
-point event:
+gate) — award eligibility is decided by a single bounded, indexed lookback **before**
+recording the point event:
 
 ```
-SELECT max(created_at)
+SELECT created_at
 FROM contribution_events
 WHERE user_id = :user
   AND fountain_id = :fountain
   AND event_type IN ('verify_working', 'report_condition')
   AND status = 'awarded'
+ORDER BY created_at DESC
+LIMIT 1
 ```
 
-- If the result is `NULL` **or** `<= report_time - interval '24 hours'` → **eligible**:
-  emit the point event (`verify_working` **or** `report_condition` per the report status)
-  with a per-report dedup key `cond_award:{report_id}` (guaranteed unique — the rolling
-  query is the real limiter; the key only guards exact double-processing).
-- Otherwise → **ineligible**: skip the point event entirely (award 0). The
-  `ConditionReport` row is still inserted and `recompute_fountain_status` still runs.
+- If no row, or the row's `created_at` **≤ `report_time − 24h`** → **eligible**: emit the
+  point event (`verify_working` **or** `report_condition` per the report status) with a
+  per-report dedup key `cond_award:{report_id}` (guaranteed unique — the rolling query is
+  the real limiter; the key only guards exact double-processing).
+- Otherwise → **ineligible**: skip the point event entirely (award 0). The `ConditionReport`
+  row is still inserted and `recompute_fountain_status` still runs.
 
-The lookback is served by the existing `ix_contribution_events_user_id` index on
-`(user_id, created_at)` (with `fountain_id`/`event_type`/`status` as residual predicates;
-a single user's condition-event volume is small).
+**Authoritative clock (single anchor).** The gate compares stored
+`contribution_events.created_at` values, so those values MUST be anchored on the same clock
+the response reports. Today `record_contributions` lets `ContributionEvent.created_at` fall
+to the DB `server_default` (`func.now()`), which is a *different* instant from the
+`report_time` the spec and the `condition_points_eligible_at` response are expressed in.
+To make one authoritative clock: extend `ContributionSpec` with an optional
+`created_at: datetime | None` and have `record_contributions` set it on insert when present
+(otherwise keep the server default — no behavior change for other callers). `submit_condition`
+passes `report_time`, so the awarded condition event's `created_at`, the lookback boundary
+(`report_time − 24h`), and the returned `report_time + 24h` are all the same instant. The
+report row, the status recompute, and the award event therefore never straddle a boundary.
+
+**Legacy rows need no backfill.** The lookback matches on `event_type IN
+('verify_working','report_condition')` and `status='awarded'` — **not** on `dedup_key`. So
+pre-existing calendar-day-keyed condition events (`verify:…`/`cond:…`) are read correctly by
+the new query even after the old builders are removed; the migration-free rollout is sound
+(covered by a regression test in §5).
 
 **Rejected alternative — encode the window as a `dedup_key` bucket.** A *rolling* 24h
 cannot be a static key without snapping to fixed buckets, which reintroduces exactly the
 calendar-boundary loophole this change removes.
 
-This replaces the current calendar-day dedup keys: the `dk_verify` and
-`dk_report_condition` builders (and their `day` parameter) are **removed**, and a single
-new builder `dk_condition_award(report_id)` replaces them. `report_time` remains the one
-captured timestamp driving the row `created_at`, the status recompute, and the eligibility
-comparison, so nothing straddles a boundary.
+This replaces the current calendar-day dedup keys: the `dk_verify` and `dk_report_condition`
+builders (and their `day` parameter) are **removed**, and a single new builder
+`dk_condition_award(report_id)` replaces them.
 
 ### 2.2 Coalescing verify + report
 
@@ -118,8 +140,23 @@ Extend the existing per-viewer detail path (`serialize_fountain_detail`, where
     last 24h and becomes eligible again at `T` (= most-recent awarded condition
     `created_at` + 24h).
 
-Computed only when `user_id is not None`, from the same lookback query as §2.1 (`max
-created_at` of awarded condition events; `+ 24h` if within window, else `null`).
+Computed only when `user_id is not None`, from the same bounded lookback as §2.1 (latest
+awarded condition `created_at`; `+ 24h` if it is within the window, else `null`).
+
+**Index (the one migration).** This lookback now runs on **every authenticated fountain-detail
+view**, and gamification deliberately cultivates high-volume contributors, so the existing
+`(user_id, created_at)` index (no `fountain_id`) is not good enough — it would scan a prolific
+user's events across all fountains. Add a partial composite index sized exactly to the query:
+
+```
+CREATE INDEX ix_contribution_events_condition_window
+  ON contribution_events (user_id, fountain_id, created_at DESC)
+  WHERE status = 'awarded' AND event_type IN ('verify_working', 'report_condition');
+```
+
+With `ORDER BY created_at DESC LIMIT 1`, the lookup is an index-only descend to the newest
+matching row. This is an **additive** Alembic migration (drift-free, reversible) — no column,
+no backfill.
 
 No new endpoints. Both `GET /fountains/{id}` and the condition **POST** already return
 `FountainDetail`, so the client receives a fresh signal on load and immediately after
@@ -127,17 +164,42 @@ submitting (so the warning appears the moment the user becomes ineligible).
 
 ### 2.4 Client warning UX (web + mobile)
 
-`web/components/fountain/ConditionForm.tsx` and
-`mobile/components/fountain/ConditionContributionForm.tsx`:
+The new field must be **plumbed through** to the condition form on each client — today both
+forms receive only enough to submit, not the eligibility state:
 
-- When `condition_points_eligible_at` is a **future** timestamp, render a non-blocking
-  inline note near the submit control, e.g.:
+- **Web:** `serialize`d detail → `ContributeSection` (currently passes only `fountainId` to
+  `ConditionForm`) → `ConditionForm` (currently only takes `fountainId`). Thread
+  `conditionPointsEligibleAt` down both hops.
+- **Mobile:** `FountainDetail` in `mobile/app/fountains/[id].tsx` → `ConditionContributionForm`
+  (currently only `fountainId` / `pending` / `onSubmit`). Add the eligibility prop.
+- The regenerated api-client (in scope, §1) is what surfaces the field to both clients.
+
+Behavior in each form:
+
+- When `conditionPointsEligibleAt` is a **future** timestamp, render a non-blocking inline
+  note near the submit control, e.g.:
   > "You've already earned points for updating this fountain recently. You can still update
   > its status — it just won't earn points until \<relative time\>."
-- The submit control stays **enabled** (warn, don't block — the issue requires the update
-  to be accepted). No warning when the field is `null`.
-- Relative-time formatting reuses the existing web/mobile time helpers; the warning is a
-  new UI element → documented in `docs/style-guide.md` as "Points-ineligible inline warning".
+- The submit control stays **enabled** (warn, don't block — the issue requires the update to
+  be accepted). No warning when the field is `null`.
+- Relative-time formatting reuses the existing web/mobile time helpers; the warning is a new
+  UI element → documented in `docs/style-guide.md` as "Points-ineligible inline warning".
+
+**Fix the existing point-feedback surfaces (do not leave them lying).** Both clients today
+imply points were earned regardless of the server's decision, which this change would make
+wrong:
+
+- **Web** `ConditionForm` shows a *possible-points* preview
+  (`web/components/fountain/ConditionForm.tsx` ~line 90). When ineligible, it must show that
+  the update won't earn points (0 / suppressed), not the nominal 3/2.
+- **Mobile** `mobile/app/fountains/[id].tsx` (~line 192) hard-codes the success-celebration
+  points from the submitted *status*. When ineligible, it must **not** celebrate awarded
+  points.
+
+Both surfaces derive their "will this earn points?" answer from the **pre-submit**
+eligibility (`null` → yes; future timestamp → no), which is exactly the gate the backend
+applies — so the client message and the server award agree. Tests assert both the warning
+and the suppressed/zero point-feedback on an ineligible submit (§5).
 
 ## 3. Data flow
 
@@ -161,30 +223,51 @@ submitting (so the warning appears the moment the user becomes ineligible).
   so the user correctly becomes eligible again. Consistent by construction.
 - **Anonymous / unauthenticated.** `condition_points_eligible_at` is always `null`; no
   warning.
-- **Clock source.** Single `report_time = datetime.now(tz=UTC)` per request, as today.
+- **Clock source.** A single `report_time = datetime.now(tz=UTC)` per request anchors the
+  report row, the awarded condition event's `created_at` (via the new `ContributionSpec.created_at`,
+  §2.1), the lookback boundary, and the returned `+24h` — one instant, no cross-clock skew.
+- **Legacy events.** Old calendar-day-keyed condition events are honored by the lookback
+  (matched on `event_type`+`status`, not `dedup_key`); no backfill (§2.1).
 
 ## 5. Testing
+
+Tests drive the clock by passing an explicit `created_at`/`report_time` (the new
+`ContributionSpec.created_at` seam makes this deterministic — no wall-clock sleeps).
 
 **Backend (`backend/tests`):**
 
 - First condition report on a fountain awards points (verify → 3, report → 2).
 - Repeat condition report within 24h: `ConditionReport` persists, status recomputes, **0
   points**, and `total_points` unchanged.
-- Condition report after the 24h window awards again.
+- **Boundary:** a prior award at **exactly** `report_time − 24h` is **eligible** (awards);
+  at `report_time − 24h + 1s` (just under 24h) is **ineligible** (0). Pins the `≤` boundary.
 - **Coalescing:** `verify_working` then `report_condition` within 24h → only the first
   awards; the second is 0.
-- `condition_points_eligible_at` is `null` before any award, a future timestamp within the
-  window, and `null` again after it lapses.
+- **Legacy rows:** a pre-existing calendar-day-keyed event (`verify:…`/`cond:…`, no
+  `cond_award:` key) within 24h correctly blocks a new award — proves the lookback reads old
+  rows and the migration-free rollout holds.
+- `condition_points_eligible_at` is `null` before any award, the awarding event's
+  `created_at + 24h` within the window, and `null` again after it lapses.
 - Regression: `rate`, `observe_attribute`, `add_note`, `add_fountain`, and the `first_*`
   bonuses are unaffected (a fresh rating of all dimensions still awards fully).
+- (If feasible without brittle timing) two concurrent condition submits by one user on one
+  fountain award **once**, confirming the `FOR UPDATE` serialization.
 
 **Web / mobile:**
 
-- The warning renders **iff** `condition_points_eligible_at` is in the future; submit stays
+- The warning renders **iff** `conditionPointsEligibleAt` is in the future; submit stays
   enabled in both states.
+- On an ineligible submit the point-feedback surface shows **no** awarded-points
+  celebration/preview (web possible-points preview suppressed; mobile success celebration
+  shows no points) — guards the §2.4 fix.
 
 ## 6. Rollout
 
-- No migration. New response field is additive and nullable; older clients ignore it.
-- Behavior change is a **tightening** of point awards for repeat condition reports only;
-  no user loses previously banked points.
+- **One additive index migration** (`ix_contribution_events_condition_window`, §2.3) —
+  drift-free (`alembic check`) and reversible. No new column, no data backfill; older clients
+  ignore the new nullable response field.
+- **Regenerate the OpenAPI + api-client artifacts** (`packages/api-client/openapi.json`,
+  `packages/api-client/src/schema.d.ts`) so the typed clients see `condition_points_eligible_at`.
+- Behavior change is a **tightening** of point awards for repeat condition reports only; no
+  user loses previously banked points, and pre-existing condition events are honored by the
+  new gate without backfill.
