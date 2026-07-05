@@ -3,6 +3,7 @@
 Desaturates the pin (so the gold crown becomes grey) and maps luminance onto a
 slate-blue ramp, preserving the original alpha (the pin silhouette). Output is
 written to both web and mobile (the two pin-standard.png are identical 77x94).
+Also emits a dark-tuned `pin-unrated-dark.png` (web only; mobile dark pins are Plan 3).
 Run from repo root: `python scripts/assets/gen_unrated_pin.py`
 """
 

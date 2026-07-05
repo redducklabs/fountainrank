@@ -10,6 +10,8 @@ These are **derived** from the canonical clean pin `docs/logos/512-pin.png`
   pin-broken.png    standard + a composited red diagonal slash (out-of-order)
   pill-bg.png       a 20x20 white rounded-rect, stretchable for the rating pill (icon-text-fit)
 
+Also emits dark-tuned variants (`*-dark.png`) of every pin/pill above for the dark basemap.
+
 They are functional, on-brand, and consistent (one source). Swap any of them for
 bespoke art at will — `web/lib/map/style.ts` references them by name, so the map
 picks up replacements with no code change. Re-run: `python scripts/gen-pin-assets.py`.
@@ -115,7 +117,7 @@ def main() -> None:
     gold_d.save(os.path.join(OUT, "pin-gold-dark.png"))
 
     sel_d = canvas()
-    sel_d.alpha_composite(_ring(std, 2, RING_DARK))
+    sel_d.alpha_composite(_ring(std, 3, (255, 255, 255)))
     sel_d.alpha_composite(std)
     sel_d.save(os.path.join(OUT, "pin-selected-dark.png"))
 
