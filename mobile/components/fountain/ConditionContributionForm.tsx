@@ -1,5 +1,9 @@
 import type { components } from "@fountainrank/api-client";
-import { conditionPointsBlocked, conditionPointsPreview } from "@fountainrank/contributions";
+import {
+  conditionPointsBlocked,
+  conditionPointsEligibleInText,
+  conditionPointsPreview,
+} from "@fountainrank/contributions";
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
@@ -31,7 +35,9 @@ export function ConditionContributionForm({
 }) {
   const [problem, setProblem] = useState<ConditionStatus>(PROBLEM_CONDITION_STATUSES[0]);
   const [message, setMessage] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
-  const blocked = conditionPointsBlocked(conditionPointsEligibleAt, new Date());
+  const now = new Date();
+  const blocked = conditionPointsBlocked(conditionPointsEligibleAt, now);
+  const eligibleIn = conditionPointsEligibleInText(conditionPointsEligibleAt, now);
 
   async function submit(status: ConditionStatus) {
     setMessage(null);
@@ -59,7 +65,7 @@ export function ConditionContributionForm({
       {blocked ? (
         <Text style={styles.limitNote}>
           You&rsquo;ve earned points for updating this fountain recently — you can still update
-          its status, but it won&rsquo;t earn points right now.
+          its status, but it won&rsquo;t earn points again{eligibleIn ? ` for ${eligibleIn}` : ""}.
         </Text>
       ) : (
         <PointsPreview lines={conditionPointsPreview("working")} />

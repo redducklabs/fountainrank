@@ -74,6 +74,24 @@ export function conditionPointsBlocked(
   return eligibleAt != null && new Date(eligibleAt).getTime() > now.getTime();
 }
 
+/**
+ * Human-readable "how long until condition points can be earned again" for the #124 warning
+ * (e.g. "about 5 hours", "about 1 minute"). Returns null when already eligible (no future time).
+ * Rounded + coarse on purpose — it's a best-effort pre-submit hint, not a countdown.
+ */
+export function conditionPointsEligibleInText(
+  eligibleAt: string | null | undefined,
+  now: Date,
+): string | null {
+  if (eligibleAt == null) return null;
+  const ms = new Date(eligibleAt).getTime() - now.getTime();
+  if (ms <= 0) return null;
+  const hours = Math.round(ms / 3_600_000);
+  if (hours >= 1) return `about ${hours} ${hours === 1 ? "hour" : "hours"}`;
+  const mins = Math.max(1, Math.round(ms / 60_000));
+  return `about ${mins} ${mins === 1 ? "minute" : "minutes"}`;
+}
+
 function countedLine(label: string, count: number, pointsEach: number): PointsLine[] {
   return count > 0 ? [{ label, points: count * pointsEach }] : [];
 }

@@ -2,7 +2,11 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { components } from "@fountainrank/api-client";
-import { conditionPointsBlocked, conditionPointsPreview } from "@fountainrank/contributions";
+import {
+  conditionPointsBlocked,
+  conditionPointsEligibleInText,
+  conditionPointsPreview,
+} from "@fountainrank/contributions";
 import { submitCondition } from "../../app/actions/contribute";
 import { conditionStatusLabel } from "../../lib/map/format";
 import { PointsPreview } from "../contributions/PointsPreview";
@@ -31,7 +35,9 @@ export function ConditionForm({
   const [problem, setProblem] = useState<ConditionStatus>(PROBLEMS[0]);
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
-  const blocked = conditionPointsBlocked(conditionPointsEligibleAt, new Date());
+  const now = new Date();
+  const blocked = conditionPointsBlocked(conditionPointsEligibleAt, now);
+  const eligibleIn = conditionPointsEligibleInText(conditionPointsEligibleAt, now);
 
   function report(status: ConditionStatus) {
     start(async () => {
@@ -105,7 +111,7 @@ export function ConditionForm({
         {blocked ? (
           <p className="rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs font-semibold text-amber-800">
             You&rsquo;ve earned points for updating this fountain recently — you can still update
-            its status, but it won&rsquo;t earn points right now.
+            its status, but it won&rsquo;t earn points again{eligibleIn ? ` for ${eligibleIn}` : ""}.
           </p>
         ) : (
           <PointsPreview lines={conditionPointsPreview(showProblems ? "problem" : "working")} />

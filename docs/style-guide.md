@@ -612,7 +612,10 @@ earn points. It **replaces** the Possible-points preview for that flow while the
   `@fountainrank/contributions`.
 - Web: an amber inline note — `rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs
   font-semibold text-amber-800` — reading "You've earned points for updating this fountain
-  recently — you can still update its status, but it won't earn points right now."
+  recently — you can still update its status, but it won't earn points again for <duration>."
+- The `<duration>` ("about 5 hours" / "about 20 minutes") comes from `conditionPointsEligibleInText()`
+  in `@fountainrank/contributions`, computed from `condition_points_eligible_at` — so the warning
+  tells the user *when* points return, not just that they're paused.
 - Mobile: the same copy in an amber `Text` (`limitNote`: background `#FEF3C7`, text `#92400E`,
   rounded padded), swapped in where the `PointsPreview` would render.
 - **Warn, don't block:** this is advisory only — the submit control stays **enabled**; the user can
