@@ -1,10 +1,15 @@
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import func, select
 
 from app.contributions import (
+    CONDITION_POINT_WINDOW,
     ContributionSpec,
+    condition_points_eligible_at,
+    dk_condition_award,
+    latest_awarded_condition_at,
     points_for,
     record_contributions,
     reverse_contributions,
@@ -40,6 +45,24 @@ def test_points_for_defaults_and_unknown():
     assert points_for("report_condition") == 2
     with pytest.raises(ValueError):
         points_for("nope")
+
+
+def test_condition_points_eligible_at_boundary():
+    now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+    # No prior award -> eligible now.
+    assert condition_points_eligible_at(None, now) is None
+    # Prior award exactly 24h ago -> eligible now (boundary is inclusive of eligibility).
+    exactly = now - CONDITION_POINT_WINDOW
+    assert condition_points_eligible_at(exactly, now) is None
+    # Prior award just under 24h ago -> blocked; eligible again at award + 24h.
+    just_under = now - CONDITION_POINT_WINDOW + timedelta(seconds=1)
+    assert condition_points_eligible_at(just_under, now) == just_under + CONDITION_POINT_WINDOW
+
+
+def test_dk_condition_award_is_per_report():
+    a, b = uuid.uuid4(), uuid.uuid4()
+    assert dk_condition_award(a) == f"cond_award:{a}"
+    assert dk_condition_award(a) != dk_condition_award(b)
 
 
 @pytest.mark.asyncio
@@ -424,3 +447,50 @@ async def test_reverse_no_events_is_noop(session):
     reversed_count = await reverse_contributions(session, fountain.id)
 
     assert reversed_count == 0
+
+
+async def test_created_at_override_is_persisted(session, test_user):
+    pinned = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    await record_contributions(
+        session,
+        [
+            ContributionSpec(
+                user_id=test_user.id,
+                event_type="add_note",
+                dedup_key="created-at-override-test",
+                target_type="note",
+                created_at=pinned,
+            )
+        ],
+    )
+    got = (
+        await session.execute(
+            select(ContributionEvent.created_at).where(
+                ContributionEvent.dedup_key == "created-at-override-test"
+            )
+        )
+    ).scalar_one()
+    assert got == pinned
+
+
+async def test_latest_awarded_condition_at_reads_legacy_keys(session, test_user):
+    # `contribution_events.fountain_id` is a real FK, so use the module's fountain helper
+    # (`_mk_fountain(session, test_user)` in test_contributions.py) — never a bare uuid4().
+    fountain = await _mk_fountain(session, test_user)
+    # Simulate a legacy calendar-day-keyed award row (old dk_verify shape).
+    t = datetime(2026, 5, 1, 9, 0, tzinfo=UTC)
+    await record_contributions(
+        session,
+        [
+            ContributionSpec(
+                user_id=test_user.id,
+                event_type="verify_working",
+                dedup_key=f"verify:{test_user.id}:{fountain.id}:20260501",
+                fountain_id=fountain.id,
+                target_type="condition_report",
+                target_id=uuid.uuid4(),
+                created_at=t,
+            )
+        ],
+    )
+    assert await latest_awarded_condition_at(session, test_user.id, fountain.id) == t

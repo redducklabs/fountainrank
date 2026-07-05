@@ -4197,6 +4197,29 @@
             "title": "Attributes",
             "default": []
           },
+          "condition_points_eligible_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Condition Points Eligible At"
+          },
+          "condition_points_awarded": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Condition Points Awarded"
+          },
           "is_hidden": {
             "type": "boolean",
             "title": "Is Hidden"
@@ -5131,6 +5154,29 @@
             "type": "array",
             "title": "Attributes",
             "default": []
+          },
+          "condition_points_eligible_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Condition Points Eligible At"
+          },
+          "condition_points_awarded": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Condition Points Awarded"
           }
         },
         "type": "object",

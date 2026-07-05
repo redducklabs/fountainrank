@@ -601,6 +601,31 @@ Used in add/rate/condition/note/detail contribution flows.
   `(conditional)`.
 - The preview is informational only; form validity still comes from the contribution fields.
 
+### Points-ineligible inline warning (`web/components/fountain/ConditionForm.tsx`, `mobile/components/fountain/ConditionContributionForm.tsx`)
+
+Shown in the condition-report ("Is it working?") flow when the signed-in viewer already earned
+points for updating this fountain within the last 24h (#124), so a new condition report will not
+earn points. It **replaces** the Possible-points preview for that flow while the limit is active.
+
+- Trigger: `FountainDetail.condition_points_eligible_at` is a future timestamp (per-viewer;
+  `null` = eligible now / anonymous). The clients compute this via `conditionPointsBlocked()` in
+  `@fountainrank/contributions`.
+- Web: an amber inline note — `rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs
+  font-semibold text-amber-800` — reading "You've earned points for updating this fountain
+  recently — you can still update its status, but it won't earn points again for <duration>."
+- The `<duration>` ("about 5 hours" / "about 20 minutes") comes from `conditionPointsEligibleInText()`
+  in `@fountainrank/contributions`, computed from `condition_points_eligible_at` — so the warning
+  tells the user *when* points return, not just that they're paused.
+- Mobile: the same copy in an amber `Text` (`limitNote`: background `#FEF3C7`, text `#92400E`,
+  rounded padded), swapped in where the `PointsPreview` would render.
+- **Warn, don't block:** this is advisory only — the submit control stays **enabled**; the user can
+  still record the status (the data always persists), it simply earns no points this time.
+- Accessibility: it is informational text (not an error) and must never be the only signal; it does
+  not disable any control.
+- It is a **best-effort pre-submit hint** (it can be stale across tabs/devices). The authoritative
+  awarded count comes from `condition_points_awarded` on the POST response, which drives the
+  post-submit success copy (0 → "already counted recently"; N → "you earned N points").
+
 ### Contribution celebration
 
 A short water-squirt/droplet animation shown after successful contribution writes on web and

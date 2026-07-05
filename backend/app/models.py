@@ -451,6 +451,17 @@ class ContributionEvent(Base):
         # location GiST index is managed via spatial_index=True on the column below
         # (geoalchemy2 + alembic_helpers); created as idx_contribution_events_location
         # in migration 0010 for the local contributor leaderboard.
+        # Rolling-24h condition point-window lookback (#124): ORDER BY created_at DESC LIMIT 1
+        # over one (user, fountain). Partial → tiny; plain columns → alembic-drift-clean.
+        Index(
+            "ix_contribution_events_condition_window",
+            "user_id",
+            "fountain_id",
+            "created_at",
+            postgresql_where=text(
+                "status = 'awarded' AND event_type IN ('verify_working', 'report_condition')"
+            ),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(

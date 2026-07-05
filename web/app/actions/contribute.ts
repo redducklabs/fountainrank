@@ -20,7 +20,8 @@ export type ContributeError =
   // Photo-upload-only: 413 (too large) / 415 (unsupported type) — a client-input problem, but
   // distinct from `validation` (422) so the UI can show file-specific guidance.
   | "file_invalid";
-export type ActionResult = { ok: true } | { ok: false; error: ContributeError };
+export type ActionResult =
+  { ok: true; pointsAwarded?: number } | { ok: false; error: ContributeError };
 
 const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 const CONDITION_STATUSES: ReadonlySet<string> = new Set([
@@ -36,6 +37,13 @@ const CONDITION_STATUSES: ReadonlySet<string> = new Set([
 
 function fail(error: ContributeError): ActionResult {
   return { ok: false, error };
+}
+function readPointsAwarded(data: unknown): number | undefined {
+  if (data && typeof data === "object" && "condition_points_awarded" in data) {
+    const value = (data as { condition_points_awarded?: unknown }).condition_points_awarded;
+    return typeof value === "number" ? value : undefined;
+  }
+  return undefined;
 }
 function mapStatus(status: number): ActionResult {
   if (status >= 200 && status < 300) return { ok: true };
@@ -54,7 +62,7 @@ async function run(
   action: string,
   call: (
     client: Awaited<ReturnType<typeof getAuthedApiClientForAction>>,
-  ) => Promise<{ response?: { status: number } }>,
+  ) => Promise<{ response?: { status: number }; data?: unknown }>,
 ): Promise<ActionResult> {
   const requestId = crypto.randomUUID();
   // Split the two failure classes: a token/session failure (getAccessToken throws) is
@@ -74,19 +82,16 @@ async function run(
     return fail("unauthenticated");
   }
   try {
-    const { response } = await call(client);
+    const { response, data } = await call(client);
     const status = response?.status ?? 0;
-    const result = mapStatus(status);
-    log(result.ok ? "info" : "warn", "contribute action", {
-      requestId,
-      action,
-      fountainId,
-      status,
-    });
-    if (result.ok) {
+    if (status >= 200 && status < 300) {
       revalidatePath(`/fountains/${fountainId}`);
       revalidatePath("/");
+      log("info", "contribute action", { requestId, action, fountainId, status });
+      return { ok: true, pointsAwarded: readPointsAwarded(data) };
     }
+    const result = mapStatus(status);
+    log("warn", "contribute action", { requestId, action, fountainId, status });
     return result;
   } catch (err) {
     log("warn", "contribute action error", {

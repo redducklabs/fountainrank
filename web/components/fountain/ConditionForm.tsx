@@ -2,7 +2,11 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { components } from "@fountainrank/api-client";
-import { conditionPointsPreview } from "@fountainrank/contributions";
+import {
+  conditionPointsBlocked,
+  conditionPointsEligibleInText,
+  conditionPointsPreview,
+} from "@fountainrank/contributions";
 import { submitCondition } from "../../app/actions/contribute";
 import { conditionStatusLabel } from "../../lib/map/format";
 import { PointsPreview } from "../contributions/PointsPreview";
@@ -19,18 +23,34 @@ const PROBLEMS: ConditionStatus[] = [
   "hours_limited",
 ];
 
-export function ConditionForm({ fountainId }: { fountainId: string }) {
+export function ConditionForm({
+  fountainId,
+  conditionPointsEligibleAt,
+}: {
+  fountainId: string;
+  conditionPointsEligibleAt?: string | null;
+}) {
   const router = useRouter();
   const [showProblems, setShowProblems] = useState(false);
   const [problem, setProblem] = useState<ConditionStatus>(PROBLEMS[0]);
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
+  const now = new Date();
+  const blocked = conditionPointsBlocked(conditionPointsEligibleAt, now);
+  const eligibleIn = conditionPointsEligibleInText(conditionPointsEligibleAt, now);
 
   function report(status: ConditionStatus) {
     start(async () => {
       const res = await submitCondition(fountainId, status);
       if (res.ok) {
-        setMsg({ tone: "ok", text: "Thanks — your report was saved." });
+        const earned = res.pointsAwarded ?? 0;
+        setMsg({
+          tone: "ok",
+          text:
+            earned > 0
+              ? `Thanks — you earned ${earned} points.`
+              : "Thanks — saved. (Already counted recently, so no points this time.)",
+        });
         window.dispatchEvent(new Event("fountainrank:contribution"));
         router.refresh();
       } else {
@@ -88,7 +108,15 @@ export function ConditionForm({ fountainId }: { fountainId: string }) {
         </div>
       )}
       <div className="mt-3">
-        <PointsPreview lines={conditionPointsPreview(showProblems ? "problem" : "working")} />
+        {blocked ? (
+          <p className="rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs font-semibold text-amber-800">
+            You&rsquo;ve earned points for updating this fountain recently — you can still update
+            its status, but it won&rsquo;t earn points again{eligibleIn ? ` for ${eligibleIn}` : ""}
+            .
+          </p>
+        ) : (
+          <PointsPreview lines={conditionPointsPreview(showProblems ? "problem" : "working")} />
+        )}
       </div>
       {msg && (
         <p

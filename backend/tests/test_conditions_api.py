@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -146,3 +147,128 @@ async def test_conditions_requires_auth(settings_override):
             f"/api/v1/fountains/{uuid.uuid4()}/conditions", json={"status": "working"}
         )
     assert r.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_detail_condition_points_eligible_at_authenticated(client, test_user):
+    # The detail GET resolves its viewer via get_optional_user, NOT the get_current_user the
+    # `client` fixture overrides — and the fixture sends no auth header, so get_optional_user
+    # returns None by default. To exercise the AUTHENTICATED eligibility branch we must
+    # override get_optional_user (same pattern as test_fountains_detail.py /
+    # test_gamification_api.py: app.dependency_overrides[get_optional_user] = lambda: test_user).
+    from app.auth import get_optional_user
+    from app.main import app
+
+    fid = await _add_fountain(client)
+    app.dependency_overrides[get_optional_user] = lambda: test_user
+    try:
+        before = (await client.get(f"/api/v1/fountains/{fid}")).json()
+        assert before["condition_points_eligible_at"] is None
+        assert before["condition_points_awarded"] is None  # GET never sets the award count
+        await _report(client, fid, "working")
+        after = (await client.get(f"/api/v1/fountains/{fid}")).json()
+        assert after["condition_points_eligible_at"] is not None
+        assert after["condition_points_awarded"] is None
+    finally:
+        app.dependency_overrides.pop(get_optional_user, None)
+
+
+@pytest.mark.asyncio
+async def test_detail_condition_points_eligible_at_anonymous(client):
+    # No get_optional_user override + no auth header => anonymous viewer, so eligibility is
+    # always null even immediately after a report (spec: null for anonymous callers).
+    fid = await _add_fountain(client)
+    await _report(client, fid, "working")  # report is attributed to test_user via the write seam
+    detail = (await client.get(f"/api/v1/fountains/{fid}")).json()
+    assert detail["condition_points_eligible_at"] is None
+
+
+async def _total_points(session, user_id):
+    from sqlalchemy import select
+
+    from app.models import UserContributionStats
+
+    return (
+        await session.execute(
+            select(UserContributionStats.total_points).where(
+                UserContributionStats.user_id == user_id
+            )
+        )
+    ).scalar_one_or_none() or 0
+
+
+@pytest.mark.asyncio
+async def test_repeat_condition_within_24h_awards_zero(client, test_user, session):
+    fid = await _add_fountain(client)
+    r1 = await _report(client, fid, "working")
+    assert r1.json()["condition_points_awarded"] == 3
+    p1 = await _total_points(session, test_user.id)
+    # A different condition type on the same fountain within 24h is coalesced -> 0.
+    r2 = await _report(client, fid, "broken")
+    assert r2.json()["condition_points_awarded"] == 0
+    assert await _total_points(session, test_user.id) == p1
+    # The report row still persisted (data always persists).
+    from sqlalchemy import func, select
+
+    from app.models import ConditionReport
+
+    n = (
+        await session.execute(
+            select(func.count())
+            .select_from(ConditionReport)
+            .where(ConditionReport.user_id == test_user.id)
+        )
+    ).scalar_one()
+    assert n == 2
+
+
+@pytest.mark.asyncio
+async def test_condition_awards_again_after_window(client, test_user, session):
+    from sqlalchemy import update
+
+    from app.models import ContributionEvent
+
+    fid = await _add_fountain(client)
+    await _report(client, fid, "working")  # awards 3
+    # Age the awarded event to just over 24h ago so the next report is eligible.
+    await session.execute(
+        update(ContributionEvent)
+        .where(ContributionEvent.user_id == test_user.id)
+        .values(created_at=datetime.now(tz=UTC) - timedelta(hours=24, minutes=1))
+    )
+    await session.commit()
+    r = await _report(client, fid, "working")
+    assert r.json()["condition_points_awarded"] == 3
+
+
+@pytest.mark.asyncio
+async def test_legacy_calendar_key_blocks_new_award(client, test_user, session):
+    from app.contributions import ContributionSpec, record_contributions
+
+    fid = await _add_fountain(client)
+    # Seed a legacy calendar-day-keyed award 1h ago (old dk_verify shape).
+    await record_contributions(
+        session,
+        [
+            ContributionSpec(
+                user_id=test_user.id,
+                event_type="verify_working",
+                dedup_key=f"verify:{test_user.id}:{fid}:legacy",
+                fountain_id=fid,
+                target_type="condition_report",
+                target_id=__import__("uuid").uuid4(),
+                created_at=datetime.now(tz=UTC) - timedelta(hours=1),
+            )
+        ],
+    )
+    await session.commit()
+    r = await _report(client, fid, "working")
+    assert r.json()["condition_points_awarded"] == 0
+
+
+@pytest.mark.asyncio
+async def test_first_problem_report_awards_two(client):
+    # The non-working (report_condition) award path is a public contract: 2 points.
+    fid = await _add_fountain(client)
+    r = await _report(client, fid, "broken")
+    assert r.json()["condition_points_awarded"] == 2

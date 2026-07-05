@@ -14,8 +14,9 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 
-from sqlalchemy import func, update
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,6 +38,10 @@ POINTS: dict[str, int] = {
     "add_note": 2,
     "photo_first": 5,
 }
+
+# The two coalesced condition event types the 24h point window (#124) covers.
+CONDITION_EVENT_TYPES: tuple[str, str] = ("verify_working", "report_condition")
+CONDITION_POINT_WINDOW = timedelta(hours=24)
 
 # Allowed target_type per event_type (None = a pure bonus event with no source row).
 # target_type is security-relevant (drives future moderation reversal), so the single
@@ -72,6 +77,18 @@ def points_for(event_type: str) -> int:
         raise ValueError(f"unknown contribution event_type: {event_type!r}") from None
 
 
+def condition_points_eligible_at(
+    last_awarded_at: datetime | None, now: datetime
+) -> datetime | None:
+    """Given the user's most recent AWARDED condition-event time for a fountain and the
+    current instant, return when they become eligible to earn condition points again — or
+    None if they are eligible now. A prior award at exactly now - 24h is eligible (#124)."""
+    if last_awarded_at is None:
+        return None
+    eligible_at = last_awarded_at + CONDITION_POINT_WINDOW
+    return eligible_at if eligible_at > now else None
+
+
 @dataclass
 class ContributionSpec:
     user_id: uuid.UUID
@@ -83,6 +100,10 @@ class ContributionSpec:
     target_id: uuid.UUID | None = None
     event_metadata: dict | None = None
     parent_event_id: uuid.UUID | None = None
+    # Optional authoritative timestamp. When set, record_contributions writes it to
+    # ContributionEvent.created_at instead of the DB server_default — so the condition
+    # point-window gate (#124) compares one clock (report_time), not insert-time skew.
+    created_at: datetime | None = None
 
 
 # --- dedup-key builders (spec §8) -------------------------------------------------
@@ -112,12 +133,10 @@ def dk_observe_attr(user_id: uuid.UUID, fountain_id: uuid.UUID, attribute_type_i
     return f"attr:{user_id}:{fountain_id}:{attribute_type_id}"
 
 
-def dk_verify(user_id: uuid.UUID, fountain_id: uuid.UUID, day: str) -> str:
-    return f"verify:{user_id}:{fountain_id}:{day}"
-
-
-def dk_report_condition(user_id: uuid.UUID, fountain_id: uuid.UUID, day: str) -> str:
-    return f"cond:{user_id}:{fountain_id}:{day}"
+def dk_condition_award(report_id: uuid.UUID) -> str:
+    # Per-report key: the rolling-24h query (#124) is the real limiter, so this only guards
+    # exact double-processing of one report row (ON CONFLICT DO NOTHING).
+    return f"cond_award:{report_id}"
 
 
 def dk_note(user_id: uuid.UUID, fountain_id: uuid.UUID) -> str:
@@ -137,6 +156,26 @@ def _validate(spec: ContributionSpec) -> None:
         )
 
 
+async def latest_awarded_condition_at(
+    session: AsyncSession, user_id: uuid.UUID, fountain_id: uuid.UUID
+) -> datetime | None:
+    """Most recent AWARDED condition event created_at for (user, fountain), or None.
+    Matches on event_type + status (NOT dedup_key), so legacy calendar-day rows count."""
+    return (
+        await session.execute(
+            select(ContributionEvent.created_at)
+            .where(
+                ContributionEvent.user_id == user_id,
+                ContributionEvent.fountain_id == fountain_id,
+                ContributionEvent.event_type.in_(CONDITION_EVENT_TYPES),
+                ContributionEvent.status == "awarded",
+            )
+            .order_by(ContributionEvent.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
 async def record_contributions(
     session: AsyncSession, specs: list[ContributionSpec]
 ) -> list[uuid.UUID]:
@@ -152,21 +191,24 @@ async def record_contributions(
 
     inserted: list = []
     for spec in specs:
+        values = dict(
+            id=uuid.uuid4(),
+            user_id=spec.user_id,
+            fountain_id=spec.fountain_id,
+            target_type=spec.target_type,
+            target_id=spec.target_id,
+            event_type=spec.event_type,
+            points=points_for(spec.event_type),
+            location=spec.location,
+            dedup_key=spec.dedup_key,
+            event_metadata=spec.event_metadata,
+            parent_event_id=spec.parent_event_id,
+        )
+        if spec.created_at is not None:
+            values["created_at"] = spec.created_at
         stmt = (
             pg_insert(ContributionEvent)
-            .values(
-                id=uuid.uuid4(),
-                user_id=spec.user_id,
-                fountain_id=spec.fountain_id,
-                target_type=spec.target_type,
-                target_id=spec.target_id,
-                event_type=spec.event_type,
-                points=points_for(spec.event_type),
-                location=spec.location,
-                dedup_key=spec.dedup_key,
-                event_metadata=spec.event_metadata,
-                parent_event_id=spec.parent_event_id,
-            )
+            .values(**values)
             .on_conflict_do_nothing(index_elements=["dedup_key"])
             .returning(
                 ContributionEvent.id,

@@ -116,6 +116,7 @@ export function FountainDetail({
         fountainId={detail.id}
         dimensions={detail.dimensions}
         isAuthenticated={isAuthenticated}
+        conditionPointsEligibleAt={detail.condition_points_eligible_at}
       />
       <p className="text-xs text-slate-400">
         Added {formatDate(detail.created_at)}

@@ -119,6 +119,11 @@ class FountainDetail(BaseModel):
     placement_note: str | None = None
     dimensions: list[DimensionSummary]
     attributes: list[AttributeConsensusOut] = []
+    # #124 repeat-contribution point limit. Both additive + nullable (no response-shape break):
+    # eligibility is a per-viewer pre-submit HINT for the warning (null = eligible now / anon);
+    # awarded is set only on the condition POST (3/2/0), null on GET and other responses.
+    condition_points_eligible_at: datetime | None = None
+    condition_points_awarded: int | None = None
 
 
 class ConditionReportRequest(BaseModel):
