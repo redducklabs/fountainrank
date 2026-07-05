@@ -186,7 +186,7 @@ jobs:
 
           echo "Fonts and sprites uploaded."
 
-      - name: Generate and upload Light style JSON
+      - name: Generate and upload Light + Dark style JSON
         if: ${{ env.UPLOAD_ASSETS == 'true' }}
         run: |
           # @protomaps/basemaps is the successor to protomaps-themes-base; it exports
@@ -226,6 +226,41 @@ jobs:
             --endpoint-url "$ENDPOINT"
 
           echo "style.light.json uploaded."
+
+          # Dark flavor — same generator + pinned deps; only the flavor + sprite path differ.
+          # The dark sprite (sprites/v4/dark.{json,png}) is already synced by the recursive
+          # sprite upload above, so only the style JSON is produced here.
+          node - > style.dark.json <<'EOF'
+          const { layers, namedFlavor } = require("@protomaps/basemaps");
+
+          const CDN_HOST = process.env.CDN_HOST;
+          const SITE_HOST = process.env.SITE_HOST;
+
+          const style = {
+            version: 8,
+            glyphs: `https://${CDN_HOST}/fonts/{fontstack}/{range}.pbf`,
+            sprite: `https://${CDN_HOST}/sprites/v4/dark`,
+            sources: {
+              protomaps: {
+                type: "vector",
+                url: `https://${SITE_HOST}/tiles/planet.json`,
+                attribution:
+                  '<a href="https://protomaps.com">Protomaps</a> © <a href="https://openstreetmap.org">OpenStreetMap</a>',
+              },
+            },
+            layers: layers("protomaps", namedFlavor("dark"), { lang: "en" }),
+          };
+
+          process.stdout.write(JSON.stringify(style, null, 2));
+          EOF
+
+          aws s3 cp style.dark.json \
+            "${BUCKET}/style.dark.json" \
+            --acl public-read \
+            --content-type "application/json" \
+            --endpoint-url "$ENDPOINT"
+
+          echo "style.dark.json uploaded."
 
       # Provision an ephemeral sfo3 worker (intra-region with the bucket). The ~127 GB planet
       # is downloaded resumably to its disk then multipart-uploaded — not streamed through the
@@ -360,7 +395,7 @@ jobs:
           if [ -z "$CDN_ID" ]; then echo "::warning::basemap CDN not found; skipping purge"; exit 0; fi
           # Absolute object paths (leading slash) — the regenerated style + the sprite it references.
           for attempt in 1 2 3; do
-            doctl compute cdn flush "$CDN_ID" --files /style.light.json,/sprites/v4/light.json,/sprites/v4/light.png && break
+            doctl compute cdn flush "$CDN_ID" --files /style.light.json,/style.dark.json,/sprites/v4/light.json,/sprites/v4/light.png,/sprites/v4/dark.json,/sprites/v4/dark.png && break
             if [ "$attempt" = 3 ]; then echo "::error::CDN flush failed after retries"; exit 1; fi
             echo "flush attempt $attempt failed; retrying…"; sleep 10
           done
@@ -409,3 +444,30 @@ jobs:
           done
           [ -n "$ok" ] || { echo "::error::CDN did not return 206 for a range request"; exit 1; }
           echo "Smoke PASSED — origin size correct; CDN serves 206 ranges with CORS."
+
+      - name: Validate dark basemap flavor
+        run: |
+          set -o pipefail
+          echo "Fetching light + dark styles; asserting parity + dark sprite…"
+          curl -sf -m 30 "https://${CDN_HOST}/style.light.json" -o style.light.check.json \
+            || { echo "::error::style.light.json not reachable on CDN"; exit 1; }
+          curl -sf -m 30 "https://${CDN_HOST}/style.dark.json" -o style.dark.check.json \
+            || { echo "::error::style.dark.json not reachable on CDN"; exit 1; }
+          python3 - <<'PY'
+          import json
+          light = json.load(open("style.light.check.json"))
+          dark = json.load(open("style.dark.check.json"))
+          assert dark.get("sprite", "").endswith("/sprites/v4/dark"), f"dark sprite ref: {dark.get('sprite')!r}"
+          assert light.get("sprite", "").endswith("/sprites/v4/light"), f"light sprite ref: {light.get('sprite')!r}"
+          # spec §7: glyphs + source must be byte-identical between flavors — compare exactly, not by suffix.
+          assert dark["glyphs"] == light["glyphs"], f"glyphs differ: {dark['glyphs']!r} vs {light['glyphs']!r}"
+          assert dark["sources"]["protomaps"]["url"] == light["sources"]["protomaps"]["url"], \
+              "protomaps source url differs between flavors"
+          assert isinstance(dark.get("layers"), list) and dark["layers"], "no dark layers"
+          print(f"dark style OK ({len(dark['layers'])} layers); glyphs + source match light")
+          PY
+          for f in dark.json dark.png; do
+            st=$(curl -s -o /dev/null -w '%{http_code}' -m 30 "https://${CDN_HOST}/sprites/v4/${f}")
+            [ "$st" = "200" ] || { echo "::error::sprites/v4/${f} -> ${st} (expected 200)"; exit 1; }
+          done
+          echo "Dark flavor validation PASSED."
