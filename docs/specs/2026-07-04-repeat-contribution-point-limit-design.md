@@ -44,9 +44,9 @@ signal so clients can warn. The already-safe flows are left untouched.
   **unconditionally** — data always persists; only the points event is gated.
 - A per-viewer **pre-submit eligibility signal** on the fountain-detail response so web +
   mobile can warn the user *before* they submit that the update will not earn points.
-- A server-authoritative **`ConditionReportResult`** envelope on the condition POST
-  (`{ fountain, points_awarded }`) so the success feedback shows the *actual* points minted,
-  not a stale pre-submit guess (see §2.5).
+- A server-authoritative, **additive** `condition_points_awarded` field on the condition POST
+  response so success feedback shows the *actual* points minted (3/2/0), not a stale pre-submit
+  guess — chosen over a breaking response envelope to stay backward-compatible (see §2.5).
 - One **additive index migration** to keep the per-detail eligibility lookback fast for
   high-volume contributors (see §2.3).
 - Regeneration of the **OpenAPI schema + shared TypeScript api-client**
@@ -164,11 +164,11 @@ With `ORDER BY created_at DESC LIMIT 1`, the lookup is an index-only descend to 
 matching row. This is an **additive** Alembic migration (drift-free, reversible) — no column,
 no backfill.
 
-No new endpoints. `GET /fountains/{id}` returns `FountainDetail` directly, and the condition
-**POST** returns it inside the `ConditionReportResult` envelope (§2.5) as `.fountain` — so the
-caller gets a fresh eligibility signal on load and immediately after submitting (the warning
-appears the moment the user becomes ineligible), while the envelope also carries the
-authoritative `points_awarded`.
+No new endpoints, and **no response-shape change**: both `GET /fountains/{id}` and the condition
+**POST** return `FountainDetail`. GET leaves the two new fields at their defaults; the POST fills
+`condition_points_eligible_at` (fresh) and `condition_points_awarded` (§2.5). So the caller gets a
+fresh eligibility signal on load and immediately after submitting (the warning appears the moment
+the user becomes ineligible), plus the authoritative awarded count on the POST.
 
 ### 2.4 Client warning UX (web + mobile)
 
@@ -210,34 +210,39 @@ returned by the POST (§2.5), because the eligibility field can be stale across 
 another device, or a retry (two clients both loaded while eligible; the first submit awards,
 the second is gated to 0 — yet both still hold a `null` hint). So the pre-submit possible-points
 preview is labelled an **estimate** ("you can earn up to 3 pts"), and the success celebration
-shows the **actual** `points_awarded` from the response (0 → "already counted recently — thanks
-for keeping it current"; N → "you earned N points"). Tests assert the warning, the estimate
+shows the **actual** `condition_points_awarded` from the response (0 → "already counted recently —
+thanks for keeping it current"; N → "you earned N points"). Tests assert the warning, the estimate
 wording, and that a stale-eligible submit the server gates to 0 shows **no** awarded points (§5).
 
-### 2.5 Server-authoritative award feedback (`ConditionReportResult`)
+### 2.5 Server-authoritative award feedback (additive `condition_points_awarded`)
 
 The condition POST must tell the client how many points *this* submit actually minted — neither
-the updated `FountainDetail` nor the post-submit `condition_points_eligible_at` can: a future
-timestamp after the POST is ambiguous between "this submit awarded (now on cooldown)" and "a
-prior award already blocked this submit." So `submit_condition`'s response changes from
-`FountainDetail` to a small envelope:
+the refreshed `FountainDetail` nor the post-submit `condition_points_eligible_at` can: a future
+timestamp after the POST is ambiguous between "this submit awarded (now on cooldown)" and "a prior
+award already blocked this submit." An envelope (`{ fountain, points_awarded }`) would carry the
+count but is a **breaking** response-shape change — a deployed native mobile build expects a bare
+`FountainDetail` and hands the body straight to its detail cache (`refreshDetailAfterWrite`), so a
+`{ fountain, … }` body corrupts it. Instead the signal is an **additive, backward-compatible**
+nullable field on `FountainDetail`:
 
-```python
-class ConditionReportResult(BaseModel):
-    fountain: FountainDetail
-    points_awarded: int  # points minted by THIS report: 3, 2, or 0 when gated by the window
-```
+- `condition_points_awarded: int | None = None`
+  - Set **only** by `submit_condition` on its response payload: `3` (verify awarded), `2` (report
+    awarded), or `0` (persisted but gated by the 24h window).
+  - `None` on every other serialization — `GET /fountains/{id}` and all other write responses — so
+    it reads as "no condition-award feedback applies here." The **null-vs-0** distinction keeps
+    "not applicable" separate from "gated to zero." Old clients ignore the extra optional field;
+    the POST body stays a `FountainDetail`, so nothing about its shape changes.
 
-`submit_condition` already knows the outcome — `record_contributions` returns the events it
-actually inserted — so `points_awarded` is the sum of those (0 when the rolling gate skipped the
-event). The web server action (`web/app/actions/contribute.ts`, which today discards the body and
-returns `{ ok: true }`) must thread `points_awarded` back to the form; mobile
-(`mobile/app/fountains/[id].tsx`, today driving feedback from client-side status constants) reads
-it from the response. This is the single source of truth for awarded-points feedback.
+`submit_condition` already knows the outcome — `record_contributions` returns the events it actually
+inserted — so it sets the field to the awarded points (0 when the rolling gate skipped the event).
+The web server action (`web/app/actions/contribute.ts`, which today discards the body and returns
+`{ ok: true }`) must thread `condition_points_awarded` back to the form; mobile
+(`mobile/app/fountains/[id].tsx`, today driving feedback from client-side status constants) reads it
+from the response. This is the single source of truth for awarded-points feedback.
 
-Out of scope: retrofitting the same authoritative-award envelope onto the rating / attribute / note
-write endpoints. They are once-ever and pre-date this issue; their feedback accuracy is a separate
-cleanup, not part of #124.
+Out of scope: retrofitting an authoritative-award signal onto the rating / attribute / note write
+endpoints. They are once-ever and pre-date this issue; their feedback accuracy is a separate cleanup,
+not part of #124.
 
 ## 3. Data flow
 
@@ -247,10 +252,9 @@ cleanup, not part of #124.
 3. User submits a condition report → `submit_condition` locks the fountain, inserts the
    `ConditionReport`, recomputes status, then runs the eligibility lookback and awards a
    point event only if eligible.
-4. The POST returns `ConditionReportResult { fountain, points_awarded }`: `fountain` carries
-   the refreshed `condition_points_eligible_at`, and `points_awarded` (3 / 2 / 0) is the
-   authoritative count the client uses for the success celebration — no reliance on the stale
-   pre-submit hint.
+4. The POST returns `FountainDetail` with the refreshed `condition_points_eligible_at` and
+   `condition_points_awarded` (3 / 2 / 0) — the authoritative count the client uses for the
+   success celebration, with no reliance on the stale pre-submit hint.
 
 ## 4. Edge cases & invariants
 
@@ -290,8 +294,8 @@ Tests drive the clock by passing an explicit `created_at`/`report_time` (the new
   `created_at + 24h` within the window, and `null` again after it lapses.
 - Regression: `rate`, `observe_attribute`, `add_note`, `add_fountain`, and the `first_*`
   bonuses are unaffected (a fresh rating of all dimensions still awards fully).
-- The condition POST returns `points_awarded` = 3/2 on an eligible submit and **0** on a
-  gated submit — the server-authoritative signal (§2.5).
+- The condition POST sets `condition_points_awarded` = 3/2 on an eligible submit and **0** on a
+  gated submit; `GET /fountains/{id}` leaves it `null` — the server-authoritative signal (§2.5).
 - (If feasible without brittle timing) two concurrent condition submits by one user on one
   fountain award **once**, confirming the `FOR UPDATE` serialization.
 
@@ -299,14 +303,17 @@ Tests drive the clock by passing an explicit `created_at`/`report_time` (the new
 
 - The warning renders **iff** `conditionPointsEligibleAt` is in the future; submit stays
   enabled in both states; the pre-submit preview is worded as an estimate.
-- Success feedback is driven by the response `points_awarded`: a **stale-eligible** submit
-  (client held `null`, server awards 0) shows **no** awarded points — guards the §2.5 fix.
+- Success feedback is driven by the response `condition_points_awarded`: a **stale-eligible**
+  submit (client held `null`, server awards 0) shows **no** awarded points — guards the §2.5 fix.
 
 ## 6. Rollout
 
 - **One additive index migration** (`ix_contribution_events_condition_window`, §2.3) —
-  drift-free (`alembic check`) and reversible. No new column, no data backfill; older clients
-  ignore the new nullable response field.
+  drift-free (`alembic check`) and reversible. No new column, no data backfill.
+- **Backward-compatible API change.** The two new `FountainDetail` fields
+  (`condition_points_eligible_at`, `condition_points_awarded`) are optional and nullable, and the
+  condition POST body stays a `FountainDetail` — so there is **no breaking response-shape change**;
+  deployed native clients that predate the fields simply ignore them.
 - **Regenerate the OpenAPI + api-client artifacts** (`packages/api-client/openapi.json`,
   `packages/api-client/src/schema.d.ts`) so the typed clients see `condition_points_eligible_at`.
 - Behavior change is a **tightening** of point awards for repeat condition reports only; no
