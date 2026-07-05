@@ -1,5 +1,5 @@
 import type { components } from "@fountainrank/api-client";
-import { conditionPointsPreview } from "@fountainrank/contributions";
+import { conditionPointsBlocked, conditionPointsPreview } from "@fountainrank/contributions";
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
@@ -20,15 +20,18 @@ export function ConditionContributionForm({
   fountainId,
   pending,
   onSubmit,
+  conditionPointsEligibleAt,
 }: {
   fountainId: string;
   pending: boolean;
   onSubmit: (
     body: ConditionReportRequest,
   ) => Promise<{ ok: true } | { ok: false; error: ContributionError }>;
+  conditionPointsEligibleAt?: string | null;
 }) {
   const [problem, setProblem] = useState<ConditionStatus>(PROBLEM_CONDITION_STATUSES[0]);
   const [message, setMessage] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
+  const blocked = conditionPointsBlocked(conditionPointsEligibleAt, new Date());
 
   async function submit(status: ConditionStatus) {
     setMessage(null);
@@ -53,7 +56,14 @@ export function ConditionContributionForm({
         disabled={pending}
         onPress={() => submit("working")}
       />
-      <PointsPreview lines={conditionPointsPreview("working")} />
+      {blocked ? (
+        <Text style={styles.limitNote}>
+          You&rsquo;ve earned points for updating this fountain recently — you can still update
+          its status, but it won&rsquo;t earn points right now.
+        </Text>
+      ) : (
+        <PointsPreview lines={conditionPointsPreview("working")} />
+      )}
       <Text style={styles.label}>Report a problem</Text>
       <View style={styles.options}>
         {PROBLEM_CONDITION_STATUSES.map((status) => {
@@ -74,7 +84,7 @@ export function ConditionContributionForm({
           );
         })}
       </View>
-      <PointsPreview lines={conditionPointsPreview("problem")} />
+      {blocked ? null : <PointsPreview lines={conditionPointsPreview("problem")} />}
       <SubmitButton label="Submit problem" disabled={pending} onPress={() => submit(problem)} />
       <ContributionMessage message={message} />
     </View>
@@ -97,4 +107,12 @@ const styles = StyleSheet.create({
   optionSelected: { borderColor: colors.brandBlue, backgroundColor: colors.brandBlue },
   optionText: { ...typography.meta, color: colors.text },
   optionTextSelected: { color: colors.onBrand, fontWeight: "700" },
+  limitNote: {
+    ...typography.meta,
+    color: "#92400E",
+    backgroundColor: "#FEF3C7",
+    borderRadius: 8,
+    padding: spacing.sm,
+    fontWeight: "600",
+  },
 });

@@ -188,13 +188,7 @@ export default function FountainDetailScreen() {
         }),
       );
     },
-    onSuccess: (detail, body) =>
-      refreshDetailAfterWrite(
-        detail,
-        body.status === "working"
-          ? CONTRIBUTION_POINTS.verify_working
-          : CONTRIBUTION_POINTS.report_condition,
-      ),
+    onSuccess: (detail) => refreshDetailAfterWrite(detail, detail.condition_points_awarded ?? 0),
   });
 
   const attributeMutation = useMutation({
@@ -362,6 +356,7 @@ export default function FountainDetailScreen() {
                   <ConditionContributionForm
                     fountainId={fountainId}
                     pending={conditionMutation.isPending}
+                    conditionPointsEligibleAt={detailQuery.data?.condition_points_eligible_at}
                     onSubmit={async (body) => {
                       try {
                         await conditionMutation.mutateAsync(body);
