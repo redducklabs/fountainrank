@@ -149,11 +149,10 @@ describe("PhotoCarousel", () => {
 
     // Simulate the owner deleting p3 and router.refresh() handing back a shorter list,
     // with p2 now is_own so the delete gating can be observed on the new current photo.
-    const shrunk = [
-      makePhoto({ id: "p1", is_own: false }),
-      makePhoto({ id: "p2", is_own: true }),
-    ];
-    expect(() => rerender(<PhotoCarousel photos={shrunk} onDelete={onDelete} onReport={onReport} />)).not.toThrow();
+    const shrunk = [makePhoto({ id: "p1", is_own: false }), makePhoto({ id: "p2", is_own: true })];
+    expect(() =>
+      rerender(<PhotoCarousel photos={shrunk} onDelete={onDelete} onReport={onReport} />),
+    ).not.toThrow();
 
     // Clamped to the new last photo (p2) rather than crashing on the stale index.
     expect(currentImg(container).src).toContain("/api/v1/photos/p2");
