@@ -32,7 +32,7 @@ export function FountainListRow({ fountain: f }: { fountain: FountainRowPin }) {
       {f.thumbnail_url ? (
         <img
           src={resolveThumbnailUrl(f.thumbnail_url)}
-          alt="Photo of this fountain"
+          alt=""
           loading="lazy"
           className="h-12 w-12 shrink-0 rounded-md object-cover"
         />

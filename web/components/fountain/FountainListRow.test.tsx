@@ -36,14 +36,21 @@ describe("FountainListRow", () => {
         fountain={{ ...base, thumbnail_url: "/api/v1/photos/p1/thumb", photo_count: 2 }}
       />,
     );
-    const thumb = screen.getByRole("img", { name: /Photo of this fountain/i });
+    const thumb = screen.getByRole("presentation");
+    expect(thumb.tagName).toBe("IMG");
+    expect(thumb.getAttribute("alt")).toBe("");
     expect(thumb.getAttribute("loading")).toBe("lazy");
     expect(thumb.getAttribute("src")).toBe("http://localhost:3021/api/v1/photos/p1/thumb");
   });
 
   it("renders a neutral placeholder (no broken img) when thumbnail_url is null", () => {
-    render(<FountainListRow fountain={{ ...base, thumbnail_url: null, photo_count: 0 }} />);
-    expect(screen.queryByRole("img", { name: /Photo of this fountain/i })).toBeNull();
+    const { container } = render(
+      <FountainListRow fountain={{ ...base, thumbnail_url: null, photo_count: 0 }} />,
+    );
+    expect(container.querySelector("img")).toBeNull();
+    const placeholder = container.querySelector('span[aria-hidden="true"]');
+    expect(placeholder).not.toBeNull();
+    expect(placeholder?.querySelector("svg")).not.toBeNull();
   });
 
   it("shows a photo count label when photo_count > 0", () => {
