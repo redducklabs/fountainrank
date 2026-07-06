@@ -34,11 +34,7 @@ import {
   mapPhotoUploadError,
   PhotoUploadError,
 } from "../../lib/detail/photo-upload";
-import {
-  REPORT_CATEGORIES,
-  reportContent,
-  type ReportContentType,
-} from "../../lib/detail/report";
+import { REPORT_CATEGORIES, reportContent, type ReportContentType } from "../../lib/detail/report";
 import { useApi } from "../../providers/api-provider";
 import { useAuth } from "../../providers/auth-provider";
 import { colors, spacing, typography } from "../../theme";
