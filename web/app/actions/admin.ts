@@ -7,6 +7,7 @@ import { log } from "../../lib/server/log";
 
 export type AdminError = "unauthenticated" | "forbidden" | "validation" | "not_found" | "server";
 export type AdminActionResult = { ok: true } | { ok: false; error: AdminError };
+export type AdminContentType = "photo" | "note" | "fountain";
 type AdminFountainPatch = components["schemas"]["AdminFountainPatch"];
 
 const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
@@ -128,7 +129,10 @@ export async function adminSetFountainHidden(
   isHidden: boolean,
 ): Promise<AdminActionResult> {
   if (!UUID_RE.test(fountainId)) return fail("validation");
-  return adminUpdateFountain(fountainId, { is_hidden: isHidden });
+  const result = await adminUpdateFountain(fountainId, { is_hidden: isHidden });
+  // Refresh the moderation queue when this is invoked from it (#12).
+  if (result.ok) revalidatePath("/admin/reports");
+  return result;
 }
 
 export async function adminDeleteFountain(fountainId: string): Promise<AdminActionResult> {
@@ -141,6 +145,7 @@ export async function adminDeleteFountain(fountainId: string): Promise<AdminActi
   }).then((result) => {
     if (result.ok) {
       revalidatePath(`/fountains/${fountainId}`);
+      revalidatePath("/admin/reports");
     }
     return result;
   });
@@ -161,6 +166,9 @@ export async function adminSetNoteHidden(
   }).then((result) => {
     if (result.ok) {
       revalidatePath(`/fountains/${fountainId}`);
+      // Also refresh the moderation queue when this is invoked from it (#12); harmless from
+      // the inline fountain-detail controls.
+      revalidatePath("/admin/reports");
     }
     return result;
   });
@@ -185,11 +193,20 @@ export async function adminHidePhoto(
   });
 }
 
-export async function adminDismissPhotoReports(photoId: string): Promise<AdminActionResult> {
-  if (!UUID_RE.test(photoId)) return fail("validation");
-  return runAdminAction("dismiss_photo_reports", photoId, async (client) => {
-    const { response } = await client.POST("/api/v1/admin/photos/{photo_id}/dismiss-reports", {
-      params: { path: { photo_id: photoId } },
+// Generalized report dismissal (#12): reject an item's pending reports for any content type,
+// used by the unified moderation board for photo/note/fountain. The old photo-specific
+// dismiss endpoint stays on the backend for released mobile clients but is no longer called here.
+export async function adminDismissReport(
+  contentType: AdminContentType,
+  contentId: string,
+): Promise<AdminActionResult> {
+  if (!UUID_RE.test(contentId)) return fail("validation");
+  if (contentType !== "photo" && contentType !== "note" && contentType !== "fountain") {
+    return fail("validation");
+  }
+  return runAdminAction("dismiss_report", contentId, async (client) => {
+    const { response } = await client.POST("/api/v1/admin/reports/dismiss", {
+      body: { content_type: contentType, content_id: contentId },
     });
     return { response };
   }).then((result) => {
@@ -218,11 +235,12 @@ export async function adminDeletePhoto(photoId: string): Promise<AdminActionResu
 // Polled by the client-side badge (W8): keeps the Logto access token server-side. Any
 // non-2xx (unauthenticated, forbidden, or a transient server error) degrades quietly to 0
 // rather than surfacing a noisy error to a client component that polls unconditionally.
+// As of #12 the count spans all report types (photo/note/fountain).
 export async function fetchPendingReportCount(): Promise<number> {
   const requestId = crypto.randomUUID();
   try {
     const client = await getAuthedApiClientForAction(requestId);
-    const { data, response } = await client.GET("/api/v1/admin/photo-reports/summary", {});
+    const { data, response } = await client.GET("/api/v1/admin/reports/summary", {});
     const status = response?.status ?? 0;
     if (status < 200 || status >= 300 || !data) {
       if (status !== 401 && status !== 403) {
@@ -230,7 +248,7 @@ export async function fetchPendingReportCount(): Promise<number> {
       }
       return 0;
     }
-    return data.pending_photo_count;
+    return data.pending_count;
   } catch (err) {
     log("warn", "pending report count error", {
       requestId,

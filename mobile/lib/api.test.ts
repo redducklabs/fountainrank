@@ -434,6 +434,17 @@ describe("isAuthenticatedApiRequest - admin photo-reports + photo list", () => {
     ).toBe(true);
   });
 
+  it("force-authenticates the #12 unified moderation queue and its summary", () => {
+    expect(
+      isAuthenticatedApiRequest(new Request("https://api.fountainrank.com/api/v1/admin/reports")),
+    ).toBe(true);
+    expect(
+      isAuthenticatedApiRequest(
+        new Request("https://api.fountainrank.com/api/v1/admin/reports/summary"),
+      ),
+    ).toBe(true);
+  });
+
   it("attaches a token to the per-fountain photo list so is_own is computed", () => {
     expect(
       isAuthenticatedApiRequest(

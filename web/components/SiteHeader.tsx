@@ -5,7 +5,7 @@ import { HeaderPoints } from "./HeaderPoints";
 import { HeaderSearch } from "./HeaderSearch";
 import ThemeToggle from "./ThemeToggle";
 import { getViewer, getViewerTotalPoints } from "../lib/server/viewer";
-import { getPendingReportCountServer } from "../lib/server/photo-reports";
+import { getPendingReportCountServer } from "../lib/server/content-reports";
 
 export async function SiteHeader({ variant }: { variant: "hero" | "bar" }) {
   const requestId = crypto.randomUUID();

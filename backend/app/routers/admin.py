@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.concurrency import run_in_threadpool
-from sqlalchemy import delete, distinct, func, select, update
+from sqlalchemy import and_, delete, distinct, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import require_admin
@@ -30,7 +30,10 @@ from app.schemas import (
     AdminPhotoOut,
     AdminPhotoPatch,
     PhotoReportsSummary,
+    ReportDismissRequest,
+    ReportedContentOut,
     ReportedPhotoOut,
+    ReportsSummary,
 )
 from app.storage import get_storage
 
@@ -115,6 +118,7 @@ async def admin_patch_fountain(
 
     changes: dict[str, dict[str, object | None]] = {}
     recompute_ranking = False
+    resolved_reports = 0
     if "location" in payload.model_fields_set:
         if payload.location is None:
             raise HTTPException(
@@ -161,6 +165,12 @@ async def admin_patch_fountain(
     if "is_hidden" in payload.model_fields_set and fountain.is_hidden != payload.is_hidden:
         changes["is_hidden"] = {"before": fountain.is_hidden, "after": payload.is_hidden}
         fountain.is_hidden = bool(payload.is_hidden)
+        # On a false->true hide, resolve this fountain's pending fountain-type reports (NOT the
+        # note/photo reports under it — those are separate queue items) (#12, spec §4).
+        if fountain.is_hidden:
+            resolved_reports = await _resolve_pending_reports(
+                session, "fountain", fountain.id, admin, "hidden"
+            )
 
     if recompute_ranking:
         await recompute_fountain_ranking(session, fountain.id)
@@ -184,6 +194,7 @@ async def admin_patch_fountain(
             "target_type": "fountain",
             "target_id": str(fountain.id),
             "changed_fields": changes,
+            "resolved_reports": resolved_reports,
         },
     )
     return await _serialize_admin_fountain(session, fountain, admin)
@@ -262,11 +273,17 @@ async def admin_patch_note(
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="note not found")
     note, author = row
     before_hidden = note.is_hidden
+    resolved_reports = 0
     if payload.is_hidden:
+        # Resolve this note's pending reports only on the false->true transition (an already-hidden
+        # note's reports were resolved on the first hide) — mirrors admin_patch_photo (#12).
         if not note.is_hidden:
             note.hidden_by_user_id = admin.id
             note.hidden_at = datetime.now(tz=UTC)
-        note.is_hidden = True
+            note.is_hidden = True
+            resolved_reports = await _resolve_pending_reports(
+                session, "note", note.id, admin, "hidden"
+            )
     else:
         note.is_hidden = False
         note.hidden_by_user_id = None
@@ -283,6 +300,7 @@ async def admin_patch_note(
             "changed_fields": {
                 "is_hidden": {"before": before_hidden, "after": note.is_hidden},
                 "body_length": len(note.body),
+                "resolved_reports": resolved_reports,
             },
         },
     )
@@ -435,15 +453,21 @@ async def admin_photo_reports_summary(
 
 
 async def _resolve_pending_reports(
-    session: AsyncSession, photo_id: uuid.UUID, admin: User, resolution: str
+    session: AsyncSession,
+    content_type: str,
+    content_id: uuid.UUID,
+    admin: User,
+    resolution: str,
 ) -> int:
-    """Resolve every still-pending report on a photo with the given resolution
-    (`hidden` on a moderation hide, `rejected` on a dismiss). Returns the number resolved."""
+    """Resolve every still-pending report on a content item (photo/note/fountain) with the given
+    resolution (`hidden` on a moderation hide, `rejected` on a dismiss). Returns the number
+    resolved. Photo callers pass `content_type='photo'`; note/fountain hide + the generalized
+    dismiss pass their own type (#12)."""
     result = await session.execute(
         update(ContentReport)
         .where(
-            ContentReport.content_type == "photo",
-            ContentReport.content_id == photo_id,
+            ContentReport.content_type == content_type,
+            ContentReport.content_id == content_id,
             ContentReport.status == "pending",
         )
         .values(
@@ -482,7 +506,9 @@ async def admin_patch_photo(
             photo.hidden_by_user_id = admin.id
             photo.hidden_at = datetime.now(tz=UTC)
             photo.is_hidden = True
-            resolved_reports = await _resolve_pending_reports(session, photo_id, admin, "hidden")
+            resolved_reports = await _resolve_pending_reports(
+                session, "photo", photo_id, admin, "hidden"
+            )
             await reverse_contribution_for_target(session, "photo", photo_id)
     else:
         if photo.is_hidden:
@@ -523,7 +549,7 @@ async def admin_dismiss_photo_reports(
     if exists is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="photo not found")
 
-    resolved = await _resolve_pending_reports(session, photo_id, admin, "rejected")
+    resolved = await _resolve_pending_reports(session, "photo", photo_id, admin, "rejected")
     await session.commit()
     logger.info(
         "admin photo mutation",
@@ -608,6 +634,278 @@ async def admin_delete_photo(
             "action": "delete",
             "target_type": "photo",
             "target_id": str(photo_id),
+        },
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# --- unified moderation queue (#12) --------------------------------------------------
+# The queue/summary/dismiss below are added ALONGSIDE the photo-only routes above (old mobile
+# clients still call those). `content_reports` is polymorphic; a per-type EXISTS predicate
+# excludes reports orphaned by a since-deleted target (the #11 invariants already preclude such
+# orphans — this is defensive and, running before LIMIT/OFFSET, it also keeps the queue page and
+# the badge count consistent by construction).
+
+CONTENT_TYPES = ("photo", "note", "fountain")
+_EXISTENCE_MODEL = {"photo": FountainPhoto, "note": FountainNote, "fountain": Fountain}
+
+
+def _content_exists_clause():
+    """A correlated per-type EXISTS: the reported content row still exists for its content_type."""
+    return or_(
+        and_(
+            ContentReport.content_type == "photo",
+            exists(select(FountainPhoto.id).where(FountainPhoto.id == ContentReport.content_id)),
+        ),
+        and_(
+            ContentReport.content_type == "note",
+            exists(select(FountainNote.id).where(FountainNote.id == ContentReport.content_id)),
+        ),
+        and_(
+            ContentReport.content_type == "fountain",
+            exists(select(Fountain.id).where(Fountain.id == ContentReport.content_id)),
+        ),
+    )
+
+
+@router.get("/reports", response_model=list[ReportedContentOut])
+async def admin_reports(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    content_type: str | None = Query(default=None),
+    session: AsyncSession = Depends(get_session),
+    admin: User = Depends(require_admin),
+) -> list[ReportedContentOut]:
+    """Unified moderation queue: one row per (content_type, content_id) with ≥1 pending report,
+    across photo/note/fountain, oldest-reported first, paginated, optional content_type filter.
+    Generalizes the photo-only ``admin_photo_reports`` (#12). Report notes are truncated in SQL
+    and never logged."""
+    if content_type is not None and content_type not in CONTENT_TYPES:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, detail=f"invalid content_type: {content_type}"
+        )
+
+    where = [ContentReport.status == "pending", _content_exists_clause()]
+    if content_type is not None:
+        where.append(ContentReport.content_type == content_type)
+
+    # (1) Grouped aggregate over pending, existing reports. Deterministic tiebreak on
+    # (content_type, content_id) so pagination never skips/dups when two items' oldest report
+    # share a timestamp.
+    grouped = (
+        select(
+            ContentReport.content_type,
+            ContentReport.content_id,
+            func.count().label("report_count"),
+            func.array_agg(distinct(ContentReport.category)).label("categories"),
+            func.min(ContentReport.created_at).label("first_reported_at"),
+        )
+        .where(*where)
+        .group_by(ContentReport.content_type, ContentReport.content_id)
+        .order_by(
+            func.min(ContentReport.created_at).asc(),
+            ContentReport.content_type,
+            ContentReport.content_id,
+        )
+        .limit(limit)
+        .offset(offset)
+    )
+    group_rows = (await session.execute(grouped)).all()
+    if not group_rows:
+        return []
+    page_ids = [row.content_id for row in group_rows]
+    ids_by_type: dict[str, list[uuid.UUID]] = {}
+    for row in group_rows:
+        ids_by_type.setdefault(row.content_type, []).append(row.content_id)
+
+    # (2) The 3 newest non-null report notes per page item, truncated to 200 chars IN SQL. Keyed
+    # by (content_type, content_id). content_ids are globally-unique UUIDs, so the IN filter is
+    # on content_id; the key still carries content_type for a defensive exact match.
+    rn = (
+        func.row_number()
+        .over(
+            partition_by=(ContentReport.content_type, ContentReport.content_id),
+            order_by=ContentReport.created_at.desc(),
+        )
+        .label("rn")
+    )
+    ranked_notes = (
+        select(
+            ContentReport.content_type.label("content_type"),
+            ContentReport.content_id.label("content_id"),
+            func.left(ContentReport.note, MAX_NOTE_CHARS).label("note"),
+            rn,
+        )
+        .where(
+            ContentReport.status == "pending",
+            ContentReport.note.isnot(None),
+            ContentReport.content_id.in_(page_ids),
+        )
+        .subquery()
+    )
+    note_rows = (
+        await session.execute(
+            select(ranked_notes.c.content_type, ranked_notes.c.content_id, ranked_notes.c.note)
+            .where(ranked_notes.c.rn <= MAX_NOTES_PER_PHOTO)
+            .order_by(ranked_notes.c.content_type, ranked_notes.c.content_id, ranked_notes.c.rn)
+        )
+    ).all()
+    notes_by_key: dict[tuple[str, uuid.UUID], list[str]] = {}
+    for row in note_rows:
+        notes_by_key.setdefault((row.content_type, row.content_id), []).append(row.note)
+
+    # (3) Per-type detail fetch (one query per present type).
+    details: dict[tuple[str, uuid.UUID], dict[str, object]] = {}
+    if photo_ids := ids_by_type.get("photo"):
+        for r in (
+            await session.execute(
+                select(
+                    FountainPhoto.id,
+                    FountainPhoto.fountain_id,
+                    FountainPhoto.is_hidden,
+                    User.display_name,
+                    User.logto_user_id,
+                    User.nickname,
+                )
+                .join(User, User.id == FountainPhoto.user_id)
+                .where(FountainPhoto.id.in_(photo_ids))
+            )
+        ).all():
+            details[("photo", r.id)] = {
+                "fountain_id": r.fountain_id,
+                "is_hidden": r.is_hidden,
+                "contributor": public_display_name(r.display_name, r.logto_user_id, r.nickname),
+                "thumbnail_url": f"/api/v1/photos/{r.id}/thumb",
+                "url": f"/api/v1/photos/{r.id}",
+            }
+    if note_ids := ids_by_type.get("note"):
+        for r in (
+            await session.execute(
+                select(
+                    FountainNote.id,
+                    FountainNote.fountain_id,
+                    FountainNote.is_hidden,
+                    func.left(FountainNote.body, MAX_NOTE_CHARS).label("excerpt"),
+                    User.display_name,
+                    User.logto_user_id,
+                    User.nickname,
+                )
+                .join(User, User.id == FountainNote.user_id)
+                .where(FountainNote.id.in_(note_ids))
+            )
+        ).all():
+            details[("note", r.id)] = {
+                "fountain_id": r.fountain_id,
+                "is_hidden": r.is_hidden,
+                "contributor": public_display_name(r.display_name, r.logto_user_id, r.nickname),
+                "excerpt": r.excerpt,
+            }
+    if fountain_ids := ids_by_type.get("fountain"):
+        for r in (
+            await session.execute(
+                select(Fountain.id, Fountain.is_hidden, Fountain.placement_note).where(
+                    Fountain.id.in_(fountain_ids)
+                )
+            )
+        ).all():
+            details[("fountain", r.id)] = {
+                "fountain_id": r.id,
+                "is_hidden": r.is_hidden,
+                "fountain_label": r.placement_note,
+            }
+
+    result: list[ReportedContentOut] = []
+    for row in group_rows:
+        key = (row.content_type, row.content_id)
+        detail = details.get(key)
+        if detail is None:
+            # Belt-and-suspenders: the EXISTS predicate already excludes orphans, so this cannot
+            # normally fire. Never silently drop — log it (no note text).
+            logger.warning(
+                "moderation queue: reported content row missing; skipping",
+                extra={
+                    **_admin_context(admin),
+                    "content_type": row.content_type,
+                    "content_id": str(row.content_id),
+                },
+            )
+            continue
+        result.append(
+            ReportedContentOut(
+                content_type=row.content_type,
+                content_id=row.content_id,
+                fountain_id=detail["fountain_id"],
+                is_hidden=detail["is_hidden"],
+                report_count=row.report_count,
+                categories=list(row.categories),
+                notes=notes_by_key.get(key, []),
+                first_reported_at=row.first_reported_at,
+                contributor=detail.get("contributor"),
+                thumbnail_url=detail.get("thumbnail_url"),
+                url=detail.get("url"),
+                excerpt=detail.get("excerpt"),
+                fountain_label=detail.get("fountain_label"),
+            )
+        )
+    # Deliberately logs only counts — NEVER the notes (admin-only PII).
+    logger.info(
+        "admin unified queue read",
+        extra={**_admin_context(admin), "returned": len(result), "limit": limit, "offset": offset},
+    )
+    return result
+
+
+@router.get("/reports/summary", response_model=ReportsSummary)
+async def admin_reports_summary(
+    session: AsyncSession = Depends(get_session),
+    admin: User = Depends(require_admin),
+) -> ReportsSummary:
+    """Badge count: distinct (content_type, content_id) items with ≥1 pending report, across all
+    types, using the same EXISTS predicate as the queue so the badge and queue agree (#12)."""
+    distinct_items = (
+        select(ContentReport.content_type, ContentReport.content_id)
+        .where(ContentReport.status == "pending", _content_exists_clause())
+        .distinct()
+        .subquery()
+    )
+    count = (await session.execute(select(func.count()).select_from(distinct_items))).scalar_one()
+    return ReportsSummary(pending_count=count)
+
+
+@router.post("/reports/dismiss", status_code=status.HTTP_204_NO_CONTENT)
+async def admin_dismiss_reports(
+    payload: ReportDismissRequest,
+    session: AsyncSession = Depends(get_session),
+    admin: User = Depends(require_admin),
+) -> Response:
+    """Generalized reject: resolve an item's pending reports as ``rejected`` without hiding or
+    deleting it, for any content type. Validates the target still exists (404 if missing),
+    matching ``admin_dismiss_photo_reports``. The new web/mobile boards use this for all types;
+    the old photo dismiss endpoint stays for released clients (#12)."""
+    model = _EXISTENCE_MODEL.get(payload.content_type)
+    if model is None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"invalid content_type: {payload.content_type}",
+        )
+    target = (
+        await session.execute(select(model.id).where(model.id == payload.content_id))
+    ).scalar_one_or_none()
+    if target is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"{payload.content_type} not found")
+
+    resolved = await _resolve_pending_reports(
+        session, payload.content_type, payload.content_id, admin, "rejected"
+    )
+    await session.commit()
+    logger.info(
+        "admin dismiss reports",
+        extra={
+            **_admin_context(admin),
+            "action": "dismiss_reports",
+            "target_type": payload.content_type,
+            "target_id": str(payload.content_id),
+            "changed_fields": {"resolved_reports": resolved},
         },
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

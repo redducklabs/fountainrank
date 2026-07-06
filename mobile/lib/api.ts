@@ -116,9 +116,15 @@ export function isAuthenticatedApiRequest(input: Request): boolean {
   if (/^\/api\/v1\/admin\/fountains\/[^/]+$/.test(path)) {
     return true;
   }
-  // The admin photo-reports queue and its unread-count summary are staff-only surfaces
-  // (moderation queue + badge count) and must always carry a token.
-  if (path === "/api/v1/admin/photo-reports" || path === "/api/v1/admin/photo-reports/summary") {
+  // The admin moderation queue and its unread-count summary are staff-only surfaces
+  // (moderation queue + badge count) and must always carry a token. Both the #12 unified routes
+  // and the pre-#12 photo-only routes (still called by older app builds) are force-authenticated.
+  if (
+    path === "/api/v1/admin/reports" ||
+    path === "/api/v1/admin/reports/summary" ||
+    path === "/api/v1/admin/photo-reports" ||
+    path === "/api/v1/admin/photo-reports/summary"
+  ) {
     return true;
   }
   // The per-fountain photo list is public, but attach the token when signed in so the

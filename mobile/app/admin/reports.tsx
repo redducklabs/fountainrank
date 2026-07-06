@@ -8,20 +8,27 @@ import { Alert, FlatList, Pressable, StyleSheet, Text, View } from "react-native
 import { ScreenContainer } from "../../components/ScreenContainer";
 import { QueryStateView } from "../../components/states/QueryStateView";
 import { unwrap } from "../../lib/api";
-import { hideToggleLabel, isQueueEmpty, nextHiddenState } from "../../lib/admin/reports";
+import {
+  contentSupportsDelete,
+  hideToggleLabel,
+  isQueueEmpty,
+  nextHiddenState,
+} from "../../lib/admin/reports";
 import { resolvePhotoUrl } from "../../lib/detail/photo-carousel";
 import { useApi } from "../../providers/api-provider";
 import { useAuth } from "../../providers/auth-provider";
 import { colors, spacing, typography } from "../../theme";
 
-type ReportedPhotoOut = components["schemas"]["ReportedPhotoOut"];
+type ReportedContentOut = components["schemas"]["ReportedContentOut"];
 type MeResponse = components["schemas"]["MeResponse"];
 
-const REPORTS_QUERY_KEY = ["admin", "photo-reports"] as const;
-const SUMMARY_QUERY_KEY = ["admin", "photo-reports", "summary"] as const;
+// SAME keys the ProfileTabIcon badge polls, so a moderation action here refreshes the badge live.
+const REPORTS_QUERY_KEY = ["admin", "reports"] as const;
+const SUMMARY_QUERY_KEY = ["admin", "reports", "summary"] as const;
 
-/** Admin photo-moderation queue (fountain-photos PR 3, task M5). Gated on `["me"]`'s
- *  `is_admin` — non-admins never see the list, since report notes are admin-only PII. */
+/** Admin unified moderation queue (#12): photo, note, and fountain reports in one list, each
+ *  with its per-type actions. Gated on `["me"]`'s `is_admin` — non-admins never see the list,
+ *  since report notes are admin-only PII. */
 export default function AdminReportsScreen() {
   const { client, config } = useApi();
   const auth = useAuth();
@@ -46,8 +53,8 @@ export default function AdminReportsScreen() {
   const reportsQuery = useQuery({
     queryKey: REPORTS_QUERY_KEY,
     enabled: isAdmin,
-    queryFn: async (): Promise<ReportedPhotoOut[]> =>
-      unwrap(await client.GET("/api/v1/admin/photo-reports")),
+    queryFn: async (): Promise<ReportedContentOut[]> =>
+      unwrap(await client.GET("/api/v1/admin/reports")),
   });
 
   const invalidateAfterModeration = () => {
@@ -56,24 +63,42 @@ export default function AdminReportsScreen() {
   };
 
   const hideMutation = useMutation({
-    mutationFn: async ({ photoId, isHidden }: { photoId: string; isHidden: boolean }) =>
-      unwrap(
-        await client.PATCH("/api/v1/admin/photos/{photo_id}", {
-          params: { path: { photo_id: photoId } },
-          body: { is_hidden: isHidden },
+    mutationFn: async (item: ReportedContentOut) => {
+      const is_hidden = nextHiddenState(item);
+      if (item.content_type === "photo") {
+        return unwrap(
+          await client.PATCH("/api/v1/admin/photos/{photo_id}", {
+            params: { path: { photo_id: item.content_id } },
+            body: { is_hidden },
+          }),
+        );
+      }
+      if (item.content_type === "note") {
+        return unwrap(
+          await client.PATCH("/api/v1/admin/notes/{note_id}", {
+            params: { path: { note_id: item.content_id } },
+            body: { is_hidden },
+          }),
+        );
+      }
+      return unwrap(
+        await client.PATCH("/api/v1/admin/fountains/{fountain_id}", {
+          params: { path: { fountain_id: item.content_id } },
+          body: { is_hidden },
         }),
-      ),
+      );
+    },
     onSuccess: invalidateAfterModeration,
     onError: () => {
-      Alert.alert("Couldn't update this photo", "Please try again in a moment.");
+      Alert.alert("Couldn't update this item", "Please try again in a moment.");
     },
   });
 
   const dismissMutation = useMutation({
-    mutationFn: async (photoId: string) => {
+    mutationFn: async (item: ReportedContentOut) => {
       unwrap(
-        await client.POST("/api/v1/admin/photos/{photo_id}/dismiss-reports", {
-          params: { path: { photo_id: photoId } },
+        await client.POST("/api/v1/admin/reports/dismiss", {
+          body: { content_type: item.content_type, content_id: item.content_id },
         }),
       );
     },
@@ -84,26 +109,35 @@ export default function AdminReportsScreen() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: async (photoId: string) => {
-      unwrap(
-        await client.DELETE("/api/v1/admin/photos/{photo_id}", {
-          params: { path: { photo_id: photoId } },
-        }),
-      );
+    mutationFn: async (item: ReportedContentOut) => {
+      if (item.content_type === "photo") {
+        unwrap(
+          await client.DELETE("/api/v1/admin/photos/{photo_id}", {
+            params: { path: { photo_id: item.content_id } },
+          }),
+        );
+      } else {
+        unwrap(
+          await client.DELETE("/api/v1/admin/fountains/{fountain_id}", {
+            params: { path: { fountain_id: item.content_id } },
+          }),
+        );
+      }
     },
     onSuccess: invalidateAfterModeration,
     onError: () => {
-      Alert.alert("Couldn't delete this photo", "Please try again in a moment.");
+      Alert.alert("Couldn't delete this item", "Please try again in a moment.");
     },
   });
 
-  const confirmDelete = (photo: ReportedPhotoOut) => {
-    Alert.alert("Delete photo?", "This can't be undone.", [
+  const confirmDelete = (item: ReportedContentOut) => {
+    const title = item.content_type === "fountain" ? "Delete fountain?" : "Delete photo?";
+    Alert.alert(title, "This can't be undone.", [
       { text: "Cancel", style: "cancel" },
       {
         text: "Delete",
         style: "destructive",
-        onPress: () => deleteMutation.mutate(photo.photo_id),
+        onPress: () => deleteMutation.mutate(item),
       },
     ]);
   };
@@ -123,7 +157,7 @@ export default function AdminReportsScreen() {
 
   return (
     <ScreenContainer>
-      <Stack.Screen options={{ headerShown: true, title: "Reports" }} />
+      <Stack.Screen options={{ headerShown: true, title: "Moderation queue" }} />
       <QueryStateView
         input={{
           isLoading: !viewerResolved || meQuery.isLoading || reportsQuery.isLoading,
@@ -136,17 +170,15 @@ export default function AdminReportsScreen() {
       >
         <FlatList
           data={reportsQuery.data ?? []}
-          keyExtractor={(photo) => photo.photo_id}
+          keyExtractor={(item) => `${item.content_type}:${item.content_id}`}
           contentContainerStyle={styles.list}
           renderItem={({ item }) => (
             <ReportRow
-              photo={item}
+              item={item}
               apiBaseUrl={config.apiBaseUrl}
               pending={pending}
-              onHideToggle={() =>
-                hideMutation.mutate({ photoId: item.photo_id, isHidden: nextHiddenState(item) })
-              }
-              onReject={() => dismissMutation.mutate(item.photo_id)}
+              onHideToggle={() => hideMutation.mutate(item)}
+              onReject={() => dismissMutation.mutate(item)}
               onDelete={() => confirmDelete(item)}
             />
           )}
@@ -157,43 +189,59 @@ export default function AdminReportsScreen() {
 }
 
 function ReportRow({
-  photo,
+  item,
   apiBaseUrl,
   pending,
   onHideToggle,
   onReject,
   onDelete,
 }: {
-  photo: ReportedPhotoOut;
+  item: ReportedContentOut;
   apiBaseUrl: string;
   pending: boolean;
   onHideToggle: () => void;
   onReject: () => void;
   onDelete: () => void;
 }) {
+  const showDelete = contentSupportsDelete(item.content_type);
   return (
     <View style={styles.row}>
-      <Image
-        source={{ uri: resolvePhotoUrl(apiBaseUrl, photo.thumbnail_url) }}
-        style={styles.thumb}
-        contentFit="cover"
-        accessibilityIgnoresInvertColors
-      />
+      {item.content_type === "photo" && item.thumbnail_url ? (
+        <Image
+          source={{ uri: resolvePhotoUrl(apiBaseUrl, item.thumbnail_url) }}
+          style={styles.thumb}
+          contentFit="cover"
+          accessibilityIgnoresInvertColors
+        />
+      ) : null}
       <View style={styles.rowBody}>
+        {item.content_type === "note" ? (
+          <>
+            <Text style={styles.title} numberOfLines={2}>
+              {item.excerpt}
+            </Text>
+            {item.contributor ? <Text style={styles.byline}>by {item.contributor}</Text> : null}
+          </>
+        ) : null}
+        {item.content_type === "fountain" ? (
+          <Text style={styles.title} numberOfLines={1}>
+            {item.fountain_label ?? "Fountain"}
+          </Text>
+        ) : null}
         <Text style={styles.reportCount}>
-          {photo.report_count} report{photo.report_count === 1 ? "" : "s"}
-          {photo.is_hidden ? " · hidden" : ""}
+          {item.report_count} report{item.report_count === 1 ? "" : "s"}
+          {item.is_hidden ? " · hidden" : ""}
         </Text>
         <View style={styles.chips}>
-          {photo.categories.map((category, index) => (
+          {item.categories.map((category, index) => (
             <View key={`${category}-${index}`} style={styles.chip}>
               <Text style={styles.chipText}>{category}</Text>
             </View>
           ))}
         </View>
-        {photo.notes.length > 0 ? (
+        {item.notes.length > 0 ? (
           <View style={styles.notes}>
-            {photo.notes.map((note, index) => (
+            {item.notes.map((note, index) => (
               <Text key={index} style={styles.note} numberOfLines={3}>
                 {note}
               </Text>
@@ -207,7 +255,7 @@ function ReportRow({
             onPress={onHideToggle}
             style={[styles.outlineButton, pending ? styles.disabled : null]}
           >
-            <Text style={styles.outlineText}>{hideToggleLabel(photo)}</Text>
+            <Text style={styles.outlineText}>{hideToggleLabel(item)}</Text>
           </Pressable>
           <Pressable
             accessibilityRole="button"
@@ -217,14 +265,16 @@ function ReportRow({
           >
             <Text style={styles.outlineText}>Reject</Text>
           </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            disabled={pending}
-            onPress={onDelete}
-            style={[styles.dangerButton, pending ? styles.disabled : null]}
-          >
-            <Text style={styles.dangerText}>Delete</Text>
-          </Pressable>
+          {showDelete ? (
+            <Pressable
+              accessibilityRole="button"
+              disabled={pending}
+              onPress={onDelete}
+              style={[styles.dangerButton, pending ? styles.disabled : null]}
+            >
+              <Text style={styles.dangerText}>Delete</Text>
+            </Pressable>
+          ) : null}
         </View>
       </View>
     </View>
@@ -246,6 +296,8 @@ const styles = StyleSheet.create({
   },
   thumb: { width: 88, height: 88, borderRadius: 8, backgroundColor: colors.border },
   rowBody: { flex: 1, gap: spacing.xs },
+  title: { ...typography.body, color: colors.text, fontWeight: "700" },
+  byline: { ...typography.meta, color: colors.textMuted },
   reportCount: { ...typography.body, color: colors.text, fontWeight: "700" },
   chips: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs },
   chip: {

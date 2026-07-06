@@ -11,6 +11,7 @@ from app.main import app
 from app.models import (
     AttributeObservation,
     ConditionReport,
+    ContentReport,
     ContributionEvent,
     Fountain,
     FountainAttributeConsensus,
@@ -86,6 +87,63 @@ async def _create_note(
     await session.commit()
     await session.refresh(note)
     return note
+
+
+async def _add_reporter(session, name: str) -> User:
+    user = User(
+        logto_user_id=f"reporter-{uuid.uuid4()}",
+        email=f"{uuid.uuid4()}@example.com",
+        display_name=name,
+    )
+    session.add(user)
+    await session.commit()
+    await session.refresh(user)
+    return user
+
+
+async def _add_photo(session, fountain: Fountain, uploader: User) -> FountainPhoto:
+    pid = uuid.uuid4()
+    photo = FountainPhoto(
+        id=pid,
+        fountain_id=fountain.id,
+        user_id=uploader.id,
+        storage_key=f"fountains/{fountain.id}/{pid}.jpg",
+        thumbnail_key=f"fountains/{fountain.id}/{pid}_thumb.jpg",
+        content_type="image/jpeg",
+        width=800,
+        height=600,
+        byte_size=12345,
+    )
+    session.add(photo)
+    await session.commit()
+    await session.refresh(photo)
+    return photo
+
+
+async def _add_content_report(
+    session,
+    *,
+    content_type: str,
+    content_id: uuid.UUID,
+    fountain_id: uuid.UUID,
+    reporter: User,
+    category: str = "spam",
+    status: str = "pending",
+) -> ContentReport:
+    report = ContentReport(
+        content_type=content_type,
+        content_id=content_id,
+        fountain_id=fountain_id,
+        reporter_user_id=reporter.id,
+        category=category,
+        status=status,
+        resolution=None,
+        created_at=datetime.now(tz=UTC),
+    )
+    session.add(report)
+    await session.commit()
+    await session.refresh(report)
+    return report
 
 
 async def _assert_authz(raw_client: AsyncClient, method: str, path: str, **kwargs) -> None:
@@ -543,3 +601,166 @@ async def test_admin_detail_includes_admins_own_rating(raw_client, session, auth
     assert admin_detail.status_code == 200
     dims = {d["rating_type_id"]: d for d in admin_detail.json()["dimensions"]}
     assert dims[1]["your_rating"] == 4
+
+
+# --- resolve-on-action: hiding a note/fountain resolves its pending reports (#12) --------
+# NOTE: capture report ids into locals BEFORE any request/`expire_all()` — accessing a mapped
+# attribute on an expired ORM object triggers a sync lazy-load (MissingGreenlet).
+
+
+async def _report_status(session, report_id: uuid.UUID) -> ContentReport:
+    return (
+        await session.execute(select(ContentReport).where(ContentReport.id == report_id))
+    ).scalar_one()
+
+
+async def test_note_hide_resolves_its_pending_reports_only(raw_client, session, author):
+    fountain = await _create_fountain(session, author)
+    note_id = (await _create_note(session, fountain, author)).id
+    reporter = await _add_reporter(session, "Reporter")
+
+    r1_id = (
+        await _add_content_report(
+            session,
+            content_type="note",
+            content_id=note_id,
+            fountain_id=fountain.id,
+            reporter=reporter,
+        )
+    ).id
+
+    # A second, unrelated note whose report must stay pending (proves isolation). Notes are
+    # one-per-user-per-fountain, so this note needs a different author.
+    other_author = await _add_reporter(session, "OtherAuthor")
+    other_note_id = (await _create_note(session, fountain, other_author)).id
+    r_other_id = (
+        await _add_content_report(
+            session,
+            content_type="note",
+            content_id=other_note_id,
+            fountain_id=fountain.id,
+            reporter=reporter,
+        )
+    ).id
+    # A photo report under the same fountain must also stay pending.
+    photo_id = (await _add_photo(session, fountain, author)).id
+    r_photo_id = (
+        await _add_content_report(
+            session,
+            content_type="photo",
+            content_id=photo_id,
+            fountain_id=fountain.id,
+            reporter=reporter,
+        )
+    ).id
+
+    resp = await raw_client.patch(
+        f"/api/v1/admin/notes/{note_id}",
+        headers={"X-Dev-User": "admin-sub"},
+        json={"is_hidden": True},
+    )
+    assert resp.status_code == 200
+
+    session.expire_all()
+    admin = await _user_by_sub(session, "admin-sub")
+
+    hidden = await _report_status(session, r1_id)
+    assert hidden.status == "resolved"
+    assert hidden.resolution == "hidden"
+    assert hidden.resolved_by_user_id == admin.id
+    assert hidden.resolved_at is not None
+
+    for other_id in (r_other_id, r_photo_id):
+        row = await _report_status(session, other_id)
+        assert row.status == "pending"
+        assert row.resolution is None
+
+
+async def test_note_unhide_does_not_reopen_reports(raw_client, session, author):
+    fountain = await _create_fountain(session, author)
+    note_id = (await _create_note(session, fountain, author)).id
+    reporter = await _add_reporter(session, "Reporter")
+    report_id = (
+        await _add_content_report(
+            session,
+            content_type="note",
+            content_id=note_id,
+            fountain_id=fountain.id,
+            reporter=reporter,
+        )
+    ).id
+
+    await raw_client.patch(
+        f"/api/v1/admin/notes/{note_id}",
+        headers={"X-Dev-User": "admin-sub"},
+        json={"is_hidden": True},
+    )
+    unhidden = await raw_client.patch(
+        f"/api/v1/admin/notes/{note_id}",
+        headers={"X-Dev-User": "admin-sub"},
+        json={"is_hidden": False},
+    )
+    assert unhidden.status_code == 200
+
+    session.expire_all()
+    row = await _report_status(session, report_id)
+    assert row.status == "resolved"  # unhide does not re-open
+    assert row.resolution == "hidden"
+
+
+async def test_fountain_hide_resolves_only_fountain_type_reports(raw_client, session, author):
+    fountain = await _create_fountain(session, author)
+    fountain_id = fountain.id
+    reporter = await _add_reporter(session, "Reporter")
+
+    fountain_report_id = (
+        await _add_content_report(
+            session,
+            content_type="fountain",
+            content_id=fountain_id,
+            fountain_id=fountain_id,
+            reporter=reporter,
+            category="not_a_fountain",
+        )
+    ).id
+    note_id = (await _create_note(session, fountain, author)).id
+    note_report_id = (
+        await _add_content_report(
+            session,
+            content_type="note",
+            content_id=note_id,
+            fountain_id=fountain_id,
+            reporter=reporter,
+        )
+    ).id
+    photo_id = (await _add_photo(session, fountain, author)).id
+    photo_report_id = (
+        await _add_content_report(
+            session,
+            content_type="photo",
+            content_id=photo_id,
+            fountain_id=fountain_id,
+            reporter=reporter,
+        )
+    ).id
+
+    resp = await raw_client.patch(
+        f"/api/v1/admin/fountains/{fountain_id}",
+        headers={"X-Dev-User": "admin-sub"},
+        json={"is_hidden": True},
+    )
+    assert resp.status_code == 200
+
+    session.expire_all()
+    admin = await _user_by_sub(session, "admin-sub")
+
+    resolved = await _report_status(session, fountain_report_id)
+    assert resolved.status == "resolved"
+    assert resolved.resolution == "hidden"
+    assert resolved.resolved_by_user_id == admin.id
+
+    # Note/photo reports UNDER the fountain stay pending — hiding the fountain moderates only
+    # the fountain item (spec §4).
+    for other_id in (note_report_id, photo_report_id):
+        row = await _report_status(session, other_id)
+        assert row.status == "pending"

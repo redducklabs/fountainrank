@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  contentSupportsDelete,
   formatBadgeCount,
   hideToggleLabel,
   isQueueEmpty,
@@ -37,19 +38,32 @@ describe("isQueueEmpty", () => {
     expect(
       isQueueEmpty([
         {
-          photo_id: "p1",
+          content_type: "photo",
+          content_id: "p1",
           fountain_id: "f1",
-          url: "/u",
-          thumbnail_url: "/t",
           is_hidden: false,
           report_count: 1,
           categories: ["spam"],
           notes: [],
           first_reported_at: "2026-06-22T10:00:00Z",
-          uploaded_by: null,
+          contributor: null,
+          thumbnail_url: "/t",
+          url: "/u",
+          excerpt: null,
+          fountain_label: null,
         },
       ]),
     ).toBe(false);
+  });
+});
+
+describe("contentSupportsDelete", () => {
+  it("is true for photo and fountain (hard delete available)", () => {
+    expect(contentSupportsDelete("photo")).toBe(true);
+    expect(contentSupportsDelete("fountain")).toBe(true);
+  });
+  it("is false for note (hide is the removal, no hard delete)", () => {
+    expect(contentSupportsDelete("note")).toBe(false);
   });
 });
 

@@ -12,7 +12,7 @@ vi.mock("../lib/server/viewer", () => ({
   getViewer,
   getViewerTotalPoints,
 }));
-vi.mock("../lib/server/photo-reports", () => ({
+vi.mock("../lib/server/content-reports", () => ({
   getPendingReportCountServer,
 }));
 vi.mock("./AuthControl", () => ({ AuthControl: () => <div data-testid="auth-control" /> }));
