@@ -75,7 +75,7 @@ export function ConditionForm({
           type="button"
           aria-expanded={showProblems}
           onClick={() => setShowProblems((v) => !v)}
-          className="text-sm text-brand-mid underline"
+          className="text-sm text-brand-ink underline"
         >
           Report a problem
         </button>

@@ -257,7 +257,7 @@ function SearchAttribution() {
         href={ATTRIBUTION_URL}
         target="_blank"
         rel="noopener noreferrer"
-        className="font-semibold text-brand-mid underline"
+        className="font-semibold text-brand-ink underline"
       >
         Search by LocationIQ
       </a>

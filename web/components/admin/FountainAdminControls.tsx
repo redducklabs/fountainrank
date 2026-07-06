@@ -56,7 +56,7 @@ export function FountainAdminControls({ detail }: { detail: AdminFountainDetail 
   return (
     <section className="space-y-4 border-t border-border pt-4">
       <div>
-        <h2 className="text-sm font-bold uppercase tracking-wide text-brand">Admin controls</h2>
+        <h2 className="text-sm font-bold uppercase tracking-wide text-brand-ink">Admin controls</h2>
         {detail.is_hidden ? (
           <p className="mt-1 text-xs font-semibold text-amber-700 dark:text-amber-300">
             Hidden from public reads
@@ -144,7 +144,7 @@ export function FountainAdminControls({ detail }: { detail: AdminFountainDetail 
           type="button"
           disabled={pending}
           onClick={() => run(() => adminSetFountainHidden(detail.id, !detail.is_hidden))}
-          className="rounded-full border border-brand px-4 py-2 text-sm font-bold text-brand disabled:opacity-60"
+          className="rounded-full border border-brand px-4 py-2 text-sm font-bold text-brand-ink disabled:opacity-60"
         >
           {detail.is_hidden ? "Unhide fountain" : "Hide fountain"}
         </button>
@@ -207,7 +207,7 @@ export function FountainAdminControls({ detail }: { detail: AdminFountainDetail 
                   disabled={pending}
                   aria-label={`${note.is_hidden ? "Unhide" : "Hide"} note ${noteLabel(note)}`}
                   onClick={() => run(() => adminSetNoteHidden(note.id, !note.is_hidden, detail.id))}
-                  className="shrink-0 rounded-full border border-brand px-3 py-1.5 text-xs font-bold text-brand disabled:opacity-60"
+                  className="shrink-0 rounded-full border border-brand px-3 py-1.5 text-xs font-bold text-brand-ink disabled:opacity-60"
                 >
                   {note.is_hidden ? "Unhide" : "Hide"}
                 </button>

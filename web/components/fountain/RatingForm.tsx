@@ -50,7 +50,7 @@ export function RatingForm({
     <div>
       <h3 className="text-sm font-semibold text-foreground">Rate it</h3>
       {hasExistingRating && (
-        <p className="text-xs font-medium text-brand">
+        <p className="text-xs font-medium text-brand-ink">
           You&rsquo;ve rated this fountain. Update your stars and submit to change it.
         </p>
       )}

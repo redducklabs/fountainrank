@@ -72,10 +72,10 @@ export default async function CityPage({
       <>
         <SiteHeader variant="bar" />
         <main className={shell}>
-          <Link href="/" className="text-sm text-brand-mid underline">
+          <Link href="/" className="text-sm text-brand-ink underline">
             ← Back to the map
           </Link>
-          <h1 className="mt-6 text-lg font-bold text-brand">Couldn&rsquo;t load this city</h1>
+          <h1 className="mt-6 text-lg font-bold text-brand-ink">Couldn&rsquo;t load this city</h1>
           <p className="mt-2 text-muted">Please try again.</p>
         </main>
       </>
@@ -92,10 +92,12 @@ export default async function CityPage({
     <>
       <SiteHeader variant="bar" />
       <main className={shell}>
-        <Link href={countryPath(place.country_code)} className="text-sm text-brand-mid underline">
+        <Link href={countryPath(place.country_code)} className="text-sm text-brand-ink underline">
           ← All of {place.country_code.toUpperCase()}
         </Link>
-        <h1 className="mt-6 text-2xl font-black text-brand">Drinking fountains in {place.name}</h1>
+        <h1 className="mt-6 text-2xl font-black text-brand-ink">
+          Drinking fountains in {place.name}
+        </h1>
         <p className="mt-2 text-muted">
           {place.fountain_count.toLocaleString()} public drinking fountains and bottle-refill
           stations in {place.name}.

@@ -36,10 +36,10 @@ export default async function LeaderboardPage({
     <>
       <SiteHeader variant="bar" />
       <main className={shell}>
-        <Link href="/" className="text-sm text-brand-mid underline">
+        <Link href="/" className="text-sm text-brand-ink underline">
           ← Back to the map
         </Link>
-        <h1 className="mt-6 text-2xl font-black text-brand">Leaderboard</h1>
+        <h1 className="mt-6 text-2xl font-black text-brand-ink">Leaderboard</h1>
         <p className="mt-1 text-sm text-muted">
           {state.scope === "near"
             ? "Top contributors near this part of the map."

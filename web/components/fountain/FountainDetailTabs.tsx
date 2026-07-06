@@ -36,7 +36,7 @@ export function FountainDetailTabs({ tabs }: { tabs: FountainDetailTab[] }) {
               onClick={() => setActive(tab.id)}
               className={`min-h-12 border-b-2 px-2 text-sm font-bold outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset ${
                 selected
-                  ? "border-brand bg-surface text-brand"
+                  ? "border-brand bg-surface text-brand-ink"
                   : "border-transparent text-muted hover:bg-surface hover:text-foreground"
               }`}
             >

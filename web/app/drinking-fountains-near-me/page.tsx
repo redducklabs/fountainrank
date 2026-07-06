@@ -41,7 +41,7 @@ export default async function NearMePage() {
     <>
       <SiteHeader variant="bar" />
       <main className={shell}>
-        <h1 className="mt-2 text-2xl font-black text-brand">{TITLE}</h1>
+        <h1 className="mt-2 text-2xl font-black text-brand-ink">{TITLE}</h1>
         <p className="mt-2 text-muted">
           Looking for a drinking fountain or water bottle refill station nearby? Open the map to see
           public fountains around your current location, ranked and reviewed by the community.
@@ -55,13 +55,13 @@ export default async function NearMePage() {
 
         {cities.length > 0 && (
           <section className="mt-8">
-            <h2 className="text-lg font-bold text-brand">Popular cities</h2>
+            <h2 className="text-lg font-bold text-brand-ink">Popular cities</h2>
             <ul className="mt-3 divide-y divide-border">
               {cities.map((city) => (
                 <li key={city.id} className="flex items-center justify-between py-2">
                   <Link
                     href={cityPath(city.country_code, city.slug)}
-                    className="text-brand-mid underline"
+                    className="text-brand-ink underline"
                   >
                     {city.name}
                   </Link>
@@ -76,13 +76,13 @@ export default async function NearMePage() {
 
         {countries.length > 0 && (
           <section className="mt-8">
-            <h2 className="text-lg font-bold text-brand">Browse by country</h2>
+            <h2 className="text-lg font-bold text-brand-ink">Browse by country</h2>
             <ul className="mt-3 flex flex-wrap gap-x-4 gap-y-1">
               {countries.map((country) => (
                 <li key={country.id}>
                   <Link
                     href={countryPath(country.country_code)}
-                    className="text-brand-mid underline"
+                    className="text-brand-ink underline"
                   >
                     {country.name}
                   </Link>

@@ -28,7 +28,7 @@ export function ContributeSection({
       : "Sign in to rate this fountain, report its status, or leave a note.";
   return (
     <section className="border-t border-border pt-4">
-      <h2 className="text-sm font-bold text-brand">Contribute</h2>
+      <h2 className="text-sm font-bold text-brand-ink">Contribute</h2>
       {!isAuthenticated ? (
         <form action={signInWithReturn.bind(null, `/fountains/${fountainId}`)} className="mt-2">
           <p className="text-sm text-muted">{signInMessage}</p>

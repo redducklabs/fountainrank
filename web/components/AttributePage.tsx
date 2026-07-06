@@ -57,10 +57,12 @@ export async function AttributePage(config: AttributePageConfig) {
       <>
         <SiteHeader variant="bar" />
         <main className={shell}>
-          <Link href="/" className="text-sm text-brand-mid underline">
+          <Link href="/" className="text-sm text-brand-ink underline">
             ← Back to the map
           </Link>
-          <h1 className="mt-6 text-lg font-bold text-brand">Couldn&rsquo;t load these fountains</h1>
+          <h1 className="mt-6 text-lg font-bold text-brand-ink">
+            Couldn&rsquo;t load these fountains
+          </h1>
           <p className="mt-2 text-muted">Please try again.</p>
         </main>
       </>
@@ -72,10 +74,10 @@ export async function AttributePage(config: AttributePageConfig) {
     <>
       <SiteHeader variant="bar" />
       <main className={shell}>
-        <Link href="/" className="text-sm text-brand-mid underline">
+        <Link href="/" className="text-sm text-brand-ink underline">
           ← Back to the map
         </Link>
-        <h1 className="mt-6 text-2xl font-black text-brand">{config.heading}</h1>
+        <h1 className="mt-6 text-2xl font-black text-brand-ink">{config.heading}</h1>
         <p className="mt-2 text-muted">{config.intro(total_count)}</p>
 
         {fountains.length > 0 ? (
@@ -86,7 +88,7 @@ export async function AttributePage(config: AttributePageConfig) {
                   href={`/fountains/${f.id}`}
                   className="flex items-center justify-between py-3 hover:bg-surface"
                 >
-                  <span className="text-brand-mid underline">
+                  <span className="text-brand-ink underline">
                     Drinking fountain{f.is_working ? "" : " · Out of order"}
                   </span>
                   <span className="text-sm text-muted">

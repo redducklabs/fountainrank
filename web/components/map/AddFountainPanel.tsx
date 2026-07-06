@@ -71,7 +71,7 @@ export function AddFountainPanel(props: AddFountainPanelProps) {
       className="absolute inset-x-0 bottom-0 z-40 mx-auto max-w-md rounded-t-2xl border border-border bg-surface-raised p-4 shadow-2xl outline-none sm:bottom-4 sm:left-auto sm:right-4 sm:mx-0 sm:rounded-2xl"
     >
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-bold text-brand">Add a fountain</h2>
+        <h2 className="text-sm font-bold text-brand-ink">Add a fountain</h2>
         <button
           type="button"
           onClick={onCancel}
@@ -280,7 +280,7 @@ function DetailsStep(props: AddFountainPanelProps) {
           <button
             type="button"
             onClick={() => setShowMoreDetails((current) => !current)}
-            className="rounded-full border border-border px-3 py-1.5 text-sm font-semibold text-brand"
+            className="rounded-full border border-border px-3 py-1.5 text-sm font-semibold text-brand-ink"
           >
             {showMoreDetails ? "Hide More Details" : "More Details"}
           </button>

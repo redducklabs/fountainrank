@@ -37,7 +37,7 @@ export function FountainDetail({
   const primary = (
     <div className="space-y-4">
       <div>
-        <h1 className="text-lg font-bold text-brand">
+        <h1 className="text-lg font-bold text-brand-ink">
           {locationLabel ?? "Public drinking fountain"}
         </h1>
         <StatusBlock
@@ -49,7 +49,7 @@ export function FountainDetail({
       </div>
       {detail.average_rating != null ? (
         <div className="flex items-center gap-3">
-          <span className="text-3xl font-extrabold leading-none text-brand">
+          <span className="text-3xl font-extrabold leading-none text-brand-ink">
             {formatAverage(detail.average_rating)}
           </span>
           <div className="flex flex-col">
@@ -78,7 +78,7 @@ export function FountainDetail({
                     size={14}
                     label={`${d.name} rated ${d.average_rating.toFixed(1)} out of 5`}
                   />
-                  <span className="font-semibold tabular-nums text-brand">
+                  <span className="font-semibold tabular-nums text-brand-ink">
                     {d.average_rating.toFixed(1)}
                   </span>
                   <span className="text-xs text-muted">({d.vote_count})</span>

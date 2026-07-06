@@ -56,7 +56,7 @@ export function ReportedPhotoActions({
           type="button"
           disabled={pending}
           onClick={() => run(() => adminHidePhoto(photoId, !isHidden))}
-          className="rounded-full border border-brand px-3 py-1.5 text-xs font-semibold text-brand hover:bg-brand/5 disabled:opacity-60"
+          className="rounded-full border border-brand px-3 py-1.5 text-xs font-semibold text-brand-ink hover:bg-brand/5 disabled:opacity-60"
         >
           {isHidden ? "Unhide" : "Hide"}
         </button>

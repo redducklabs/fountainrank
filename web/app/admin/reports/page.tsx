@@ -33,7 +33,7 @@ function ReportedPhotoRow({ photo }: { photo: ReportedPhotoOut }) {
       <div className="min-w-0 flex-1">
         <Link
           href={`/fountains/${photo.fountain_id}`}
-          className="text-sm font-semibold text-brand hover:underline"
+          className="text-sm font-semibold text-brand-ink hover:underline"
         >
           View fountain
         </Link>
@@ -80,7 +80,7 @@ export default async function AdminReportsPage() {
       <>
         <SiteHeader variant="bar" />
         <main className="mx-auto max-w-2xl px-6 py-10">
-          <h1 className="text-lg font-bold text-brand">Admin</h1>
+          <h1 className="text-lg font-bold text-brand-ink">Admin</h1>
           <p className="mt-2 text-muted">Sign in to access the admin tools.</p>
           <form action={signInWithReturn.bind(null, "/admin/reports")} className="mt-3">
             <button
@@ -99,7 +99,7 @@ export default async function AdminReportsPage() {
       <>
         <SiteHeader variant="bar" />
         <main className="mx-auto max-w-2xl px-6 py-10">
-          <h1 className="text-lg font-bold text-brand">Couldn&rsquo;t verify admin access</h1>
+          <h1 className="text-lg font-bold text-brand-ink">Couldn&rsquo;t verify admin access</h1>
           <p className="mt-2 text-muted">Please try again in a moment.</p>
         </main>
       </>
@@ -118,7 +118,7 @@ export default async function AdminReportsPage() {
     <>
       <SiteHeader variant="bar" />
       <main className="mx-auto max-w-2xl px-6 py-10">
-        <h1 className="text-lg font-bold text-brand">Photo reports</h1>
+        <h1 className="text-lg font-bold text-brand-ink">Photo reports</h1>
         <p className="mt-2 text-muted">
           Review photos flagged by the community and hide, dismiss, or delete them.
         </p>

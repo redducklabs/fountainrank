@@ -14,6 +14,7 @@
   --brand: #0a357e;
   --brand-mid: #0c44a0;
   --brand-royal: #0e4da4;
+  --brand-ink: #0a357e;
   --accent-gold: #f2c200;
   --accent-gold-hover: #ffce1f;
   --accent-subtle: #e7f0ff;
@@ -34,6 +35,7 @@
   --brand: #0a357e;
   --brand-mid: #2a5cc0;
   --brand-royal: #2a5cc0;
+  --brand-ink: #8ab4f8;
   --accent-gold: #f2c200;
   --accent-gold-hover: #ffce1f;
   --accent-subtle: #1e2e4a;
@@ -54,6 +56,7 @@
   --color-brand: var(--brand);
   --color-brand-mid: var(--brand-mid);
   --color-brand-royal: var(--brand-royal);
+  --color-brand-ink: var(--brand-ink);
   --color-accent-gold: var(--accent-gold);
   --color-accent-gold-hover: var(--accent-gold-hover);
   --color-accent-subtle: var(--accent-subtle);

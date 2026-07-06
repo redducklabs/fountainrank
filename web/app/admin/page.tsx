@@ -15,7 +15,7 @@ export default async function AdminPage() {
       <>
         <SiteHeader variant="bar" />
         <main className="mx-auto max-w-2xl px-6 py-10">
-          <h1 className="text-lg font-bold text-brand">Admin</h1>
+          <h1 className="text-lg font-bold text-brand-ink">Admin</h1>
           <p className="mt-2 text-muted">Sign in to access the admin tools.</p>
           <form action={signInWithReturn.bind(null, "/admin")} className="mt-3">
             <button
@@ -34,7 +34,7 @@ export default async function AdminPage() {
       <>
         <SiteHeader variant="bar" />
         <main className="mx-auto max-w-2xl px-6 py-10">
-          <h1 className="text-lg font-bold text-brand">Couldn&rsquo;t verify admin access</h1>
+          <h1 className="text-lg font-bold text-brand-ink">Couldn&rsquo;t verify admin access</h1>
           <p className="mt-2 text-muted">Please try again in a moment.</p>
         </main>
       </>
@@ -45,7 +45,7 @@ export default async function AdminPage() {
     <>
       <SiteHeader variant="bar" />
       <main className="mx-auto max-w-2xl px-6 py-10">
-        <h1 className="text-lg font-bold text-brand">Admin</h1>
+        <h1 className="text-lg font-bold text-brand-ink">Admin</h1>
         <p className="mt-2 text-muted">
           Moderation controls live inline on each fountain detail page.
         </p>

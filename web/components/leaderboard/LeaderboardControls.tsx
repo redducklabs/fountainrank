@@ -33,7 +33,7 @@ export function LeaderboardControls({ state }: { state: ParsedLeaderboard }) {
                 "rounded-full border px-3 py-1.5 text-sm font-semibold transition " +
                 (active
                   ? "border-brand bg-brand text-white"
-                  : "border-border bg-surface-raised text-muted hover:border-brand-mid hover:text-brand-mid")
+                  : "border-border bg-surface-raised text-muted hover:border-brand-mid hover:text-brand-ink")
               }
             >
               {SORT_LABELS[sort]}
@@ -61,7 +61,7 @@ function ScopeLink({
       aria-current={active ? "true" : undefined}
       className={
         "rounded-full px-4 py-1.5 text-sm font-semibold transition " +
-        (active ? "bg-brand text-white" : "text-muted hover:text-brand")
+        (active ? "bg-brand text-white" : "text-muted hover:text-brand-ink")
       }
     >
       {label}

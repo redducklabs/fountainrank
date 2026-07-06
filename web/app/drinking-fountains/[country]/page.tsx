@@ -63,10 +63,12 @@ export default async function CountryPage({ params }: { params: Promise<{ countr
     <>
       <SiteHeader variant="bar" />
       <main className={shell}>
-        <Link href="/" className="text-sm text-brand-mid underline">
+        <Link href="/" className="text-sm text-brand-ink underline">
           ← Back to the map
         </Link>
-        <h1 className="mt-6 text-2xl font-black text-brand">Drinking fountains in {place.name}</h1>
+        <h1 className="mt-6 text-2xl font-black text-brand-ink">
+          Drinking fountains in {place.name}
+        </h1>
         <p className="mt-2 text-muted">
           {place.fountain_count.toLocaleString()} public drinking fountains and bottle-refill
           stations mapped in {place.name} on FountainRank.
@@ -74,13 +76,13 @@ export default async function CountryPage({ params }: { params: Promise<{ countr
 
         {cities.length > 0 ? (
           <section className="mt-8">
-            <h2 className="text-lg font-bold text-brand">Top cities</h2>
+            <h2 className="text-lg font-bold text-brand-ink">Top cities</h2>
             <ul className="mt-3 divide-y divide-border">
               {cities.map((city) => (
                 <li key={city.id} className="flex items-center justify-between py-2">
                   <Link
                     href={cityPath(place.country_code, city.slug)}
-                    className="text-brand-mid underline"
+                    className="text-brand-ink underline"
                   >
                     {city.name}
                   </Link>
@@ -94,7 +96,7 @@ export default async function CountryPage({ params }: { params: Promise<{ countr
         ) : (
           <p className="mt-8 text-muted">
             Explore the{" "}
-            <Link href="/" className="text-brand-mid underline">
+            <Link href="/" className="text-brand-ink underline">
               map
             </Link>{" "}
             to find drinking fountains in {place.name}.

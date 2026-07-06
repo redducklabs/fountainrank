@@ -72,7 +72,7 @@ export function ReportPhotoDialog({
       }}
     >
       <div className="w-full max-w-sm rounded-lg bg-surface-raised p-4 shadow-xl">
-        <h2 className="text-base font-semibold text-brand">Report photo</h2>
+        <h2 className="text-base font-semibold text-brand-ink">Report photo</h2>
 
         {alreadyReported ? (
           <>

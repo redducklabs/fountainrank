@@ -58,7 +58,7 @@ export function FountainListRow({ fountain: f }: { fountain: FountainRowPin }) {
         <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
           <Link
             href={`/fountains/${f.id}`}
-            className="min-w-0 truncate text-brand-mid underline focus-visible:outline-2"
+            className="min-w-0 truncate text-brand-ink underline focus-visible:outline-2"
           >
             Drinking fountain{f.is_working ? "" : " · Out of order"}
           </Link>
@@ -73,7 +73,7 @@ export function FountainListRow({ fountain: f }: { fountain: FountainRowPin }) {
             )}
             <Link
               href={href}
-              className="whitespace-nowrap text-brand-mid underline focus-visible:outline-2"
+              className="whitespace-nowrap text-brand-ink underline focus-visible:outline-2"
             >
               See on Map
             </Link>

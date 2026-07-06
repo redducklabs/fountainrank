@@ -43,3 +43,52 @@ describe("globals.css token layer", () => {
     }
   });
 });
+
+// WCAG 2.x relative-luminance contrast ratio (no dependency) — see
+// https://www.w3.org/TR/WCAG21/#contrast-minimum. Returns the larger:smaller luminance ratio,
+// always >= 1, so callers assert a lower bound regardless of which color is lighter.
+function ratio(hexA: string, hexB: string): number {
+  const lum = (hex: string) => {
+    const n = hex.replace("#", "");
+    const c = [0, 2, 4].map((i) => parseInt(n.slice(i, i + 2), 16) / 255);
+    const lin = c.map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2];
+  };
+  const [l1, l2] = [lum(hexA), lum(hexB)].sort((a, b) => b - a);
+  return (l1 + 0.05) / (l2 + 0.05);
+}
+
+describe("WCAG AA contrast (both themes)", () => {
+  for (const [name, P] of [
+    ["light", LIGHT],
+    ["dark", DARK],
+  ] as const) {
+    it(`${name}: body text >= 4.5:1`, () => {
+      expect(ratio(P.foreground, P.background)).toBeGreaterThanOrEqual(4.5);
+      expect(ratio(P.foreground, P.surface)).toBeGreaterThanOrEqual(4.5);
+      expect(ratio(P.foreground, P["surface-raised"])).toBeGreaterThanOrEqual(4.5);
+    });
+
+    it(`${name}: on-brand (white) >= 4.5:1 on every brand band`, () => {
+      // Brand bands (bg-brand/from-brand/etc.) keep white text legible — this constrains how
+      // brand/brand-mid/brand-royal may be tuned; they stay navy-ish in both themes.
+      expect(ratio(P["on-brand"], P.brand)).toBeGreaterThanOrEqual(4.5);
+      expect(ratio(P["on-brand"], P["brand-mid"])).toBeGreaterThanOrEqual(4.5);
+      expect(ratio(P["on-brand"], P["brand-royal"])).toBeGreaterThanOrEqual(4.5);
+    });
+
+    it(`${name}: secondary/UI text >= 4.5:1 body / 3:1 large`, () => {
+      expect(ratio(P.muted, P.background)).toBeGreaterThanOrEqual(4.5);
+      expect(ratio(P.danger, P.background)).toBeGreaterThanOrEqual(3);
+    });
+
+    it(`${name}: brand-ink (heading/link text) >= 4.5:1 on every content surface`, () => {
+      // brand-ink is the TEXT-only counterpart to brand/brand-mid/brand-royal (which stay
+      // background bands) — it must read on every surface content is actually laid over.
+      expect(ratio(P["brand-ink"], P.surface)).toBeGreaterThanOrEqual(4.5);
+      expect(ratio(P["brand-ink"], P["surface-raised"])).toBeGreaterThanOrEqual(4.5);
+      expect(ratio(P["brand-ink"], P["accent-subtle"])).toBeGreaterThanOrEqual(4.5);
+      expect(ratio(P["brand-ink"], P.background)).toBeGreaterThanOrEqual(4.5);
+    });
+  }
+});

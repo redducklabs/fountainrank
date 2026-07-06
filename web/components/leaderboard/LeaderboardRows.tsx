@@ -129,7 +129,7 @@ function RankCell({ rank, you }: { rank: string; you: boolean }) {
     <span
       className={
         "w-8 shrink-0 text-right text-sm font-bold tabular-nums " +
-        (you ? "text-brand" : "text-muted")
+        (you ? "text-brand-ink" : "text-muted")
       }
     >
       {rank}
@@ -140,7 +140,7 @@ function RankCell({ rank, you }: { rank: string; you: boolean }) {
 function Metric({ value, caption }: { value: number; caption: string }) {
   return (
     <span className="shrink-0 text-right">
-      <span className="block text-base font-black tabular-nums text-brand">
+      <span className="block text-base font-black tabular-nums text-brand-ink">
         {value.toLocaleString()}
       </span>
       <span className="block text-[11px] text-muted">{caption}</span>

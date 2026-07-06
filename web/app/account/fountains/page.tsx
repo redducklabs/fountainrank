@@ -79,10 +79,10 @@ export default async function MyFountainsPage() {
     <>
       <SiteHeader variant="bar" />
       <main className={listShell}>
-        <Link href="/account" className="text-sm text-brand-mid underline">
+        <Link href="/account" className="text-sm text-brand-ink underline">
           ← Back to your account
         </Link>
-        <h1 className="mt-6 text-2xl font-black text-brand">
+        <h1 className="mt-6 text-2xl font-black text-brand-ink">
           Fountains you&rsquo;ve added or rated
         </h1>
         {fountains === null ? (
@@ -92,7 +92,7 @@ export default async function MyFountainsPage() {
         ) : (
           <p className="mt-6 text-muted">
             You haven&rsquo;t added or rated any fountains yet.{" "}
-            <Link href="/" className="text-brand-mid underline">
+            <Link href="/" className="text-brand-ink underline">
               Find one on the map.
             </Link>
           </p>

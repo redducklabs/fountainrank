@@ -67,7 +67,7 @@ export function ErrorToast({ onRetry }: { onRetry: () => void }) {
       className="absolute bottom-6 left-1/2 flex -translate-x-1/2 items-center gap-3 rounded-lg bg-surface-raised px-4 py-2 text-sm shadow"
     >
       <span className="text-foreground">Couldn&apos;t load fountains.</span>
-      <button onClick={onRetry} className="font-semibold text-brand-mid underline">
+      <button onClick={onRetry} className="font-semibold text-brand-ink underline">
         Retry
       </button>
     </div>

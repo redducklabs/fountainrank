@@ -91,10 +91,12 @@ export default async function FountainPage({ params }: { params: Promise<{ id: s
       <>
         <SiteHeader variant="bar" />
         <main className={shell}>
-          <Link href="/" className="text-sm text-brand-mid underline">
+          <Link href="/" className="text-sm text-brand-ink underline">
             ← Back to the map
           </Link>
-          <h1 className="mt-6 text-lg font-bold text-brand">Couldn&rsquo;t load this fountain</h1>
+          <h1 className="mt-6 text-lg font-bold text-brand-ink">
+            Couldn&rsquo;t load this fountain
+          </h1>
           <p className="mt-2 text-muted">Please try again.</p>
         </main>
       </>
@@ -118,7 +120,7 @@ export default async function FountainPage({ params }: { params: Promise<{ id: s
       <SiteHeader variant="bar" />
       {isAuthenticated ? <ContributionStatusOverlay /> : null}
       <main className={shell}>
-        <Link href="/" className="text-sm text-brand-mid underline">
+        <Link href="/" className="text-sm text-brand-ink underline">
           ← Back to the map
         </Link>
         <div className="mt-6">
