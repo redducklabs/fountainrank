@@ -21,6 +21,9 @@ vi.mock("./ContributeSection", () => ({
 vi.mock("./PhotoGallery", () => ({
   PhotoGallery: () => <div data-testid="photo-gallery" />,
 }));
+// The real NotesList + the fountain Report control both import the `reportContent` server
+// action; mock it so the (server-only) action module never loads into the jsdom test.
+vi.mock("../../app/actions/contribute", () => ({ reportContent: vi.fn() }));
 
 const now = new Date("2026-06-22T12:00:00Z");
 const base: Detail = {
@@ -239,5 +242,13 @@ describe("FountainDetail", () => {
     screen
       .getAllByTestId("contribute-section")
       .forEach((section) => expect(section).toHaveTextContent("authed"));
+  });
+  it("exposes a 'Report this fountain' control only for a signed-in viewer", () => {
+    const { rerender } = render(
+      <FountainDetail detail={base} notes={[]} now={now} isAuthenticated={false} />,
+    );
+    expect(screen.queryByRole("button", { name: /report this fountain/i })).not.toBeInTheDocument();
+    rerender(<FountainDetail detail={base} notes={[]} now={now} isAuthenticated={true} />);
+    expect(screen.getByRole("button", { name: /report this fountain/i })).toBeInTheDocument();
   });
 });

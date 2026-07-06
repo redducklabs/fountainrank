@@ -9,6 +9,8 @@ import { NotesList } from "./NotesList";
 import { ContributeSection } from "./ContributeSection";
 import { PhotoGallery } from "./PhotoGallery";
 import { FountainDetailTabs } from "./FountainDetailTabs";
+import { ReportControl } from "./ReportControl";
+import { REPORT_CATEGORIES } from "./reportCategories";
 
 export function FountainDetail({
   detail,
@@ -134,7 +136,12 @@ export function FountainDetail({
           <p className="mt-1 text-xs text-muted">From the person who added this fountain</p>
         </div>
       )}
-      <NotesList notes={notes} now={renderNow} />
+      <NotesList
+        notes={notes}
+        now={renderNow}
+        fountainId={detail.id}
+        isAuthenticated={isAuthenticated}
+      />
       {adminControls}
       <ContributeSection
         fountainId={detail.id}
@@ -147,6 +154,17 @@ export function FountainDetail({
         Added {formatDate(detail.created_at)}
         {detail.last_rated_at ? ` · Last rated ${formatDate(detail.last_rated_at)}` : ""}
       </p>
+      {isAuthenticated && (
+        <div className="border-t border-border pt-3">
+          <ReportControl
+            contentType="fountain"
+            fountainId={detail.id}
+            contentId={detail.id}
+            categories={REPORT_CATEGORIES.fountain}
+            label="Report this fountain"
+          />
+        </div>
+      )}
     </div>
   );
   const photoTab = (
