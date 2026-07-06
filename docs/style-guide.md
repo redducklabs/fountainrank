@@ -4,10 +4,14 @@ The single source of truth for FountainRank's visual language. Read this before
 creating any new UI element, and document new components here as they are added
 (house rule from `CLAUDE.md`).
 
-Styling is done with **Tailwind CSS v4** utility classes (`web/app/globals.css`
-is just `@import "tailwindcss";`). There is no custom CSS layer yet — brand colors
-are applied as arbitrary-value utilities (e.g. `bg-[#0A357E]`) until a token theme
-is introduced.
+Styling is done with **Tailwind CSS v4** utility classes. `web/app/globals.css` defines a
+semantic **token layer** — `:root`/`.dark` custom properties mapped to Tailwind v4 utilities
+via `@theme inline` — seeded from `web/lib/theme/palette.ts` (the single source of truth;
+the mirror is enforced by `palette.test.ts`). Surfaces are built from token utilities
+(`bg-surface`, `text-foreground`, `text-brand-ink`, `border-border`, `bg-brand`, …) that flip
+automatically when the `.dark` class is present on `<html>`; arbitrary hex utilities (e.g.
+`bg-[#0A357E]`) are no longer used for brand/neutral colors. See "Dark mode & theme tokens"
+below for the full token table and how the theme is selected.
 
 ---
 
@@ -36,6 +40,87 @@ The brand background is a top-to-bottom gradient:
 ```
 bg-gradient-to-b from-[#0A357E] via-[#0C44A0] to-[#0E4DA4]
 ```
+
+---
+
+## Dark mode & theme tokens
+
+The app supports **System / Light / Dark** appearance (#18). The token layer lives in
+`web/app/globals.css` (`:root` for light, `.dark` for dark, mirrored into Tailwind v4
+utilities via `@theme inline`), seeded from the single source of truth
+`web/lib/theme/palette.ts`. `palette.test.ts` asserts the CSS mirrors `palette.ts` exactly
+and that every WCAG AA contrast pairing below holds in both themes — tune values in
+`palette.ts` first, CSS follows.
+
+### Semantic token table
+
+| Token               | Light     | Dark      | Usage                                                                              |
+| ------------------- | --------- | --------- | ----------------------------------------------------------------------------------- |
+| `background`        | `#FFFFFF` | `#0B1220` | Page background (`bg-background`).                                                 |
+| `surface`           | `#F8FAFC` | `#111A2E` | Card/panel background one step off `background` (`bg-surface`).                    |
+| `surface-raised`    | `#FFFFFF` | `#16213A` | Elevated surface — dropdowns, modals (`bg-surface-raised`).                        |
+| `foreground`        | `#0F172A` | `#E6EDF7` | Primary body text (`text-foreground`).                                             |
+| `muted`             | `#475569` | `#9FB0C7` | Secondary/de-emphasized text (`text-muted`).                                       |
+| `border`            | `#E2E8F0` | `#26324A` | Hairline borders and dividers (`border-border`).                                   |
+| `brand`             | `#0A357E` | `#0A357E` | Brand **background** band — hero gradient top, solid brand fills (`bg-brand`).     |
+| `brand-mid`         | `#0C44A0` | `#2A5CC0` | Brand gradient middle stop (`via-brand-mid`).                                      |
+| `brand-royal`       | `#0E4DA4` | `#2A5CC0` | Brand gradient bottom stop / primary brand-blue fills (`to-brand-royal`).          |
+| `brand-ink`         | `#0A357E` | `#8AB4F8` | Brand-colored **text** on a content surface (`text-brand-ink`) — see below.        |
+| `accent-gold`       | `#F2C200` | `#F2C200` | Crown-gold accent / CTA fill (`bg-accent-gold`) — unchanged across themes.         |
+| `accent-gold-hover` | `#FFCE1F` | `#FFCE1F` | Gold hover state (`hover:bg-accent-gold-hover`).                                   |
+| `accent-subtle`     | `#E7F0FF` | `#1E2E4A` | Subtle brand-tinted fill — possible-points preview, positive attribute chips.      |
+| `water`             | `#5FC5F0` | `#5FC5F0` | Water-cyan decorative accent (glows, celebration droplets).                        |
+| `danger`            | `#B91C1C` | `#F87171` | Destructive/error text and borders (`text-danger`) — brightened in dark mode.      |
+| `on-brand`          | `#FFFFFF` | `#FFFFFF` | Text/icons placed on a `brand`/`brand-mid`/`brand-royal` background.               |
+| `map-canvas`        | `#E9EFE7` | `#0B1220` | MapLibre canvas / loading placeholder background behind the map.                  |
+| `star-empty`        | `#CBD5E1` | `#3A4A66` | Empty (unfilled) star fill in the read-only `Stars` rating component.             |
+
+### `brand` vs `brand-ink`
+
+`brand`/`brand-mid`/`brand-royal` are **background** tones for the brand band (hero gradient,
+solid brand fills) — they stay a navy family in both themes so white `on-brand` text keeps
+AA contrast on them. `brand-ink` is the paired **text** tone for brand-colored headings/links
+sitting directly on a content surface (`text-brand-ink` over `background`/`surface`/
+`surface-raised`) — the same navy in light mode, but a light blue (`#8AB4F8`) in dark mode,
+because navy text cannot meet AA on the dark surfaces.
+
+**Exception:** gold CTA buttons (`bg-accent-gold` + `text-brand`, e.g. Sign-in) intentionally
+keep the fixed navy `text-brand` in both themes — gold's brightness doesn't change with
+theme, so navy remains the correct (AA) choice there; swapping those to `brand-ink` would
+collapse the ratio to roughly 1.2:1 on the light-blue dark value.
+
+### Map paint tokens (`web/lib/map/colors.ts`)
+
+MapLibre paint is applied in JS (not CSS custom properties), so the map's colors are a
+separate `MAP_COLORS` constant keyed by resolved theme (`mapColorsFor("light" | "dark")`):
+
+| Field          | Light       | Dark             | Paint target                                    |
+| -------------- | ----------- | ---------------- | ------------------------------------------------ |
+| `cluster`      | `#0C44A0`   | `#4C82F0`        | `clusters` circle-color                         |
+| `clusterStroke`| `#FFFFFF`   | `#0B1220`        | `clusters` circle-stroke-color                  |
+| `clusterCount` | `#FFFFFF`   | `#FFFFFF`        | `cluster-count` text-color                      |
+| `pillText`     | `#0A357E`   | `#E7F0FF`        | `pins-pill` text-color                          |
+| `pillBg`       | `pill-bg`   | `pill-bg-dark`   | `pins-pill` icon-image name (themed sprite)     |
+| `halo`         | `#0C44A0`   | `#5FC5F0`        | `selected-halo` circle-color                    |
+| `selectedPin`  | `pin-selected` | `pin-selected-dark` | `selected-pin` icon-image name           |
+| `ring`         | `#0A357E`   | `#4C82F0`        | Placement-map add-bound ring line-color         |
+| `marker`       | `#0A357E`   | `#4C82F0`        | Placement-map draggable marker color            |
+
+Dark values are brightened relative to their light counterparts so pins, labels, and the
+selection halo hold contrast against the dark basemap land.
+
+### Theme selection
+
+- **Provider:** `web/app/providers.tsx` wraps the app in `next-themes`' `ThemeProvider`
+  (`attribute="class"`, `defaultTheme="system"`, `enableSystem`). `next-themes` injects a
+  pre-hydration `<script>` that sets the `.dark` class on `<html>` before first paint, so
+  there is no light→dark flash.
+- **Class-based variant:** `globals.css` overrides Tailwind v4's default
+  `prefers-color-scheme` behavior with `@custom-variant dark (&:where(.dark, .dark *));` so
+  every `dark:` utility keys off the `.dark` class rather than the OS media query directly.
+- **Default & persistence:** defaults to **System** (follows the OS); the user's explicit
+  choice is persisted to `localStorage` by `next-themes` and restored on the next visit.
+- **Control:** the `ThemeToggle` component (below) is the only UI for changing it.
 
 ---
 
@@ -209,6 +294,68 @@ Pill-shaped buttons that submit a Next.js server action (`<form action={...}>`).
   `hover:bg-white/10`, white focus ring — for use on the brand gradient.
 - Both are `rounded-full`, `px-6 py-2.5`, `text-sm font-semibold`, and carry a visible
   `focus-visible` outline for keyboard users.
+
+### Theme toggle (`web/components/ThemeToggle.tsx`)
+
+A 3-state **System / Light / Dark** control (#18) that lets a visitor override the
+OS-driven theme; the choice is persisted (`next-themes` writes it to `localStorage`) and
+survives reloads. See "Dark mode & theme tokens" above for the token layer this drives.
+
+**Placement:** the right-hand cluster of `SiteHeader` (between the points badge and
+`AuthControl`, on every full-page route) and again in the signed-in body of `/account`
+(labelled "Appearance"). The account page renders **two independent instances** at once.
+
+**Structure:** a native radio group — one `<input type="radio">` per option
+(System/Light/Dark) inside a `<fieldset>` with a screen-reader-only `<legend>Theme</legend>`.
+The radios' shared `name` is a **per-instance `useId()`** value rather than a fixed string,
+so the header instance and the account-page instance don't merge into a single native radio
+group (which would break each other's selection and keyboard navigation). Each radio is
+visually hidden (`sr-only`) behind its glyph (🖥 / ☀ / 🌙); the wrapping `<label>` renders
+the glyph and reacts to the hidden radio's state via `has-[:checked]` / `has-[:focus-visible]`.
+
+**Hydration safety:** `theme` from `next-themes` is not reliable until after mount, so the
+component reads mounted-state via `useSyncExternalStore` (server snapshot `false`, client
+snapshot `true`) — **not** a mount `useEffect` + `setState`, which the project's
+`react-hooks/set-state-in-effect` lint rule forbids. Before mount it renders a same-size,
+non-interactive, `aria-hidden` placeholder (`height: 32, width: 96`) so there is no layout
+shift and no hydration mismatch; it swaps to the real control immediately after mount.
+
+**Style:** translucent-white pill on the brand gradient (`border-white/30 bg-white/10`) —
+the same family as the header search box and the analytics-consent Decline button — legible
+on the header's blue background without competing with gold primary actions.
+
+**States:**
+
+| State                    | Styling                                                          |
+| ------------------------ | ----------------------------------------------------------------- |
+| Default                  | `hover:bg-white/10`                                              |
+| Checked (active option)  | `has-[:checked]:bg-white/25 has-[:checked]:font-semibold`         |
+| Keyboard focus           | `has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-white/70`  |
+
+**Accessibility:** native `<input type="radio">`s in a `<fieldset>`/`<legend>` give the
+browser's built-in radiogroup semantics and keyboard behavior (arrow keys move the selection,
+Tab enters/exits the group) for free; each option's radio carries its own `aria-label`
+("System"/"Light"/"Dark") so the glyph-only visible label still has an accessible name; the
+focus-visible ring is always shown for keyboard users.
+
+```tsx
+<fieldset className="inline-flex items-center rounded-full border border-white/30 bg-white/10 p-0.5 text-white">
+  <legend className="sr-only">Theme</legend>
+  <label className="flex h-7 w-8 cursor-pointer items-center justify-center rounded-full text-sm transition hover:bg-white/10 has-[:checked]:bg-white/25 has-[:checked]:font-semibold has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-white/70">
+    <input
+      type="radio"
+      name={groupName}
+      value="dark"
+      checked={theme === "dark"}
+      onChange={() => setTheme("dark")}
+      aria-label="Dark"
+      className="sr-only"
+    />
+    <span aria-hidden="true">🌙</span>
+  </label>
+  {/* …System (🖥), Light (☀) siblings, same shape… */}
+</fieldset>
+```
 
 ### Account panel (`web/app/account/page.tsx`)
 
