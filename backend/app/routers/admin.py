@@ -115,6 +115,7 @@ async def admin_patch_fountain(
 
     changes: dict[str, dict[str, object | None]] = {}
     recompute_ranking = False
+    resolved_reports = 0
     if "location" in payload.model_fields_set:
         if payload.location is None:
             raise HTTPException(
@@ -161,6 +162,12 @@ async def admin_patch_fountain(
     if "is_hidden" in payload.model_fields_set and fountain.is_hidden != payload.is_hidden:
         changes["is_hidden"] = {"before": fountain.is_hidden, "after": payload.is_hidden}
         fountain.is_hidden = bool(payload.is_hidden)
+        # On a false->true hide, resolve this fountain's pending fountain-type reports (NOT the
+        # note/photo reports under it — those are separate queue items) (#12, spec §4).
+        if fountain.is_hidden:
+            resolved_reports = await _resolve_pending_reports(
+                session, "fountain", fountain.id, admin, "hidden"
+            )
 
     if recompute_ranking:
         await recompute_fountain_ranking(session, fountain.id)
@@ -184,6 +191,7 @@ async def admin_patch_fountain(
             "target_type": "fountain",
             "target_id": str(fountain.id),
             "changed_fields": changes,
+            "resolved_reports": resolved_reports,
         },
     )
     return await _serialize_admin_fountain(session, fountain, admin)
@@ -262,11 +270,17 @@ async def admin_patch_note(
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="note not found")
     note, author = row
     before_hidden = note.is_hidden
+    resolved_reports = 0
     if payload.is_hidden:
+        # Resolve this note's pending reports only on the false->true transition (an already-hidden
+        # note's reports were resolved on the first hide) — mirrors admin_patch_photo (#12).
         if not note.is_hidden:
             note.hidden_by_user_id = admin.id
             note.hidden_at = datetime.now(tz=UTC)
-        note.is_hidden = True
+            note.is_hidden = True
+            resolved_reports = await _resolve_pending_reports(
+                session, "note", note.id, admin, "hidden"
+            )
     else:
         note.is_hidden = False
         note.hidden_by_user_id = None
@@ -283,6 +297,7 @@ async def admin_patch_note(
             "changed_fields": {
                 "is_hidden": {"before": before_hidden, "after": note.is_hidden},
                 "body_length": len(note.body),
+                "resolved_reports": resolved_reports,
             },
         },
     )
@@ -435,15 +450,21 @@ async def admin_photo_reports_summary(
 
 
 async def _resolve_pending_reports(
-    session: AsyncSession, photo_id: uuid.UUID, admin: User, resolution: str
+    session: AsyncSession,
+    content_type: str,
+    content_id: uuid.UUID,
+    admin: User,
+    resolution: str,
 ) -> int:
-    """Resolve every still-pending report on a photo with the given resolution
-    (`hidden` on a moderation hide, `rejected` on a dismiss). Returns the number resolved."""
+    """Resolve every still-pending report on a content item (photo/note/fountain) with the given
+    resolution (`hidden` on a moderation hide, `rejected` on a dismiss). Returns the number
+    resolved. Photo callers pass `content_type='photo'`; note/fountain hide + the generalized
+    dismiss pass their own type (#12)."""
     result = await session.execute(
         update(ContentReport)
         .where(
-            ContentReport.content_type == "photo",
-            ContentReport.content_id == photo_id,
+            ContentReport.content_type == content_type,
+            ContentReport.content_id == content_id,
             ContentReport.status == "pending",
         )
         .values(
@@ -482,7 +503,9 @@ async def admin_patch_photo(
             photo.hidden_by_user_id = admin.id
             photo.hidden_at = datetime.now(tz=UTC)
             photo.is_hidden = True
-            resolved_reports = await _resolve_pending_reports(session, photo_id, admin, "hidden")
+            resolved_reports = await _resolve_pending_reports(
+                session, "photo", photo_id, admin, "hidden"
+            )
             await reverse_contribution_for_target(session, "photo", photo_id)
     else:
         if photo.is_hidden:
@@ -523,7 +546,7 @@ async def admin_dismiss_photo_reports(
     if exists is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="photo not found")
 
-    resolved = await _resolve_pending_reports(session, photo_id, admin, "rejected")
+    resolved = await _resolve_pending_reports(session, "photo", photo_id, admin, "rejected")
     await session.commit()
     logger.info(
         "admin photo mutation",
