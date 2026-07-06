@@ -12,9 +12,9 @@ import { useApi } from "../../providers/api-provider";
 import { useAuth } from "../../providers/auth-provider";
 import { colors } from "../../theme";
 
-type PhotoReportsSummary = components["schemas"]["PhotoReportsSummary"];
+type ReportsSummary = components["schemas"]["ReportsSummary"];
 
-const SUMMARY_QUERY_KEY = ["admin", "photo-reports", "summary"] as const;
+const SUMMARY_QUERY_KEY = ["admin", "reports", "summary"] as const;
 
 const ICON_SIZE = 24;
 const RING_WIDTH = 2;
@@ -48,12 +48,13 @@ const INACTIVE_COLOR = "#64748B";
  * gating on it (rather than on the cached data alone) avoids showing the previous user's photo on a
  * shared device.
  *
- * Admins additionally get a small pending-photo-report count badge overlaid on the
+ * Admins additionally get a small pending-report count badge overlaid on the
  * avatar/glyph (style guide "Pending-report badge"), fed by a `useQuery` polling
- * `GET /api/v1/admin/photo-reports/summary` every 60s under the SAME query key
- * (`["admin","photo-reports","summary"]`) the admin reports screen (M5) invalidates on
+ * `GET /api/v1/admin/reports/summary` every 60s under the SAME query key
+ * (`["admin","reports","summary"]`) the admin moderation screen invalidates on
  * every moderation action, so the badge updates live without waiting for its own poll
- * tick. The query is `enabled` only for a confirmed admin (`me.data?.is_admin === true`)
+ * tick. As of #12 this counts distinct pending items across ALL report types (photo/note/
+ * fountain). The query is `enabled` only for a confirmed admin (`me.data?.is_admin === true`)
  * — never fetched or polled for a non-admin viewer, avoiding 403 spam from this
  * persistent tab-bar component.
  */
@@ -62,17 +63,17 @@ export function ProfileTabIcon({ focused }: { focused: boolean }) {
   const { client } = useApi();
   const me = useQuery<MeProfile>({ queryKey: ["me"], queryFn: skipToken });
   const isAdmin = me.data?.is_admin === true;
-  // Admin-only, polled pending-photo-report count (style guide "Pending-report badge"):
+  // Admin-only, polled pending-report count (style guide "Pending-report badge"):
   // never fetched/polled for a non-admin viewer, so signed-in members never 403-spam this
   // staff-only endpoint from the persistent tab bar.
-  const summary = useQuery<PhotoReportsSummary>({
+  const summary = useQuery<ReportsSummary>({
     queryKey: SUMMARY_QUERY_KEY,
-    queryFn: async () => unwrap(await client.GET("/api/v1/admin/photo-reports/summary")),
+    queryFn: async () => unwrap(await client.GET("/api/v1/admin/reports/summary")),
     enabled: isAdmin,
     refetchInterval: 60_000,
     staleTime: 30_000,
   });
-  const pendingCount = summary.data?.pending_photo_count;
+  const pendingCount = summary.data?.pending_count;
   const showBadge = isAdmin && shouldShowBadge(pendingCount);
   const avatarUrl = auth.status === "authenticated" ? me.data?.avatar_url : undefined;
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
@@ -80,7 +81,7 @@ export function ProfileTabIcon({ focused }: { focused: boolean }) {
   const showImage = !imageErrored && profileTabIcon(avatarUrl, focused) === "image";
 
   const badge = showBadge ? (
-    <View style={styles.badge} accessibilityLabel={`${pendingCount} pending photo reports`}>
+    <View style={styles.badge} accessibilityLabel={`${pendingCount} pending reports`}>
       <Text style={styles.badgeText} accessibilityElementsHidden importantForAccessibility="no">
         {formatBadgeCount(pendingCount as number)}
       </Text>
