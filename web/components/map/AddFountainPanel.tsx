@@ -68,9 +68,9 @@ export function AddFountainPanel(props: AddFountainPanelProps) {
       role="dialog"
       aria-label="Add a fountain"
       tabIndex={-1}
-      className="absolute inset-x-0 bottom-0 z-40 mx-auto max-w-md rounded-t-2xl border border-border bg-surface-raised p-4 shadow-2xl outline-none sm:bottom-4 sm:left-auto sm:right-4 sm:mx-0 sm:rounded-2xl"
+      className="absolute inset-x-0 bottom-0 z-40 mx-auto flex max-h-full max-w-md flex-col rounded-t-2xl border border-border bg-surface-raised p-4 shadow-2xl outline-none sm:bottom-4 sm:left-auto sm:right-4 sm:mx-0 sm:max-h-[calc(100%-2rem)] sm:rounded-2xl"
     >
-      <div className="flex items-center justify-between">
+      <div className="flex shrink-0 items-center justify-between">
         <h2 className="text-sm font-bold text-brand-ink">Add a fountain</h2>
         <button
           type="button"
@@ -81,64 +81,70 @@ export function AddFountainPanel(props: AddFountainPanelProps) {
           ✕
         </button>
       </div>
-      {phase === "placing" && <PlacingStep {...props} />}
-      {phase === "details" && <DetailsStep {...props} />}
-      {(phase === "submitting" || phase === "done") && (
-        <p role="status" className="mt-3 text-sm text-muted">
-          {phase === "submitting" ? "Adding…" : "Fountain added."}
-        </p>
-      )}
-      {phase === "duplicate" && (
-        <div className="mt-3 space-y-2">
-          <p role="status" className="text-sm text-foreground">
-            A fountain already exists here.
+      {/* The details step can be taller than the space between the fixed header and the bottom of
+          the screen on a phone. The panel is capped at its container's height (max-h-full → the
+          map layer, which fills <main> below the header) and this body scrolls, so the top of the
+          form stays reachable instead of hiding behind the header (matches FountainDetailTabs). */}
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        {phase === "placing" && <PlacingStep {...props} />}
+        {phase === "details" && <DetailsStep {...props} />}
+        {(phase === "submitting" || phase === "done") && (
+          <p role="status" className="mt-3 text-sm text-muted">
+            {phase === "submitting" ? "Adding…" : "Fountain added."}
           </p>
-          {props.duplicateId && (
-            <Link
-              href={`/fountains/${props.duplicateId}`}
-              onClick={props.onViewDuplicate}
-              className="inline-block rounded-full bg-accent-gold px-4 py-2 text-sm font-bold text-brand"
-            >
-              View it
-            </Link>
-          )}
-        </div>
-      )}
-      {phase === "error" && (
-        <div className="mt-3 space-y-2">
-          <p role="status" className="text-sm text-danger">
-            {props.errorKind ? ERROR_COPY[props.errorKind] : ERROR_COPY.server}
-          </p>
-          {props.errorKind === "unauthenticated" ? (
-            // An expired session can't be retried — send the user back through sign-in (spec §8),
-            // returning to the add flow. A "use server" action must run from a form action, not onClick.
-            <form action={signInWithReturn.bind(null, "/?add=1")}>
-              <button
-                type="submit"
-                className="rounded-full bg-accent-gold px-4 py-2 text-sm font-bold text-brand"
+        )}
+        {phase === "duplicate" && (
+          <div className="mt-3 space-y-2">
+            <p role="status" className="text-sm text-foreground">
+              A fountain already exists here.
+            </p>
+            {props.duplicateId && (
+              <Link
+                href={`/fountains/${props.duplicateId}`}
+                onClick={props.onViewDuplicate}
+                className="inline-block rounded-full bg-accent-gold px-4 py-2 text-sm font-bold text-brand"
               >
-                Sign in
+                View it
+              </Link>
+            )}
+          </div>
+        )}
+        {phase === "error" && (
+          <div className="mt-3 space-y-2">
+            <p role="status" className="text-sm text-danger">
+              {props.errorKind ? ERROR_COPY[props.errorKind] : ERROR_COPY.server}
+            </p>
+            {props.errorKind === "unauthenticated" ? (
+              // An expired session can't be retried — send the user back through sign-in (spec §8),
+              // returning to the add flow. A "use server" action must run from a form action, not onClick.
+              <form action={signInWithReturn.bind(null, "/?add=1")}>
+                <button
+                  type="submit"
+                  className="rounded-full bg-accent-gold px-4 py-2 text-sm font-bold text-brand"
+                >
+                  Sign in
+                </button>
+              </form>
+            ) : props.errorKind === "needs_name" ? (
+              // Retrying won't help until a name is set — send the user to the account name gate.
+              <Link
+                href="/account"
+                className="inline-block rounded-full bg-accent-gold px-4 py-2 text-sm font-bold text-brand"
+              >
+                Set your name
+              </Link>
+            ) : (
+              <button
+                type="button"
+                onClick={props.onSubmit}
+                className="rounded-full bg-brand px-4 py-2 text-sm font-bold text-white"
+              >
+                Try again
               </button>
-            </form>
-          ) : props.errorKind === "needs_name" ? (
-            // Retrying won't help until a name is set — send the user to the account name gate.
-            <Link
-              href="/account"
-              className="inline-block rounded-full bg-accent-gold px-4 py-2 text-sm font-bold text-brand"
-            >
-              Set your name
-            </Link>
-          ) : (
-            <button
-              type="button"
-              onClick={props.onSubmit}
-              className="rounded-full bg-brand px-4 py-2 text-sm font-bold text-white"
-            >
-              Try again
-            </button>
-          )}
-        </div>
-      )}
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
