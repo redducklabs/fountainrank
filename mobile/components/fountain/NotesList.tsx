@@ -1,5 +1,5 @@
 import type { components } from "@fountainrank/api-client";
-import { StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { isNoteEdited } from "../../lib/detail/notes";
 import { formatRelativeTime } from "../../lib/map/format";
@@ -7,7 +7,16 @@ import { colors, spacing, typography } from "../../theme";
 
 type NoteOut = components["schemas"]["NoteOut"];
 
-export function NotesList({ notes, now }: { notes: NoteOut[]; now: Date }) {
+export function NotesList({
+  notes,
+  now,
+  onReportNote,
+}: {
+  notes: NoteOut[];
+  now: Date;
+  /** When provided (signed-in reader), each note row shows a "Report" trigger (#11). */
+  onReportNote?: (note: NoteOut) => void;
+}) {
   if (notes.length === 0) return null;
   return (
     <View style={styles.wrap}>
@@ -15,11 +24,24 @@ export function NotesList({ notes, now }: { notes: NoteOut[]; now: Date }) {
       {notes.map((note) => (
         <View key={note.id} style={styles.card}>
           <Text style={styles.body}>{note.body}</Text>
-          <Text style={styles.byline}>
-            {`— ${note.author_display_name} · ${formatRelativeTime(note.created_at, now)}${
-              isNoteEdited(note) ? " · edited" : ""
-            }`}
-          </Text>
+          <View style={styles.footer}>
+            <Text style={styles.byline}>
+              {`— ${note.author_display_name} · ${formatRelativeTime(note.created_at, now)}${
+                isNoteEdited(note) ? " · edited" : ""
+              }`}
+            </Text>
+            {onReportNote ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Report this note"
+                onPress={() => onReportNote(note)}
+                style={styles.reportButton}
+                hitSlop={spacing.xs}
+              >
+                <Text style={styles.reportText}>Report</Text>
+              </Pressable>
+            ) : null}
+          </View>
         </View>
       ))}
     </View>
@@ -38,5 +60,13 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
   },
   body: { ...typography.body, color: colors.text },
-  byline: { ...typography.meta, color: colors.textMuted },
+  footer: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.sm,
+  },
+  byline: { ...typography.meta, color: colors.textMuted, flexShrink: 1 },
+  reportButton: { paddingHorizontal: spacing.xs, paddingVertical: 2 },
+  reportText: { ...typography.meta, color: colors.textMuted, fontWeight: "700" },
 });

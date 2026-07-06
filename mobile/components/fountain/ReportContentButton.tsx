@@ -1,43 +1,44 @@
-import type { components } from "@fountainrank/api-client";
 import { useState } from "react";
 import { Modal, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import type { ContributionError } from "../../lib/contributions/state";
 import { contributionErrorText } from "../../lib/contributions/state";
+import {
+  REPORT_CONTENT_NOUN,
+  type ReportCategoryOption,
+  type ReportContentType,
+} from "../../lib/detail/report";
 import { colors, spacing, typography } from "../../theme";
 
-type PhotoOut = components["schemas"]["PhotoOut"];
-type ReportCategory = components["schemas"]["ReportPhotoRequest"]["category"];
-
-const CATEGORIES: { value: ReportCategory; label: string }[] = [
-  { value: "inappropriate", label: "Inappropriate" },
-  { value: "not_a_fountain", label: "Not a fountain" },
-  { value: "spam", label: "Spam" },
-  { value: "other", label: "Other" },
-];
-
-/** The photo-report sheet, opened via `PhotoCarousel`'s "Report" trigger. A plain-props
- *  Modal (no dialog library exists in this app yet) mirroring the web `ReportPhotoDialog`'s
- *  category + optional note shape. `report_photo` (design §8.3) is idempotent server-side, so
- *  unlike the web dialog this doesn't need an `alreadyReported` short-circuit — a duplicate
+/** The generalized content-report sheet (#11) — replaces the photo-only `ReportPhotoButton`,
+ *  parameterized by `contentType` + its allowed `categories` (spec §6/§10). Opened via the
+ *  per-content "Report" triggers (photo carousel, each note row, the fountain detail). A
+ *  plain-props Modal (no dialog library exists in this app yet) mirroring the web
+ *  `ReportContentDialog`'s category + optional note shape. The nested report endpoint is
+ *  idempotent server-side (design §7), so — unlike a dedup-tracking web dialog — a duplicate
  *  pending report from the same reporter is silently accepted (204) and shown as success.
- *  The caller should remount this component per photo (e.g. `key={photo?.id}`) so the local
- *  form state resets between reports. */
-export function ReportPhotoButton({
-  photo,
+ *  The caller should remount this per target (e.g. `key={contentType:contentId}`) so the
+ *  local form state resets between reports. */
+export function ReportContentButton({
+  contentType,
+  categories,
+  visible,
   pending,
   onSubmit,
   onClose,
 }: {
-  photo: PhotoOut | null;
+  contentType: ReportContentType;
+  categories: readonly ReportCategoryOption[];
+  visible: boolean;
   pending: boolean;
   onSubmit: (
-    category: ReportCategory,
+    category: string,
     note: string | undefined,
   ) => Promise<{ ok: true } | { ok: false; error: ContributionError }>;
   onClose: () => void;
 }) {
-  const [category, setCategory] = useState<ReportCategory>("inappropriate");
+  const noun = REPORT_CONTENT_NOUN[contentType];
+  const [category, setCategory] = useState<string>(categories[0]?.value ?? "");
   const [note, setNote] = useState("");
   const [message, setMessage] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
   const [submitted, setSubmitted] = useState(false);
@@ -46,21 +47,21 @@ export function ReportPhotoButton({
     const result = await onSubmit(category, note.trim() || undefined);
     if (result.ok) {
       setSubmitted(true);
-      setMessage({ tone: "ok", text: "Thanks — this photo was reported." });
+      setMessage({ tone: "ok", text: `Thanks — this ${noun} was reported.` });
     } else {
       setMessage({ tone: "err", text: contributionErrorText(result.error) });
     }
   }
 
   return (
-    <Modal visible={photo != null} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.overlay}>
         <View style={styles.sheet}>
-          <Text style={styles.title}>Report photo</Text>
+          <Text style={styles.title}>{`Report ${noun}`}</Text>
 
           <Text style={styles.label}>Reason</Text>
           <View style={styles.categories}>
-            {CATEGORIES.map((c) => {
+            {categories.map((c) => {
               const selected = c.value === category;
               return (
                 <Pressable

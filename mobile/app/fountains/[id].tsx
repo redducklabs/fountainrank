@@ -22,7 +22,7 @@ import { FountainDetail } from "../../components/fountain/FountainDetail";
 import { NoteContributionForm } from "../../components/fountain/NoteContributionForm";
 import { PhotoUploadButton } from "../../components/fountain/PhotoUploadButton";
 import { RatingContributionForm } from "../../components/fountain/RatingContributionForm";
-import { ReportPhotoButton } from "../../components/fountain/ReportPhotoButton";
+import { ReportContentButton } from "../../components/fountain/ReportContentButton";
 import { ScreenContainer } from "../../components/ScreenContainer";
 import { QueryStateView } from "../../components/states/QueryStateView";
 import { apiErrorStatus, unwrap } from "../../lib/api";
@@ -34,6 +34,11 @@ import {
   mapPhotoUploadError,
   PhotoUploadError,
 } from "../../lib/detail/photo-upload";
+import {
+  REPORT_CATEGORIES,
+  reportContent,
+  type ReportContentType,
+} from "../../lib/detail/report";
 import { useApi } from "../../providers/api-provider";
 import { useAuth } from "../../providers/auth-provider";
 import { colors, spacing, typography } from "../../theme";
@@ -41,7 +46,7 @@ import { colors, spacing, typography } from "../../theme";
 type FountainDetailT = components["schemas"]["FountainDetail"];
 type NoteOut = components["schemas"]["NoteOut"];
 type PhotoOut = components["schemas"]["PhotoOut"];
-type ReportPhotoRequest = components["schemas"]["ReportPhotoRequest"];
+type ReportTarget = { contentType: ReportContentType; contentId: string };
 type AdminFountainDetail = components["schemas"]["AdminFountainDetail"];
 type AdminFountainPatch = components["schemas"]["AdminFountainPatch"];
 type AdminNoteOut = components["schemas"]["AdminNoteOut"];
@@ -72,7 +77,7 @@ export default function FountainDetailScreen() {
   const [showMoreDetails, setShowMoreDetails] = useState(false);
   const [celebrationKey, setCelebrationKey] = useState(0);
   const [celebrationPoints, setCelebrationPoints] = useState<number | null>(null);
-  const [reportingPhoto, setReportingPhoto] = useState<PhotoOut | null>(null);
+  const [reportTarget, setReportTarget] = useState<ReportTarget | null>(null);
   const [photoUploadMessage, setPhotoUploadMessage] = useState<{
     tone: "ok" | "err";
     text: string;
@@ -218,13 +223,13 @@ export default function FountainDetailScreen() {
     }
   };
 
-  const submitPhotoReport = async (
-    photoId: string,
-    category: ReportPhotoRequest["category"],
+  const submitReport = async (
+    category: string,
     note: string | undefined,
   ): Promise<SubmitResult> => {
+    if (reportTarget == null) return { ok: false, error: "server" };
     try {
-      await photoReportMutation.mutateAsync({ photoId, category, note });
+      await reportMutation.mutateAsync({ ...reportTarget, category, note });
       return { ok: true };
     } catch (error) {
       return handleMutationError(error);
@@ -340,15 +345,15 @@ export default function FountainDetailScreen() {
     },
   });
 
-  const photoReportMutation = useMutation({
-    mutationFn: async (body: ReportPhotoRequest & { photoId: string }): Promise<void> => {
+  const reportMutation = useMutation({
+    mutationFn: async ({
+      contentType,
+      contentId,
+      category,
+      note,
+    }: ReportTarget & { category: string; note: string | undefined }): Promise<void> => {
       if (fountainId == null) throw new Error("missing fountain id");
-      unwrap(
-        await client.POST("/api/v1/fountains/{fountain_id}/photos/{photo_id}/report", {
-          params: { path: { fountain_id: fountainId, photo_id: body.photoId } },
-          body: { category: body.category, note: body.note },
-        }),
-      );
+      await reportContent(client, { contentType, fountainId, contentId, category, note });
     },
   });
 
@@ -455,9 +460,21 @@ export default function FountainDetailScreen() {
               photos={photosQuery.data}
               apiBaseUrl={config.apiBaseUrl}
               onReportPhoto={
-                auth.status === "authenticated" ? (photo) => setReportingPhoto(photo) : undefined
+                auth.status === "authenticated"
+                  ? (photo) => setReportTarget({ contentType: "photo", contentId: photo.id })
+                  : undefined
               }
               onDeletePhoto={auth.status === "authenticated" ? confirmDeletePhoto : undefined}
+              onReportNote={
+                auth.status === "authenticated"
+                  ? (note) => setReportTarget({ contentType: "note", contentId: note.id })
+                  : undefined
+              }
+              onReportFountain={
+                auth.status === "authenticated"
+                  ? () => setReportTarget({ contentType: "fountain", contentId: fountainId })
+                  : undefined
+              }
               adminControls={
                 adminDetail ? (
                   <AdminControls
@@ -567,15 +584,14 @@ export default function FountainDetailScreen() {
         </ScrollView>
         <WaterCelebration triggerKey={celebrationKey} points={celebrationPoints} />
       </QueryStateView>
-      <ReportPhotoButton
-        key={reportingPhoto?.id ?? "closed"}
-        photo={reportingPhoto}
-        pending={photoReportMutation.isPending}
-        onSubmit={async (category, note) => {
-          if (reportingPhoto == null) return { ok: false, error: "server" };
-          return submitPhotoReport(reportingPhoto.id, category, note);
-        }}
-        onClose={() => setReportingPhoto(null)}
+      <ReportContentButton
+        key={reportTarget ? `${reportTarget.contentType}:${reportTarget.contentId}` : "closed"}
+        contentType={reportTarget?.contentType ?? "photo"}
+        categories={REPORT_CATEGORIES[reportTarget?.contentType ?? "photo"]}
+        visible={reportTarget != null}
+        pending={reportMutation.isPending}
+        onSubmit={submitReport}
+        onClose={() => setReportTarget(null)}
       />
     </ScreenContainer>
   );
