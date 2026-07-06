@@ -50,7 +50,10 @@ describe("ReportContentDialog", () => {
       />,
     );
     fireEvent.change(screen.getByLabelText(/reason/i), { target: { value: "abuse" } });
-    fireEvent.change(screen.getByLabelText(/note/i), { target: { value: "  harassment  " } });
+    // Specific label — /note/i alone also matches the dialog's aria-label "Report note".
+    fireEvent.change(screen.getByLabelText(/note \(optional\)/i), {
+      target: { value: "  harassment  " },
+    });
     fireEvent.click(screen.getByRole("button", { name: /submit report/i }));
     await waitFor(() =>
       expect(reportContent).toHaveBeenCalledWith("note", "fid", "nid", "abuse", "harassment"),

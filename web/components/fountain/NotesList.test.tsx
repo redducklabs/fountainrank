@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { NoteOut } from "../../lib/fountains";
 
@@ -80,7 +80,7 @@ describe("NotesList", () => {
     const reportButtons = screen.getAllByRole("button", { name: /^report$/i });
     expect(reportButtons).toHaveLength(2);
     // Opening one surfaces the generalized dialog titled for a note report.
-    reportButtons[0].click();
+    fireEvent.click(reportButtons[0]);
     expect(screen.getByRole("dialog", { name: /report note/i })).toBeInTheDocument();
   });
 });

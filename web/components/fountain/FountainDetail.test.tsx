@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { components } from "@fountainrank/api-client";
 import type { FountainDetail as Detail } from "../../lib/fountains";
@@ -247,8 +247,11 @@ describe("FountainDetail", () => {
     const { rerender } = render(
       <FountainDetail detail={base} notes={[]} now={now} isAuthenticated={false} />,
     );
+    // The control lives on the Details tab; activate it so getByRole sees the un-hidden panel.
+    fireEvent.click(screen.getByRole("tab", { name: "Details" }));
     expect(screen.queryByRole("button", { name: /report this fountain/i })).not.toBeInTheDocument();
     rerender(<FountainDetail detail={base} notes={[]} now={now} isAuthenticated={true} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Details" }));
     expect(screen.getByRole("button", { name: /report this fountain/i })).toBeInTheDocument();
   });
 });
