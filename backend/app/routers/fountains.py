@@ -1209,3 +1209,31 @@ async def report_note(
         category=payload.category,
         note=payload.note,
     )
+
+
+@router.post("/fountains/{fountain_id}/report", status_code=status.HTTP_204_NO_CONTENT)
+async def report_fountain(
+    fountain_id: uuid.UUID,
+    payload: ReportContentRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    """Flag a fountain for moderation (#11). Any signed-in user may report ANY existing fountain
+    (any created_source) — the report is signal-only; #12 decides the action. The shared
+    chokepoint validates the category (422 outside the fountain set), dedupes (idempotent 204),
+    and rate-limits a genuinely new report (429). For a fountain report content_id == the
+    fountain_id."""
+    exists = (
+        await session.execute(select(Fountain.id).where(Fountain.id == fountain_id))
+    ).scalar_one_or_none()
+    if exists is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="fountain not found")
+    await create_content_report(
+        session,
+        content_type="fountain",
+        content_id=fountain_id,
+        fountain_id=fountain_id,
+        reporter_user_id=user.id,
+        category=payload.category,
+        note=payload.note,
+    )

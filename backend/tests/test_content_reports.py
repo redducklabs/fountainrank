@@ -234,3 +234,95 @@ async def test_report_note_raw_text_never_logged(session, client, test_user, cap
         )
         assert resp.status_code == 204
     assert sentinel not in caplog.text
+
+
+# --- B3: fountain report ------------------------------------------------------------
+
+
+async def test_report_fountain_creates_pending_row(session, client, test_user):
+    fountain = await _add_fountain(session)
+    fid, uid = fountain.id, test_user.id
+
+    resp = await client.post(
+        f"/api/v1/fountains/{fid}/report",
+        json={"category": "not_a_fountain", "note": "this is a bench"},
+    )
+    assert resp.status_code == 204, resp.text
+
+    await session.rollback()
+    row = (
+        await session.execute(select(ContentReport).where(ContentReport.content_id == fid))
+    ).scalar_one()
+    assert row.content_type == "fountain"
+    assert row.fountain_id == fid  # for a fountain report, content_id == fountain_id
+    assert row.reporter_user_id == uid
+    assert row.category == "not_a_fountain"
+    assert row.status == "pending"
+
+
+async def test_report_fountain_category_outside_fountain_set_422(session, client, test_user):
+    fountain = await _add_fountain(session)
+    fid = fountain.id
+
+    # 'abuse' is a note category, NOT allowed for a fountain.
+    resp = await client.post(f"/api/v1/fountains/{fid}/report", json={"category": "abuse"})
+    assert resp.status_code == 422
+    await session.rollback()
+    assert (
+        await session.execute(select(ContentReport).where(ContentReport.content_id == fid))
+    ).scalar_one_or_none() is None
+
+
+async def test_report_osm_imported_fountain_allowed(session, client, test_user):
+    fountain = await _add_fountain(session, created_source="osm")
+    fid = fountain.id
+
+    resp = await client.post(f"/api/v1/fountains/{fid}/report", json={"category": "spam"})
+    assert resp.status_code == 204
+    await session.rollback()
+    assert (
+        await session.execute(select(ContentReport).where(ContentReport.content_id == fid))
+    ).scalar_one_or_none() is not None
+
+
+async def test_report_fountain_duplicate_pending_is_idempotent(session, client, test_user):
+    fountain = await _add_fountain(session)
+    fid = fountain.id
+
+    r1 = await client.post(f"/api/v1/fountains/{fid}/report", json={"category": "spam"})
+    r2 = await client.post(f"/api/v1/fountains/{fid}/report", json={"category": "inappropriate"})
+    assert r1.status_code == 204
+    assert r2.status_code == 204
+
+    await session.rollback()
+    rows = (
+        (await session.execute(select(ContentReport).where(ContentReport.content_id == fid)))
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+    assert rows[0].category == "spam"
+
+
+async def test_report_fountain_rate_limited_429(session, client, test_user):
+    fountain = await _add_fountain(session)
+    # Fill the reporter's minute window; the fountain report is then a NEW report -> 429.
+    await _seed_reports_for(session, test_user, fountain, REPORTS_PER_MIN)
+
+    resp = await client.post(f"/api/v1/fountains/{fountain.id}/report", json={"category": "spam"})
+    assert resp.status_code == 429
+    assert "Retry-After" in resp.headers
+
+
+async def test_report_fountain_note_too_long_422(session, client, test_user):
+    fountain = await _add_fountain(session)
+    resp = await client.post(
+        f"/api/v1/fountains/{fountain.id}/report",
+        json={"category": "spam", "note": "x" * 501},
+    )
+    assert resp.status_code == 422
+
+
+async def test_report_fountain_unknown_404(session, client, test_user):
+    resp = await client.post(f"/api/v1/fountains/{uuid.uuid4()}/report", json={"category": "spam"})
+    assert resp.status_code == 404
