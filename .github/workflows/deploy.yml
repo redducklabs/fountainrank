@@ -73,6 +73,19 @@ jobs:
         run: |
           docker build -t "$REGISTRY/fountainrank-backend:$IMAGE_TAG" backend
           docker push "$REGISTRY/fountainrank-backend:$IMAGE_TAG"
+      - name: Verify dark basemap style is live (rollout gate)
+        env:
+          # Must match the web build args below (spec §7): the client requests
+          # style.dark.json?v=$BASEMAP_STYLE_VER; fail the deploy if it isn't published.
+          BASEMAP_CDN: fountainrank-basemap.sfo3.cdn.digitaloceanspaces.com
+          BASEMAP_STYLE_VER: "2"
+        run: |
+          url="https://${BASEMAP_CDN}/style.dark.json?v=${BASEMAP_STYLE_VER}"
+          st=$(curl -s -o /dev/null -w '%{http_code}' -m 30 "$url")
+          if [ "$st" != "200" ]; then
+            echo "::error::dark basemap not live: ${url} -> ${st} (run basemap-upload first)"; exit 1
+          fi
+          echo "dark basemap style live (${url})."
       - name: Build + push web
         env:
           REGISTRY: registry.digitalocean.com/${{ vars.DO_REGISTRY }}
