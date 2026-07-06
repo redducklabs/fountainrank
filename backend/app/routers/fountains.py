@@ -9,7 +9,7 @@ from sqlalchemy import cast, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import get_optional_user, require_named_user
+from app.auth import get_current_user, get_optional_user, require_named_user
 from app.conditions import recompute_fountain_status
 from app.config import Settings, get_settings
 from app.consensus import recompute_attribute_consensus
@@ -55,6 +55,7 @@ from app.models import (
     User,
 )
 from app.ranking import recompute_fountain_ranking
+from app.reports import create_content_report
 from app.schemas import (
     AddFountainRequest,
     AddNoteRequest,
@@ -74,6 +75,7 @@ from app.schemas import (
     PlaceOut,
     RateRequest,
     RatingInput,
+    ReportContentRequest,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["fountains"])
@@ -1172,3 +1174,38 @@ async def list_notes(
         )
         for r in rows
     ]
+
+
+@router.post(
+    "/fountains/{fountain_id}/notes/{note_id}/report",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def report_note(
+    fountain_id: uuid.UUID,
+    note_id: uuid.UUID,
+    payload: ReportContentRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    """Flag a note for moderation (#11). Any signed-in user may report (display name NOT
+    required). Reporting a hidden note is allowed — moderators still want the signal. The
+    shared chokepoint validates the category (422 outside the note set), dedupes (idempotent
+    204), and rate-limits a genuinely new report (429)."""
+    note = (
+        await session.execute(
+            select(FountainNote).where(
+                FountainNote.id == note_id, FountainNote.fountain_id == fountain_id
+            )
+        )
+    ).scalar_one_or_none()
+    if note is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="note not found")
+    await create_content_report(
+        session,
+        content_type="note",
+        content_id=note.id,
+        fountain_id=fountain_id,
+        reporter_user_id=user.id,
+        category=payload.category,
+        note=payload.note,
+    )
