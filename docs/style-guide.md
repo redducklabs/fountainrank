@@ -2167,11 +2167,41 @@ interactive.
   role-appropriate message (e.g. "This account does not have admin access.", "This photo no
   longer exists.") renders as `text-xs text-red-700` under the button row.
 
+### Unified moderation queue — note & fountain rows (#12)
+
+As of #12 the `/admin/reports` page is the **Moderation queue**: one combined list, fed by
+`GET /api/v1/admin/reports`, whose rows are heterogeneous — `content_type` is `photo`, `note`,
+or `fountain`. The **photo row** is exactly the row documented above. Note and fountain rows
+reuse the same card-row density, the same report-count / `Hidden` / category chips, the same
+truncated reporter-notes `<ul>`, and the same button hierarchy — they only differ in the
+leading "what was reported" block (no thumbnail) and in which actions are offered. All three
+rows link to the reported item's fountain (`/fountains/{fountain_id}`). A `content_type`
+query-param filter is available for triage.
+
+The action buttons for every type are rendered by one client component,
+`ReportedContentActions`, which switches on `content_type`; Reject calls the generalized
+`POST /api/v1/admin/reports/dismiss` for all types.
+
+- **Note row** — no thumbnail. The leading block is the reported note's own body as a
+  truncated **excerpt** (`text-sm text-slate-700`, ≤200 chars, server-side) with the author's
+  display name beneath (`text-xs text-slate-500`). Chips + reporter-notes list as the photo row.
+  Actions: **Hide / Unhide** (navy outline) · **Reject** (slate outline). **No Delete** — hiding
+  a note *is* its removal (the row stays with a `Hidden` chip; the note is retained + auditable).
+- **Fountain row** — no thumbnail. The leading block is the fountain's **label**
+  (`placement_note`, or "Fountain" when it has none; `text-sm font-semibold`) plus a
+  `View fountain` link. Chips + reporter-notes list as the photo row. Actions: **Hide / Unhide** ·
+  **Reject** · **Delete** (red outline, same two-step confirm as the photo row — a fountain
+  hard-delete is destructive, reversing points and removing children).
+- The photo row keeps its thumbnail + **Hide / Unhide · Reject · Delete** exactly as documented
+  in the section above.
+
 ### Pending-report badge (`web/components/admin/ReportBadge.tsx`, `mobile/components/nav/ProfileTabIcon.tsx`)
 
 A small count badge overlaid on the header profile avatar (web) / profile tab icon
-(mobile), shown only to admins, when `GET /api/v1/admin/photo-reports/summary` reports
-`pending_photo_count > 0`. On web, the markup below is its own component (`ReportBadge`),
+(mobile), shown only to admins, when `GET /api/v1/admin/reports/summary` reports
+`pending_count > 0` (as of #12 this counts distinct pending **items across all report types** —
+photo, note, and fountain — not photos only). On web, the markup below is its own component
+(`ReportBadge`),
 rendered inside `AuthControl`'s existing `<span className="relative inline-block">` avatar
 wrapper — server-seeded with the initial count, then polled client-side on a ~60s interval
 via the `fetchPendingReportCount` server action (keeps the Logto access token server-side).
@@ -2184,9 +2214,9 @@ Never shown to non-admins; renders nothing at count 0 (not an empty badge).
     aria-hidden="true"
     className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-bold leading-none text-white"
   >
-    {pending_photo_count > 9 ? "9+" : pending_photo_count}
+    {pending_count > 9 ? "9+" : pending_count}
   </span>
-  <span className="sr-only">, {pending_photo_count} pending photo reports</span>
+  <span className="sr-only">, {pending_count} pending reports</span>
 </span>
 ```
 
@@ -2200,11 +2230,11 @@ Never shown to non-admins; renders nothing at count 0 (not an empty badge).
   never needs to fit more than two glyphs.
 - **Accessibility:** the numeral badge itself is `aria-hidden` (decorative glyph); a
   `sr-only` suffix appended to the avatar button's accessible name announces the pending
-  count (e.g. "Open account menu, 3 pending photo reports") so screen-reader users get the
+  count (e.g. "Open account menu, 3 pending reports") so screen-reader users get the
   same information sighted admins see from the badge. Mobile: the tab icon badge is a
   sibling `View` positioned the same way, with the count folded into the tab's
   `accessibilityLabel`.
-- Hidden entirely (no empty badge, no `0`) when `pending_photo_count === 0` or the viewer is
+- Hidden entirely (no empty badge, no `0`) when `pending_count === 0` or the viewer is
   not an admin.
 
 ---
