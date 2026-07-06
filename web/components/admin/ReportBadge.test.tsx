@@ -22,13 +22,13 @@ describe("ReportBadge", () => {
   it("renders the raw count for 1-9", () => {
     render(<ReportBadge initialCount={3} />);
     expect(screen.getByText("3")).toBeTruthy();
-    expect(screen.getByText(", 3 pending photo reports")).toBeTruthy();
+    expect(screen.getByText(", 3 pending reports")).toBeTruthy();
   });
 
   it("formats any count above 9 as 9+", () => {
     render(<ReportBadge initialCount={42} />);
     expect(screen.getByText("9+")).toBeTruthy();
-    expect(screen.getByText(", 42 pending photo reports")).toBeTruthy();
+    expect(screen.getByText(", 42 pending reports")).toBeTruthy();
   });
 
   it("polls fetchPendingReportCount on a ~60s interval and updates the count", async () => {

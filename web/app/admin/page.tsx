@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import Link from "next/link";
 import { SiteHeader } from "../../components/SiteHeader";
 import { getViewer } from "../../lib/server/viewer";
 import { signInWithReturn } from "../actions/auth";
@@ -47,11 +48,16 @@ export default async function AdminPage() {
       <main className="mx-auto max-w-2xl px-6 py-10">
         <h1 className="text-lg font-bold text-brand-ink">Admin</h1>
         <p className="mt-2 text-muted">
-          Moderation controls live inline on each fountain detail page.
+          Review reported content in the{" "}
+          <Link href="/admin/reports" className="font-semibold text-brand-ink hover:underline">
+            Moderation queue
+          </Link>{" "}
+          — photos, notes, and fountains flagged by the community.
         </p>
         <p className="mt-4 text-sm text-muted">
-          Open a fountain from the map to edit location, status, placement text, visibility,
-          deletion, and community-note visibility.
+          Per-fountain moderation controls also live inline on each fountain detail page: open a
+          fountain from the map to edit location, status, placement text, visibility, deletion, and
+          community-note visibility.
         </p>
       </main>
     </>

@@ -5,8 +5,9 @@ import { fetchPendingReportCount } from "../../app/actions/admin";
 
 const POLL_INTERVAL_MS = 60_000;
 
-// Admin-only pending-photo-report count overlaid on the header avatar (style guide
-// "Pending-report badge"). Seeded with the server-rendered initial count, then polls the
+// Admin-only pending-report count overlaid on the header avatar (style guide
+// "Pending-report badge"). As of #12 it counts distinct pending items across all report types
+// (photo/note/fountain). Seeded with the server-rendered initial count, then polls the
 // `fetchPendingReportCount` server action every ~60s so the token never leaves the server.
 // Renders nothing at count 0 — never an empty badge.
 export function ReportBadge({ initialCount }: { initialCount: number }) {
@@ -35,7 +36,7 @@ export function ReportBadge({ initialCount }: { initialCount: number }) {
       >
         {display}
       </span>
-      <span className="sr-only">, {count} pending photo reports</span>
+      <span className="sr-only">, {count} pending reports</span>
     </>
   );
 }

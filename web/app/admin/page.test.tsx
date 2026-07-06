@@ -46,7 +46,7 @@ it("shows a retry state on error (not admin content, not 404)", async () => {
   expect(notFound).not.toHaveBeenCalled();
 });
 
-it("renders the inline-moderation landing for an admin", async () => {
+it("renders the moderation landing for an admin (queue link + inline note)", async () => {
   getViewer.mockResolvedValue({
     state: "authed",
     displayName: "x",
@@ -54,6 +54,7 @@ it("renders the inline-moderation landing for an admin", async () => {
     isAdmin: true,
   });
   render(await AdminPage());
-  expect(screen.getByText(/moderation controls live inline/i)).toBeTruthy();
+  const queueLink = screen.getByRole("link", { name: /moderation queue/i });
+  expect(queueLink.getAttribute("href")).toBe("/admin/reports");
   expect(screen.getByText(/open a fountain from the map/i)).toBeTruthy();
 });
