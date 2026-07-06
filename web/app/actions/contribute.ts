@@ -4,9 +4,12 @@ import type { components } from "@fountainrank/api-client";
 import { getAuthedApiClientForAction, getActionAccessToken } from "../../lib/server/api";
 import { log } from "../../lib/server/log";
 import { resolveApiBaseUrl } from "../../lib/api";
+import {
+  REPORT_CATEGORIES,
+  type ReportContentType,
+} from "../../components/fountain/reportCategories";
 
 type ConditionStatus = components["schemas"]["ConditionReportRequest"]["status"];
-type ReportCategory = components["schemas"]["ReportPhotoRequest"]["category"];
 export type ContributeError =
   | "unauthenticated"
   | "validation"
@@ -267,25 +270,42 @@ export async function uploadPhoto(fountainId: string, formData: FormData): Promi
   return result;
 }
 
-export async function reportPhoto(
+// Generalized content report (#11): POSTs the nested report endpoint matching `contentType`.
+// Category is validated against the per-type allowed set (mirrors the backend chokepoint,
+// spec §6) BEFORE any API call. For a fountain report the endpoint has no separate content-id
+// path param — `contentId` is the fountain itself (callers pass `contentId === fountainId`).
+export async function reportContent(
+  contentType: ReportContentType,
   fountainId: string,
-  photoId: string,
-  category: ReportCategory,
+  contentId: string,
+  category: string,
   note?: string,
 ): Promise<ActionResult> {
-  if (!UUID_RE.test(fountainId) || !UUID_RE.test(photoId)) return fail("validation");
-  const REPORT_CATEGORIES: ReadonlySet<string> = new Set([
-    "inappropriate",
-    "not_a_fountain",
-    "spam",
-    "other",
-  ]);
-  if (!REPORT_CATEGORIES.has(category)) return fail("validation");
+  if (!UUID_RE.test(fountainId) || !UUID_RE.test(contentId)) return fail("validation");
+  const allowed = REPORT_CATEGORIES[contentType];
+  if (!allowed || !allowed.includes(category)) return fail("validation");
   const trimmedNote = typeof note === "string" ? note.trim() : undefined;
-  return run(fountainId, "report_photo", (client) =>
-    client.POST("/api/v1/fountains/{fountain_id}/photos/{photo_id}/report", {
-      params: { path: { fountain_id: fountainId, photo_id: photoId } },
-      body: { category, note: trimmedNote || undefined },
+  const body = { category, note: trimmedNote || undefined };
+  if (contentType === "photo") {
+    return run(fountainId, "report_photo", (client) =>
+      client.POST("/api/v1/fountains/{fountain_id}/photos/{photo_id}/report", {
+        params: { path: { fountain_id: fountainId, photo_id: contentId } },
+        body,
+      }),
+    );
+  }
+  if (contentType === "note") {
+    return run(fountainId, "report_note", (client) =>
+      client.POST("/api/v1/fountains/{fountain_id}/notes/{note_id}/report", {
+        params: { path: { fountain_id: fountainId, note_id: contentId } },
+        body,
+      }),
+    );
+  }
+  return run(fountainId, "report_fountain", (client) =>
+    client.POST("/api/v1/fountains/{fountain_id}/report", {
+      params: { path: { fountain_id: fountainId } },
+      body,
     }),
   );
 }

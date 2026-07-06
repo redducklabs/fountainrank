@@ -4,10 +4,11 @@ import { useRouter } from "next/navigation";
 import type { PhotoOut } from "../../lib/fountains";
 import { deleteOwnPhoto } from "../../app/actions/contribute";
 import { PhotoCarousel } from "./PhotoCarousel";
-import { ReportPhotoDialog } from "./ReportPhotoDialog";
+import { ReportContentDialog } from "./ReportContentDialog";
+import { REPORT_CATEGORIES } from "./reportCategories";
 
 // Bridges `PhotoCarousel` (a plain client component, callback props only) to the
-// `reportPhoto`/`deleteOwnPhoto` server actions — kept as its own client component so
+// `reportContent`/`deleteOwnPhoto` server actions — kept as its own client component so
 // `FountainDetail` can stay a server component (matches the ContributeSection boundary).
 export function PhotoGallery({
   fountainId,
@@ -57,9 +58,11 @@ export function PhotoGallery({
         </p>
       )}
       {reportPhotoId && (
-        <ReportPhotoDialog
+        <ReportContentDialog
+          contentType="photo"
           fountainId={fountainId}
-          photoId={reportPhotoId}
+          contentId={reportPhotoId}
+          categories={REPORT_CATEGORIES.photo}
           alreadyReported={reportedIds.has(reportPhotoId)}
           onClose={() => setReportPhotoId(null)}
           onReported={() => {

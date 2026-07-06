@@ -26,12 +26,13 @@ import {
   submitCondition,
   submitNote,
   uploadPhoto,
-  reportPhoto,
+  reportContent,
   deleteOwnPhoto,
 } from "./contribute";
 
 const FID = "123e4567-e89b-12d3-a456-426614174000";
 const PID = "223e4567-e89b-12d3-a456-426614174000";
+const NID = "323e4567-e89b-12d3-a456-426614174000";
 beforeEach(() => {
   getClient.mockImplementation(async () => ({ POST, DELETE }));
   getActionAccessToken.mockResolvedValue("test-token");
@@ -245,24 +246,32 @@ describe("uploadPhoto", () => {
   });
 });
 
-describe("reportPhoto", () => {
-  it("rejects bad ids and an unknown category before any API call", async () => {
-    expect(await reportPhoto("not-a-uuid", PID, "spam")).toEqual({
+describe("reportContent", () => {
+  it("rejects bad ids and a per-type-invalid category before any API call", async () => {
+    expect(await reportContent("photo", "not-a-uuid", PID, "spam")).toEqual({
       ok: false,
       error: "validation",
     });
-    expect(await reportPhoto(FID, "not-a-uuid", "spam")).toEqual({
+    expect(await reportContent("photo", FID, "not-a-uuid", "spam")).toEqual({
       ok: false,
       error: "validation",
     });
-    // @ts-expect-error hostile input
-    expect(await reportPhoto(FID, PID, "explode")).toEqual({ ok: false, error: "validation" });
+    // `abuse` is valid for a note but NOT for a photo (per-type sets, spec §6).
+    expect(await reportContent("photo", FID, PID, "abuse")).toEqual({
+      ok: false,
+      error: "validation",
+    });
+    // @ts-expect-error hostile content type
+    expect(await reportContent("rating", FID, PID, "spam")).toEqual({
+      ok: false,
+      error: "validation",
+    });
     expect(getClient).not.toHaveBeenCalled();
   });
 
-  it("posts the category and trimmed note", async () => {
+  it("photo -> POSTs the nested photo report endpoint with trimmed note", async () => {
     POST.mockResolvedValue({ response: { status: 204 } });
-    await reportPhoto(FID, PID, "spam", "  looks fake  ");
+    await reportContent("photo", FID, PID, "spam", "  looks fake  ");
     expect(POST).toHaveBeenCalledWith(
       "/api/v1/fountains/{fountain_id}/photos/{photo_id}/report",
       expect.objectContaining({
@@ -272,9 +281,36 @@ describe("reportPhoto", () => {
     );
   });
 
+  it("note -> POSTs the nested note report endpoint", async () => {
+    POST.mockResolvedValue({ response: { status: 204 } });
+    await reportContent("note", FID, NID, "abuse", "  bad  ");
+    expect(POST).toHaveBeenCalledWith(
+      "/api/v1/fountains/{fountain_id}/notes/{note_id}/report",
+      expect.objectContaining({
+        params: { path: { fountain_id: FID, note_id: NID } },
+        body: { category: "abuse", note: "bad" },
+      }),
+    );
+  });
+
+  it("fountain -> POSTs the fountain report endpoint (no separate content-id param)", async () => {
+    POST.mockResolvedValue({ response: { status: 204 } });
+    await reportContent("fountain", FID, FID, "not_a_fountain");
+    expect(POST).toHaveBeenCalledWith(
+      "/api/v1/fountains/{fountain_id}/report",
+      expect.objectContaining({
+        params: { path: { fountain_id: FID } },
+        body: { category: "not_a_fountain", note: undefined },
+      }),
+    );
+  });
+
   it("maps 429 to rate_limited", async () => {
     POST.mockResolvedValue({ response: { status: 429 } });
-    expect(await reportPhoto(FID, PID, "spam")).toEqual({ ok: false, error: "rate_limited" });
+    expect(await reportContent("photo", FID, PID, "spam")).toEqual({
+      ok: false,
+      error: "rate_limited",
+    });
   });
 });
 
