@@ -276,6 +276,53 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/fountains/{fountain_id}/notes/{note_id}/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Report Note
+         * @description Flag a note for moderation (#11). Any signed-in user may report (display name NOT
+         *     required). Reporting a hidden note is allowed — moderators still want the signal. The
+         *     shared chokepoint validates the category (422 outside the note set), dedupes (idempotent
+         *     204), and rate-limits a genuinely new report (429).
+         */
+        post: operations["report_note_api_v1_fountains__fountain_id__notes__note_id__report_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/fountains/{fountain_id}/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Report Fountain
+         * @description Flag a fountain for moderation (#11). Any signed-in user may report ANY existing fountain
+         *     (any created_source) — the report is signal-only; #12 decides the action. The shared
+         *     chokepoint validates the category (422 outside the fountain set), dedupes (idempotent 204),
+         *     and rate-limits a genuinely new report (429). For a fountain report content_id == the
+         *     fountain_id.
+         */
+        post: operations["report_fountain_api_v1_fountains__fountain_id__report_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/fountains/{fountain_id}/photos": {
         parameters: {
             query?: never;
@@ -348,9 +395,10 @@ export interface paths {
          * @description Owner self-delete (fountain-photos design §8.2): the uploader may remove their own
          *     photo. Both storage objects are deleted before the row (best-effort with a durable
          *     `storage_cleanup` fallback on failure); the still-awarded contribution point is reversed
-         *     BEFORE the row is deleted so the reversal can still find the event by `target_id`; the
-         *     row delete then cascades to any pending `photo_reports` (no `resolution` write — the
-         *     report simply no longer applies to a photo that no longer exists).
+         *     BEFORE the row is deleted so the reversal can still find the event by `target_id`; this
+         *     photo's `content_reports` are explicitly deleted in the same txn (content_id is a soft
+         *     ref with no cascade — no `resolution` write, the report simply no longer applies to a
+         *     photo that no longer exists).
          */
         delete: operations["delete_own_photo_api_v1_fountains__fountain_id__photos__photo_id__delete"];
         options?: never;
@@ -369,11 +417,12 @@ export interface paths {
         put?: never;
         /**
          * Report Photo
-         * @description Flag a photo for moderation (fountain-photos design §8.3). Any signed-in user may
-         *     report (a display name is NOT required — unlike contribution-earning actions); reporting
-         *     is idempotent — a duplicate pending report from the same reporter on the same photo is
-         *     silently accepted (204) rather than surfacing a conflict, so a double-tap in a flaky
-         *     client never poisons the async session with an unhandled IntegrityError.
+         * @description Flag a photo for moderation (fountain-photos design §8.3, #11). Any signed-in user may
+         *     report (a display name is NOT required — unlike contribution-earning actions). Target-
+         *     existence 404 precedes the report handling; the shared chokepoint then validates the
+         *     category (422), dedupes (a duplicate pending report is an idempotent 204 that consumes no
+         *     rate budget, so a double-tap in a flaky client never poisons the async session), and rate-
+         *     limits a genuinely new report (429).
          */
         post: operations["report_photo_api_v1_fountains__fountain_id__photos__photo_id__report_post"];
         delete?: never;
@@ -476,8 +525,8 @@ export interface paths {
          * @description Hard-delete a photo (mirrors the owner self-delete in `photos.py`): delete BOTH Spaces
          *     objects first — a delete failure is escalated to a durable `storage_cleanup` row and a 5xx
          *     (never a silent success) — then reverse the still-awarded point BEFORE deleting the row (so
-         *     the reversal can still find the event by `target_id`), then delete the row (its pending
-         *     reports cascade away).
+         *     the reversal can still find the event by `target_id`), then explicitly delete this photo's
+         *     `content_reports` (content_id is a soft ref with no cascade) and finally the row.
          */
         delete: operations["admin_delete_photo_api_v1_admin_photos__photo_id__delete"];
         options?: never;
@@ -1372,13 +1421,10 @@ export interface components {
             /** Sf To Nyc M */
             sf_to_nyc_m: number;
         };
-        /** ReportPhotoRequest */
-        ReportPhotoRequest: {
-            /**
-             * Category
-             * @enum {string}
-             */
-            category: "inappropriate" | "not_a_fountain" | "spam" | "other";
+        /** ReportContentRequest */
+        ReportContentRequest: {
+            /** Category */
+            category: string;
             /** Note */
             note?: string | null;
         };
@@ -2036,6 +2082,83 @@ export interface operations {
             };
         };
     };
+    report_note_api_v1_fountains__fountain_id__notes__note_id__report_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "X-Dev-User"?: string | null;
+                "X-Dev-Email"?: string | null;
+                "X-Dev-Name"?: string | null;
+            };
+            path: {
+                fountain_id: string;
+                note_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportContentRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    report_fountain_api_v1_fountains__fountain_id__report_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "X-Dev-User"?: string | null;
+                "X-Dev-Email"?: string | null;
+                "X-Dev-Name"?: string | null;
+            };
+            path: {
+                fountain_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportContentRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_photos_api_v1_fountains__fountain_id__photos_get: {
         parameters: {
             query?: never;
@@ -2231,7 +2354,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ReportPhotoRequest"];
+                "application/json": components["schemas"]["ReportContentRequest"];
             };
         };
         responses: {
