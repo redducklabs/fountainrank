@@ -162,22 +162,30 @@ round-trip are complete, add-fountain code is locally verified only
 add-fountain writes work on device until native auth and an authenticated add
 have actually been observed.
 
-## Store-testing builds (EAS)
+## Store builds (EAS)
 
 `eas.json` defines `development` / `preview` / `production` build profiles and a
-credential-free `production` submit profile for Android's `internal` track. The
+credential-free `production` submit profile for Android's `production` track. The
 Android submit profile uses `releaseStatus: completed`, so a store-release run
-auto-publishes the internal-testing release on upload — no Play Console step. The
-Expo org/project are linked in `app.config.ts`
+auto-publishes the production Play Store release on upload when Google Play managed
+publishing is off. The Expo org/project are linked in `app.config.ts`
 (`red-duck-labs/fountainrank`, project id
 `820564bf-5f29-44c7-8ec7-edde67b77360`), and the native identity is
 owner-confirmed as `com.redducklabs.fountainrank`.
+
+The app version defaults to `1.0.0` in `app.config.ts`. Store-release CI sets
+`EXPO_APP_VERSION` for both Android and iOS builds: tag releases use the
+`vMAJOR.MINOR.PATCH` tag exactly, while manual dispatches use the configured
+default until a matching tag exists and then bump the patch component from the
+latest tag. For minor or major releases, update the default version and create
+the matching release tag manually.
 
 Build numbers are EAS-managed for store builds: `cli.appVersionSource` is
 `remote`, and the production profile keeps `autoIncrement: true`. Android
 production builds produce an `.aab`; preview Android builds produce an `.apk`.
 The local `ios.buildNumber` and `android.versionCode` values in `app.config.ts`
-seed the first remote value; after that, EAS owns store build-number increments.
+seed the first remote value; after that, EAS owns store build-number increments
+separately from the app's user-visible version.
 The iOS `production` submit profile carries only non-secret identifiers — the App
 Store Connect app id (`ascAppId`) and the Apple Team id (`appleTeamId`). The App
 Store Connect API key, Play service-account JSON, signing material, EAS tokens, and
@@ -185,13 +193,21 @@ tester lists stay outside the repo (EAS credentials service / GitHub secrets).
 
 The GitHub `mobile-store-release.yml` workflow generates store release notes from
 the PRs included since the previous `v*.*.*` tag and prints them in the run summary
-for both platforms. Neither store's release-notes text is set automatically by EAS:
-the TestFlight changelog requires the Enterprise plan (otherwise the submit fails with
-"Changelog submission is currently available for Enterprise plan only"), and the EAS
-Android submit options here don't carry release-note text. iOS is submitted without it
-(paste the notes into TestFlight's "What to Test" if wanted); Android auto-publishes to
-internal testing (`releaseStatus: completed`) without notes — add them in Play Console
-afterward only if desired. The printed notes are there for that optional paste.
+for both platforms. For Google Play, CI also generates title-only "What's new"
+notes without PR numbers. The run summary keeps the full title-only list; the
+Play field receives as many complete title lines as fit in Play's 500-character
+per-language limit, plus a short overflow line when needed. CI updates the latest
+production-track release after EAS Submit finishes. That post-submit note update
+requires the production GitHub secret `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON`, a Google
+Play service-account key with Android Publisher access for this app. EAS still
+uses its own managed Google Play upload credential for the binary submission.
+The Android job builds first, captures the EAS build id and Android
+`appBuildVersion`, submits that exact build id, and only updates Play release
+notes when the production-track release contains the expected version code.
+iOS is submitted without notes because the TestFlight changelog requires the
+Enterprise plan (otherwise the submit fails with "Changelog submission is
+currently available for Enterprise plan only"); paste the printed notes into
+TestFlight's "What to Test" if wanted.
 
 Before any `expo config --type prebuild`, `expo prebuild`, or EAS command after
 incremental dependency changes, recover the pnpm/Expo install from the repo
