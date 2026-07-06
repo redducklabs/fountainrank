@@ -309,7 +309,7 @@ def upgrade() -> None:
   (`INSERT INTO photo_reports (id, photo_id, reporter_user_id, category, note, status, resolution, resolved_by_user_id, resolved_at, created_at) SELECT id, content_id, reporter_user_id, category, note, status, resolution, resolved_by_user_id, resolved_at, created_at FROM content_reports WHERE content_type = 'photo'`),
   then `op.drop_table("content_reports")`. (Note/fountain reports are dropped on downgrade — documented in the spec §4.)
 
-- [ ] **Step 9: Repoint the existing tests + the autouse fixture.** 
+- [ ] **Step 9: Repoint the existing tests + the autouse fixture.**
   - **CRITICAL — `tests/conftest.py`:** the autouse `clean_db` fixture `TRUNCATE`s `photo_reports` (conftest.py:37). After the migration that table is gone, so this **must** be changed `photo_reports` → `content_reports` in the TRUNCATE list — otherwise **every** test errors ("relation photo_reports does not exist"). `content_reports` FKs `fountains`/`users` which are already in the `CASCADE` list, so only the name changes.
   - `test_rate_limit.py`, `test_photos_delete_report.py`, `test_admin_photos.py`: replace `PhotoReport`→`ContentReport`, `photo_reports`→`content_reports`, and any direct-construct of a report row to include `content_type="photo"`, `content_id=<photo_id>`, `fountain_id=<fountain_id>` (was `photo_id=`). Keep every assertion. The dedupe-first order (Step 4) is behavior-compatible with the existing non-rate-limited duplicate-204 test and the distinct-report rate-limit test; adjust only if a test specifically constructs a rate-limited *duplicate* expecting 429 (none should — it would now be 204).
 
