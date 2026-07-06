@@ -318,7 +318,7 @@ def upgrade() -> None:
   - **No-orphan — admin delete:** same via `DELETE /admin/photos/{pid}`; 0 orphans.
   - **Fountain cascade:** seed reports on a fountain's photo AND on the fountain itself (`content_type='fountain'`); `DELETE /admin/fountains/{fid}`; assert all that fountain's `content_reports` are gone.
   - **Photo-delete isolation:** deleting photo A leaves a report on unrelated photo B intact.
-  - **Duplicate-at-quota idempotency (Codex plan-review #2):** as `test_user`, insert `REPORTS_PER_MIN` `content_reports` rows for that reporter in-window; report photo X once (→201/204, 1 row); then report photo X **again** while at quota → **204** (not 429) and still exactly one pending row for (photo, reporter). This proves dedupe-before-rate.
+  - **Duplicate-at-quota idempotency (Codex plan-review #2 R2):** order matters — establish X's pending report BEFORE filling the quota. As `test_user`: (1) report photo X once while under quota → **204**, exactly one pending `(photo, X, reporter)` row; (2) seed `REPORTS_PER_MIN - 1` additional in-window `content_reports` for the same reporter on **distinct** content_ids (reporter now at `REPORTS_PER_MIN`); (3) re-report photo X → **204**, **no** new row, **no** 429 (idempotent duplicate consumes no budget); (4) separately, a NEW report on a different photo Y at the same quota → **429**. This proves dedupe-before-rate. (The endpoint returns 204, never 201.)
 
 - [ ] **Step 10b: Real data-migration test** `backend/tests/test_content_reports_migration.py` — an **isolated temporary database** (the shared test DB is externally pinned at head; the async Alembic env can't be stepped in-process because `env.py` calls `asyncio.run`, so drive it via **subprocess**). Skeleton:
 ```python
@@ -391,7 +391,10 @@ async def test_photo_reports_data_migration_roundtrip():
         assert "uq_photo_reports_photo_reporter_pending" in idx and "ix_photo_reports_reporter_pending_created" in idx
         checks = {r["conname"] for r in await c.fetch(
             "SELECT conname FROM pg_constraint WHERE conrelid='photo_reports'::regclass AND contype='c'")}
-        assert {"category","status","resolution"} <= checks
+        # NAMING_CONVENTION renders short CHECK names to ck_<table>_<name> (the stars_range trap),
+        # so the DB connames are the rendered forms, NOT 'category'/'status'/'resolution'.
+        assert {"ck_photo_reports_category", "ck_photo_reports_status",
+                "ck_photo_reports_resolution"} <= checks
         assert not await c.fetch("SELECT 1 FROM information_schema.tables WHERE table_name='content_reports'")
         await c.close()
     finally:
@@ -400,7 +403,7 @@ async def test_photo_reports_data_migration_roundtrip():
 ```
   Notes: subprocess (not in-process `command.upgrade`) because `env.py` does `asyncio.run(...)`, which can't run inside pytest-asyncio's loop; a **fresh temp DB** keeps the shared test DB untouched and lets us seed `photo_reports` (which no longer exists at head). Confirm `asyncpg` is importable in tests (it's the app's driver) and the DB role can `CREATE DATABASE` (the postgis dev container + CI service superuser can). If `uv run alembic` isn't resolvable in the subprocess env, use the alembic console script on PATH or `python -m alembic`.
 
-- [ ] **Step 11: Run the full backend mirror + verify names.** Run: `cd backend && uv run alembic upgrade head && uv run alembic check` (expect drift-free), then verify the 4 CHECK names + 3 index names against `pg_indexes`/`pg_constraint` (`\d content_reports` or a `select … from pg_indexes where tablename='content_reports'`), then `cd backend && uv run ruff check . && uv run ruff format --check . && uv run pytest`. Round-trip: `uv run alembic downgrade -1 && uv run alembic upgrade head`. Expected: all green, `photo_reports` gone, photo tests pass.
+- [ ] **Step 11: Run the full backend mirror + verify names.** Run: `cd backend && uv run alembic upgrade head && uv run alembic check` (expect drift-free), then verify the rendered `content_reports` names against `pg_constraint`/`pg_indexes` (`\d content_reports`). Expected **CHECK** connames (convention-rendered, per the `stars_range` trap): `ck_content_reports_content_type`, `ck_content_reports_category`, `ck_content_reports_status`, `ck_content_reports_resolution`. Expected **FK** connames: `fk_content_reports_fountain`, `fk_content_reports_reporter`, `fk_content_reports_resolved_by`. Expected **index** names (verbatim, not convention-rendered): `uq_content_reports_target_reporter_pending`, `ix_content_reports_target_pending`, `ix_content_reports_reporter_created`. Then `cd backend && uv run ruff check . && uv run ruff format --check . && uv run pytest`. Round-trip: `uv run alembic downgrade -1 && uv run alembic upgrade head`. Expected: all green, `photo_reports` gone, photo tests pass.
 
 - [ ] **Step 12: Commit.**
 ```bash
