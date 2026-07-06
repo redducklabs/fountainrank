@@ -102,6 +102,17 @@
 
 ---
 
+# Style guide (BEFORE any UI — CLAUDE.md mandate)
+
+### Task S1: Update the style guide first
+
+`CLAUDE.md` requires reading/updating `docs/style-guide.md` **before** creating any new UI element. This task runs **before** W1/M1.
+
+- [ ] Document in `docs/style-guide.md`: the moderation-queue **row variants** (photo / note / fountain), the **per-type action buttons** (Hide/Unhide · Reject · Delete availability per type), and the pending-report **badge copy change** ("pending reports", all types). Follow the existing style-guide entry format (the photo-report queue/badge entries already exist — generalize them).
+- [ ] **Commit** `docs: style guide for unified moderation queue (#12)`.
+
+---
+
 # Web
 
 ### Task W1: Unified moderation board + per-type actions
@@ -110,18 +121,18 @@
 
 **Interfaces — Consumes:** C1 types + the three endpoints, existing `adminHidePhoto`/`adminDeletePhoto`/`adminSetNoteHidden`/`adminSetFountainHidden`/`adminDeleteFountain`.
 
-- [ ] **Step 1: Server fetch.** Generalize `photo-reports.ts` to `getContentReportsServer(requestId)` calling `GET /admin/reports` → `ReportedContentOut[]`.
-- [ ] **Step 2: Dismiss action.** Add `adminDismissReport(contentType, contentId)` to `admin.ts` calling `POST /admin/reports/dismiss`, revalidating `/admin/reports` (mirrors `adminDismissPhotoReports`).
+- [ ] **Step 1: Server fetch.** Generalize `photo-reports.ts` to `getContentReportsServer(requestId)` calling `GET /api/v1/admin/reports` → `ReportedContentOut[]`.
+- [ ] **Step 2: Actions + queue revalidation.** Add `adminDismissReport(contentType, contentId)` to `admin.ts` calling `POST /api/v1/admin/reports/dismiss`, revalidating `/admin/reports` (mirrors `adminDismissPhotoReports`). **Spec §6/§9 requires every queue action to revalidate `/admin/reports`.** The reused note/fountain actions currently revalidate only `/fountains/{id}` (`admin.ts:126-166`), so **add `revalidatePath("/admin/reports")` to `adminSetNoteHidden`, `adminSetFountainHidden`, and `adminDeleteFountain`** (in addition to their existing `/fountains/{id}` revalidation — harmless when those actions are called from the inline fountain-detail controls). `adminHidePhoto`/`adminDeletePhoto` already revalidate `/admin/reports`.
 - [ ] **Step 3: Actions component.** Generalize `ReportedPhotoActions` → `ReportedContentActions` switching on `content_type`: photo → Hide/Unhide · Reject · Delete; note → Hide/Unhide · Reject; fountain → Hide/Unhide · Reject · Delete. Reject calls `adminDismissReport`; Delete confirmed via a dialog.
 - [ ] **Step 4: Page.** Rewrite `page.tsx` heading/intro to "Moderation queue"; render one list with a row-per-`content_type` (reuse the photo row markup; add note row = `excerpt`+`contributor`; fountain row = `fountain_label`/"Fountain"); every row links to `/fountains/{fountain_id}`; empty state "No pending reports."
-- [ ] **Step 5: Tests.** vitest: a photo + note + fountain row render with the right actions; `adminDismissReport` posts the right endpoint; empty state. `pnpm exec turbo run lint typecheck test --filter=web`.
+- [ ] **Step 5: Tests.** vitest: a photo + note + fountain row render with the right actions; `adminDismissReport` posts the right endpoint; **`adminSetNoteHidden`, `adminSetFountainHidden`, and `adminDeleteFountain` each revalidate `/admin/reports`** (assert on the `revalidatePath` mock); empty state. `pnpm exec turbo run lint typecheck test --filter=web`.
 - [ ] **Step 6: Commit** `feat(web): unified moderation board with per-type actions (#12)`.
 
 ### Task W2: Badge repoint + landing copy
 
 **Files:** Modify `web/app/actions/admin.ts` (`fetchPendingReportCount`), the `AuthControl` server seed source, `web/components/admin/ReportBadge.tsx` (sr-text), `web/app/admin/page.tsx`; tests `web/components/admin/ReportBadge.test.tsx`, `web/components/AuthControl.test.tsx`, `web/app/actions/admin.test.ts`.
 
-- [ ] **Step 1: Repoint** `fetchPendingReportCount` to `GET /admin/reports/summary` (returns `pending_count`); repoint the server-rendered initial-count seed (grep the `photo-reports/summary` caller feeding `AuthControl`'s `pendingReportCount`). Update `ReportBadge` sr-text "pending reports" (drop "photo").
+- [ ] **Step 1: Repoint** `fetchPendingReportCount` to `GET /api/v1/admin/reports/summary` (returns `pending_count`); repoint the server-rendered initial-count seed (grep the `photo-reports/summary` caller feeding `AuthControl`'s `pendingReportCount`). Update `ReportBadge` sr-text "pending reports" (drop "photo").
 - [ ] **Step 2: Landing copy** in `admin/page.tsx` → point at the Moderation queue (keep the inline-per-fountain note).
 - [ ] **Step 3: Tests + mirror.** Update the affected tests; `pnpm exec turbo run lint typecheck test --filter=web`.
 - [ ] **Step 4: Commit** `feat(web): count all report types in the admin badge (#12)`.
@@ -138,18 +149,14 @@
 
 - [ ] **Step 1: Auth helper (must-not-miss, spec §7).** In `isAuthenticatedApiRequest` add the two new exact GET paths `"/api/v1/admin/reports"` and `"/api/v1/admin/reports/summary"` to the allowlist (`api.ts:121`), **retaining** the old photo paths. Grep for the mobile badge summary consumer to pin its file.
 - [ ] **Step 2: Failing helper tests.** `mobile/lib/api.test.ts`: `isAuthenticatedApiRequest` returns `true` for both new paths (and still the old photo paths). Add any per-type helper (action availability / label) to `mobile/lib/admin/reports.ts` with tests.
-- [ ] **Step 3: Screen.** Generalize `reports.tsx`: query `GET /admin/reports` (`ReportedContentOut[]`) + `GET /admin/reports/summary`; render per-type rows (photo row = today's `ReportRow`; note row = `excerpt`+`contributor`; fountain row = `fountain_label`). Per-type mutations: note Hide/Unhide (`PATCH /admin/notes/{id}`) + Reject; fountain Hide/Unhide (`PATCH /admin/fountains/{id}`) + Reject + Delete (`DELETE /admin/fountains/{id}` behind an `Alert` confirm); Reject = `POST /admin/reports/dismiss` for all types. Invalidate queue + summary keys after each action.
-- [ ] **Step 4: Badge.** Repoint the mobile admin pending-report summary query to `GET /admin/reports/summary`; keep `formatBadgeCount`/`shouldShowBadge` unchanged.
+- [ ] **Step 3: Screen.** Generalize `reports.tsx`: query `GET /api/v1/admin/reports` (`ReportedContentOut[]`) + `GET /api/v1/admin/reports/summary`; render per-type rows (photo row = today's `ReportRow`; note row = `excerpt`+`contributor`; fountain row = `fountain_label`). Per-type mutations: note Hide/Unhide (`PATCH /api/v1/admin/notes/{note_id}`) + Reject; fountain Hide/Unhide (`PATCH /api/v1/admin/fountains/{fountain_id}`) + Reject + Delete (`DELETE /api/v1/admin/fountains/{fountain_id}` behind an `Alert` confirm); Reject = `POST /api/v1/admin/reports/dismiss` for all types. Invalidate queue + summary keys after each action.
+- [ ] **Step 4: Badge.** Repoint the mobile admin pending-report summary query to `GET /api/v1/admin/reports/summary`; keep `formatBadgeCount`/`shouldShowBadge` unchanged.
 - [ ] **Step 5: Run.** `pnpm exec turbo run lint typecheck test --filter=mobile` + `expo-doctor` (via the mirror). (React-Compiler eslint is CI-only/stricter — see the mobile lint note; avoid `useRef().current` in render + unconditional `setState` in `useEffect`.)
 - [ ] **Step 6: Commit** `feat(mobile): unified moderation screen + all-type badge (#12)`.
 
 ---
 
-# Docs & finalize
-
-### Task S1: Style guide
-
-- [ ] Document the moderation-queue row variants (photo/note/fountain) + per-type action buttons + the badge copy change in `docs/style-guide.md`. Commit `docs: style guide for unified moderation queue (#12)`.
+# Finalize
 
 ### Task F1: Full mirror + PR + Codex + merge
 
@@ -162,8 +169,9 @@
 
 ## Deployment
 
+- [ ] **Preflight:** `gh auth status` before any GitHub/workflow operation (CLAUDE.md).
 - [ ] **Backend + web:** after merge to `main`, dispatch `gh workflow run deploy.yml --ref main` and monitor to success (deploy is **manual dispatch** — merge alone does not deploy). Verify the badge + unified board on the deployed web app with a test note report.
-- [ ] **Mobile store release:** dispatch the mobile store-release workflow per project process (production env; confirm with the owner). Verify the unified screen + badge on a build.
+- [ ] **Mobile store release:** dispatch `.github/workflows/mobile-store-release.yml` (`gh workflow run mobile-store-release.yml --ref main`, production env — confirm with the owner before dispatching). Verify the unified screen + badge on a build.
 
 ## Out of scope (stays on #12/#13)
 
