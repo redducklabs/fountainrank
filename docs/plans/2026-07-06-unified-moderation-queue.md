@@ -26,7 +26,7 @@
 
 ## PR / branch strategy
 
-**Single PR** off `feat/unified-moderation-queue` bundling backend + api-client + web + mobile — the change is cohesive (three endpoints + generalized UI on both platforms). Order of commits: backend (B1→B2), api-client (C1), web (W1→W2), mobile (M1), style guide (S1); the PR opens after the full local mirror is green. Spec + this plan are already committed on the branch. After merge: dispatch the **web/backend deploy** and the **mobile store release** (see "Deployment").
+**Single PR** off `feat/unified-moderation-queue` bundling backend + api-client + web + mobile — the change is cohesive (three endpoints + generalized UI on both platforms). Order of commits: backend (B1→B2), api-client (C1), **style guide (S1) — before any UI, per CLAUDE.md**, web (W1→W2), mobile (M1); the PR opens after the full local mirror is green. Spec + this plan are already committed on the branch. After merge: dispatch the **web/backend deploy** and the **mobile store release** (see "Deployment").
 
 ---
 
@@ -145,7 +145,7 @@
 
 **Files:** Modify `mobile/app/admin/reports.tsx`, `mobile/lib/api.ts` (`isAuthenticatedApiRequest`), `mobile/lib/admin/reports.ts` (per-type helpers), the mobile admin badge summary query; tests `mobile/lib/api.test.ts`, `mobile/lib/admin/reports.test.ts`.
 
-**Interfaces — Consumes:** C1 types + endpoints; existing `PATCH /admin/notes/{id}`, `PATCH/DELETE /admin/fountains/{id}`.
+**Interfaces — Consumes:** C1 types + endpoints; existing `PATCH /api/v1/admin/notes/{note_id}`, `PATCH`/`DELETE /api/v1/admin/fountains/{fountain_id}`.
 
 - [ ] **Step 1: Auth helper (must-not-miss, spec §7).** In `isAuthenticatedApiRequest` add the two new exact GET paths `"/api/v1/admin/reports"` and `"/api/v1/admin/reports/summary"` to the allowlist (`api.ts:121`), **retaining** the old photo paths. Grep for the mobile badge summary consumer to pin its file.
 - [ ] **Step 2: Failing helper tests.** `mobile/lib/api.test.ts`: `isAuthenticatedApiRequest` returns `true` for both new paths (and still the old photo paths). Add any per-type helper (action availability / label) to `mobile/lib/admin/reports.ts` with tests.
