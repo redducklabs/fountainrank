@@ -6,7 +6,7 @@ from sqlalchemy import text
 
 from app.config import get_settings
 from app.geo import point_geography
-from app.models import Fountain, FountainPhoto, PhotoReport, UploadAttempt, User
+from app.models import ContentReport, Fountain, FountainPhoto, UploadAttempt, User
 from app.rate_limit import (
     REPORTS_PER_DAY,
     REPORTS_PER_MIN,
@@ -52,10 +52,10 @@ async def _seed_attempt(session, user: User, status: str, created_at: datetime) 
 
 async def _seed_report(
     session, fountain: Fountain, reporter: User, created_at: datetime, n: int
-) -> PhotoReport:
-    # Each report targets its own photo: the (photo_id, reporter_user_id) partial-unique
-    # index only forbids two *pending* reports on the SAME photo, so a bulk-seed of many
-    # reports from one reporter needs distinct photos.
+) -> ContentReport:
+    # Each report targets its own photo: the (content_type, content_id, reporter_user_id)
+    # partial-unique index only forbids two *pending* reports on the SAME item, so a bulk-seed
+    # of many reports from one reporter needs distinct content_ids.
     photo = FountainPhoto(
         fountain_id=fountain.id,
         user_id=reporter.id,
@@ -68,8 +68,10 @@ async def _seed_report(
     )
     session.add(photo)
     await session.flush()
-    report = PhotoReport(
-        photo_id=photo.id,
+    report = ContentReport(
+        content_type="photo",
+        content_id=photo.id,
+        fountain_id=fountain.id,
         reporter_user_id=reporter.id,
         category="spam",
         status="pending",

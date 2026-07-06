@@ -363,8 +363,8 @@ class PhotoOut(BaseModel):
     is_own: bool = False
 
 
-class ReportPhotoRequest(BaseModel):
-    category: Literal["inappropriate", "not_a_fountain", "spam", "other"]
+class ReportContentRequest(BaseModel):
+    category: str
     note: str | None = Field(default=None, max_length=500)
 
 

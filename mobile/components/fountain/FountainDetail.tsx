@@ -28,6 +28,8 @@ export function FountainDetail({
   apiBaseUrl,
   onReportPhoto,
   onDeletePhoto,
+  onReportNote,
+  onReportFountain,
 }: {
   detail: FountainDetailT;
   notes: NoteOut[];
@@ -41,6 +43,10 @@ export function FountainDetail({
   apiBaseUrl: string;
   onReportPhoto?: (photo: PhotoOut) => void;
   onDeletePhoto?: (photo: PhotoOut) => void;
+  /** When provided (signed-in reader), each note row shows a "Report" trigger (#11). */
+  onReportNote?: (note: NoteOut) => void;
+  /** When provided (signed-in reader), a "Report this fountain" trigger is shown (#11). */
+  onReportFountain?: () => void;
 }) {
   const { latitude, longitude } = detail.location;
   const contextComment = detail.comments || detail.placement_note;
@@ -153,7 +159,7 @@ export function FountainDetail({
           ) : null}
         </View>
       ) : (
-        <NotesList notes={notes} now={now} />
+        <NotesList notes={notes} now={now} onReportNote={onReportNote} />
       )}
 
       {adminControls}
@@ -183,6 +189,18 @@ export function FountainDetail({
           <Text style={styles.shareText}>Share</Text>
         </Pressable>
       </View>
+
+      {onReportFountain ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Report this fountain"
+          onPress={onReportFountain}
+          style={styles.reportFountain}
+          hitSlop={spacing.xs}
+        >
+          <Text style={styles.reportFountainText}>Report this fountain</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -247,4 +265,6 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   shareText: { ...typography.body, fontWeight: "700", color: colors.brandBlue },
+  reportFountain: { alignSelf: "flex-start", paddingVertical: spacing.xs },
+  reportFountainText: { ...typography.meta, color: colors.textMuted, fontWeight: "700" },
 });

@@ -1848,44 +1848,51 @@ arrows, stacked so they never overlap:
 null`) — no placeholder frame, no "no photos" message, consistent with the other
 graceful-skip sections in this document (rating fields, attribute controls).
 
-### Photo report dialog (`web/components/fountain/ReportPhotoDialog.tsx`)
+### Content report dialog (`web/components/fountain/ReportContentDialog.tsx`)
 
-Lets a signed-in user flag a photo. `PhotoGallery` (the client bridge described above) owns
-the "which photo is being reported" and "which photos has this viewer already reported
-this session" state and mounts this dialog on demand when the carousel's Report button (see
-above) is clicked; the dialog itself follows the existing modal shell used by the detail
-overlay and add-fountain panel.
+Lets a signed-in user flag any reportable content — a **photo**, a **note**, or the
+**fountain** itself (#11). Generalizes the former photo-only `ReportPhotoDialog`: it is
+parameterized by `{ contentType: 'photo' | 'note' | 'fountain'; fountainId; contentId;
+categories }` and calls the generalized `reportContent` server action, which POSTs the nested
+report endpoint matching `contentType`. The caller owns the "which item is being reported" and
+"already reported this session" state and mounts the dialog on demand (the photo carousel's
+Report button for photos; the `ReportControl` affordance below for notes/fountains); the
+dialog itself follows the existing modal shell used by the detail overlay and add-fountain
+panel.
 
 ```tsx
 <div
   role="dialog"
-  aria-label="Report photo"
+  aria-label={DIALOG_TITLE[contentType]} // "Report photo" | "Report note" | "Report this fountain"
   tabIndex={-1}
   className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 outline-none"
   onClick={(e) => {
     if (e.target === e.currentTarget) onClose();
   }}
 >
-  <div className="w-full max-w-sm rounded-lg bg-white p-4 shadow-xl">
-    <h2 className="text-base font-semibold text-[#0A357E]">Report photo</h2>
+  <div className="w-full max-w-sm rounded-lg bg-surface-raised p-4 shadow-xl">
+    <h2 className="text-base font-semibold text-brand-ink">{DIALOG_TITLE[contentType]}</h2>
 
     {/* alreadyReported branch — see below — replaces everything from here down */}
 
-    <label htmlFor="report-category" className="mt-3 block text-sm font-medium text-slate-700">
+    <label htmlFor="report-category" className="mt-3 block text-sm font-medium text-foreground">
       Reason
     </label>
     <select
       id="report-category"
+      value={category}
       disabled={pending || submitted}
-      className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm text-slate-700"
+      className="mt-1 w-full rounded border border-border px-3 py-2 text-sm text-foreground"
     >
-      <option value="inappropriate">Inappropriate</option>
-      <option value="not_a_fountain">Not a fountain</option>
-      <option value="spam">Spam</option>
-      <option value="other">Other</option>
+      {/* one <option> per value in the `categories` prop, labelled via REPORT_CATEGORY_LABELS */}
+      {categories.map((c) => (
+        <option key={c} value={c}>
+          {REPORT_CATEGORY_LABELS[c]}
+        </option>
+      ))}
     </select>
 
-    <label htmlFor="report-note" className="mt-3 block text-sm font-medium text-slate-700">
+    <label htmlFor="report-note" className="mt-3 block text-sm font-medium text-foreground">
       Note (optional)
     </label>
     <textarea
@@ -1893,21 +1900,21 @@ overlay and add-fountain panel.
       maxLength={500}
       rows={3}
       disabled={pending || submitted}
-      className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm break-words text-slate-700"
+      className="mt-1 w-full rounded border border-border px-3 py-2 text-sm break-words text-foreground"
     />
 
     <div className="mt-4 flex justify-end gap-2">
       <button
         type="button"
         disabled={pending}
-        className="rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50"
+        className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-muted hover:bg-surface"
       >
         Cancel
       </button>
       <button
         type="button"
         disabled={pending || submitted}
-        className="rounded-full bg-[#0C44A0] px-4 py-2 text-sm font-bold text-white hover:bg-[#0A357E] disabled:opacity-50"
+        className="rounded-full bg-brand-mid px-4 py-2 text-sm font-bold text-white hover:bg-brand disabled:opacity-50"
       >
         {pending ? "Submitting…" : "Submit report"}
       </button>
@@ -1917,7 +1924,7 @@ overlay and add-fountain panel.
       <p
         role="status"
         aria-live="polite"
-        className={`mt-2 text-sm ${msg.tone === "ok" ? "text-emerald-700" : "text-red-700"}`}
+        className={`mt-2 text-sm ${msg.tone === "ok" ? "text-emerald-700 dark:text-emerald-300" : "text-danger"}`}
       >
         {msg.text}
       </p>
@@ -1929,33 +1936,67 @@ overlay and add-fountain panel.
 - Same centered-overlay shell family as the fountain-detail dialog/panel (`role="dialog"`,
   backdrop `bg-black/30`, `tabIndex={-1}` + focus-on-mount, `Escape` dismisses). Clicking the
   backdrop (a click whose `target === currentTarget`) also dismisses, same as `DetailOverlay`;
-  clicks inside the white card do not bubble to the backdrop handler because the inner `<div>`
-  is a separate element.
-- **`alreadyReported`** — `PhotoGallery` tracks reported photo ids client-side (session-only;
-  there is no "did I already report this" read endpoint) and passes `alreadyReported` in when
-  reopening the dialog for a photo the viewer already reported this session. When true, the
-  dialog **replaces the whole form** with a read-only notice ("You've already reported this
-  photo. Thanks — our moderators will take a look.") and a single "Close" button — no
-  category/note fields render at all, and no request is made.
-- **Category `<select>`** — required, four options in the fixed order Inappropriate / Not a
-  fountain / Spam / Other (`inappropriate` / `not_a_fountain` / `spam` / `other`), same
-  select styling as the Condition form's problem-status select; disabled while pending or
-  after a successful submit.
+  clicks inside the card do not bubble to the backdrop handler because the inner `<div>`
+  is a separate element. Uses the semantic dark-mode tokens (`bg-surface-raised`,
+  `text-brand-ink`, `border-border`, `text-foreground`/`text-muted`) shared with the rest of
+  the detail UI.
+- **`contentType`** — drives the heading/`aria-label` (`Report photo` / `Report note` /
+  `Report this fountain`) and the success/already-reported copy noun, and selects which nested
+  endpoint `reportContent` POSTs. `contentId` is the reported item's id; for a **fountain**
+  report `contentId === fountainId` (that endpoint has no separate id path param).
+- **`categories`** — the per-type allowed set (spec §6), supplied by the caller from the
+  shared `REPORT_CATEGORIES` map and rendered in order; each `<option>` label comes from
+  `REPORT_CATEGORY_LABELS`. The select defaults to the first entry. Per type:
+  - **photo** — Inappropriate / Not a fountain / Spam / Other.
+  - **note** — Spam / Abuse / Inappropriate / Inaccurate / Other.
+  - **fountain** — Not a fountain / Spam / Inappropriate / Inaccurate / Other.
+- **`alreadyReported`** — the caller tracks reported ids client-side (session-only; there is
+  no "did I already report this" read endpoint) and passes it when reopening the dialog for an
+  item already reported this session. When true, the dialog **replaces the whole form** with a
+  read-only notice ("You've already reported this {photo|note|fountain}. Thanks — our
+  moderators will take a look.") and a single "Close" button — no category/note fields render
+  and no request is made.
 - **Note `<textarea>`** — optional, `maxLength={500}`, `break-words` (user-generated text
-  convention); disabled while pending or after a successful submit. No live character
-  counter needed at this length (unlike the 1000-char note form).
-- **Submit** — royal-blue pill (`bg-[#0C44A0]`, same as the Condition/Note form submit
-  buttons), disabled while pending or after a successful submit; label swaps to
-  "Submitting…" while pending.
+  convention); disabled while pending or after a successful submit. No live character counter
+  needed at this length (unlike the 1000-char note form).
+- **Submit** — royal-blue pill (`bg-brand-mid`, same as the Condition/Note form submit
+  buttons), disabled while pending or after a successful submit; label swaps to "Submitting…"
+  while pending.
 - **States:** idle → pending (fields + Submit `disabled`, "Submitting…") → success (fields
   stay disabled, an inline `role="status"` success message appears below the form, and the
-  photo id is added to `PhotoGallery`'s reported-ids set — the dialog does **not**
-  auto-close; the viewer dismisses it via Cancel/backdrop/Escape) → error (fields re-enable,
-  inline `role="status"` error message, same convention as the other Contribute forms). A
-  reopen for the same photo id short-circuits straight to the `alreadyReported` branch
-  instead of replaying pending/idle.
-- Auth-gated: the Report control only renders for a signed-in viewer (signed-out visitors
-  see no report affordance on photos, matching the rest of Contribute).
+  item id is added to the caller's reported-ids set — the dialog does **not** auto-close; the
+  viewer dismisses it via Cancel/backdrop/Escape) → error (fields re-enable, inline
+  `role="status"` error message, same convention as the other Contribute forms). A reopen for
+  an already-reported item short-circuits straight to the `alreadyReported` branch.
+- Auth-gated: the Report control only renders for a signed-in viewer (signed-out visitors see
+  no report affordance, matching the rest of Contribute).
+
+### Report control (note & fountain) (`web/components/fountain/ReportControl.tsx`)
+
+The trigger affordance that opens the content report dialog for a **note** or a **fountain**
+(#11) — the photo path keeps its own carousel-overlay Report chip (above). A small
+low-emphasis text button that owns the dialog open/`reported` state for its single item:
+
+```tsx
+<button
+  type="button"
+  onClick={() => setOpen(true)}
+  className="text-xs font-semibold text-muted hover:text-foreground"
+>
+  Report
+</button>
+```
+
+- **Placement:** on each community-note row (`NotesList`), inline at the end of the note's
+  meta line; and once on the fountain detail (`FountainDetail`, Details tab) as
+  "Report this fountain". Both render **only for a signed-in viewer** (auth-gated by the
+  parent, exactly like the photo Report control and the rest of Contribute).
+- **Styling:** deliberately quiet — `text-xs font-semibold text-muted hover:text-foreground`
+  (a text button, not a pill) so a report affordance never competes with the primary content
+  or the Contribute actions. The caller may pass a `className` override.
+- **Behavior:** clicking mounts `ReportContentDialog` with the row's `contentType`/`contentId`
+  and the per-type `categories`; on a successful submit the control flips its own
+  `alreadyReported` so a reopen shows the read-only notice for the rest of the session.
 
 ### List-row thumbnail (`web/components/fountain/FountainListRow.tsx`)
 

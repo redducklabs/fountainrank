@@ -1,42 +1,53 @@
 "use client";
 import { useEffect, useRef, useState, useTransition } from "react";
-import type { components } from "@fountainrank/api-client";
-import { reportPhoto } from "../../app/actions/contribute";
+import { reportContent } from "../../app/actions/contribute";
 import { errorText } from "./contributeError";
+import { REPORT_CATEGORY_LABELS, type ReportContentType } from "./reportCategories";
 
-type ReportCategory = components["schemas"]["ReportPhotoRequest"]["category"];
+// Per-content-type dialog copy. The category `<option>` labels come from
+// `REPORT_CATEGORY_LABELS` (shared with the note/fountain report affordances).
+const DIALOG_TITLE: Record<ReportContentType, string> = {
+  photo: "Report photo",
+  note: "Report note",
+  fountain: "Report this fountain",
+};
+const CONTENT_NOUN: Record<ReportContentType, string> = {
+  photo: "photo",
+  note: "note",
+  fountain: "fountain",
+};
 
-const CATEGORIES: { value: ReportCategory; label: string }[] = [
-  { value: "inappropriate", label: "Inappropriate" },
-  { value: "not_a_fountain", label: "Not a fountain" },
-  { value: "spam", label: "Spam" },
-  { value: "other", label: "Other" },
-];
-
-// Photo report dialog (docs/style-guide.md "Photo report dialog"). Follows the same
-// centered-overlay shell family as `AddFountainPanel`/`DetailOverlay`: `role="dialog"`,
-// `tabIndex={-1}` + focus-on-mount, Escape dismisses. `alreadyReported` short-circuits to a
-// read-only notice — `PhotoCarousel`'s "Report" trigger has no per-photo disabled state of
-// its own, so this dialog is what surfaces the already-reported outcome instead.
-export function ReportPhotoDialog({
+// Generalized content report dialog (docs/style-guide.md "Content report dialog"). Generalizes
+// the former photo-only `ReportPhotoDialog` to any reportable content (#11) — photos, notes, or
+// the fountain itself — parameterized by `{ contentType, fountainId, contentId, categories }`.
+// Follows the same centered-overlay shell family as `AddFountainPanel`/`DetailOverlay`:
+// `role="dialog"`, `tabIndex={-1}` + focus-on-mount, Escape dismisses. `alreadyReported`
+// short-circuits to a read-only notice (there is no "did I already report this" read endpoint,
+// so the caller tracks it client-side for the session).
+export function ReportContentDialog({
+  contentType,
   fountainId,
-  photoId,
+  contentId,
+  categories,
   alreadyReported,
   onClose,
   onReported,
 }: {
+  contentType: ReportContentType;
   fountainId: string;
-  photoId: string;
+  contentId: string;
+  categories: readonly string[];
   alreadyReported: boolean;
   onClose: () => void;
   onReported: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const [category, setCategory] = useState<ReportCategory>("inappropriate");
+  const [category, setCategory] = useState<string>(categories[0]);
   const [note, setNote] = useState("");
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
   const [submitted, setSubmitted] = useState(false);
+  const noun = CONTENT_NOUN[contentType];
 
   useEffect(() => {
     ref.current?.focus();
@@ -49,10 +60,16 @@ export function ReportPhotoDialog({
 
   function submit() {
     start(async () => {
-      const res = await reportPhoto(fountainId, photoId, category, note.trim() || undefined);
+      const res = await reportContent(
+        contentType,
+        fountainId,
+        contentId,
+        category,
+        note.trim() || undefined,
+      );
       if (res.ok) {
         setSubmitted(true);
-        setMsg({ tone: "ok", text: "Thanks — this photo was reported." });
+        setMsg({ tone: "ok", text: `Thanks — this ${noun} was reported.` });
         onReported();
       } else {
         setMsg({ tone: "err", text: errorText(res.error) });
@@ -64,7 +81,7 @@ export function ReportPhotoDialog({
     <div
       ref={ref}
       role="dialog"
-      aria-label="Report photo"
+      aria-label={DIALOG_TITLE[contentType]}
       tabIndex={-1}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 outline-none"
       onClick={(e) => {
@@ -72,12 +89,12 @@ export function ReportPhotoDialog({
       }}
     >
       <div className="w-full max-w-sm rounded-lg bg-surface-raised p-4 shadow-xl">
-        <h2 className="text-base font-semibold text-brand-ink">Report photo</h2>
+        <h2 className="text-base font-semibold text-brand-ink">{DIALOG_TITLE[contentType]}</h2>
 
         {alreadyReported ? (
           <>
             <p className="mt-3 text-sm text-muted">
-              You&rsquo;ve already reported this photo. Thanks — our moderators will take a look.
+              You&rsquo;ve already reported this {noun}. Thanks — our moderators will take a look.
             </p>
             <div className="mt-4 flex justify-end">
               <button
@@ -101,12 +118,12 @@ export function ReportPhotoDialog({
               id="report-category"
               value={category}
               disabled={pending || submitted}
-              onChange={(e) => setCategory(e.target.value as ReportCategory)}
+              onChange={(e) => setCategory(e.target.value)}
               className="mt-1 w-full rounded border border-border px-3 py-2 text-sm text-foreground"
             >
-              {CATEGORIES.map((c) => (
-                <option key={c.value} value={c.value}>
-                  {c.label}
+              {categories.map((c) => (
+                <option key={c} value={c}>
+                  {REPORT_CATEGORY_LABELS[c] ?? c}
                 </option>
               ))}
             </select>

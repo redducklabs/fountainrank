@@ -1448,6 +1448,238 @@
         }
       }
     },
+    "/api/v1/fountains/{fountain_id}/notes/{note_id}/report": {
+      "post": {
+        "tags": [
+          "fountains"
+        ],
+        "summary": "Report Note",
+        "description": "Flag a note for moderation (#11). Any signed-in user may report (display name NOT\nrequired). Reporting a hidden note is allowed \u2014 moderators still want the signal. The\nshared chokepoint validates the category (422 outside the note set), dedupes (idempotent\n204), and rate-limits a genuinely new report (429).",
+        "operationId": "report_note_api_v1_fountains__fountain_id__notes__note_id__report_post",
+        "parameters": [
+          {
+            "name": "fountain_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Fountain Id"
+            }
+          },
+          {
+            "name": "note_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Note Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "X-Dev-User",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Dev-User"
+            }
+          },
+          {
+            "name": "X-Dev-Email",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Dev-Email"
+            }
+          },
+          {
+            "name": "X-Dev-Name",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Dev-Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportContentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fountains/{fountain_id}/report": {
+      "post": {
+        "tags": [
+          "fountains"
+        ],
+        "summary": "Report Fountain",
+        "description": "Flag a fountain for moderation (#11). Any signed-in user may report ANY existing fountain\n(any created_source) \u2014 the report is signal-only; #12 decides the action. The shared\nchokepoint validates the category (422 outside the fountain set), dedupes (idempotent 204),\nand rate-limits a genuinely new report (429). For a fountain report content_id == the\nfountain_id.",
+        "operationId": "report_fountain_api_v1_fountains__fountain_id__report_post",
+        "parameters": [
+          {
+            "name": "fountain_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Fountain Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "X-Dev-User",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Dev-User"
+            }
+          },
+          {
+            "name": "X-Dev-Email",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Dev-Email"
+            }
+          },
+          {
+            "name": "X-Dev-Name",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Dev-Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportContentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/fountains/{fountain_id}/photos": {
       "get": {
         "tags": [
@@ -1763,7 +1995,7 @@
           "photos"
         ],
         "summary": "Delete Own Photo",
-        "description": "Owner self-delete (fountain-photos design \u00a78.2): the uploader may remove their own\nphoto. Both storage objects are deleted before the row (best-effort with a durable\n`storage_cleanup` fallback on failure); the still-awarded contribution point is reversed\nBEFORE the row is deleted so the reversal can still find the event by `target_id`; the\nrow delete then cascades to any pending `photo_reports` (no `resolution` write \u2014 the\nreport simply no longer applies to a photo that no longer exists).",
+        "description": "Owner self-delete (fountain-photos design \u00a78.2): the uploader may remove their own\nphoto. Both storage objects are deleted before the row (best-effort with a durable\n`storage_cleanup` fallback on failure); the still-awarded contribution point is reversed\nBEFORE the row is deleted so the reversal can still find the event by `target_id`; this\nphoto's `content_reports` are explicitly deleted in the same txn (content_id is a soft\nref with no cascade \u2014 no `resolution` write, the report simply no longer applies to a\nphoto that no longer exists).",
         "operationId": "delete_own_photo_api_v1_fountains__fountain_id__photos__photo_id__delete",
         "parameters": [
           {
@@ -1874,7 +2106,7 @@
           "photos"
         ],
         "summary": "Report Photo",
-        "description": "Flag a photo for moderation (fountain-photos design \u00a78.3). Any signed-in user may\nreport (a display name is NOT required \u2014 unlike contribution-earning actions); reporting\nis idempotent \u2014 a duplicate pending report from the same reporter on the same photo is\nsilently accepted (204) rather than surfacing a conflict, so a double-tap in a flaky\nclient never poisons the async session with an unhandled IntegrityError.",
+        "description": "Flag a photo for moderation (fountain-photos design \u00a78.3, #11). Any signed-in user may\nreport (a display name is NOT required \u2014 unlike contribution-earning actions). Target-\nexistence 404 precedes the report handling; the shared chokepoint then validates the\ncategory (422), dedupes (a duplicate pending report is an idempotent 204 that consumes no\nrate budget, so a double-tap in a flaky client never poisons the async session), and rate-\nlimits a genuinely new report (429).",
         "operationId": "report_photo_api_v1_fountains__fountain_id__photos__photo_id__report_post",
         "parameters": [
           {
@@ -1967,7 +2199,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ReportPhotoRequest"
+                "$ref": "#/components/schemas/ReportContentRequest"
               }
             }
           }
@@ -2771,7 +3003,7 @@
           "admin"
         ],
         "summary": "Admin Delete Photo",
-        "description": "Hard-delete a photo (mirrors the owner self-delete in `photos.py`): delete BOTH Spaces\nobjects first \u2014 a delete failure is escalated to a durable `storage_cleanup` row and a 5xx\n(never a silent success) \u2014 then reverse the still-awarded point BEFORE deleting the row (so\nthe reversal can still find the event by `target_id`), then delete the row (its pending\nreports cascade away).",
+        "description": "Hard-delete a photo (mirrors the owner self-delete in `photos.py`): delete BOTH Spaces\nobjects first \u2014 a delete failure is escalated to a durable `storage_cleanup` row and a 5xx\n(never a silent success) \u2014 then reverse the still-awarded point BEFORE deleting the row (so\nthe reversal can still find the event by `target_id`), then explicitly delete this photo's\n`content_reports` (content_id is a soft ref with no cascade) and finally the row.",
         "operationId": "admin_delete_photo_api_v1_admin_photos__photo_id__delete",
         "parameters": [
           {
@@ -5785,16 +6017,10 @@
         ],
         "title": "ReadyzResponse"
       },
-      "ReportPhotoRequest": {
+      "ReportContentRequest": {
         "properties": {
           "category": {
             "type": "string",
-            "enum": [
-              "inappropriate",
-              "not_a_fountain",
-              "spam",
-              "other"
-            ],
             "title": "Category"
           },
           "note": {
@@ -5814,7 +6040,7 @@
         "required": [
           "category"
         ],
-        "title": "ReportPhotoRequest"
+        "title": "ReportContentRequest"
       },
       "ReportedPhotoOut": {
         "properties": {

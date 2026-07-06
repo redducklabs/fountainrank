@@ -19,7 +19,7 @@ from app.display import public_display_name
 from app.geo import point_geography
 from app.locks import ADD_FOUNTAIN_LOCK_KEY
 from app.membership import recompute_fountain_membership, recompute_place_counts
-from app.models import Fountain, FountainNote, FountainPhoto, PhotoReport, StorageCleanup, User
+from app.models import ContentReport, Fountain, FountainNote, FountainPhoto, StorageCleanup, User
 from app.ranking import recompute_fountain_ranking
 from app.routers.fountains import serialize_fountain_detail
 from app.schemas import (
@@ -308,22 +308,25 @@ async def admin_photo_reports(
     paginated. Two-part query bounds the admin-only PII notes: a grouped aggregate for the
     counts/categories/first-reported, then a windowed fetch of the 3 newest truncated notes for
     only the page's photos. Notes are truncated in SQL and never logged."""
-    # (1) Grouped aggregate over PENDING reports, joined to the photo so a report orphaned by a
-    # (cascade-)deleted photo can never surface. Oldest pending report first; page-bounded.
+    # (1) Grouped aggregate over PENDING photo reports, joined to the photo so a report
+    # orphaned by an explicitly-deleted photo can never surface. `content_reports` is
+    # polymorphic; this queue stays photo-only (content_type='photo'), so the grouped id is
+    # ContentReport.content_id, labeled back to photo_id for ReportedPhotoOut (generalizing
+    # the queue is #12). Oldest pending report first; page-bounded.
     grouped = (
         select(
-            PhotoReport.photo_id.label("photo_id"),
+            ContentReport.content_id.label("photo_id"),
             func.count().label("report_count"),
-            func.array_agg(distinct(PhotoReport.category)).label("categories"),
-            func.min(PhotoReport.created_at).label("first_reported_at"),
+            func.array_agg(distinct(ContentReport.category)).label("categories"),
+            func.min(ContentReport.created_at).label("first_reported_at"),
         )
-        .join(FountainPhoto, FountainPhoto.id == PhotoReport.photo_id)
-        .where(PhotoReport.status == "pending")
-        .group_by(PhotoReport.photo_id)
-        # Deterministic tiebreak on photo_id: two photos whose oldest pending report share an
+        .join(FountainPhoto, FountainPhoto.id == ContentReport.content_id)
+        .where(ContentReport.content_type == "photo", ContentReport.status == "pending")
+        .group_by(ContentReport.content_id)
+        # Deterministic tiebreak on content_id: two photos whose oldest pending report share an
         # exact timestamp would otherwise reorder across limit/offset pages (skip/dup risk at
         # a page boundary).
-        .order_by(func.min(PhotoReport.created_at).asc(), PhotoReport.photo_id)
+        .order_by(func.min(ContentReport.created_at).asc(), ContentReport.content_id)
         .limit(limit)
         .offset(offset)
     )
@@ -355,21 +358,22 @@ async def admin_photo_reports(
     rn = (
         func.row_number()
         .over(
-            partition_by=PhotoReport.photo_id,
-            order_by=PhotoReport.created_at.desc(),
+            partition_by=ContentReport.content_id,
+            order_by=ContentReport.created_at.desc(),
         )
         .label("rn")
     )
     ranked_notes = (
         select(
-            PhotoReport.photo_id.label("photo_id"),
-            func.left(PhotoReport.note, MAX_NOTE_CHARS).label("note"),
+            ContentReport.content_id.label("photo_id"),
+            func.left(ContentReport.note, MAX_NOTE_CHARS).label("note"),
             rn,
         )
         .where(
-            PhotoReport.status == "pending",
-            PhotoReport.photo_id.in_(page_ids),
-            PhotoReport.note.isnot(None),
+            ContentReport.content_type == "photo",
+            ContentReport.status == "pending",
+            ContentReport.content_id.in_(page_ids),
+            ContentReport.note.isnot(None),
         )
         .subquery()
     )
@@ -421,8 +425,9 @@ async def admin_photo_reports_summary(
     """Badge count: the number of DISTINCT photos with ≥1 pending report."""
     count = (
         await session.execute(
-            select(func.count(distinct(PhotoReport.photo_id))).where(
-                PhotoReport.status == "pending"
+            select(func.count(distinct(ContentReport.content_id))).where(
+                ContentReport.content_type == "photo",
+                ContentReport.status == "pending",
             )
         )
     ).scalar_one()
@@ -435,8 +440,12 @@ async def _resolve_pending_reports(
     """Resolve every still-pending report on a photo with the given resolution
     (`hidden` on a moderation hide, `rejected` on a dismiss). Returns the number resolved."""
     result = await session.execute(
-        update(PhotoReport)
-        .where(PhotoReport.photo_id == photo_id, PhotoReport.status == "pending")
+        update(ContentReport)
+        .where(
+            ContentReport.content_type == "photo",
+            ContentReport.content_id == photo_id,
+            ContentReport.status == "pending",
+        )
         .values(
             status="resolved",
             resolution=resolution,
@@ -539,8 +548,8 @@ async def admin_delete_photo(
     """Hard-delete a photo (mirrors the owner self-delete in `photos.py`): delete BOTH Spaces
     objects first — a delete failure is escalated to a durable `storage_cleanup` row and a 5xx
     (never a silent success) — then reverse the still-awarded point BEFORE deleting the row (so
-    the reversal can still find the event by `target_id`), then delete the row (its pending
-    reports cascade away)."""
+    the reversal can still find the event by `target_id`), then explicitly delete this photo's
+    `content_reports` (content_id is a soft ref with no cascade) and finally the row."""
     photo = (
         await session.execute(select(FountainPhoto).where(FountainPhoto.id == photo_id))
     ).scalar_one_or_none()
@@ -582,7 +591,13 @@ async def admin_delete_photo(
 
     # Reverse the still-awarded point BEFORE deleting the row (find the event by target_id).
     await reverse_contribution_for_target(session, "photo", photo_id)
-    # Deleting the row cascades to `photo_reports` (ON DELETE CASCADE).
+    # content_id is a soft ref (no cascade), so this photo's reports must be explicitly removed
+    # in the same txn as the row delete.
+    await session.execute(
+        delete(ContentReport).where(
+            ContentReport.content_type == "photo", ContentReport.content_id == photo_id
+        )
+    )
     await session.execute(delete(FountainPhoto).where(FountainPhoto.id == photo_id))
     await session.commit()
 

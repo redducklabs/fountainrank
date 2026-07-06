@@ -13,7 +13,6 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import RedirectResponse
 from sqlalchemy import delete, func, select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user, get_optional_user, require_named_user
@@ -28,10 +27,11 @@ from app.db import get_session
 from app.display import public_display_name
 from app.geo import latitude_of, longitude_of, point_geography
 from app.images import UnsupportedImage, process_image
-from app.models import Fountain, FountainPhoto, PhotoReport, StorageCleanup, User
+from app.models import ContentReport, Fountain, FountainPhoto, StorageCleanup, User
 from app.multipart_read import TooLarge, read_capped_multipart_file
-from app.rate_limit import RateLimited, check_report_rate, finalize_upload, reserve_upload
-from app.schemas import DisplayNameRequiredConflict, PhotoOut, ReportPhotoRequest
+from app.rate_limit import RateLimited, finalize_upload, reserve_upload
+from app.reports import create_content_report
+from app.schemas import DisplayNameRequiredConflict, PhotoOut, ReportContentRequest
 from app.storage import Storage, get_storage
 
 router = APIRouter(prefix="/api/v1", tags=["photos"])
@@ -480,9 +480,10 @@ async def delete_own_photo(
     """Owner self-delete (fountain-photos design §8.2): the uploader may remove their own
     photo. Both storage objects are deleted before the row (best-effort with a durable
     `storage_cleanup` fallback on failure); the still-awarded contribution point is reversed
-    BEFORE the row is deleted so the reversal can still find the event by `target_id`; the
-    row delete then cascades to any pending `photo_reports` (no `resolution` write — the
-    report simply no longer applies to a photo that no longer exists)."""
+    BEFORE the row is deleted so the reversal can still find the event by `target_id`; this
+    photo's `content_reports` are explicitly deleted in the same txn (content_id is a soft
+    ref with no cascade — no `resolution` write, the report simply no longer applies to a
+    photo that no longer exists)."""
     photo = await _load_scoped_photo(session, fountain_id, photo_id)
     if photo.user_id != user.id:
         logger.warning(
@@ -537,8 +538,14 @@ async def delete_own_photo(
     # but doing it first keeps the sequence obviously correct and matches the brief).
     await reverse_contribution_for_target(session, "photo", photo_id)
 
-    # Deleting the row cascades to `photo_reports` (ON DELETE CASCADE) — no `resolution`
-    # write needed; a report on a photo that no longer exists simply ceases to exist too.
+    # content_id is a soft ref (no cascade), so this photo's reports must be explicitly
+    # removed in the same txn — no `resolution` write needed; a report on a photo that no
+    # longer exists simply ceases to exist too.
+    await session.execute(
+        delete(ContentReport).where(
+            ContentReport.content_type == "photo", ContentReport.content_id == photo_id
+        )
+    )
     await session.execute(delete(FountainPhoto).where(FountainPhoto.id == photo_id))
     await session.commit()
 
@@ -554,59 +561,25 @@ async def delete_own_photo(
 async def report_photo(
     fountain_id: uuid.UUID,
     photo_id: uuid.UUID,
-    payload: ReportPhotoRequest,
+    payload: ReportContentRequest,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> None:
-    """Flag a photo for moderation (fountain-photos design §8.3). Any signed-in user may
-    report (a display name is NOT required — unlike contribution-earning actions); reporting
-    is idempotent — a duplicate pending report from the same reporter on the same photo is
-    silently accepted (204) rather than surfacing a conflict, so a double-tap in a flaky
-    client never poisons the async session with an unhandled IntegrityError."""
-    try:
-        await check_report_rate(session, user.id)
-    except RateLimited as exc:
-        await session.rollback()
-        logger.info(
-            "photo report rate limited",
-            extra={"user_id": str(user.id), "reason": exc.reason},
-        )
-        raise HTTPException(
-            status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=exc.reason,
-            headers={"Retry-After": str(exc.retry_after)},
-        ) from exc
-
+    """Flag a photo for moderation (fountain-photos design §8.3, #11). Any signed-in user may
+    report (a display name is NOT required — unlike contribution-earning actions). Target-
+    existence 404 precedes the report handling; the shared chokepoint then validates the
+    category (422), dedupes (a duplicate pending report is an idempotent 204 that consumes no
+    rate budget, so a double-tap in a flaky client never poisons the async session), and rate-
+    limits a genuinely new report (429)."""
     # Reports may target a hidden photo too (a moderator may still want more signal), so this
     # deliberately does NOT reuse `_load_visible_photo` — only the nested fountain scoping.
     photo = await _load_scoped_photo(session, fountain_id, photo_id)
-
-    stmt = (
-        pg_insert(PhotoReport)
-        .values(
-            photo_id=photo.id,
-            reporter_user_id=user.id,
-            category=payload.category,
-            note=payload.note,
-        )
-        .on_conflict_do_nothing(
-            index_elements=["photo_id", "reporter_user_id"],
-            index_where=(PhotoReport.status == "pending"),
-        )
-        .returning(PhotoReport.id)
-    )
-    result = await session.execute(stmt)
-    inserted = result.first() is not None
-    await session.commit()
-
-    # Deliberately logs only ids/category — NEVER the free-text note (may contain PII).
-    logger.info(
-        "photo reported",
-        extra={
-            "fountain_id": str(fountain_id),
-            "photo_id": str(photo_id),
-            "user_id": str(user.id),
-            "category": payload.category,
-            "inserted": inserted,
-        },
+    await create_content_report(
+        session,
+        content_type="photo",
+        content_id=photo.id,
+        fountain_id=fountain_id,
+        reporter_user_id=user.id,
+        category=payload.category,
+        note=payload.note,
     )

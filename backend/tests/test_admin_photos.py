@@ -32,10 +32,10 @@ from app.config import Settings, get_settings
 from app.geo import point_geography
 from app.main import app
 from app.models import (
+    ContentReport,
     ContributionEvent,
     Fountain,
     FountainPhoto,
-    PhotoReport,
     User,
     UserContributionStats,
 )
@@ -154,9 +154,11 @@ async def _add_report(
     note: str | None = None,
     status: str = "pending",
     created_at: datetime | None = None,
-) -> PhotoReport:
-    report = PhotoReport(
-        photo_id=photo.id,
+) -> ContentReport:
+    report = ContentReport(
+        content_type="photo",
+        content_id=photo.id,
+        fountain_id=photo.fountain_id,
         reporter_user_id=reporter.id,
         category=category,
         note=note,
@@ -400,7 +402,11 @@ async def test_hide_flips_stamps_resolves_reverses_and_read_404s(raw_client, ses
     assert fresh.hidden_at is not None
 
     report = (
-        await session.execute(select(PhotoReport).where(PhotoReport.photo_id == photo_id))
+        await session.execute(
+            select(ContentReport).where(
+                ContentReport.content_type == "photo", ContentReport.content_id == photo_id
+            )
+        )
     ).scalar_one()
     assert report.status == "resolved"
     assert report.resolution == "hidden"
@@ -460,7 +466,11 @@ async def test_unhide_reactivates_and_read_resolves(raw_client, session, storage
 
     # Already-resolved report stays resolved (unhide does not un-resolve).
     report = (
-        await session.execute(select(PhotoReport).where(PhotoReport.photo_id == photo_id))
+        await session.execute(
+            select(ContentReport).where(
+                ContentReport.content_type == "photo", ContentReport.content_id == photo_id
+            )
+        )
     ).scalar_one()
     assert report.status == "resolved"
 
@@ -491,7 +501,13 @@ async def test_dismiss_sets_rejected_and_photo_stays_visible(raw_client, session
     session.expire_all()
     admin = await _admin_user(session)
     reports = (
-        (await session.execute(select(PhotoReport).where(PhotoReport.photo_id == photo_id)))
+        (
+            await session.execute(
+                select(ContentReport).where(
+                    ContentReport.content_type == "photo", ContentReport.content_id == photo_id
+                )
+            )
+        )
         .scalars()
         .all()
     )
@@ -543,7 +559,13 @@ async def test_delete_removes_objects_row_and_reverses_point(raw_client, session
     ).scalar_one_or_none() is None
     # reports removed by cascade
     assert (
-        (await session.execute(select(PhotoReport).where(PhotoReport.photo_id == photo_id)))
+        (
+            await session.execute(
+                select(ContentReport).where(
+                    ContentReport.content_type == "photo", ContentReport.content_id == photo_id
+                )
+            )
+        )
         .scalars()
         .all()
     ) == []
@@ -626,3 +648,48 @@ async def test_audit_logs_never_contain_raw_notes(raw_client, session, storage, 
 
     # ...but never in the logs.
     assert _SENTINEL_NOTE not in caplog.text
+
+
+# --- fountain-delete cascades every content_report -----------------------------------
+
+
+async def test_admin_delete_fountain_cascades_all_content_reports(raw_client, session, storage):
+    """Deleting a fountain removes ALL its content_reports (photo + fountain types) via the
+    fountain_id ON DELETE CASCADE — no per-type explicit cleanup needed (spec §3.2)."""
+    uploader = await _add_user(session, name="Uploader")
+    reporter = await _add_user(session, name="R1")
+    fountain = await _add_fountain(session)
+    fountain_id = fountain.id
+
+    # A pending report on the fountain's photo...
+    photo = await _add_photo(session, fountain, uploader)
+    await _add_report(session, photo, reporter, category="spam")
+    # ...and a pending report on the fountain itself (content_type='fountain').
+    session.add(
+        ContentReport(
+            content_type="fountain",
+            content_id=fountain_id,
+            fountain_id=fountain_id,
+            reporter_user_id=reporter.id,
+            category="not_a_fountain",
+            status="pending",
+        )
+    )
+    await session.commit()
+
+    resp = await raw_client.delete(
+        f"/api/v1/admin/fountains/{fountain_id}", headers={"X-Dev-User": "admin-sub"}
+    )
+    assert resp.status_code == 204
+
+    session.expire_all()
+    remaining = (
+        (
+            await session.execute(
+                select(ContentReport).where(ContentReport.fountain_id == fountain_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert remaining == []
