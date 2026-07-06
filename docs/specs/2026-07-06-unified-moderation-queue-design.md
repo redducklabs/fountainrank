@@ -324,7 +324,8 @@ mirror so a regenerated client that web/mobile no longer typecheck against can't
     resolves only that fountain's `content_type='fountain'` reports and leaves note/photo
     reports under it pending; unhide does not re-open.
   - **Dismiss**: `POST /admin/reports/dismiss` rejects an item's pending reports for each type;
-    idempotent no-op when none pending; 422 on bad `content_type`.
+    idempotent no-op when none pending; 422 on bad `content_type`; **404 when the target
+    (photo/note/fountain) does not exist** (existence check per §3.3).
   - **PII**: reporter `note` free-text is **never logged** (caplog assertion on the queue-read
     and dismiss records); notes truncated ≤200.
   - **Auth boundary**: non-admin → **403** on `GET /admin/reports`, `/admin/reports/summary`,
