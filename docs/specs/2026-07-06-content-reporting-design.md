@@ -123,12 +123,25 @@ chokepoints (matching `contribution_events`):
 
 - **Fountain deleted** → `fountain_id` FK `ON DELETE CASCADE` removes all of that fountain's
   reports across every content type. ✓ (Admin fountain hard-delete already cascades broadly.)
-- **Individual note/photo removed** (owner-delete, or admin hide-then-delete) → the delete
-  path must **explicitly delete that item's rows**:
-  `DELETE FROM content_reports WHERE content_type = :t AND content_id = :id`. Today the photo
-  owner-delete (`photos.py`, `DELETE …/photos/{id}`) relies on the DB `ON DELETE CASCADE` from
-  `fountain_photos → photo_reports`; dropping that hard FK means this delete becomes explicit.
-  This is the **only** place the refactor adds logic rather than repointing (§5).
+- **Individual photo removed** (row hard-deleted while its fountain lives) → the delete path
+  must run, **in the same transaction** as the row delete,
+  `DELETE FROM content_reports WHERE content_type = 'photo' AND content_id = :photo_id`. There
+  are **two** such paths today, **both** currently relying on the dropped
+  `fountain_photos → photo_reports` `ON DELETE CASCADE`, and **both** must add the explicit
+  delete (and drop the now-false cascade comments at those sites):
+  - `photos.py::delete_own_photo` — `DELETE /fountains/{fid}/photos/{pid}` (photos.py:542).
+  - `admin.py::admin_delete_photo` — `DELETE /admin/photos/{pid}` (admin.py:586).
+- **Fountain removed** (`admin.py::delete_fountain`, `DELETE /admin/fountains/{fid}`) → **no**
+  explicit cleanup needed: `content_reports.fountain_id ON DELETE CASCADE` removes every report
+  for that fountain (photo/note/fountain) directly. (Its `fountain_photos` rows also cascade,
+  but those photos' reports are already gone via the `fountain_id` cascade — order-independent.)
+- **Notes** have **no hard-delete path** in v1 (upsert-only + admin *hide*, which keeps the row
+  so its reports correctly persist); note reports are removed only via the fountain-delete
+  cascade above. If a note hard-delete is ever added it must run the same explicit
+  `content_reports` cleanup — flagged for #12/future.
+
+These explicit photo deletes are the **only** places the refactor adds logic rather than
+repointing (§5).
 
 Rejected alternative: keeping per-type nullable FK columns (`photo_id`/`note_id`) to preserve
 hard integrity — it defeats the polymorphic simplicity and makes the #12 queue a per-column
@@ -178,9 +191,12 @@ tests are the safety net). What moves from `PhotoReport`/`photo_reports` to
   (§7) with `content_type='photo'`; the photo **owner-delete** adds the explicit report
   cleanup (§3.2).
 - **`app/routers/admin.py`** — the photo-reports **queue**, **summary badge**, **hide**
-  (resolve pending reports), **dismiss-reports**, and **delete** read/write
-  `content_reports WHERE content_type = 'photo'`. Behavior and payloads are identical; it stays
-  photo-only. (Generalizing this queue to notes/fountains is **#12**.)
+  (resolve pending reports), and **dismiss-reports** read/write
+  `content_reports WHERE content_type = 'photo'` (behavior/payloads identical; stays photo-only
+  — generalizing is **#12**). **`admin_delete_photo`** additionally performs the **explicit
+  `content_reports` cleanup of §3.2** in the same transaction as the `FountainPhoto` delete — it
+  must **not** be left relying on the dropped cascade, and this is distinct from the queue's
+  report-resolution logic.
 - **`app/schemas.py`** — `ReportPhotoRequest` becomes the shared `ReportContentRequest`
   (§7); the admin `ReportedPhotoOut` is unchanged (still photo-only).
 
@@ -309,10 +325,14 @@ that web/mobile no longer typecheck against can't slip through.
     delete tests continue to pass against `content_reports` — their fixtures/assertions that
     reference the `PhotoReport` model or `photo_reports` table (in `tests/conftest.py`,
     `test_rate_limit.py`, `test_photos_delete_report.py`, `test_admin_photos.py`) are updated
-    to `ContentReport` / `content_reports`; the photo **owner-delete now explicitly removes**
-    that photo's `content_reports` rows (was cascade).
-  - **Referential integrity:** deleting a fountain cascades its `content_reports`; deleting a
-    note/photo removes only that item's reports.
+    to `ContentReport` / `content_reports`.
+  - **No-orphan cleanup (both photo hard-delete paths):** `delete_own_photo` **and**
+    `admin_delete_photo` are each asserted to remove that photo's `content_reports` rows in the
+    same txn, with an explicit check that **no orphan** `content_reports(content_type='photo',
+    content_id=<deleted>)` row survives (per §3.2).
+  - **Referential integrity:** deleting a **fountain** cascades away all its `content_reports`
+    (via `fountain_id`), including reports on its notes and photos; deleting a **photo** via
+    either path removes only that photo's reports and leaves unrelated `content_reports` intact.
 - **Web/mobile:** `pnpm exec turbo run lint typecheck test --filter=web|mobile`;
   `ReportContentDialog` / `ReportContentButton` render + submit tests (category subset per
   type, success/already-reported); web build clean.
