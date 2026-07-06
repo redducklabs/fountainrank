@@ -103,13 +103,19 @@ page-bounded.
    make pagination deterministic when two items' oldest report share a timestamp — the same
    skip/dup guard the photo query uses). `LIMIT/OFFSET` applied here.
 
-   Unlike the photo query, this grouped step does **not** join a content table (it cannot — the
-   table varies by `content_type`). The referential-integrity invariants from #11 guarantee no
-   orphan pending reports can exist (photo hard-delete paths delete their reports in-txn;
-   fountain delete cascades all its reports via `content_reports.fountain_id ON DELETE CASCADE`;
-   notes have no hard-delete). The per-type detail fetch below is the backstop: any group whose
-   content row is unexpectedly missing is **skipped and logged at `warning`** (never silently
-   dropped), exactly as the photo query already skips a `detail is None` row.
+   Unlike the photo query, this grouped step cannot join a single content table (the table
+   varies by `content_type`), so it **excludes orphaned reports before pagination** with a
+   per-type `EXISTS` existence predicate in the `WHERE` (photo → `EXISTS (SELECT 1 FROM
+   fountain_photos WHERE id = cr.content_id)`, note → `fountain_notes`, fountain → `fountains`).
+   This reproduces the guarantee the photo query gets from its `FountainPhoto` join — an orphaned
+   report never enters the count, the page, or the ordering — and, by using the **same predicate**
+   as the badge summary (§3.2), keeps the queue and the badge consistent by construction. The #11
+   invariants already make orphan pending reports impossible (photo hard-delete deletes its
+   reports in-txn; fountain delete cascades all its reports via the `fk_content_reports_fountain`
+   `ON DELETE CASCADE`; notes have no hard-delete), so the predicate is defensive. The per-type
+   detail fetch below additionally **skips and logs at `warning`** any row that still resolves to
+   a missing detail (never silently dropped), as a belt-and-suspenders backstop — but because the
+   `EXISTS` predicate runs before `LIMIT/OFFSET`, that skip can no longer corrupt pagination.
 
 2. **Windowed report-notes fetch** — identical to the photo query's step (2b): the ≤3 newest
    non-null report notes per page item, each `left(note, 200)` **truncated in SQL** so the
@@ -137,12 +143,17 @@ optionally, per-type counts — never the notes.
 ### 3.2 `GET /api/v1/admin/reports/summary` — the badge count
 
 Returns `ReportsSummary { pending_count: int }` = the number of **distinct
-`(content_type, content_id)` pairs** with ≥1 pending report:
+`(content_type, content_id)` pairs** with ≥1 pending report, using the **same per-type `EXISTS`
+existence predicate as the queue (§3.1)** so the badge and the queue agree by construction (an
+orphan report — which the #11 invariants already preclude — is counted by neither):
 
 ```sql
 SELECT count(*) FROM (
   SELECT DISTINCT content_type, content_id
-  FROM content_reports WHERE status = 'pending'
+  FROM content_reports cr WHERE status = 'pending'
+    AND ( (cr.content_type = 'photo'    AND EXISTS (SELECT 1 FROM fountain_photos WHERE id = cr.content_id))
+       OR (cr.content_type = 'note'     AND EXISTS (SELECT 1 FROM fountain_notes  WHERE id = cr.content_id))
+       OR (cr.content_type = 'fountain' AND EXISTS (SELECT 1 FROM fountains       WHERE id = cr.content_id)) )
 ) t;
 ```
 
@@ -154,15 +165,16 @@ shape.
 ### 3.3 `POST /api/v1/admin/reports/dismiss` — generalized reject
 
 Body `ReportDismissRequest { content_type: str, content_id: uuid.UUID }` → **204**. Validates
-`content_type ∈ {photo,note,fountain}` (422 else). Resolves every still-pending report for that
-`(content_type, content_id)` as `resolution = 'rejected'` (via the generalized resolver, §4),
-stamping `resolved_by_user_id`/`resolved_at`. Idempotent: dismissing an item with no pending
-reports is a no-op 204 (rowcount 0). The new web + mobile boards use this for **all** types
-(including photo); the old `POST /admin/photos/{id}/dismiss-reports` stays for old mobile.
-
-It deliberately does **not** verify the target content row still exists — like the existing
-photo dismiss, it only flips report rows; a dismiss on an already-gone item resolves nothing and
-returns 204. Logs the admin, `content_type`, `content_id`, and resolved count.
+`content_type ∈ {photo,note,fountain}` (422 else). It **validates the target still exists** per
+content type (photo → `FountainPhoto`, note → `FountainNote`, fountain → `Fountain`) and returns
+**404** if missing — matching the existing `admin_dismiss_photo_reports` existence check
+(`admin.py:512`), so a dismiss never resolves reports for a nonexistent target. It then resolves
+every still-pending report for that `(content_type, content_id)` as `resolution = 'rejected'`
+(via the generalized resolver, §4), stamping `resolved_by_user_id`/`resolved_at`. Idempotent:
+dismissing an existing item that has no pending reports is a no-op **204** (rowcount 0). The new
+web + mobile boards use this for **all** types (including photo); the old
+`POST /admin/photos/{id}/dismiss-reports` stays unchanged for old mobile. Logs the admin,
+`content_type`, `content_id`, and resolved count.
 
 ### 3.4 `ReportedContentOut` schema (`backend/app/schemas.py`)
 
@@ -216,8 +228,8 @@ Semantics mirror the photo path exactly:
 - **Delete already cleans up.** Photo hard-delete (both paths) deletes its `content_reports`
   in-txn (existing, #11 §3.2). Fountain delete cascades all its reports via
   `content_reports.fountain_id ON DELETE CASCADE` (existing, **no change** — an earlier draft's
-  "fountain-delete orphan fix" was a false alarm; the cascade already handles it, verified
-  against migration `0021` line 52).
+  "fountain-delete orphan fix" was a false alarm; the cascade already handles it, via the
+  `fk_content_reports_fountain` FK in migration `0021` and `ContentReport`).
 
 The photo-path behavior and payloads are unchanged; only the resolver's signature widens.
 
@@ -276,6 +288,13 @@ already does.
 - **Badge** — repoint the mobile admin pending-report count (the `["me"]`-gated summary query /
   `ProfileTabIcon` badge) to `GET /admin/reports/summary`; reuse the existing
   `mobile/lib/admin/reports.ts` `formatBadgeCount`/`shouldShowBadge` helpers unchanged.
+- **Auth attachment (must-not-miss)** — `mobile/lib/api.ts::isAuthenticatedApiRequest`
+  force-attaches a bearer token only for an allowlist of **exact** paths, and it currently lists
+  only the **old** photo-report paths (`api.ts:121`). Non-GET admin actions attach auth
+  automatically, but these new queue/summary reads are **GETs**, so add the two new admin GET
+  paths (`/api/v1/admin/reports`, `/api/v1/admin/reports/summary`) to that allowlist — **retaining
+  the old photo paths for released clients**. Without this the staff-only reads go out tokenless
+  and 401/403. Covered by a unit test (§9).
 - Reuses existing toast/`Alert`/`QueryStateView` patterns; **no new native deps**.
 
 ## 8. API client (`packages/api-client/`)
@@ -294,6 +313,10 @@ mirror so a regenerated client that web/mobile no longer typecheck against can't
     detail fields; `limit`/`offset` pagination is stable across a shared-timestamp tiebreak;
     the optional `content_type` filter narrows correctly; an invalid `content_type` → 422.
   - **Hidden items appear** with `is_hidden = true` (not filtered out).
+  - **Orphan exclusion**: a pending report whose content row does not exist (the soft `content_id`
+    lets a test insert one directly, with a real `fountain_id`) is excluded from **both** the queue
+    page (via the per-type `EXISTS` predicate — so pagination of the surviving rows is unaffected)
+    **and** the summary count; the detail-skip backstop leaks no report notes if it ever fires.
   - **Summary**: distinct-item count across types; an item with N pending reports counts once;
     resolved reports don't count.
   - **Resolve-on-action**: `admin_patch_note` hide resolves that note's pending reports
@@ -314,7 +337,9 @@ mirror so a regenerated client that web/mobile no longer typecheck against can't
   per-type actions; `adminDismissReport` posts the right endpoint; `ReportBadge`/
   `fetchPendingReportCount` count all types; empty state renders "No pending reports."
 - **Mobile (vitest):** pure-helper tests for any new per-type helpers (e.g. action availability
-  / label formatting) added to `mobile/lib/admin/reports.ts`; existing helper tests stay green.
+  / label formatting) added to `mobile/lib/admin/reports.ts`; **`isAuthenticatedApiRequest`
+  attaches auth for `/api/v1/admin/reports` and `/api/v1/admin/reports/summary`** (and still for
+  the old photo paths); existing helper tests stay green.
 - **Full local mirror** `./run.ps1 check` green before the PR and before each push.
 
 ## 10. #12 boundary after this slice
