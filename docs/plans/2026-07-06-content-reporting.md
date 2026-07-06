@@ -128,19 +128,40 @@ class ContentReport(Base):
 
 - [ ] **Step 2: Rename the lock.** In `backend/app/locks.py` rename `PHOTO_REPORT_LOCK_NS` → `CONTENT_REPORT_LOCK_NS` (keep the value `0x50525054`; update the comment to "content report rate gate").
 
-- [ ] **Step 3: Repoint the rate limiter.** In `backend/app/rate_limit.py`: change the import `PhotoReport` → `ContentReport` and `PHOTO_REPORT_LOCK_NS` → `CONTENT_REPORT_LOCK_NS`; in `_count_reports_since` use `ContentReport`/`ContentReport.reporter_user_id`; `check_report_rate` uses `CONTENT_REPORT_LOCK_NS`. Update the module docstring line that says "count `photo_reports`" → "count `content_reports`". Limits unchanged.
+- [ ] **Step 3: Repoint + refactor the rate limiter.** In `backend/app/rate_limit.py`: change the import `PhotoReport` → `ContentReport` and `PHOTO_REPORT_LOCK_NS` → `CONTENT_REPORT_LOCK_NS`; in `_count_reports_since` use `ContentReport`/`ContentReport.reporter_user_id`; update the docstring "count `photo_reports`" → "count `content_reports`"; limits unchanged. **Extract** the lock-free counting so the chokepoint can rate-check without re-acquiring the lock:
+```python
+async def enforce_report_rate(session: AsyncSession, user_id: uuid.UUID) -> None:
+    """Lock-free: raise RateLimited if the user is over the 60s/24h report windows.
+    The CALLER must already hold the per-user report advisory lock."""
+    minute_count = await _count_reports_since(session, user_id, _MINUTE_WINDOW_SECONDS)
+    if minute_count >= REPORTS_PER_MIN:
+        logger.info("report_rate_limited", extra={"user_id": str(user_id), "kind": "report_per_minute", "count": minute_count})
+        raise RateLimited("reports_per_minute", retry_after=_MINUTE_WINDOW_SECONDS)
+    day_count = await _count_reports_since(session, user_id, _DAY_WINDOW_SECONDS)
+    if day_count >= REPORTS_PER_DAY:
+        logger.info("report_rate_limited", extra={"user_id": str(user_id), "kind": "report_per_day", "count": day_count})
+        raise RateLimited("reports_per_day", retry_after=_DAY_WINDOW_SECONDS)
 
-- [ ] **Step 4: Add the chokepoint** `backend/app/reports.py`:
+async def check_report_rate(session: AsyncSession, user_id: uuid.UUID) -> None:
+    """Public gate (kept for tests/back-compat): acquire the lock, then enforce."""
+    await acquire_user_lock(session, CONTENT_REPORT_LOCK_NS, user_id)
+    await enforce_report_rate(session, user_id)
+```
+  This keeps `check_report_rate` (and `test_rate_limit.py`) behaving exactly as before while exposing `enforce_report_rate` for the chokepoint's dedupe-before-rate ordering (Step 4).
+
+- [ ] **Step 4: Add the chokepoint** `backend/app/reports.py`. **Ordering is dedupe-BEFORE-rate** (Codex plan-review #2): a duplicate pending report is an idempotent 204 that consumes **no** rate budget, regardless of the reporter's quota state. The per-user advisory lock serializes a user's report requests, so the "already pending?" check + insert is race-free for that user; `ON CONFLICT DO NOTHING` remains a backstop. (This makes the idempotency guarantee unconditional — a strict, test-safe improvement over the old photo path, which rate-checked first; no existing photo test exercises a rate-limited duplicate.)
 ```python
 import logging
 import uuid
 
 from fastapi import HTTPException, status as http_status
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.locks import CONTENT_REPORT_LOCK_NS
 from app.models import ContentReport
-from app.rate_limit import RateLimited, check_report_rate
+from app.rate_limit import RateLimited, acquire_user_lock, enforce_report_rate
 
 logger = logging.getLogger(__name__)
 
@@ -155,27 +176,51 @@ async def create_content_report(
     session: AsyncSession, *, content_type: str, content_id: uuid.UUID,
     fountain_id: uuid.UUID, reporter_user_id: uuid.UUID, category: str, note: str | None,
 ) -> None:
-    """Rate-limited, idempotent report insert (spec §7). Category validated per content_type
-    BEFORE consuming rate budget; a duplicate pending report is a silent no-op (idempotent).
-    Commits. NEVER logs the raw note (PII)."""
-    if category not in ALLOWED_CATEGORIES[content_type]:
-        raise HTTPException(
-            http_status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"invalid category for {content_type}: {category}",
-        )
+    """Idempotent, rate-limited report insert (spec §7). Category validated per content_type;
+    a duplicate pending report is a silent no-op (idempotent 204) that consumes no rate budget;
+    a NEW report is rate-limited. Commits. NEVER logs the raw note (PII)."""
+    allowed = ALLOWED_CATEGORIES.get(content_type)
+    if allowed is None:  # defensive: internal misuse of the soft-polymorphic boundary
+        raise HTTPException(http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail=f"unknown content_type: {content_type}")
+    if category not in allowed:
+        raise HTTPException(http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail=f"invalid category for {content_type}: {category}")
+
+    # Serialize this user's report requests so dedupe-check + insert is race-free.
+    await acquire_user_lock(session, CONTENT_REPORT_LOCK_NS, reporter_user_id)
+
+    # Idempotent: an existing PENDING report by this reporter for this item -> no-op 204.
+    existing = (await session.execute(
+        select(ContentReport.id).where(
+            ContentReport.content_type == content_type,
+            ContentReport.content_id == content_id,
+            ContentReport.reporter_user_id == reporter_user_id,
+            ContentReport.status == "pending",
+        ).limit(1)
+    )).first()
+    if existing is not None:
+        await session.commit()  # releases the lock; no rate charge
+        logger.info("content report duplicate ignored", extra={
+            "content_type": content_type, "content_id": str(content_id),
+            "user_id": str(reporter_user_id)})
+        return
+
+    # NEW report: apply the rate limit (lock already held).
     try:
-        await check_report_rate(session, reporter_user_id)  # acquires CONTENT_REPORT_LOCK_NS
+        await enforce_report_rate(session, reporter_user_id)
     except RateLimited as exc:
         await session.rollback()
         logger.info("content report rate limited",
                     extra={"user_id": str(reporter_user_id), "reason": exc.reason})
         raise HTTPException(http_status.HTTP_429_TOO_MANY_REQUESTS, detail=exc.reason,
                             headers={"Retry-After": str(exc.retry_after)}) from exc
+
     stmt = (
         pg_insert(ContentReport)
         .values(content_type=content_type, content_id=content_id, fountain_id=fountain_id,
                 reporter_user_id=reporter_user_id, category=category, note=note)
-        .on_conflict_do_nothing(
+        .on_conflict_do_nothing(  # backstop; the lock already prevents same-user races
             index_elements=["content_type", "content_id", "reporter_user_id"],
             index_where=(ContentReport.status == "pending"),
         )
@@ -197,11 +242,18 @@ class ReportContentRequest(BaseModel):
 ```
 
 - [ ] **Step 6: Repoint the photo report endpoint + owner-delete.** In `backend/app/routers/photos.py`:
-  - `report_photo`: change the body param type to `ReportContentRequest`; **replace** the inline rate-check + `pg_insert(PhotoReport)` block with: load the scoped photo first (keep `_load_scoped_photo` → 404), then `await create_content_report(session, content_type="photo", content_id=photo.id, fountain_id=fountain_id, reporter_user_id=user.id, category=payload.category, note=payload.note)`; return 204. (Order refinement: target-existence 404 now precedes the 429; a rate-limited report on a valid photo still 429s — verified by the repointed tests in Step 9.)
+  - `report_photo`: change the body param type to `ReportContentRequest`; **replace** the inline rate-check + `pg_insert(PhotoReport)` block with: load the scoped photo first (keep `_load_scoped_photo` → 404), then `await create_content_report(session, content_type="photo", content_id=photo.id, fountain_id=fountain_id, reporter_user_id=user.id, category=payload.category, note=payload.note)`; return 204. (Order: target-existence 404 precedes report handling; within the chokepoint a duplicate is a 204 regardless of quota, a new report is rate-limited — verified by the repointed tests in Step 9.)
   - `delete_own_photo`: **before** `delete(FountainPhoto)`, add
-    `await session.execute(delete(ContentReport).where(ContentReport.content_type == "photo", ContentReport.content_id == photo_id))`; delete the now-false "cascades to `photo_reports`" comments (photos.py ~484, ~540). Import `ContentReport`.
+    `await session.execute(delete(ContentReport).where(ContentReport.content_type == "photo", ContentReport.content_id == photo_id))`; delete the now-false "cascades to `photo_reports`" comments (photos.py ~484, ~540).
+  - **Imports:** add `ContentReport` (models) and `create_content_report` (`app.reports`); **remove the now-unused** `from sqlalchemy.dialects.postgresql import insert as pg_insert` (line 16) and drop `check_report_rate` from the `from app.rate_limit import …` line (line 33) — **keep** `RateLimited`, `reserve_upload`, `finalize_upload` (still used by the upload path). `ruff check` must be clean (it flags the unused imports — this is the single-commit-green hazard called out in Codex plan-review #4).
 
-- [ ] **Step 7: Repoint the admin photo queue/actions.** In `backend/app/routers/admin.py`, mechanical `PhotoReport` → `ContentReport` and add `ContentReport.content_type == "photo"` to every report query (queue group-by, summary count, hide-resolve, dismiss). In `admin_delete_photo`: **before** `delete(FountainPhoto)`, add the same explicit `delete(ContentReport).where(content_type=="photo", content_id==photo_id)`; delete the "cascades to `photo_reports`" comment (admin.py ~585). The queue still joins `fountain_photos` (photo-only) — unchanged behavior; `ReportedPhotoOut` unchanged.
+- [ ] **Step 7: Repoint the admin photo queue/actions (precise — NOT a blind rename).** `ContentReport` has **no `photo_id`**; every current `PhotoReport.photo_id` use maps to `ContentReport.content_id` **plus** a `ContentReport.content_type == "photo"` filter. In `backend/app/routers/admin.py`, for **each** of the queue, ranked-notes subquery, summary, hide-resolve, dismiss-resolve, and delete-cleanup:
+  - Join `FountainPhoto.id == ContentReport.content_id` (was `== PhotoReport.photo_id`).
+  - `GROUP BY` / `ORDER BY` / window-`PARTITION BY` / `COUNT(DISTINCT …)` on **`ContentReport.content_id`** (was `photo_id`).
+  - Label the grouped id back to **`photo_id`** in the projection so `ReportedPhotoOut` (unchanged) still gets a `photo_id` field: `ContentReport.content_id.label("photo_id")`.
+  - Add `ContentReport.content_type == "photo"` to the WHERE of the **grouped queue**, the **ranked-notes** subquery, the **summary** count (`count(DISTINCT content_id) … WHERE status='pending' AND content_type='photo'`), the **hide** `_resolve_pending_reports` UPDATE, and the **dismiss** UPDATE.
+  - Repoint the `_resolve_pending_reports` helper (admin.py) to `UPDATE content_reports … WHERE content_type='photo' AND content_id=:photo_id AND status='pending'`.
+  In `admin_delete_photo`: **before** `delete(FountainPhoto)`, add `await session.execute(delete(ContentReport).where(ContentReport.content_type == "photo", ContentReport.content_id == photo_id))`; delete the "cascades to `photo_reports`" comment (admin.py ~585). The queue stays photo-only (still joins `fountain_photos`); `ReportedPhotoOut` unchanged. `ruff check` + the repointed `test_admin_photos.py` (Step 9) prove no stale `PhotoReport`/`.photo_id` reference survives.
 
 - [ ] **Step 8: Write the migration** `backend/migrations/versions/0021_content_reports.py`. Confirm head first: `cd backend && uv run alembic heads` (expect `0020_condition_award_window`). `revision = "0021_content_reports"`, `down_revision = "0020_condition_award_window"`. `upgrade()`:
 ```python
@@ -257,14 +309,96 @@ def upgrade() -> None:
   (`INSERT INTO photo_reports (id, photo_id, reporter_user_id, category, note, status, resolution, resolved_by_user_id, resolved_at, created_at) SELECT id, content_id, reporter_user_id, category, note, status, resolution, resolved_by_user_id, resolved_at, created_at FROM content_reports WHERE content_type = 'photo'`),
   then `op.drop_table("content_reports")`. (Note/fountain reports are dropped on downgrade — documented in the spec §4.)
 
-- [ ] **Step 9: Repoint the existing tests.** In `conftest.py`, `test_rate_limit.py`, `test_photos_delete_report.py`, `test_admin_photos.py`: replace `PhotoReport`→`ContentReport`, `photo_reports`→`content_reports`, and any direct-construct of a report row to include `content_type="photo"`, `content_id=<photo_id>`, `fountain_id=<fountain_id>` (was `photo_id=`). Keep every assertion. Adjust only if a test asserts 429-*before*-404 on the photo report (order changed in Step 6 to 404-first) — update it to target a valid photo for the rate-limit case.
+- [ ] **Step 9: Repoint the existing tests + the autouse fixture.** 
+  - **CRITICAL — `tests/conftest.py`:** the autouse `clean_db` fixture `TRUNCATE`s `photo_reports` (conftest.py:37). After the migration that table is gone, so this **must** be changed `photo_reports` → `content_reports` in the TRUNCATE list — otherwise **every** test errors ("relation photo_reports does not exist"). `content_reports` FKs `fountains`/`users` which are already in the `CASCADE` list, so only the name changes.
+  - `test_rate_limit.py`, `test_photos_delete_report.py`, `test_admin_photos.py`: replace `PhotoReport`→`ContentReport`, `photo_reports`→`content_reports`, and any direct-construct of a report row to include `content_type="photo"`, `content_id=<photo_id>`, `fountain_id=<fountain_id>` (was `photo_id=`). Keep every assertion. The dedupe-first order (Step 4) is behavior-compatible with the existing non-rate-limited duplicate-204 test and the distinct-report rate-limit test; adjust only if a test specifically constructs a rate-limited *duplicate* expecting 429 (none should — it would now be 204).
 
-- [ ] **Step 10: Add migration + cleanup tests** `backend/tests/test_content_reports_migration.py` and extend the delete tests. Assert:
-  - **No-orphan cleanup — owner delete:** create a photo + a pending content report on it; `DELETE /fountains/{fid}/photos/{pid}` (owner); then `SELECT count(*) FROM content_reports WHERE content_type='photo' AND content_id=:pid` == 0.
-  - **No-orphan cleanup — admin delete:** same, via `DELETE /admin/photos/{pid}`; 0 orphans.
-  - **Fountain cascade:** create reports on a fountain's photo AND on the fountain itself; delete the fountain (`admin.py::delete_fountain`); all its `content_reports` gone.
-  - **Photo-delete isolation:** deleting photo A's row leaves a report on unrelated photo B intact.
-  - *(Migration data-integrity is covered by the alembic round-trip in Step 11 against a DB seeded with a photo report; if the CI DB is empty, add a pytest that inserts a photo_reports-shaped row pre-migration is impractical mid-suite — instead assert the schema post-migration: `content_reports` exists, `photo_reports` does not, and a photo report round-trips through the chokepoint.)*
+- [ ] **Step 10a: No-orphan cleanup + idempotency tests** (head DB — extend `test_photos_delete_report.py` / `test_admin_photos.py`):
+  - **No-orphan — owner delete:** seed a photo + a pending content report on it; `DELETE /fountains/{fid}/photos/{pid}` (owner); assert `SELECT count(*) FROM content_reports WHERE content_type='photo' AND content_id=:pid` == 0.
+  - **No-orphan — admin delete:** same via `DELETE /admin/photos/{pid}`; 0 orphans.
+  - **Fountain cascade:** seed reports on a fountain's photo AND on the fountain itself (`content_type='fountain'`); `DELETE /admin/fountains/{fid}`; assert all that fountain's `content_reports` are gone.
+  - **Photo-delete isolation:** deleting photo A leaves a report on unrelated photo B intact.
+  - **Duplicate-at-quota idempotency (Codex plan-review #2):** as `test_user`, insert `REPORTS_PER_MIN` `content_reports` rows for that reporter in-window; report photo X once (→201/204, 1 row); then report photo X **again** while at quota → **204** (not 429) and still exactly one pending row for (photo, reporter). This proves dedupe-before-rate.
+
+- [ ] **Step 10b: Real data-migration test** `backend/tests/test_content_reports_migration.py` — an **isolated temporary database** (the shared test DB is externally pinned at head; the async Alembic env can't be stepped in-process because `env.py` calls `asyncio.run`, so drive it via **subprocess**). Skeleton:
+```python
+import subprocess, uuid, os
+from pathlib import Path
+import asyncpg, pytest
+from sqlalchemy.engine import make_url
+from app.config import get_settings
+
+BACKEND = Path(__file__).resolve().parents[1]
+
+def _urls():
+    u = make_url(get_settings().database_url)                 # postgresql+asyncpg://…/fountainrank
+    tmp = f"cr_migtest_{uuid.uuid4().hex[:12]}"
+    admin_dsn = f"postgresql://{u.username}:{u.password}@{u.host}:{u.port}/postgres"
+    tmp_pg   = f"postgresql://{u.username}:{u.password}@{u.host}:{u.port}/{tmp}"   # asyncpg.connect
+    tmp_alembic = str(u.set(database=tmp))                     # postgresql+asyncpg://…/<tmp>  (env DATABASE_URL)
+    return tmp, admin_dsn, tmp_pg, tmp_alembic
+
+def _alembic(rev, database_url):
+    subprocess.run(["uv", "run", "alembic", "upgrade", rev] if rev != "down" else [],
+                   check=True, cwd=BACKEND, env={**os.environ, "DATABASE_URL": database_url})
+
+@pytest.mark.asyncio
+async def test_photo_reports_data_migration_roundtrip():
+    tmp, admin_dsn, tmp_pg, tmp_alembic = _urls()
+    admin = await asyncpg.connect(dsn=admin_dsn)
+    await admin.execute(f'CREATE DATABASE "{tmp}"')
+    try:
+        # 1) up to just-before this migration
+        subprocess.run(["uv","run","alembic","upgrade","0020_condition_award_window"],
+                       check=True, cwd=BACKEND, env={**os.environ, "DATABASE_URL": tmp_alembic})
+        # 2) seed user + fountain + photo + a PENDING and a RESOLVED photo_reports row (raw)
+        c = await asyncpg.connect(dsn=tmp_pg)
+        uid, fid, pid = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+        rep_pending, rep_resolved = uuid.uuid4(), uuid.uuid4()
+        await c.execute("INSERT INTO users (id, logto_user_id, display_name, email) VALUES ($1,$2,$3,$4)",
+                        uid, "m", "M", "m@e.com")
+        await c.execute("INSERT INTO fountains (id, location, added_by_user_id, created_source) "
+                        "VALUES ($1, ST_SetSRID(ST_MakePoint(0,0),4326)::geography, $2, 'user')", fid, uid)
+        await c.execute("INSERT INTO fountain_photos (id, fountain_id, user_id, storage_key, thumbnail_key, "
+                        "content_type, width, height, byte_size) VALUES "
+                        "($1,$2,$3,'k','t','image/jpeg',10,10,10)", pid, fid, uid)
+        await c.execute("INSERT INTO photo_reports (id, photo_id, reporter_user_id, category, note, status) "
+                        "VALUES ($1,$2,$3,'spam','hi','pending')", rep_pending, pid, uid)
+        await c.execute("INSERT INTO photo_reports (id, photo_id, reporter_user_id, category, status, "
+                        "resolution, resolved_by_user_id, resolved_at) VALUES "
+                        "($1,$2,$3,'other','resolved','hidden',$3, now())", rep_resolved, pid, uid)
+        await c.close()
+        # 3) apply the migration under test
+        subprocess.run(["uv","run","alembic","upgrade","0021_content_reports"],
+                       check=True, cwd=BACKEND, env={**os.environ, "DATABASE_URL": tmp_alembic})
+        c = await asyncpg.connect(dsn=tmp_pg)
+        rows = {r["id"]: r for r in await c.fetch("SELECT * FROM content_reports")}
+        assert set(rows) == {rep_pending, rep_resolved}
+        assert rows[rep_pending]["content_type"] == "photo"
+        assert rows[rep_pending]["content_id"] == pid
+        assert rows[rep_pending]["fountain_id"] == fid            # <- the JOIN got fountain_id right
+        assert rows[rep_pending]["category"] == "spam" and rows[rep_pending]["note"] == "hi"
+        assert rows[rep_resolved]["status"] == "resolved" and rows[rep_resolved]["resolution"] == "hidden"
+        assert not await c.fetch("SELECT 1 FROM information_schema.tables WHERE table_name='photo_reports'")
+        await c.close()
+        # 4) downgrade recreates photo_reports (0019 shape) + copies photo rows back
+        subprocess.run(["uv","run","alembic","downgrade","0020_condition_award_window"],
+                       check=True, cwd=BACKEND, env={**os.environ, "DATABASE_URL": tmp_alembic})
+        c = await asyncpg.connect(dsn=tmp_pg)
+        back = {r["id"] for r in await c.fetch("SELECT id FROM photo_reports")}
+        assert back == {rep_pending, rep_resolved}
+        idx = {r["indexname"] for r in await c.fetch("SELECT indexname FROM pg_indexes WHERE tablename='photo_reports'")}
+        assert "uq_photo_reports_photo_reporter_pending" in idx and "ix_photo_reports_reporter_pending_created" in idx
+        checks = {r["conname"] for r in await c.fetch(
+            "SELECT conname FROM pg_constraint WHERE conrelid='photo_reports'::regclass AND contype='c'")}
+        assert {"category","status","resolution"} <= checks
+        assert not await c.fetch("SELECT 1 FROM information_schema.tables WHERE table_name='content_reports'")
+        await c.close()
+    finally:
+        await admin.execute(f'DROP DATABASE IF EXISTS "{tmp}" WITH (FORCE)')
+        await admin.close()
+```
+  Notes: subprocess (not in-process `command.upgrade`) because `env.py` does `asyncio.run(...)`, which can't run inside pytest-asyncio's loop; a **fresh temp DB** keeps the shared test DB untouched and lets us seed `photo_reports` (which no longer exists at head). Confirm `asyncpg` is importable in tests (it's the app's driver) and the DB role can `CREATE DATABASE` (the postgis dev container + CI service superuser can). If `uv run alembic` isn't resolvable in the subprocess env, use the alembic console script on PATH or `python -m alembic`.
 
 - [ ] **Step 11: Run the full backend mirror + verify names.** Run: `cd backend && uv run alembic upgrade head && uv run alembic check` (expect drift-free), then verify the 4 CHECK names + 3 index names against `pg_indexes`/`pg_constraint` (`\d content_reports` or a `select … from pg_indexes where tablename='content_reports'`), then `cd backend && uv run ruff check . && uv run ruff format --check . && uv run pytest`. Round-trip: `uv run alembic downgrade -1 && uv run alembic upgrade head`. Expected: all green, `photo_reports` gone, photo tests pass.
 
@@ -289,7 +423,9 @@ git commit -m "feat(backend): replace photo_reports with polymorphic content_rep
 # category outside {spam,abuse,inappropriate,inaccurate,other} -> 422 (e.g. 'not_a_fountain')
 # note text > 500 -> 422
 # duplicate pending report -> 204 AND the session still commits (no IntegrityError); exactly 1 row
-# report rate limit -> 429 (fire REPORTS_PER_MIN+1)
+# report rate limit -> 429: seed REPORTS_PER_MIN prior content_reports for the reporter (distinct
+#   content_ids, in-window) so the NEXT new report (a fresh note) -> 429 with Retry-After
+#   (re-reporting the SAME note would dedupe to 204, never reaching the limit)
 # report on a HIDDEN note allowed (is_hidden=True note still 204)
 # unknown note_id -> 404 ; note whose fountain_id != path {fountain_id} -> 404
 # the raw note text is never emitted in logs (caplog assertion on the 'content reported' record)
