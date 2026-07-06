@@ -12,9 +12,13 @@ from PIL import Image
 SRC = "web/public/pins/pin-standard.png"
 DARK = (47, 63, 90)      # #2F3F5A — slate shadow (light theme)
 LIGHT = (176, 190, 210)  # #B0BED2 — light slate highlight (light theme)
-# Dark theme: a brighter slate ramp so the muted pin still reads on dark land.
-DARK_DK = (120, 138, 168)   # brighter shadow
-LIGHT_DK = (206, 217, 233)  # near-white highlight
+# Dark theme: an INVERTED slate duotone. The first attempt mapped the bright
+# fountain-spray to near-white (same as the body) -> a flat, washed-out light blob
+# (owner feedback). Here bright source regions (the spray/crown) map to a DARK slate and
+# dark source regions (the teardrop rim/outline) map to a LIGHT slate, so on the dark
+# basemap the pin reads as a light-rimmed teardrop with a defined, DARKER interior spray.
+DK_RIM = (180, 194, 216)   # light slate for dark source px (rim/outline) -> visible on dark land
+DK_CORE = (56, 72, 102)    # dark slate for bright source px (interior spray/crown) -> darker inside
 
 src = Image.open(SRC).convert("RGBA")
 r, g, b, a = src.split()
@@ -42,7 +46,8 @@ for path in ["web/public/pins/pin-unrated.png", "mobile/assets/pins/pin-unrated.
     out.save(path)
     print(f"wrote {path} ({out.size[0]}x{out.size[1]})")
 
-# Dark unrated → web only (mobile dark pins are Plan 3).
-out_dk = Image.merge("RGBA", (*duotone(DARK_DK, LIGHT_DK).split(), a))
+# Dark unrated → web only (mobile dark pins are Plan 3). Inverted duotone (see above):
+# DK_RIM for dark source px, DK_CORE for bright source px -> light rim, dark interior spray.
+out_dk = Image.merge("RGBA", (*duotone(DK_RIM, DK_CORE).split(), a))
 out_dk.save("web/public/pins/pin-unrated-dark.png")
 print(f"wrote web/public/pins/pin-unrated-dark.png ({out_dk.size[0]}x{out_dk.size[1]})")
