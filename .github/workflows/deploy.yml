@@ -33,6 +33,16 @@ jobs:
       security-events: write
     outputs:
       image_tag: ${{ steps.tag.outputs.image_tag }}
+    # Single-sourced basemap CDN + style cache-bust — used by BOTH the dark-basemap rollout
+    # gate and the web build args below, so the gate verifies the exact URL the client ships.
+    # Phase 3a basemap CDN (Terraform `digitalocean_cdn.basemap` endpoint); NEXT_PUBLIC_* are
+    # inlined into the web bundle at build time (passed as build-args below).
+    # BASEMAP_STYLE_VER: the app requests `style.<flavor>.json?v=$BASEMAP_STYLE_VER`; bump it
+    # whenever the style's source/contents change so every client refetches immediately (the
+    # CDN ignores the query and returns the object; the browser keys its cache on it).
+    env:
+      BASEMAP_CDN: fountainrank-basemap.sfo3.cdn.digitaloceanspaces.com
+      BASEMAP_STYLE_VER: "2"
     steps:
       - uses: actions/checkout@v7
       - name: Resolve image tag
@@ -73,21 +83,24 @@ jobs:
         run: |
           docker build -t "$REGISTRY/fountainrank-backend:$IMAGE_TAG" backend
           docker push "$REGISTRY/fountainrank-backend:$IMAGE_TAG"
+      - name: Verify dark basemap style is live (rollout gate)
+        # Uses the job-level BASEMAP_CDN + BASEMAP_STYLE_VER, so the gate checks the exact dark
+        # style URL the web image (built below) will request (spec §7); fail the deploy if it
+        # isn't published.
+        run: |
+          url="https://${BASEMAP_CDN}/style.dark.json?v=${BASEMAP_STYLE_VER}"
+          st=$(curl -s -o /dev/null -w '%{http_code}' -m 30 "$url")
+          if [ "$st" != "200" ]; then
+            echo "::error::dark basemap not live: ${url} -> ${st} (run basemap-upload first)"; exit 1
+          fi
+          echo "dark basemap style live (${url})."
       - name: Build + push web
         env:
           REGISTRY: registry.digitalocean.com/${{ vars.DO_REGISTRY }}
           IMAGE_TAG: ${{ steps.tag.outputs.image_tag }}
-          # Phase 3a basemap CDN (Terraform `digitalocean_cdn.basemap` endpoint). NEXT_PUBLIC_*
-          # are inlined into the web client bundle at build time, so they must be build-args.
-          BASEMAP_CDN: fountainrank-basemap.sfo3.cdn.digitaloceanspaces.com
-          # Cache-bust version for the basemap style URL. style.light.json is served with
-          # max-age=86400 (24h) and no version in its path, so when its tile SOURCE changed
-          # (client-side pmtiles -> go-pmtiles TileJSON) clients with the old style cached kept
-          # requesting the dropped `pmtiles://` protocol -> blank basemap until expiry. The app
-          # requests `style.light.json?v=$BASEMAP_STYLE_VER`; bump this whenever the style's
-          # source/contents change so every client refetches the current style immediately
-          # (the CDN ignores the query and returns the object; the browser keys cache on it).
-          BASEMAP_STYLE_VER: "2"
+          # BASEMAP_CDN + BASEMAP_STYLE_VER come from the job-level env (single-sourced with the
+          # rollout gate above). NEXT_PUBLIC_* are inlined into the web bundle at build time, so
+          # they are passed as build-args below.
         run: |
           docker build -f web/Dockerfile \
             --build-arg NEXT_PUBLIC_API_BASE_URL="https://api.${DOMAIN}" \

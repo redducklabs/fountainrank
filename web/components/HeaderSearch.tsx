@@ -186,7 +186,7 @@ export function HeaderSearch() {
           id="header-search-listbox"
           role="listbox"
           aria-label="Search results"
-          className="absolute inset-x-0 top-full z-50 mt-2 max-h-80 overflow-auto rounded-lg border border-slate-200 bg-white text-left shadow-lg"
+          className="absolute inset-x-0 top-full z-50 mt-2 max-h-80 overflow-auto rounded-lg border border-border bg-surface-raised text-left shadow-lg"
         >
           <SearchDropdownBody state={state} highlight={highlight} onSelect={select} />
         </div>
@@ -209,15 +209,15 @@ function SearchDropdownBody({
       return null;
     case "loading":
       return (
-        <p role="status" className="px-4 py-3 text-sm text-slate-500">
+        <p role="status" className="px-4 py-3 text-sm text-muted">
           Searching…
         </p>
       );
     case "empty":
-      return <p className="px-4 py-3 text-sm text-slate-500">No matches</p>;
+      return <p className="px-4 py-3 text-sm text-muted">No matches</p>;
     case "error":
       return (
-        <p role="alert" className="px-4 py-3 text-sm text-red-600">
+        <p role="alert" className="px-4 py-3 text-sm text-danger">
           Search is unavailable right now
         </p>
       );
@@ -234,8 +234,8 @@ function SearchDropdownBody({
                   aria-selected={index === highlight}
                   onClick={() => onSelect(item)}
                   className={
-                    "block w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 focus-visible:bg-slate-50 focus-visible:outline-none" +
-                    (index === highlight ? " bg-slate-50" : "")
+                    "block w-full px-4 py-2 text-left text-sm text-foreground hover:bg-surface focus-visible:bg-surface focus-visible:outline-none" +
+                    (index === highlight ? " bg-surface" : "")
                   }
                 >
                   {item.label}
@@ -252,12 +252,12 @@ function SearchDropdownBody({
 /** Persistent, tappable attribution shown whenever results render (spec §12/§4.1). */
 function SearchAttribution() {
   return (
-    <p className="border-t border-slate-100 px-4 py-2 text-xs text-slate-400">
+    <p className="border-t border-border px-4 py-2 text-xs text-muted">
       <a
         href={ATTRIBUTION_URL}
         target="_blank"
         rel="noopener noreferrer"
-        className="font-semibold text-[#0C44A0] underline"
+        className="font-semibold text-brand-ink underline"
       >
         Search by LocationIQ
       </a>

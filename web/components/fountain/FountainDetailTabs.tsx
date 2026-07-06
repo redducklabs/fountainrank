@@ -19,7 +19,7 @@ export function FountainDetailTabs({ tabs }: { tabs: FountainDetailTab[] }) {
       <div
         role="tablist"
         aria-label="Fountain detail sections"
-        className="mr-14 grid grid-cols-3 border-b border-slate-200 bg-white"
+        className="mr-14 grid grid-cols-3 border-b border-border bg-surface-raised"
       >
         {tabs.map((tab) => {
           const selected = tab.id === activeTab.id;
@@ -34,10 +34,10 @@ export function FountainDetailTabs({ tabs }: { tabs: FountainDetailTab[] }) {
               aria-selected={selected}
               aria-controls={panelId}
               onClick={() => setActive(tab.id)}
-              className={`min-h-12 border-b-2 px-2 text-sm font-bold outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#0A357E] focus-visible:ring-inset ${
+              className={`min-h-12 border-b-2 px-2 text-sm font-bold outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset ${
                 selected
-                  ? "border-[#0A357E] bg-slate-50 text-[#0A357E]"
-                  : "border-transparent text-slate-500 hover:bg-slate-50 hover:text-slate-800"
+                  ? "border-brand bg-surface text-brand-ink"
+                  : "border-transparent text-muted hover:bg-surface hover:text-foreground"
               }`}
             >
               {tab.label}

@@ -10,7 +10,7 @@ import type { CityFountainsOut } from "../../../../lib/places";
 import { log } from "../../../../lib/server/log";
 
 export const dynamic = "force-dynamic";
-const shell = "mx-auto min-h-dvh max-w-2xl bg-white px-6 py-10";
+const shell = "mx-auto min-h-dvh max-w-2xl bg-surface-raised px-6 py-10";
 
 // cache() dedupes the fetch between generateMetadata() and the page render within one request.
 // Segments are lowercased for the lookup (slugs are stored lowercased); the page 301s any
@@ -72,11 +72,11 @@ export default async function CityPage({
       <>
         <SiteHeader variant="bar" />
         <main className={shell}>
-          <Link href="/" className="text-sm text-[#0C44A0] underline">
+          <Link href="/" className="text-sm text-brand-ink underline">
             ← Back to the map
           </Link>
-          <h1 className="mt-6 text-lg font-bold text-[#0A357E]">Couldn&rsquo;t load this city</h1>
-          <p className="mt-2 text-slate-600">Please try again.</p>
+          <h1 className="mt-6 text-lg font-bold text-brand-ink">Couldn&rsquo;t load this city</h1>
+          <p className="mt-2 text-muted">Please try again.</p>
         </main>
       </>
     );
@@ -92,13 +92,13 @@ export default async function CityPage({
     <>
       <SiteHeader variant="bar" />
       <main className={shell}>
-        <Link href={countryPath(place.country_code)} className="text-sm text-[#0C44A0] underline">
+        <Link href={countryPath(place.country_code)} className="text-sm text-brand-ink underline">
           ← All of {place.country_code.toUpperCase()}
         </Link>
-        <h1 className="mt-6 text-2xl font-black text-[#0A357E]">
+        <h1 className="mt-6 text-2xl font-black text-brand-ink">
           Drinking fountains in {place.name}
         </h1>
-        <p className="mt-2 text-slate-600">
+        <p className="mt-2 text-muted">
           {place.fountain_count.toLocaleString()} public drinking fountains and bottle-refill
           stations in {place.name}.
           {fountains.length < place.fountain_count ? ` Showing the top ${fountains.length}.` : ""}
@@ -107,7 +107,7 @@ export default async function CityPage({
         {fountains.length > 0 ? (
           <FountainList fountains={fountains} />
         ) : (
-          <p className="mt-6 text-slate-500">No public fountains are mapped here yet.</p>
+          <p className="mt-6 text-muted">No public fountains are mapped here yet.</p>
         )}
       </main>
     </>

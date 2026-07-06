@@ -24,7 +24,7 @@ export function AuthControl({
       <form action={signInWithReturn.bind(null, returnTo)}>
         <button
           type="submit"
-          className="inline-flex shrink-0 items-center justify-center rounded-full bg-[#F2C200] px-5 py-2 text-sm font-semibold text-[#0A357E] transition hover:bg-[#ffce1f]"
+          className="inline-flex shrink-0 items-center justify-center rounded-full bg-accent-gold px-5 py-2 text-sm font-semibold text-brand transition hover:bg-accent-gold-hover"
         >
           Sign in
         </button>
@@ -38,7 +38,7 @@ export function AuthControl({
     return (
       <Link
         href="/account"
-        className="inline-flex shrink-0 items-center justify-center rounded-full bg-[#F2C200] px-5 py-2 text-sm font-semibold text-[#0A357E] transition hover:bg-[#ffce1f]"
+        className="inline-flex shrink-0 items-center justify-center rounded-full bg-accent-gold px-5 py-2 text-sm font-semibold text-brand transition hover:bg-accent-gold-hover"
       >
         Finish setup
       </Link>
@@ -128,16 +128,18 @@ function UserMenu({
         <div
           ref={menuRef}
           role="menu"
-          className="absolute right-0 z-50 mt-2 w-56 rounded-lg border border-slate-200 bg-white py-1 text-left shadow-lg"
+          className="absolute right-0 z-50 mt-2 w-56 rounded-lg border border-border bg-surface-raised py-1 text-left shadow-lg"
         >
-          {name && <p className="px-3 py-2 text-sm font-semibold text-slate-700">{name}</p>}
+          {name && <p className="px-3 py-2 text-sm font-semibold text-foreground">{name}</p>}
           {degraded && (
-            <p className="px-3 py-1 text-xs text-amber-700">Couldn&rsquo;t load your account.</p>
+            <p className="px-3 py-1 text-xs text-amber-700 dark:text-amber-300">
+              Couldn&rsquo;t load your account.
+            </p>
           )}
           <Link
             role="menuitem"
             href="/account"
-            className="block px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+            className="block px-3 py-2 text-sm text-foreground hover:bg-surface"
           >
             Your account
           </Link>
@@ -146,25 +148,25 @@ function UserMenu({
               <Link
                 role="menuitem"
                 href="/admin"
-                className="block px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                className="block px-3 py-2 text-sm text-foreground hover:bg-surface"
               >
                 Admin
               </Link>
               <Link
                 role="menuitem"
                 href="/admin/reports"
-                className="block px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                className="block px-3 py-2 text-sm text-foreground hover:bg-surface"
               >
                 Reports
               </Link>
             </>
           )}
-          <div className="my-1 border-t border-slate-100" />
+          <div className="my-1 border-t border-border" />
           <form action={signOutAction}>
             <button
               role="menuitem"
               type="submit"
-              className="block w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+              className="block w-full px-3 py-2 text-left text-sm text-foreground hover:bg-surface"
             >
               Sign out
             </button>

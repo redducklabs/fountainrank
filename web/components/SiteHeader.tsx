@@ -3,6 +3,7 @@ import Link from "next/link";
 import { AuthControl } from "./AuthControl";
 import { HeaderPoints } from "./HeaderPoints";
 import { HeaderSearch } from "./HeaderSearch";
+import ThemeToggle from "./ThemeToggle";
 import { getViewer, getViewerTotalPoints } from "../lib/server/viewer";
 import { getPendingReportCountServer } from "../lib/server/photo-reports";
 
@@ -17,7 +18,7 @@ export async function SiteHeader({ variant }: { variant: "hero" | "bar" }) {
       ? await getPendingReportCountServer(requestId)
       : null;
   return (
-    <header className="relative z-50 bg-gradient-to-b from-[#0A357E] to-[#0E4DA4] px-6 py-3 text-white">
+    <header className="relative z-50 bg-gradient-to-b from-brand to-brand-royal px-6 py-3 text-white">
       {/* Ever-present header search (design doc §4.1): a single flex row that reads
           logo - search - points/auth inline on md+ screens (search is `flex-1 max-w-md`
           between the two fixed-width clusters), and wraps the search onto its own full-width
@@ -40,6 +41,7 @@ export async function SiteHeader({ variant }: { variant: "hero" | "bar" }) {
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-3">
           {totalPoints != null && <HeaderPoints initialTotalPoints={totalPoints} />}
+          <ThemeToggle />
           <AuthControl viewer={viewer} initialPendingReportCount={pendingReportCount} />
         </div>
       </div>

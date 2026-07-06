@@ -22,7 +22,7 @@ function resolvePhotoUrl(path: string): string {
 
 function ReportedPhotoRow({ photo }: { photo: ReportedPhotoOut }) {
   return (
-    <li className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:flex-row sm:items-start">
+    <li className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-3 sm:flex-row sm:items-start">
       {/* eslint-disable-next-line @next/next/no-img-element -- gated API-relative photo path */}
       <img
         src={resolvePhotoUrl(photo.thumbnail_url)}
@@ -33,30 +33,30 @@ function ReportedPhotoRow({ photo }: { photo: ReportedPhotoOut }) {
       <div className="min-w-0 flex-1">
         <Link
           href={`/fountains/${photo.fountain_id}`}
-          className="text-sm font-semibold text-[#0A357E] hover:underline"
+          className="text-sm font-semibold text-brand-ink hover:underline"
         >
           View fountain
         </Link>
         <div className="mt-1 flex flex-wrap items-center gap-1.5">
-          <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-bold text-red-800">
+          <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-bold text-red-800 dark:bg-red-500/15 dark:text-red-300">
             {photo.report_count} report{photo.report_count > 1 ? "s" : ""}
           </span>
           {photo.is_hidden && (
-            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-800">
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-800 dark:bg-amber-500/15 dark:text-amber-300">
               Hidden
             </span>
           )}
           {photo.categories.map((c) => (
             <span
               key={c}
-              className="rounded-full bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-600"
+              className="rounded-full bg-border px-2 py-0.5 text-xs font-medium text-muted"
             >
               {c}
             </span>
           ))}
         </div>
         {photo.notes.length > 0 && (
-          <ul className="mt-2 space-y-1 text-xs text-slate-500">
+          <ul className="mt-2 space-y-1 text-xs text-muted">
             {photo.notes.map((n, i) => (
               <li key={i} className="truncate break-words">
                 {n}
@@ -80,12 +80,12 @@ export default async function AdminReportsPage() {
       <>
         <SiteHeader variant="bar" />
         <main className="mx-auto max-w-2xl px-6 py-10">
-          <h1 className="text-lg font-bold text-[#0A357E]">Admin</h1>
-          <p className="mt-2 text-slate-600">Sign in to access the admin tools.</p>
+          <h1 className="text-lg font-bold text-brand-ink">Admin</h1>
+          <p className="mt-2 text-muted">Sign in to access the admin tools.</p>
           <form action={signInWithReturn.bind(null, "/admin/reports")} className="mt-3">
             <button
               type="submit"
-              className="rounded-full bg-[#F2C200] px-4 py-2 text-sm font-bold text-[#0A357E]"
+              className="rounded-full bg-accent-gold px-4 py-2 text-sm font-bold text-brand"
             >
               Sign in
             </button>
@@ -99,8 +99,8 @@ export default async function AdminReportsPage() {
       <>
         <SiteHeader variant="bar" />
         <main className="mx-auto max-w-2xl px-6 py-10">
-          <h1 className="text-lg font-bold text-[#0A357E]">Couldn&rsquo;t verify admin access</h1>
-          <p className="mt-2 text-slate-600">Please try again in a moment.</p>
+          <h1 className="text-lg font-bold text-brand-ink">Couldn&rsquo;t verify admin access</h1>
+          <p className="mt-2 text-muted">Please try again in a moment.</p>
         </main>
       </>
     );
@@ -118,12 +118,12 @@ export default async function AdminReportsPage() {
     <>
       <SiteHeader variant="bar" />
       <main className="mx-auto max-w-2xl px-6 py-10">
-        <h1 className="text-lg font-bold text-[#0A357E]">Photo reports</h1>
-        <p className="mt-2 text-slate-600">
+        <h1 className="text-lg font-bold text-brand-ink">Photo reports</h1>
+        <p className="mt-2 text-muted">
           Review photos flagged by the community and hide, dismiss, or delete them.
         </p>
         {!reportsOk ? (
-          <p className="mt-6 text-sm text-red-700">
+          <p className="mt-6 text-sm text-danger">
             Couldn&rsquo;t load reports right now — please retry.
           </p>
         ) : photos && photos.length > 0 ? (
@@ -133,7 +133,7 @@ export default async function AdminReportsPage() {
             ))}
           </ul>
         ) : (
-          <p className="mt-6 text-sm text-slate-500">No pending reports.</p>
+          <p className="mt-6 text-sm text-muted">No pending reports.</p>
         )}
       </main>
     </>

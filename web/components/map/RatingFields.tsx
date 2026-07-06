@@ -14,7 +14,7 @@ export function RatingFields({
   if (!types.length) return null;
   return (
     <div className="mt-3 space-y-1">
-      <p className="text-sm font-semibold text-slate-700">Rate it (optional)</p>
+      <p className="text-sm font-semibold text-foreground">Rate it (optional)</p>
       {types.map((t) => (
         <StarGroup
           key={t.id}

@@ -17,7 +17,7 @@ export function FountainsInViewList({
   return (
     <nav
       aria-label="Fountains in view"
-      className="absolute bottom-10 left-2 right-2 max-h-40 overflow-auto rounded-lg bg-white/95 p-2 shadow md:bottom-4 md:left-4 md:right-auto md:w-72"
+      className="absolute bottom-10 left-2 right-2 max-h-40 overflow-auto rounded-lg bg-surface-raised/95 p-2 shadow md:bottom-4 md:left-4 md:right-auto md:w-72"
     >
       <ul className="space-y-1">
         {pins.map((p) => {
@@ -27,7 +27,7 @@ export function FountainsInViewList({
               <button
                 onClick={() => onOpen(String(p.id))}
                 aria-current={String(p.id) === activeId ? "true" : undefined}
-                className="flex w-full items-center justify-between rounded px-3 py-2 text-left text-sm hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#0C44A0] aria-[current=true]:bg-[#0C44A0]/10"
+                className="flex w-full items-center justify-between rounded px-3 py-2 text-left text-sm hover:bg-surface focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-mid aria-[current=true]:bg-brand-mid/10"
               >
                 <span>
                   {status}
@@ -35,7 +35,7 @@ export function FountainsInViewList({
                     ? " · Top-rated"
                     : ""}
                 </span>
-                <span className="text-slate-500">{formatAverage(p.average_rating ?? null)}</span>
+                <span className="text-muted">{formatAverage(p.average_rating ?? null)}</span>
               </button>
             </li>
           );

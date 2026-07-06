@@ -2,7 +2,7 @@
 import { signInWithReturn } from "../../app/actions/auth";
 
 const FAB_CLASS =
-  "absolute bottom-24 right-4 z-40 inline-flex items-center gap-2 rounded-full bg-[#F2C200] px-4 py-3 text-sm font-bold text-[#0A357E] shadow-lg transition hover:bg-[#ffce1f]";
+  "absolute bottom-24 right-4 z-40 inline-flex items-center gap-2 rounded-full bg-accent-gold px-4 py-3 text-sm font-bold text-brand shadow-lg transition hover:bg-accent-gold-hover";
 
 export function AddFountainFab({
   isAuthenticated,

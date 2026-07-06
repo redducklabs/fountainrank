@@ -5,11 +5,12 @@ import {
 } from "../../lib/map/format";
 
 const STYLE: Record<ChipVariant, string> = {
-  positive: "bg-[#E7F0FF] text-[#0A357E] ring-1 ring-[#0E4DA4]/20",
-  neutral: "bg-[#E7F0FF] text-[#0A357E] ring-1 ring-[#0E4DA4]/20",
-  negative: "bg-slate-100 text-slate-500 ring-1 ring-slate-200",
-  mixed: "bg-amber-50 text-amber-700 ring-1 ring-amber-200",
-  muted: "bg-slate-50 text-slate-400 ring-1 ring-slate-200",
+  positive: "bg-accent-subtle text-brand-ink ring-1 ring-brand-royal/20 dark:ring-brand-royal/30",
+  neutral: "bg-accent-subtle text-brand-ink ring-1 ring-brand-royal/20 dark:ring-brand-royal/30",
+  negative: "bg-surface text-muted ring-1 ring-border",
+  mixed:
+    "bg-amber-50 text-amber-700 ring-1 ring-amber-200 dark:bg-amber-500/10 dark:text-amber-300",
+  muted: "bg-surface text-muted ring-1 ring-border",
 };
 const GLYPH: Record<ChipVariant, string> = {
   positive: "✓",

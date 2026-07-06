@@ -14,7 +14,7 @@ import type { PlaceOut } from "../../../lib/places";
 import { log } from "../../../lib/server/log";
 
 export const dynamic = "force-dynamic";
-const shell = "mx-auto min-h-dvh max-w-2xl bg-white px-6 py-10";
+const shell = "mx-auto min-h-dvh max-w-2xl bg-surface-raised px-6 py-10";
 
 // Resolve the canonical country for the URL segment. Only >= K countries are returned by the
 // API, so an unknown/below-gate segment resolves to null (the page 404s). cache() dedupes the
@@ -63,30 +63,30 @@ export default async function CountryPage({ params }: { params: Promise<{ countr
     <>
       <SiteHeader variant="bar" />
       <main className={shell}>
-        <Link href="/" className="text-sm text-[#0C44A0] underline">
+        <Link href="/" className="text-sm text-brand-ink underline">
           ← Back to the map
         </Link>
-        <h1 className="mt-6 text-2xl font-black text-[#0A357E]">
+        <h1 className="mt-6 text-2xl font-black text-brand-ink">
           Drinking fountains in {place.name}
         </h1>
-        <p className="mt-2 text-slate-600">
+        <p className="mt-2 text-muted">
           {place.fountain_count.toLocaleString()} public drinking fountains and bottle-refill
           stations mapped in {place.name} on FountainRank.
         </p>
 
         {cities.length > 0 ? (
           <section className="mt-8">
-            <h2 className="text-lg font-bold text-[#0A357E]">Top cities</h2>
-            <ul className="mt-3 divide-y divide-slate-100">
+            <h2 className="text-lg font-bold text-brand-ink">Top cities</h2>
+            <ul className="mt-3 divide-y divide-border">
               {cities.map((city) => (
                 <li key={city.id} className="flex items-center justify-between py-2">
                   <Link
                     href={cityPath(place.country_code, city.slug)}
-                    className="text-[#0C44A0] underline"
+                    className="text-brand-ink underline"
                   >
                     {city.name}
                   </Link>
-                  <span className="text-sm text-slate-500">
+                  <span className="text-sm text-muted">
                     {city.fountain_count.toLocaleString()} fountains
                   </span>
                 </li>
@@ -94,9 +94,9 @@ export default async function CountryPage({ params }: { params: Promise<{ countr
             </ul>
           </section>
         ) : (
-          <p className="mt-8 text-slate-500">
+          <p className="mt-8 text-muted">
             Explore the{" "}
-            <Link href="/" className="text-[#0C44A0] underline">
+            <Link href="/" className="text-brand-ink underline">
               map
             </Link>{" "}
             to find drinking fountains in {place.name}.

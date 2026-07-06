@@ -28,7 +28,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ a
           hadAddParam={hadAddParam}
         />
       </main>
-      <footer className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 bg-gradient-to-b from-[#0E4DA4] to-[#0A357E] px-6 py-3 text-xs text-white/60">
+      <footer className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 bg-gradient-to-b from-brand-royal to-brand px-6 py-3 text-xs text-white/60">
         <span>&copy; {new Date().getFullYear()} FountainRank</span>
         <Link className="underline-offset-4 hover:text-white hover:underline" href="/privacy">
           Privacy

@@ -1,18 +1,21 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useTheme } from "next-themes";
 import maplibregl, {
   type FilterSpecification,
+  type LayerSpecification,
   type MapLayerMouseEvent,
   type GeoJSONSource,
 } from "maplibre-gl";
 import { createPlacementMap, type PlacementMap } from "./placement-map";
 import { useAddFountainMode } from "./useAddFountainMode";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { BASEMAP, PIN_ASSETS, PILL_BG_ASSET } from "../../lib/map/style";
+import { styleUrlFor, themedPinAssets, themedPillBg } from "../../lib/map/style";
+import { mapColorsFor } from "../../lib/map/colors";
 import { fetchBbox, type FountainPin } from "../../lib/fountains";
 import { resolveApiBaseUrl } from "../../lib/api";
-import { pinsToFeatureCollection } from "../../lib/map/pins";
+import { pinsToFeatureCollection, type PinInput } from "../../lib/map/pins";
 import { normalizeBounds, shouldLoadPins, isAtCap } from "../../lib/map/bounds";
 import {
   EMPTY_FC,
@@ -78,6 +81,25 @@ function webglInfo(): string {
   }
 }
 
+// next-themes exposes `resolvedTheme` as an arbitrary string ("light" | "dark" | undefined
+// before hydration). Collapse it to the two map flavors — anything that isn't "dark" is light.
+const resolveTheme = (t?: string): "light" | "dark" => (t === "dark" ? "dark" : "light");
+
+// SSR-safe mount detection via useSyncExternalStore (NOT a mount useEffect+setState, which the
+// project's react-hooks/set-state-in-effect lint rule forbids — see ThemeToggle/AnalyticsConsent
+// for the established pattern). Server snapshot is `false` so the map is not built during SSR /
+// first paint (before next-themes resolves the theme); the client snapshot is `true`, flipping to
+// build the map at the already-resolved theme (no light→dark basemap flash for dark users).
+function subscribeMounted(): () => void {
+  return () => {};
+}
+function getMountedSnapshot(): boolean {
+  return true;
+}
+function getServerMountedSnapshot(): boolean {
+  return false;
+}
+
 export default function MapBrowser({
   isAuthenticated = false,
   autoEnterAdd = false,
@@ -94,6 +116,28 @@ export default function MapBrowser({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const { resolvedTheme } = useTheme();
+  const mounted = useSyncExternalStore(
+    subscribeMounted,
+    getMountedSnapshot,
+    getServerMountedSnapshot,
+  );
+  // Latest-value refs so the ONE-TIME map listeners and the async load()/installOverlay read the
+  // current theme / pins / selection without being re-registered (which would double-fire).
+  const themeRef = useRef<"light" | "dark">("light");
+  const pinsRef = useRef<PinInput[]>([]);
+  const activeIdRef = useRef<string>("");
+  // Generation counter bumped on every setStyle: an in-flight installOverlay/load() from a prior
+  // theme aborts once it sees a newer generation (prevents seeding the new overlay with stale data
+  // or installing layers on a superseded style).
+  const styleGenRef = useRef(0);
+  // Tracks the theme the basemap style was last setStyle-targeted to (set at map-init and on every
+  // theme-swap setStyle call) — NOT the theme of the last *installed* overlay (installOverlay can
+  // still be in flight when a rapid toggle fires). Guarding the swap effect on this instead of an
+  // "installed" marker prevents a stale-read early-return that would strand the basemap on the
+  // wrong theme mid-swap.
+  const styleThemeRef = useRef<"light" | "dark">("light");
+  const placementRef = useRef<PlacementMap | null>(null);
   const [pins, setPins] = useState<FountainPin[]>([]);
   const [status, setStatus] = useState<Status>("idle");
   const [celebrationKey, setCelebrationKey] = useState(0);
@@ -130,14 +174,18 @@ export default function MapBrowser({
   }));
 
   useEffect(() => {
-    if (!webglOk) return; // no WebGL2 → the UnsupportedHint renders; never touch MapLibre.
+    // Wait for `mounted` so next-themes has resolved the theme before building the map — the map
+    // is created ONCE at the resolved flavor (no light→dark basemap flash for dark users). Theme
+    // changes AFTER build swap the style in place (Step 6 effect); they never rebuild the map.
+    if (!webglOk || !mounted) return; // no WebGL2 → the UnsupportedHint renders; never touch MapLibre.
     // The basemap source is now a normal vector TileJSON (go-pmtiles at /tiles) — MapLibre
     // fetches it natively; no client-side pmtiles protocol needed.
+    themeRef.current = resolveTheme(resolvedTheme);
     let map: maplibregl.Map;
     try {
       map = new maplibregl.Map({
         container: ref.current!,
-        style: BASEMAP.styleUrl,
+        style: styleUrlFor(themeRef.current),
         center: DEFAULT_CENTER,
         zoom: DEFAULT_ZOOM,
         // MapLibre defaults powerPreference to 'high-performance', which makes WebGL context
@@ -152,6 +200,7 @@ export default function MapBrowser({
       return;
     }
     mapRef.current = map;
+    styleThemeRef.current = themeRef.current; // basemap was built targeting themeRef's theme
     // Capture MapLibre's own errors (tile fetch/decode failures, WebGL/render errors) — these
     // are otherwise only console-logged by MapLibre and invisible to us. This is how a
     // mobile-only "gray basemap" (tiles never paint) surfaces a concrete cause.
@@ -195,66 +244,42 @@ export default function MapBrowser({
       timer = setTimeout(() => void load(), DEBOUNCE_MS);
     };
 
-    map.on("load", async () => {
-      try {
-        await Promise.all(
-          Object.entries(PIN_ASSETS).map(async ([name, url]) => {
-            // v5: map.loadImage(url) returns Promise<GetResourceResponse<HTMLImageElement | ImageBitmap>>.
-            // The resolved value has a `.data` property — use img.data.
-            const img = await map.loadImage(url);
-            if (!map.hasImage(name)) map.addImage(name, img.data);
+    // ── One-time wiring (layer-id–scoped listeners survive setStyle; attach exactly once) ──
+    // map.on(type, layerId, listener) registers a MAP-LEVEL delegated listener that filters
+    // `layerId` through map.getLayer() on every event, so it can be bound BEFORE the overlay
+    // layers exist, tolerates them being absent mid-swap, and is NOT removed by setStyle. Do NOT
+    // move these into installOverlay — that would re-register per swap and double-fire nav/loads.
+    map.on("click", "clusters", (e) => {
+      if (addActiveRef.current) return;
+      const f = map.queryRenderedFeatures(e.point, { layers: ["clusters"] })[0];
+      const cid = f?.properties?.cluster_id as number | undefined;
+      const src = map.getSource("fountains") as GeoJSONSource;
+      // v5: GeoJSONSource.getClusterExpansionZoom returns Promise<number>.
+      if (cid != null)
+        src.getClusterExpansionZoom(cid).then((z) =>
+          map.easeTo({
+            center: (f.geometry as GeoJSON.Point).coordinates as [number, number],
+            zoom: z,
           }),
         );
-        // Stretchable rating-pill background (9-patch). Stretch/content coords match pill-bg.png
-        // (Task 11 step 2 — adjust if the asset's content box differs).
-        const pill = await map.loadImage(PILL_BG_ASSET);
-        if (!map.hasImage("pill-bg"))
-          map.addImage("pill-bg", pill.data, {
-            stretchX: [[6, 14]],
-            stretchY: [[6, 14]],
-            content: [6, 6, 14, 14],
-          });
-      } catch (e) {
-        logMapError("image-load-failed", { name: (e as Error).name });
-      }
-      map.addSource("fountains", fountainsSource());
-      [
-        clusterCircleLayer(),
-        clusterCountLayer(),
-        pinLayer(),
-        pillLayer(),
-        selectedHaloLayer(""),
-        selectedPinLayer(""),
-      ].forEach((l) => map.addLayer(l));
-      setPlacementMap(createPlacementMap(map));
-      // cluster click -> expand
-      map.on("click", "clusters", (e) => {
-        if (addActiveRef.current) return;
-        const f = map.queryRenderedFeatures(e.point, { layers: ["clusters"] })[0];
-        const cid = f?.properties?.cluster_id as number | undefined;
-        const src = map.getSource("fountains") as GeoJSONSource;
-        // v5: GeoJSONSource.getClusterExpansionZoom returns Promise<number>.
-        if (cid != null)
-          src.getClusterExpansionZoom(cid).then((z) =>
-            map.easeTo({
-              center: (f.geometry as GeoJSON.Point).coordinates as [number, number],
-              zoom: z,
-            }),
-          );
-      });
-      // pin click -> open detail route (soft nav; map stays mounted)
-      const openPin = (e: MapLayerMouseEvent) => {
-        if (addActiveRef.current) return;
-        const id = e.features?.[0]?.properties?.id as string | undefined;
-        if (id) router.push(`/fountains/${id}`);
-      };
-      map.on("click", "pins", openPin);
-      map.on("click", "selected-pin", openPin);
-      ["clusters", "pins", "selected-pin"].forEach((ly) => {
-        map.on("mouseenter", ly, () => (map.getCanvas().style.cursor = "pointer"));
-        map.on("mouseleave", ly, () => (map.getCanvas().style.cursor = ""));
-      });
-      // geolocate on load (short timeout); fall back to the default view silently.
+    });
+    // pin click -> open detail route (soft nav; map stays mounted)
+    const openPin = (e: MapLayerMouseEvent) => {
+      if (addActiveRef.current) return;
+      const id = e.features?.[0]?.properties?.id as string | undefined;
+      if (id) router.push(`/fountains/${id}`);
+    };
+    map.on("click", "pins", openPin);
+    map.on("click", "selected-pin", openPin);
+    ["clusters", "pins", "selected-pin"].forEach((ly) => {
+      map.on("mouseenter", ly, () => (map.getCanvas().style.cursor = "pointer"));
+      map.on("mouseleave", ly, () => (map.getCanvas().style.cursor = ""));
+    });
+    map.on("moveend", onMoveEnd);
+
+    // Geolocate ONCE at startup (not on style swaps): map.once("load") fires only on the initial
+    // load; setStyle emits style.load, never load again.
+    map.once("load", () => {
       navigator.geolocation?.getCurrentPosition(
         (pos) =>
           map.flyTo({
@@ -266,20 +291,94 @@ export default function MapBrowser({
         },
         { enableHighAccuracy: false, timeout: GEOLOCATE_TIMEOUT_MS },
       );
-      map.on("moveend", onMoveEnd);
-      void load();
     });
+
+    // Per-style install: fires on the initial style.load AND after every setStyle swap.
+    map.on("style.load", () => {
+      void installOverlay(map, styleGenRef.current);
+    });
+
+    // Load the themed pin/pill images, (re)create the source+layers, and seed them from the latest
+    // pins/selection. Runs on every style.load; `gen` aborts the install if a newer setStyle
+    // superseded this generation mid-flight.
+    async function installOverlay(m: maplibregl.Map, gen: number) {
+      const theme = themeRef.current;
+      const colors = mapColorsFor(theme);
+      try {
+        await Promise.all(
+          themedPinAssets(theme).map(async ({ name, url }) => {
+            // v5: map.loadImage(url) resolves to { data } (HTMLImageElement | ImageBitmap).
+            const img = await m.loadImage(url);
+            if (gen !== styleGenRef.current) return; // superseded by a newer setStyle
+            if (!m.hasImage(name)) m.addImage(name, img.data);
+          }),
+        );
+        // Stretchable rating-pill background (9-patch); stretch/content coords match pill-bg.png.
+        const pill = themedPillBg(theme);
+        const pillImg = await m.loadImage(pill.url);
+        if (gen !== styleGenRef.current) return;
+        if (!m.hasImage(pill.name))
+          m.addImage(pill.name, pillImg.data, {
+            stretchX: [[6, 14]],
+            stretchY: [[6, 14]],
+            content: [6, 6, 14, 14],
+          });
+      } catch (e) {
+        logMapError("image-load-failed", { name: (e as Error).name });
+      }
+      if (gen !== styleGenRef.current) return;
+      if (!m.getSource("fountains")) m.addSource("fountains", fountainsSource());
+      const src = m.getSource("fountains") as GeoJSONSource | undefined;
+      src?.setData(pinsToFeatureCollection(pinsRef.current, theme)); // seed from latest pins
+      const c = colors;
+      (
+        [
+          clusterCircleLayer(c),
+          clusterCountLayer(c),
+          pinLayer(),
+          pillLayer(c),
+          selectedHaloLayer(activeIdRef.current, c),
+          selectedPinLayer(activeIdRef.current, c.selectedPin),
+        ] as LayerSpecification[]
+      ).forEach((l) => {
+        if (!m.getLayer(l.id)) m.addLayer(l);
+      });
+      applyActiveFilter(m, activeIdRef.current);
+
+      // Placement map: create ONCE (first install — matches the old "after load" timing that
+      // useAddFountainMode/flyto depend on); re-establish its themed ring/marker on later swaps.
+      if (!placementRef.current) {
+        const pm = createPlacementMap(m, colors);
+        placementRef.current = pm;
+        setPlacementMap(pm);
+      } else {
+        placementRef.current.reinstall(colors);
+      }
+      void load(); // reconcile any pan/zoom that happened during the swap
+    }
+
+    function applyActiveFilter(m: maplibregl.Map, id: string) {
+      if (!m.getLayer("selected-halo")) return;
+      const flt: FilterSpecification = [
+        "all",
+        ["!", ["has", "point_count"]],
+        ["==", ["get", "id"], id],
+      ];
+      m.setFilter("selected-halo", flt);
+      m.setFilter("selected-pin", flt);
+    }
 
     async function load() {
       const m = mapRef.current;
       if (!m) return;
       const seq = ++loadSeqRef.current;
-      const src = m.getSource("fountains") as GeoJSONSource | undefined;
+      const gen = styleGenRef.current;
       if (!shouldLoadPins(m.getZoom())) {
-        src?.setData(EMPTY_FC);
+        (m.getSource("fountains") as GeoJSONSource | undefined)?.setData(EMPTY_FC);
+        pinsRef.current = []; // a later swap re-seeds empty, not stale (spec §6.1)
         setPins([]);
         setStatus("belowZoom");
-        return; // clear stale pins (spec §6.1); seq bump already invalidates in-flight fetches
+        return; // seq bump already invalidates in-flight fetches
       }
       const b = m.getBounds();
       const norm = normalizeBounds({
@@ -299,13 +398,18 @@ export default function MapBrowser({
             ? crypto.randomUUID()
             : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
         const result = await fetchBbox(norm.params, reqId);
-        if (seq !== loadSeqRef.current) return; // stale response — a newer load is in progress
+        // Stale if a newer load started OR a style swap superseded this generation.
+        if (seq !== loadSeqRef.current || gen !== styleGenRef.current) return;
         const data = result.pins;
         setPins(data);
         // Normalise ranking_score: the API schema marks it optional (?), but PinInput requires
         // number | null. Map undefined → null so pinsToFeatureCollection is type-safe.
         const pinInputs = data.map((p) => ({ ...p, ranking_score: p.ranking_score ?? null }));
-        src?.setData(pinsToFeatureCollection(pinInputs));
+        pinsRef.current = pinInputs;
+        // Re-read the source AFTER the guards — a setStyle during the fetch replaced it, and the
+        // pre-fetch reference would point at the removed (dead) source.
+        const src = m.getSource("fountains") as GeoJSONSource | undefined;
+        src?.setData(pinsToFeatureCollection(pinInputs, themeRef.current));
         setStatus(
           result.truncated || isAtCap(data.length)
             ? "capped"
@@ -314,7 +418,7 @@ export default function MapBrowser({
               : "idle",
         );
       } catch (e) {
-        if (seq !== loadSeqRef.current) return; // stale error — don't clobber newer load's state
+        if (seq !== loadSeqRef.current || gen !== styleGenRef.current) return; // stale — don't clobber
         const detail = `${(e as Error).name}: ${(e as Error).message}`;
         logMapError("bbox-fetch-failed", { detail });
         setDiag((d) => ({ ...d, errors: [...d.errors.slice(-9), `bbox-fetch: ${detail}`] }));
@@ -324,11 +428,31 @@ export default function MapBrowser({
 
     return () => {
       clearTimeout(timer);
+      placementRef.current?.teardown();
+      placementRef.current = null;
       map.remove();
       mapRef.current = null;
       setPlacementMap(null);
     };
-  }, [router, webglOk, debug]);
+    // resolvedTheme is intentionally NOT a dependency: after build, a theme change swaps the style
+    // in place (the setStyle effect below), never rebuilds the map — a rebuild would drop the
+    // camera + re-trigger geolocation. It is read via themeRef at build time instead.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router, webglOk, debug, mounted]);
+
+  // Theme change → swap the basemap style in place (camera preserved; no rebuild, no geolocation
+  // re-trigger). Bumping styleGenRef first makes any in-flight installOverlay/load() from the prior
+  // theme abort; the style.load handler then re-installs pins/layers/selection at the new theme.
+  useEffect(() => {
+    const theme = resolveTheme(resolvedTheme);
+    themeRef.current = theme;
+    const m = mapRef.current;
+    if (!m) return;
+    if (styleThemeRef.current === theme) return; // basemap already targeting this theme
+    styleThemeRef.current = theme;
+    styleGenRef.current += 1;
+    m.setStyle(styleUrlFor(theme));
+  }, [resolvedTheme]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -342,7 +466,9 @@ export default function MapBrowser({
   }, [isAuthenticated]);
 
   // Reflect the active route id on the selected layers (additive: halo always; icon swap via expr).
+  // Recording activeIdRef here lets installOverlay re-apply the selection after a theme swap.
   useEffect(() => {
+    activeIdRef.current = activeId;
     const m = mapRef.current;
     if (!m || !m.getLayer?.("selected-halo")) return;
     const flt: FilterSpecification = [

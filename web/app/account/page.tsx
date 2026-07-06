@@ -4,13 +4,14 @@ import { DisplayNameForm } from "../../components/account/DisplayNameForm";
 import { SignInButton } from "../../components/SignInButton";
 import { SignOutButton } from "../../components/SignOutButton";
 import { SiteHeader } from "../../components/SiteHeader";
+import ThemeToggle from "../../components/ThemeToggle";
 import { resolveAccountGate } from "../../lib/server/account-gate";
 import { isDisplayableEmail } from "../../lib/email";
 
 export const dynamic = "force-dynamic";
 
 const shell =
-  "relative flex min-h-dvh flex-col items-center justify-center gap-6 bg-gradient-to-b from-[#0A357E] via-[#0C44A0] to-[#0E4DA4] px-6 py-16 text-center text-white";
+  "relative flex min-h-dvh flex-col items-center justify-center gap-6 bg-gradient-to-b from-brand via-brand-mid to-brand-royal px-6 py-16 text-center text-white";
 
 export default async function AccountPage({
   searchParams,
@@ -90,6 +91,10 @@ export default async function AccountPage({
           )}
         </dl>
         <DisplayNameForm initialValue={profile.display_name} required={false} />
+        <div className="flex items-center gap-3">
+          <span className="text-sm font-semibold text-white/90">Appearance</span>
+          <ThemeToggle />
+        </div>
         <Link href="/account/fountains" className="text-sm font-semibold text-white underline">
           My rated water fountains
         </Link>

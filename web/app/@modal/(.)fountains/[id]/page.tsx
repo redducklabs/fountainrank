@@ -38,7 +38,7 @@ export default async function FountainModal({ params }: { params: Promise<{ id: 
     log("info", "fountain not found (overlay)", { requestId, id, status });
     return (
       <DetailOverlay>
-        <p className="text-slate-600">Fountain not found.</p>
+        <p className="text-muted">Fountain not found.</p>
       </DetailOverlay>
     );
   }
@@ -46,7 +46,7 @@ export default async function FountainModal({ params }: { params: Promise<{ id: 
     log("error", "failed to load fountain (overlay)", { requestId, id, status });
     return (
       <DetailOverlay>
-        <p className="text-slate-600">Couldn&rsquo;t load this fountain.</p>
+        <p className="text-muted">Couldn&rsquo;t load this fountain.</p>
       </DetailOverlay>
     );
   }

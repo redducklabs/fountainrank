@@ -70,7 +70,7 @@ export function DetailOverlay({ children }: { children: React.ReactNode }) {
         tabIndex={-1}
         role="dialog"
         aria-label="Fountain detail"
-        className={`absolute inset-y-0 right-0 flex h-dvh w-full max-w-full flex-col bg-white shadow-xl transition-transform duration-200 ease-out md:w-[28rem] ${
+        className={`absolute inset-y-0 right-0 flex h-dvh w-full max-w-full flex-col bg-surface-raised shadow-xl transition-transform duration-200 ease-out md:w-[28rem] ${
           open
             ? "translate-y-0 md:translate-x-0"
             : "translate-y-full md:translate-x-full md:translate-y-0"
@@ -79,7 +79,7 @@ export function DetailOverlay({ children }: { children: React.ReactNode }) {
         <button
           onClick={requestClose}
           aria-label="Close"
-          className="absolute right-4 top-3 z-10 h-8 w-8 rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200 focus-visible:ring-2 focus-visible:ring-[#0A357E]"
+          className="absolute right-4 top-3 z-10 h-8 w-8 rounded-full bg-surface text-muted hover:bg-border focus-visible:ring-2 focus-visible:ring-brand"
         >
           ×
         </button>

@@ -13,7 +13,7 @@ export function MobileStoreLinks() {
           target="_blank"
           rel="noopener noreferrer"
           aria-label={`${link.label} (opens in a new tab)`}
-          className="inline-flex min-h-10 items-center rounded-lg border border-white/30 bg-black/25 px-3 py-2 text-xs font-bold leading-tight text-white transition hover:border-white hover:bg-black/35 focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#0A357E]"
+          className="inline-flex min-h-10 items-center rounded-lg border border-white/30 bg-black/25 px-3 py-2 text-xs font-bold leading-tight text-white transition hover:border-white hover:bg-black/35 focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-brand"
         >
           {link.label}
         </a>

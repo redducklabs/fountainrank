@@ -37,7 +37,7 @@ export function FountainDetail({
   const primary = (
     <div className="space-y-4">
       <div>
-        <h1 className="text-lg font-bold text-[#0A357E]">
+        <h1 className="text-lg font-bold text-brand-ink">
           {locationLabel ?? "Public drinking fountain"}
         </h1>
         <StatusBlock
@@ -49,27 +49,27 @@ export function FountainDetail({
       </div>
       {detail.average_rating != null ? (
         <div className="flex items-center gap-3">
-          <span className="text-3xl font-extrabold leading-none text-[#0A357E]">
+          <span className="text-3xl font-extrabold leading-none text-brand-ink">
             {formatAverage(detail.average_rating)}
           </span>
           <div className="flex flex-col">
             <Stars value={detail.average_rating} size={18} />
-            <span className="text-xs text-slate-500">{formatVotes(detail.rating_count)}</span>
+            <span className="text-xs text-muted">{formatVotes(detail.rating_count)}</span>
           </div>
         </div>
       ) : (
         <div className="flex items-center gap-2">
           <Stars value={0} size={18} label="Not yet rated" />
-          <span className="text-sm font-medium text-slate-500">Not yet rated</span>
+          <span className="text-sm font-medium text-muted">Not yet rated</span>
         </div>
       )}
-      <dl className="space-y-2 border-t border-slate-100 pt-3">
+      <dl className="space-y-2 border-t border-border pt-3">
         {detail.dimensions.map((d) => (
           <div
             key={d.rating_type_id}
             className="grid grid-cols-[1fr_auto] items-center gap-x-3 gap-y-1"
           >
-            <dt className="text-sm font-medium text-slate-700">{d.name}</dt>
+            <dt className="text-sm font-medium text-foreground">{d.name}</dt>
             <dd className="flex items-center gap-2 text-sm">
               {d.average_rating != null ? (
                 <>
@@ -78,22 +78,22 @@ export function FountainDetail({
                     size={14}
                     label={`${d.name} rated ${d.average_rating.toFixed(1)} out of 5`}
                   />
-                  <span className="font-semibold tabular-nums text-[#0A357E]">
+                  <span className="font-semibold tabular-nums text-brand-ink">
                     {d.average_rating.toFixed(1)}
                   </span>
-                  <span className="text-xs text-slate-400">({d.vote_count})</span>
+                  <span className="text-xs text-muted">({d.vote_count})</span>
                 </>
               ) : (
-                <span className="text-xs text-slate-400">Not yet rated</span>
+                <span className="text-xs text-muted">Not yet rated</span>
               )}
             </dd>
             {d.average_rating != null && (
               <div
-                className="col-span-2 h-1.5 overflow-hidden rounded-full bg-slate-100"
+                className="col-span-2 h-1.5 overflow-hidden rounded-full bg-border"
                 aria-hidden="true"
               >
                 <div
-                  className="h-full rounded-full bg-[#0E4DA4]"
+                  className="h-full rounded-full bg-brand-royal"
                   style={{ width: `${(Math.max(0, Math.min(5, d.average_rating)) / 5) * 100}%` }}
                 />
               </div>
@@ -112,7 +112,7 @@ export function FountainDetail({
           href={dir}
           target="_blank"
           rel="noopener noreferrer"
-          className="rounded-full bg-[#F2C200] px-4 py-2 text-sm font-bold text-[#0A357E]"
+          className="rounded-full bg-accent-gold px-4 py-2 text-sm font-bold text-brand"
         >
           Directions
         </a>
@@ -124,16 +124,14 @@ export function FountainDetail({
     <div className="space-y-4">
       <AttributeList attributes={detail.attributes} />
       {detail.attributes.length === 0 ? (
-        <p className="text-sm text-slate-500">
-          No additional fountain details have been added yet.
-        </p>
+        <p className="text-sm text-muted">No additional fountain details have been added yet.</p>
       ) : null}
       {contextComment && (
         <div>
-          <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm break-words text-slate-700">
+          <p className="rounded-lg border border-border bg-surface p-3 text-sm break-words text-foreground">
             {contextComment}
           </p>
-          <p className="mt-1 text-xs text-slate-400">From the person who added this fountain</p>
+          <p className="mt-1 text-xs text-muted">From the person who added this fountain</p>
         </div>
       )}
       <NotesList notes={notes} now={renderNow} />
@@ -145,7 +143,7 @@ export function FountainDetail({
         conditionPointsEligibleAt={detail.condition_points_eligible_at}
         variant="details"
       />
-      <p className="text-xs text-slate-400">
+      <p className="text-xs text-muted">
         Added {formatDate(detail.created_at)}
         {detail.last_rated_at ? ` · Last rated ${formatDate(detail.last_rated_at)}` : ""}
       </p>
@@ -155,7 +153,7 @@ export function FountainDetail({
     <div className="space-y-4">
       <PhotoGallery fountainId={detail.id} photos={photos} isAuthenticated={isAuthenticated} />
       {photos.length === 0 ? (
-        <p className="text-sm text-slate-500">No photos have been added yet.</p>
+        <p className="text-sm text-muted">No photos have been added yet.</p>
       ) : null}
       <ContributeSection
         fountainId={detail.id}

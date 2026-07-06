@@ -68,15 +68,15 @@ export function AddFountainPanel(props: AddFountainPanelProps) {
       role="dialog"
       aria-label="Add a fountain"
       tabIndex={-1}
-      className="absolute inset-x-0 bottom-0 z-40 mx-auto max-w-md rounded-t-2xl border border-slate-200 bg-white p-4 shadow-2xl outline-none sm:bottom-4 sm:left-auto sm:right-4 sm:mx-0 sm:rounded-2xl"
+      className="absolute inset-x-0 bottom-0 z-40 mx-auto max-w-md rounded-t-2xl border border-border bg-surface-raised p-4 shadow-2xl outline-none sm:bottom-4 sm:left-auto sm:right-4 sm:mx-0 sm:rounded-2xl"
     >
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-bold text-[#0A357E]">Add a fountain</h2>
+        <h2 className="text-sm font-bold text-brand-ink">Add a fountain</h2>
         <button
           type="button"
           onClick={onCancel}
           aria-label="Cancel"
-          className="rounded p-1 text-slate-500 hover:bg-slate-100"
+          className="rounded p-1 text-muted hover:bg-surface"
         >
           ✕
         </button>
@@ -84,20 +84,20 @@ export function AddFountainPanel(props: AddFountainPanelProps) {
       {phase === "placing" && <PlacingStep {...props} />}
       {phase === "details" && <DetailsStep {...props} />}
       {(phase === "submitting" || phase === "done") && (
-        <p role="status" className="mt-3 text-sm text-slate-600">
+        <p role="status" className="mt-3 text-sm text-muted">
           {phase === "submitting" ? "Adding…" : "Fountain added."}
         </p>
       )}
       {phase === "duplicate" && (
         <div className="mt-3 space-y-2">
-          <p role="status" className="text-sm text-slate-700">
+          <p role="status" className="text-sm text-foreground">
             A fountain already exists here.
           </p>
           {props.duplicateId && (
             <Link
               href={`/fountains/${props.duplicateId}`}
               onClick={props.onViewDuplicate}
-              className="inline-block rounded-full bg-[#F2C200] px-4 py-2 text-sm font-bold text-[#0A357E]"
+              className="inline-block rounded-full bg-accent-gold px-4 py-2 text-sm font-bold text-brand"
             >
               View it
             </Link>
@@ -106,7 +106,7 @@ export function AddFountainPanel(props: AddFountainPanelProps) {
       )}
       {phase === "error" && (
         <div className="mt-3 space-y-2">
-          <p role="status" className="text-sm text-red-700">
+          <p role="status" className="text-sm text-danger">
             {props.errorKind ? ERROR_COPY[props.errorKind] : ERROR_COPY.server}
           </p>
           {props.errorKind === "unauthenticated" ? (
@@ -115,7 +115,7 @@ export function AddFountainPanel(props: AddFountainPanelProps) {
             <form action={signInWithReturn.bind(null, "/?add=1")}>
               <button
                 type="submit"
-                className="rounded-full bg-[#F2C200] px-4 py-2 text-sm font-bold text-[#0A357E]"
+                className="rounded-full bg-accent-gold px-4 py-2 text-sm font-bold text-brand"
               >
                 Sign in
               </button>
@@ -124,7 +124,7 @@ export function AddFountainPanel(props: AddFountainPanelProps) {
             // Retrying won't help until a name is set — send the user to the account name gate.
             <Link
               href="/account"
-              className="inline-block rounded-full bg-[#F2C200] px-4 py-2 text-sm font-bold text-[#0A357E]"
+              className="inline-block rounded-full bg-accent-gold px-4 py-2 text-sm font-bold text-brand"
             >
               Set your name
             </Link>
@@ -132,7 +132,7 @@ export function AddFountainPanel(props: AddFountainPanelProps) {
             <button
               type="button"
               onClick={props.onSubmit}
-              className="rounded-full bg-[#0A357E] px-4 py-2 text-sm font-bold text-white"
+              className="rounded-full bg-brand px-4 py-2 text-sm font-bold text-white"
             >
               Try again
             </button>
@@ -144,9 +144,9 @@ export function AddFountainPanel(props: AddFountainPanelProps) {
 }
 
 function Coord({ pin }: { pin: LngLat | null }) {
-  if (!pin) return <p className="mt-2 text-xs text-slate-500">Drop a pin to set the location.</p>;
+  if (!pin) return <p className="mt-2 text-xs text-muted">Drop a pin to set the location.</p>;
   return (
-    <p className="mt-2 text-xs tabular-nums text-slate-500">
+    <p className="mt-2 text-xs tabular-nums text-muted">
       Lat {pin.lat.toFixed(5)} · Lng {pin.lng.toFixed(5)}
     </p>
   );
@@ -157,17 +157,17 @@ function PlacingStep(props: AddFountainPanelProps) {
   const glyph = { n: "↑", s: "↓", e: "→", w: "←" } as const;
   return (
     <div>
-      <p className="mt-1 text-sm text-slate-600">
+      <p className="mt-1 text-sm text-muted">
         Tap the map where the fountain is, then drag the pin to fine-tune.
       </p>
       {props.gpsUnavailable && (
-        <p className="mt-2 rounded bg-amber-50 px-2 py-1 text-xs text-amber-800">
+        <p className="mt-2 rounded bg-amber-50 px-2 py-1 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
           We couldn&rsquo;t confirm your location — make sure the pin is exactly where the fountain
           is.
         </p>
       )}
       {!props.placeable && (
-        <p className="mt-2 text-xs text-slate-500">Zoom in to place the fountain.</p>
+        <p className="mt-2 text-xs text-muted">Zoom in to place the fountain.</p>
       )}
       <Coord pin={props.pin} />
       <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -175,7 +175,7 @@ function PlacingStep(props: AddFountainPanelProps) {
           type="button"
           onClick={props.onPlaceAtCenter}
           disabled={!props.placeable}
-          className="rounded-full border border-slate-300 px-3 py-1.5 text-sm text-slate-700 disabled:opacity-40"
+          className="rounded-full border border-border px-3 py-1.5 text-sm text-foreground disabled:opacity-40"
         >
           Place at map center
         </button>
@@ -187,7 +187,7 @@ function PlacingStep(props: AddFountainPanelProps) {
               onClick={() => props.onNudge(d)}
               disabled={!props.pin || !props.placeable}
               aria-label={`Nudge ${dirs[d]}`}
-              className="rounded border border-slate-300 px-2 py-1 text-xs disabled:opacity-40"
+              className="rounded border border-border px-2 py-1 text-xs disabled:opacity-40"
             >
               {glyph[d]}
             </button>
@@ -199,7 +199,7 @@ function PlacingStep(props: AddFountainPanelProps) {
           type="button"
           onClick={props.onNext}
           disabled={!props.pin || !props.placeable}
-          className="rounded-full bg-[#0A357E] px-4 py-2 text-sm font-bold text-white disabled:opacity-40"
+          className="rounded-full bg-brand px-4 py-2 text-sm font-bold text-white disabled:opacity-40"
         >
           Next: details
         </button>
@@ -224,7 +224,7 @@ function DetailsStep(props: AddFountainPanelProps) {
     <div className="mt-2">
       <Coord pin={props.pin} />
       <fieldset className="mt-3">
-        <legend className="text-sm font-semibold text-slate-700">Is it working?</legend>
+        <legend className="text-sm font-semibold text-foreground">Is it working?</legend>
         <div className="mt-1 flex gap-4">
           <label className="flex items-center gap-2 text-sm">
             <input
@@ -255,19 +255,19 @@ function DetailsStep(props: AddFountainPanelProps) {
       )}
       {props.onComments !== undefined && (
         <div className="mt-3">
-          <label className="block text-sm font-semibold text-slate-700" htmlFor="add-comments">
+          <label className="block text-sm font-semibold text-foreground" htmlFor="add-comments">
             Comments (optional)
           </label>
           <textarea
             id="add-comments"
-            className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-sm"
+            className="mt-1 w-full rounded border border-border px-2 py-1 text-sm"
             rows={3}
             maxLength={COMMENTS_MAX}
             value={props.comments ?? ""}
             onChange={(e) => props.onComments!(e.target.value)}
             aria-label="Comments"
           />
-          <p className="mt-0.5 text-right text-xs text-slate-400">
+          <p className="mt-0.5 text-right text-xs text-muted">
             {commentsLen}/{COMMENTS_MAX}
           </p>
         </div>
@@ -280,7 +280,7 @@ function DetailsStep(props: AddFountainPanelProps) {
           <button
             type="button"
             onClick={() => setShowMoreDetails((current) => !current)}
-            className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-semibold text-[#0A357E]"
+            className="rounded-full border border-border px-3 py-1.5 text-sm font-semibold text-brand-ink"
           >
             {showMoreDetails ? "Hide More Details" : "More Details"}
           </button>
@@ -294,13 +294,13 @@ function DetailsStep(props: AddFountainPanelProps) {
         </div>
       )}
       <div className="mt-4 flex justify-between">
-        <button type="button" onClick={props.onBack} className="text-sm text-slate-600 underline">
+        <button type="button" onClick={props.onBack} className="text-sm text-muted underline">
           Back
         </button>
         <button
           type="button"
           onClick={props.onSubmit}
-          className="rounded-full bg-[#F2C200] px-4 py-2 text-sm font-bold text-[#0A357E]"
+          className="rounded-full bg-accent-gold px-4 py-2 text-sm font-bold text-brand"
         >
           Add fountain
         </button>

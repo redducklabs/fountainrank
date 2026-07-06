@@ -27,14 +27,14 @@ export function ContributeSection({
       ? "Sign in to add a photo to this fountain."
       : "Sign in to rate this fountain, report its status, or leave a note.";
   return (
-    <section className="border-t border-slate-100 pt-4">
-      <h2 className="text-sm font-bold text-[#0A357E]">Contribute</h2>
+    <section className="border-t border-border pt-4">
+      <h2 className="text-sm font-bold text-brand-ink">Contribute</h2>
       {!isAuthenticated ? (
         <form action={signInWithReturn.bind(null, `/fountains/${fountainId}`)} className="mt-2">
-          <p className="text-sm text-slate-600">{signInMessage}</p>
+          <p className="text-sm text-muted">{signInMessage}</p>
           <button
             type="submit"
-            className="mt-2 rounded-full bg-[#F2C200] px-4 py-2 text-sm font-bold text-[#0A357E]"
+            className="mt-2 rounded-full bg-accent-gold px-4 py-2 text-sm font-bold text-brand"
           >
             Sign in to contribute
           </button>

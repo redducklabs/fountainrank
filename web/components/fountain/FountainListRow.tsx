@@ -39,7 +39,7 @@ export function FountainListRow({ fountain: f }: { fountain: FountainRowPin }) {
       ) : (
         <span
           aria-hidden="true"
-          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-slate-100 text-slate-300"
+          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-surface text-muted"
         >
           <svg viewBox="0 0 24 24" fill="none" className="h-6 w-6" aria-hidden="true">
             <path
@@ -58,29 +58,29 @@ export function FountainListRow({ fountain: f }: { fountain: FountainRowPin }) {
         <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
           <Link
             href={`/fountains/${f.id}`}
-            className="min-w-0 truncate text-[#0C44A0] underline focus-visible:outline-2"
+            className="min-w-0 truncate text-brand-ink underline focus-visible:outline-2"
           >
             Drinking fountain{f.is_working ? "" : " · Out of order"}
           </Link>
-          <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-500">
+          <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted">
             {f.average_rating != null ? (
               <span className="flex items-center gap-1">
                 <Stars value={f.average_rating} />
                 {f.rating_count ? <span>· {f.rating_count} ratings</span> : null}
               </span>
             ) : (
-              <span className="text-slate-400">Not yet rated</span>
+              <span className="text-muted">Not yet rated</span>
             )}
             <Link
               href={href}
-              className="whitespace-nowrap text-[#0C44A0] underline focus-visible:outline-2"
+              className="whitespace-nowrap text-brand-ink underline focus-visible:outline-2"
             >
               See on Map
             </Link>
           </span>
         </div>
         {f.photo_count ? (
-          <p className="mt-1 text-xs text-slate-400">
+          <p className="mt-1 text-xs text-muted">
             {f.photo_count} photo{f.photo_count === 1 ? "" : "s"}
           </p>
         ) : null}

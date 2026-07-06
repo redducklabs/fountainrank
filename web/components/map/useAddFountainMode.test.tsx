@@ -55,6 +55,7 @@ function makeFakeMap(zoom = 17) {
     },
     setPin: (p) => calls.pin.push(p),
     setRing: (b) => calls.ring.push(b),
+    reinstall: () => {},
     teardown: () => {
       calls.torn++;
     },

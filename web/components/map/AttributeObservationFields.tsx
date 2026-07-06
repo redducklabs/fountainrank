@@ -13,15 +13,15 @@ export function AttributeObservationFields({
   if (!groups.length) return null;
   return (
     <div className="mt-3 space-y-3">
-      <p className="text-sm font-semibold text-slate-700">Details (optional)</p>
+      <p className="text-sm font-semibold text-foreground">Details (optional)</p>
       {groups.map((g) => (
         <fieldset key={g.category}>
-          <legend className="text-xs font-semibold uppercase text-slate-500">{g.category}</legend>
+          <legend className="text-xs font-semibold uppercase text-muted">{g.category}</legend>
           {g.controls.map((c) => {
             const v = value[c.id] ?? "unknown";
             return (
               <div key={c.id} className="mt-1 flex items-center justify-between gap-2">
-                <span className="text-sm text-slate-700">{c.name}</span>
+                <span className="text-sm text-foreground">{c.name}</span>
                 {c.kind === "boolean" ? (
                   <span className="flex gap-2 text-xs">
                     {c.options.map((opt) => (
@@ -42,7 +42,7 @@ export function AttributeObservationFields({
                     aria-label={c.name}
                     value={v}
                     onChange={(e) => onChange(c.id, e.target.value)}
-                    className="rounded border border-slate-300 px-2 py-1 text-sm"
+                    className="rounded border border-border px-2 py-1 text-sm"
                   >
                     {c.options.map((opt) => (
                       <option key={opt} value={opt}>

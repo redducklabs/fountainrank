@@ -35,7 +35,9 @@ export function selectedSwapIcon(p: PinLike): "pin-selected" | null {
 }
 export function pinsToFeatureCollection(
   pins: PinInput[],
+  theme: "light" | "dark" = "light",
 ): GeoJSON.FeatureCollection<GeoJSON.Point, PinProps> {
+  const suffix = theme === "dark" ? "-dark" : "";
   return {
     type: "FeatureCollection",
     features: pins.map((p) => ({
@@ -46,7 +48,7 @@ export function pinsToFeatureCollection(
         is_working: p.is_working,
         ranking_score: p.ranking_score ?? null,
         average_rating: p.average_rating ?? null,
-        icon: basePinIcon(p),
+        icon: `${basePinIcon(p)}${suffix}`,
         pill: formatPill(p.average_rating ?? null),
       },
     })),

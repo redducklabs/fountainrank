@@ -10,6 +10,8 @@ These are **derived** from the canonical clean pin `docs/logos/512-pin.png`
   pin-broken.png    standard + a composited red diagonal slash (out-of-order)
   pill-bg.png       a 20x20 white rounded-rect, stretchable for the rating pill (icon-text-fit)
 
+Also emits dark-tuned variants (`*-dark.png`) of every pin/pill above for the dark basemap.
+
 They are functional, on-brand, and consistent (one source). Swap any of them for
 bespoke art at will — `web/lib/map/style.ts` references them by name, so the map
 picks up replacements with no code change. Re-run: `python scripts/gen-pin-assets.py`.
@@ -97,7 +99,43 @@ def main() -> None:
                                            outline=PILL_BORDER + (255,), width=1)
     pill.save(os.path.join(OUT, "pill-bg.png"))
 
-    for name in ("pin-standard", "pin-gold", "pin-selected", "pin-broken", "pill-bg"):
+    # ── Dark-tuned variants (spec §8): a stronger, lighter contrast ring so pins pop on
+    #    dark land; a dark pill body with a light border for the light pill text. ─────────
+    RING_DARK = (231, 240, 255)   # #E7F0FF — bright halo outline on dark basemap
+    PILL_BG_DARK = (17, 26, 46)   # #111A2E — matches --surface (dark)
+    PILL_BORDER_DARK = (159, 176, 199)  # #9FB0C7 — light edge so the pill reads
+
+    std_d = canvas()
+    std_d.alpha_composite(_ring(std, 2, RING_DARK))
+    std_d.alpha_composite(std)
+    std_d.save(os.path.join(OUT, "pin-standard-dark.png"))
+
+    gold_d = canvas()
+    gold_d.alpha_composite(_ring(std, 3, GOLD))
+    gold_d.alpha_composite(_ring(std, 1, RING_DARK))
+    gold_d.alpha_composite(std)
+    gold_d.save(os.path.join(OUT, "pin-gold-dark.png"))
+
+    sel_d = canvas()
+    sel_d.alpha_composite(_ring(std, 3, (255, 255, 255)))
+    sel_d.alpha_composite(std)
+    sel_d.save(os.path.join(OUT, "pin-selected-dark.png"))
+
+    broken_d = broken.copy()
+    broken_d.alpha_composite(_ring(std, 2, RING_DARK), (0, 0))
+    broken_d.alpha_composite(broken)
+    broken_d.save(os.path.join(OUT, "pin-broken-dark.png"))
+
+    pill_d = Image.new("RGBA", (20, 20), (0, 0, 0, 0))
+    ImageDraw.Draw(pill_d).rounded_rectangle(
+        [0, 0, 19, 19], radius=6, fill=PILL_BG_DARK + (255,),
+        outline=PILL_BORDER_DARK + (255,), width=1,
+    )
+    pill_d.save(os.path.join(OUT, "pill-bg-dark.png"))
+
+    for name in ("pin-standard", "pin-gold", "pin-selected", "pin-broken", "pill-bg",
+                 "pin-standard-dark", "pin-gold-dark", "pin-selected-dark",
+                 "pin-broken-dark", "pill-bg-dark"):
         im = Image.open(os.path.join(OUT, f"{name}.png"))
         print(f"{name}.png {im.size} {im.mode} alpha={im.split()[3].getextrema()}")
 
