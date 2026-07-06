@@ -89,12 +89,13 @@ it("renders a heterogeneous queue: photo thumbnail, note excerpt, fountain label
     ],
   });
 
-  render(await AdminReportsPage());
+  const { container } = render(await AdminReportsPage());
 
   expect(screen.getByText("Moderation queue")).toBeTruthy();
-  // photo row: thumbnail image at the resolved gated path
-  const img = screen.getByRole("img");
-  expect(img.getAttribute("src")).toBe("/api/v1/photos/p1/thumb");
+  // photo row: thumbnail image at the resolved gated path. The decorative img (alt="") has ARIA
+  // role "presentation", not "img", so query the DOM directly rather than by role.
+  const img = container.querySelector("img");
+  expect(img?.getAttribute("src")).toBe("/api/v1/photos/p1/thumb");
   // note row: excerpt + author
   expect(screen.getByText("an abusive note")).toBeTruthy();
   expect(screen.getByText(/by Author/)).toBeTruthy();
