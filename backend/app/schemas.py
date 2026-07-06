@@ -390,6 +390,36 @@ class PhotoReportsSummary(BaseModel):
     pending_photo_count: int
 
 
+class ReportedContentOut(BaseModel):
+    """One reported item in the unified moderation queue (#12). Discriminated by
+    ``content_type``; the per-type fields below are populated only for their type. ``notes`` are
+    the reporters' free-text (admin-only PII, ≤3, truncated ≤200); ``excerpt`` is the reported
+    note's own body (note only, truncated ≤200)."""
+
+    content_type: str  # 'photo' | 'note' | 'fountain'
+    content_id: uuid.UUID
+    fountain_id: uuid.UUID
+    is_hidden: bool
+    report_count: int
+    categories: list[str]
+    notes: list[str]
+    first_reported_at: datetime
+    contributor: str | None = None  # uploader (photo) / author (note); None for fountain
+    thumbnail_url: str | None = None  # photo only
+    url: str | None = None  # photo only (gated full-image path)
+    excerpt: str | None = None  # note body, truncated <=200 (note only)
+    fountain_label: str | None = None  # fountain placement_note (fountain only; nullable)
+
+
+class ReportsSummary(BaseModel):
+    pending_count: int
+
+
+class ReportDismissRequest(BaseModel):
+    content_type: str
+    content_id: uuid.UUID
+
+
 class CityFountainsOut(BaseModel):
     """A city place plus its ranked, paginated fountains (#127 Slice 3, spec §4.3/§5).
 
