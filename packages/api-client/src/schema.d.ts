@@ -562,6 +562,73 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Admin Reports
+         * @description Unified moderation queue: one row per (content_type, content_id) with ≥1 pending report,
+         *     across photo/note/fountain, oldest-reported first, paginated, optional content_type filter.
+         *     Generalizes the photo-only ``admin_photo_reports`` (#12). Report notes are truncated in SQL
+         *     and never logged.
+         */
+        get: operations["admin_reports_api_v1_admin_reports_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/reports/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Admin Reports Summary
+         * @description Badge count: distinct (content_type, content_id) items with ≥1 pending report, across all
+         *     types, using the same EXISTS predicate as the queue so the badge and queue agree (#12).
+         */
+        get: operations["admin_reports_summary_api_v1_admin_reports_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/reports/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Admin Dismiss Reports
+         * @description Generalized reject: resolve an item's pending reports as ``rejected`` without hiding or
+         *     deleting it, for any content type. Validates the target still exists (404 if missing),
+         *     matching ``admin_dismiss_photo_reports``. The new web/mobile boards use this for all types;
+         *     the old photo dismiss endpoint stays for released clients (#12).
+         */
+        post: operations["admin_dismiss_reports_api_v1_admin_reports_dismiss_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/leaderboard/contributors": {
         parameters: {
             query?: never;
@@ -1428,6 +1495,60 @@ export interface components {
             /** Note */
             note?: string | null;
         };
+        /** ReportDismissRequest */
+        ReportDismissRequest: {
+            /** Content Type */
+            content_type: string;
+            /**
+             * Content Id
+             * Format: uuid
+             */
+            content_id: string;
+        };
+        /**
+         * ReportedContentOut
+         * @description One reported item in the unified moderation queue (#12). Discriminated by
+         *     ``content_type``; the per-type fields below are populated only for their type. ``notes`` are
+         *     the reporters' free-text (admin-only PII, ≤3, truncated ≤200); ``excerpt`` is the reported
+         *     note's own body (note only, truncated ≤200).
+         */
+        ReportedContentOut: {
+            /** Content Type */
+            content_type: string;
+            /**
+             * Content Id
+             * Format: uuid
+             */
+            content_id: string;
+            /**
+             * Fountain Id
+             * Format: uuid
+             */
+            fountain_id: string;
+            /** Is Hidden */
+            is_hidden: boolean;
+            /** Report Count */
+            report_count: number;
+            /** Categories */
+            categories: string[];
+            /** Notes */
+            notes: string[];
+            /**
+             * First Reported At
+             * Format: date-time
+             */
+            first_reported_at: string;
+            /** Contributor */
+            contributor?: string | null;
+            /** Thumbnail Url */
+            thumbnail_url?: string | null;
+            /** Url */
+            url?: string | null;
+            /** Excerpt */
+            excerpt?: string | null;
+            /** Fountain Label */
+            fountain_label?: string | null;
+        };
         /** ReportedPhotoOut */
         ReportedPhotoOut: {
             /**
@@ -1459,6 +1580,11 @@ export interface components {
             first_reported_at: string;
             /** Uploaded By */
             uploaded_by: string | null;
+        };
+        /** ReportsSummary */
+        ReportsSummary: {
+            /** Pending Count */
+            pending_count: number;
         };
         /** SyncProfileRequest */
         SyncProfileRequest: {
@@ -2686,6 +2812,114 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    admin_reports_api_v1_admin_reports_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+                content_type?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+                "X-Dev-User"?: string | null;
+                "X-Dev-Email"?: string | null;
+                "X-Dev-Name"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportedContentOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    admin_reports_summary_api_v1_admin_reports_summary_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "X-Dev-User"?: string | null;
+                "X-Dev-Email"?: string | null;
+                "X-Dev-Name"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportsSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    admin_dismiss_reports_api_v1_admin_reports_dismiss_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "X-Dev-User"?: string | null;
+                "X-Dev-Email"?: string | null;
+                "X-Dev-Name"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportDismissRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             204: {
