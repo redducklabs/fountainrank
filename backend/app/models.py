@@ -672,52 +672,52 @@ class FountainPhoto(Base):
     )
 
 
-class PhotoReport(Base):
-    """User report flagging a fountain photo for moderation (fountain-photos design §3.2).
-    A user may hold at most one *pending* report per photo (partial unique index below) but
-    may re-report after resolution."""
+class ContentReport(Base):
+    """Polymorphic user report flagging content for moderation (#11). Replaces
+    `photo_reports`. `content_id` is a SOFT reference (no per-type FK — targets span
+    tables, like ContributionEvent.target_id); integrity is enforced in the report
+    chokepoint (app/reports.py) and by the fountain_id CASCADE. One *pending* report per
+    (content_type, content_id, reporter); re-report allowed after resolution."""
 
-    __tablename__ = "photo_reports"
+    __tablename__ = "content_reports"
     __table_args__ = (
+        CheckConstraint("content_type IN ('photo','note','fountain')", name="content_type"),
         CheckConstraint(
-            "category IN ('inappropriate','not_a_fountain','spam','other')", name="category"
+            "category IN ('spam','abuse','inappropriate','not_a_fountain','inaccurate','other')",
+            name="category",
         ),
         CheckConstraint("status IN ('pending','resolved')", name="status"),
         CheckConstraint("resolution IN ('hidden','rejected')", name="resolution"),
-        # One pending report per (photo, reporter); a user may re-report after resolution.
         Index(
-            "uq_photo_reports_photo_reporter_pending",
-            "photo_id",
+            "uq_content_reports_target_reporter_pending",
+            "content_type",
+            "content_id",
             "reporter_user_id",
             unique=True,
             postgresql_where=text("status = 'pending'"),
         ),
-        # Queue / badge count (spec §6).
         Index(
-            "ix_photo_reports_photo_pending",
-            "photo_id",
+            "ix_content_reports_target_pending",
+            "content_type",
+            "content_id",
             postgresql_where=text("status = 'pending'"),
         ),
-        # Reporter rate limit (spec §6).
-        Index(
-            "ix_photo_reports_reporter_pending_created",
-            "reporter_user_id",
-            "created_at",
-            postgresql_where=text("status = 'pending'"),
-        ),
+        Index("ix_content_reports_reporter_created", "reporter_user_id", "created_at"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
         PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    photo_id: Mapped[uuid.UUID] = mapped_column(
+    content_type: Mapped[str] = mapped_column(String, nullable=False)
+    content_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
+    fountain_id: Mapped[uuid.UUID] = mapped_column(
         PgUUID(as_uuid=True),
-        ForeignKey("fountain_photos.id", ondelete="CASCADE", name="fk_photo_reports_photo"),
+        ForeignKey("fountains.id", ondelete="CASCADE", name="fk_content_reports_fountain"),
         nullable=False,
     )
     reporter_user_id: Mapped[uuid.UUID] = mapped_column(
         PgUUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE", name="fk_photo_reports_reporter"),
+        ForeignKey("users.id", ondelete="CASCADE", name="fk_content_reports_reporter"),
         nullable=False,
     )
     category: Mapped[str] = mapped_column(String, nullable=False)
@@ -726,7 +726,7 @@ class PhotoReport(Base):
     resolution: Mapped[str | None] = mapped_column(String, nullable=True)
     resolved_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True),
-        ForeignKey("users.id", name="fk_photo_reports_resolved_by"),
+        ForeignKey("users.id", name="fk_content_reports_resolved_by"),
         nullable=True,
     )
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

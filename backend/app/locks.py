@@ -15,4 +15,4 @@ ADD_FOUNTAIN_LOCK_KEY = 0x464E5452
 # deterministic per-user hash — distinct from each other and from `ADD_FOUNTAIN_LOCK_KEY` so
 # these locks can never collide.
 PHOTO_UPLOAD_LOCK_NS = 0x50554C44  # "PULD" — upload-reservation rate gate.
-PHOTO_REPORT_LOCK_NS = 0x50525054  # "PRPT" — report rate gate.
+CONTENT_REPORT_LOCK_NS = 0x50525054  # "PRPT" — content report rate gate.

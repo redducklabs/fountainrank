@@ -11,7 +11,7 @@ Two independent gates:
   bounding the product limit. On success it inserts a `reserved` row that the caller must
   later `finalize_upload` to `completed` or `failed`.
 - **Report rate** (`check_report_rate`) is a cheap insert-time check with no reservation:
-  count `photo_reports` by that reporter in rolling windows.
+  count `content_reports` by that reporter in rolling windows.
 
 Both gates run under a per-user Postgres advisory lock (`pg_advisory_xact_lock`, two-arg
 form) so the count-then-insert is atomic against concurrent requests from the same user —
@@ -29,8 +29,8 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
-from app.locks import PHOTO_REPORT_LOCK_NS, PHOTO_UPLOAD_LOCK_NS
-from app.models import PhotoReport, UploadAttempt
+from app.locks import CONTENT_REPORT_LOCK_NS, PHOTO_UPLOAD_LOCK_NS
+from app.models import ContentReport, UploadAttempt
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ UPLOAD_ATTEMPTS_PER_MIN = 10
 UPLOAD_ATTEMPTS_PER_DAY = 60
 # Success-quota limit: counts only `completed` attempts — the product limit.
 UPLOAD_COMPLETED_PER_DAY = 30
-# Report rate limit: counts all photo_reports by that reporter.
+# Report rate limit: counts all content_reports by that reporter.
 REPORTS_PER_MIN = 20
 REPORTS_PER_DAY = 100
 
@@ -122,10 +122,10 @@ async def _count_reports_since(
 ) -> int:
     stmt = (
         select(func.count())
-        .select_from(PhotoReport)
+        .select_from(ContentReport)
         .where(
-            PhotoReport.reporter_user_id == user_id,
-            PhotoReport.created_at > func.now() - text(f"interval '{window_seconds} seconds'"),
+            ContentReport.reporter_user_id == user_id,
+            ContentReport.created_at > func.now() - text(f"interval '{window_seconds} seconds'"),
         )
     )
     return (await session.execute(stmt)).scalar_one()
@@ -192,11 +192,9 @@ async def finalize_upload(session: AsyncSession, attempt_id: uuid.UUID, status: 
     )
 
 
-async def check_report_rate(session: AsyncSession, user_id: uuid.UUID) -> None:
-    """Report rate gate: cheap insert-time check, no reservation. Under the per-user report
-    advisory lock, count `photo_reports` by that reporter in the 60s and 24h windows."""
-    await acquire_user_lock(session, PHOTO_REPORT_LOCK_NS, user_id)
-
+async def enforce_report_rate(session: AsyncSession, user_id: uuid.UUID) -> None:
+    """Lock-free: raise RateLimited if the user is over the 60s/24h report windows. The
+    CALLER must already hold the per-user report advisory lock (`CONTENT_REPORT_LOCK_NS`)."""
     minute_count = await _count_reports_since(session, user_id, _MINUTE_WINDOW_SECONDS)
     if minute_count >= REPORTS_PER_MIN:
         logger.info(
@@ -212,3 +210,10 @@ async def check_report_rate(session: AsyncSession, user_id: uuid.UUID) -> None:
             extra={"user_id": str(user_id), "kind": "report_per_day", "count": day_count},
         )
         raise RateLimited("reports_per_day", retry_after=_DAY_WINDOW_SECONDS)
+
+
+async def check_report_rate(session: AsyncSession, user_id: uuid.UUID) -> None:
+    """Public gate (kept for tests/back-compat): acquire the per-user report advisory lock,
+    then enforce the 60s/24h `content_reports` windows."""
+    await acquire_user_lock(session, CONTENT_REPORT_LOCK_NS, user_id)
+    await enforce_report_rate(session, user_id)

@@ -34,7 +34,7 @@ async def clean_db(engine):
                 "TRUNCATE contribution_events, user_contribution_stats, "
                 "fountain_attribute_consensus, attribute_observations, condition_reports, "
                 "fountain_notes, "
-                "photo_reports, upload_attempts, storage_cleanup, fountain_photos, "
+                "content_reports, upload_attempts, storage_cleanup, fountain_photos, "
                 "fountain_import_events, osm_fountain_import_candidates, "
                 "fountain_provenances, osm_fountain_import_runs, ratings, fountains, "
                 "place_boundary_cells, place_boundaries, users "

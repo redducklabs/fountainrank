@@ -19,7 +19,7 @@ import app.routers.photos as photos_module
 from app.auth import get_current_user
 from app.images import ProcessedImage
 from app.main import app
-from app.models import ContributionEvent, FountainPhoto, PhotoReport, User
+from app.models import ContentReport, ContributionEvent, FountainPhoto, User
 from app.rate_limit import REPORTS_PER_MIN
 
 _FILE = {"file": ("photo.jpg", b"raw-image-bytes", "image/jpeg")}
@@ -101,7 +101,7 @@ async def _hide_photo(session, photo_id) -> None:
 
 async def _seed_reports(session, reporter: User, fountain_id, n: int) -> None:
     """Seed n pending reports by `reporter`, each on its own distinct photo (the partial
-    unique index only forbids two pending reports on the SAME photo from one reporter)."""
+    unique index only forbids two pending reports on the SAME item from one reporter)."""
     now = datetime.now(UTC)
     for i in range(n):
         photo = FountainPhoto(
@@ -117,8 +117,10 @@ async def _seed_reports(session, reporter: User, fountain_id, n: int) -> None:
         session.add(photo)
         await session.flush()
         session.add(
-            PhotoReport(
-                photo_id=photo.id,
+            ContentReport(
+                content_type="photo",
+                content_id=photo.id,
+                fountain_id=fountain_id,
                 reporter_user_id=reporter.id,
                 category="spam",
                 status="pending",
@@ -176,9 +178,16 @@ async def test_owner_delete_removes_row_storage_point_and_cascades_reports(
     ).scalar_one()
     assert ev.status == "reversed"
 
-    # The photo's pending reports are gone via ON DELETE CASCADE (not resolved).
+    # The photo's pending reports are gone via the explicit content_reports delete (not resolved).
     remaining_reports = (
-        (await session.execute(select(PhotoReport).where(PhotoReport.photo_id == uuid.UUID(pid))))
+        (
+            await session.execute(
+                select(ContentReport).where(
+                    ContentReport.content_type == "photo",
+                    ContentReport.content_id == uuid.UUID(pid),
+                )
+            )
+        )
         .scalars()
         .all()
     )
@@ -272,7 +281,11 @@ async def test_any_signed_in_user_creates_pending_report(
     assert resp.status_code == 204, resp.text
     await session.rollback()
     row = (
-        await session.execute(select(PhotoReport).where(PhotoReport.photo_id == uuid.UUID(pid)))
+        await session.execute(
+            select(ContentReport).where(
+                ContentReport.content_type == "photo", ContentReport.content_id == uuid.UUID(pid)
+            )
+        )
     ).scalar_one()
     assert row.status == "pending"
     assert row.reporter_user_id == reporter.id
@@ -298,7 +311,14 @@ async def test_duplicate_pending_report_is_idempotent_and_session_still_commits(
 
     await session.rollback()
     rows = (
-        (await session.execute(select(PhotoReport).where(PhotoReport.photo_id == uuid.UUID(pid))))
+        (
+            await session.execute(
+                select(ContentReport).where(
+                    ContentReport.content_type == "photo",
+                    ContentReport.content_id == uuid.UUID(pid),
+                )
+            )
+        )
         .scalars()
         .all()
     )
@@ -348,7 +368,11 @@ async def test_report_hidden_photo_allowed(session, client, test_user, storage, 
     assert resp.status_code == 204
     await session.rollback()
     assert (
-        await session.execute(select(PhotoReport).where(PhotoReport.photo_id == uuid.UUID(pid)))
+        await session.execute(
+            select(ContentReport).where(
+                ContentReport.content_type == "photo", ContentReport.content_id == uuid.UUID(pid)
+            )
+        )
     ).scalar_one_or_none() is not None
 
 
@@ -388,3 +412,124 @@ async def test_report_wrong_fountain_path_404(session, client, test_user, storag
         f"/api/v1/fountains/{fid2}/photos/{pid}/report", json={"category": "spam"}
     )
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_duplicate_report_at_quota_is_idempotent_and_costs_no_budget(
+    session, client, test_user, storage, process
+):
+    """Dedupe-BEFORE-rate (Codex plan-review #2 R2): a duplicate pending report is a 204 that
+    consumes no rate budget even when the reporter is at quota, while a genuinely NEW report at
+    the same quota is 429. Order matters — establish X's pending report BEFORE filling quota."""
+    fid = await _add_fountain(session)
+    await session.commit()
+    pid_x = await _upload_photo(client, fid)
+    pid_y = await _upload_photo(client, fid)
+
+    # (1) Report photo X once while under quota -> 204, exactly one pending row.
+    r1 = await client.post(
+        f"/api/v1/fountains/{fid}/photos/{pid_x}/report", json={"category": "spam"}
+    )
+    assert r1.status_code == 204
+    await session.rollback()
+    rows_x = (
+        (
+            await session.execute(
+                select(ContentReport).where(
+                    ContentReport.content_type == "photo",
+                    ContentReport.content_id == uuid.UUID(pid_x),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(rows_x) == 1
+
+    # (2) Fill the reporter's minute window with REPORTS_PER_MIN - 1 more reports on distinct
+    # content_ids -> the reporter is now exactly at REPORTS_PER_MIN.
+    await _seed_reports(session, test_user, fid, REPORTS_PER_MIN - 1)
+
+    # (3) Re-report photo X -> idempotent 204 (dedupe first), NO new row, NO 429.
+    r3 = await client.post(
+        f"/api/v1/fountains/{fid}/photos/{pid_x}/report", json={"category": "other"}
+    )
+    assert r3.status_code == 204
+    await session.rollback()
+    rows_x_after = (
+        (
+            await session.execute(
+                select(ContentReport).where(
+                    ContentReport.content_type == "photo",
+                    ContentReport.content_id == uuid.UUID(pid_x),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(rows_x_after) == 1  # still one; the duplicate consumed no budget and added no row
+    assert rows_x_after[0].category == "spam"  # original unchanged
+
+    # (4) A genuinely NEW report on a different photo Y at the same quota -> 429.
+    r4 = await client.post(
+        f"/api/v1/fountains/{fid}/photos/{pid_y}/report", json={"category": "spam"}
+    )
+    assert r4.status_code == 429
+    assert "Retry-After" in r4.headers
+
+
+@pytest.mark.asyncio
+async def test_photo_delete_isolation_leaves_unrelated_report_intact(
+    session, client, test_user, storage, process
+):
+    """Deleting photo A removes only A's content_reports; a report on unrelated photo B stays."""
+    fid = await _add_fountain(session)
+    await session.commit()
+    pid_a = await _upload_photo(client, fid)
+    pid_b = await _upload_photo(client, fid)
+
+    reporter = await _add_user(session, 7)
+    await session.commit()
+    _as_user(reporter)
+    try:
+        ra = await client.post(
+            f"/api/v1/fountains/{fid}/photos/{pid_a}/report", json={"category": "spam"}
+        )
+        rb = await client.post(
+            f"/api/v1/fountains/{fid}/photos/{pid_b}/report", json={"category": "spam"}
+        )
+        assert ra.status_code == 204 and rb.status_code == 204
+    finally:
+        _as_user(test_user)
+
+    resp = await client.delete(f"/api/v1/fountains/{fid}/photos/{pid_a}")
+    assert resp.status_code == 204, resp.text
+
+    await session.rollback()
+    a_rows = (
+        (
+            await session.execute(
+                select(ContentReport).where(
+                    ContentReport.content_type == "photo",
+                    ContentReport.content_id == uuid.UUID(pid_a),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    b_rows = (
+        (
+            await session.execute(
+                select(ContentReport).where(
+                    ContentReport.content_type == "photo",
+                    ContentReport.content_id == uuid.UUID(pid_b),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert a_rows == []  # A's report removed with the photo
+    assert len(b_rows) == 1  # B's report untouched
