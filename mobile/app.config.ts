@@ -2,12 +2,18 @@ import type { ExpoConfig } from "expo/config";
 
 const logtoNativeAuthConfirmed = process.env.EXPO_PUBLIC_LOGTO_NATIVE_AUTH_CONFIRMED === "true";
 const logtoAppId = logtoNativeAuthConfirmed ? process.env.EXPO_PUBLIC_LOGTO_APP_ID : undefined;
+const defaultAppVersion = "1.0.0";
+const appVersion = process.env.EXPO_APP_VERSION ?? defaultAppVersion;
+
+if (!/^\d+\.\d+\.\d+$/.test(appVersion)) {
+  throw new Error(`EXPO_APP_VERSION must be a semver version like 1.0.0; received ${appVersion}`);
+}
 
 const config: ExpoConfig = {
   name: "FountainRank",
   slug: "fountainrank",
   owner: "red-duck-labs",
-  version: "0.1.0",
+  version: appVersion,
   scheme: "com.redducklabs.fountainrank",
   platforms: ["ios", "android"],
   icon: "./assets/icon.png",

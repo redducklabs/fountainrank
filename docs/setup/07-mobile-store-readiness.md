@@ -87,7 +87,7 @@ Apple references:
 - Age ratings:
   <https://developer.apple.com/help/app-store-connect/reference/app-information/age-ratings-values-and-definitions/>
 
-## Google Play testing
+## Google Play release/testing
 
 Use `docs/setup/04-apple-and-app-stores.md` for Play Console enrollment. For
 store testing:
@@ -101,19 +101,34 @@ create the app record.
 3. Capture the Play App Signing SHA-1 from Play Console App integrity. This feeds
    the future Android OAuth client in `docs/setup/03-google-cloud.md`.
 4. Keep the Google Play service-account JSON for EAS Submit outside the repo.
-5. Use the configured Android production submit track `internal` unless the owner
-   chooses closed testing for the first broader group. CI submits with
-   `releaseStatus: completed`, so internal-testing releases auto-publish on upload —
-   no manual Play Console step. (The EAS Android submit options do not carry
-   release-note text, so the release publishes without "What's new".)
-6. Optionally copy the PR-only release notes from the `mobile-store-release.yml` run
-   summary into the Play release's "What's new" field afterward; it is not required.
-7. Add tester email lists and opt-in links in Play Console.
-8. Upload the owner-reviewed phone screenshots from
+5. Use the configured Android production submit track `production`. CI submits with
+   `releaseStatus: completed`, so production Play Store releases auto-publish on
+   upload when Google Play managed publishing is off.
+6. Add the production GitHub secret `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON`: a Google
+   Play service-account key with Android Publisher access for
+   `com.redducklabs.fountainrank`. CI uses it only after EAS Submit completes, to
+   update the latest production-track release's "What's new" notes through the
+   Google Play Developer API. The workflow builds Android first, submits that
+   exact EAS build id, and refuses to update Play release notes unless the
+   production-track release contains the captured Android version code. EAS still
+   uses its own managed Google Play upload credential for binary submission.
+7. Review the generated title-only Play release notes in the workflow summary.
+   The summary keeps the full title-only list. The actual Play "What's new" field
+   receives as many complete title lines as fit within Google Play's 500-character
+   per-language limit, plus a short overflow line when needed.
+8. Add tester email lists and opt-in links in Play Console.
+9. Upload the owner-reviewed phone screenshots from
    `mobile/assets/store/screenshots/play-store/`. These are real captures of the
    release-config app on an Android emulator (San Diego basemap, production API),
    `1080x1920`, covering map discovery, fountain detail, address/city search,
    rating filter, and rankings.
+
+Store app versions default to `1.0.0` in `mobile/app.config.ts`. The
+`mobile-store-release.yml` workflow sets `EXPO_APP_VERSION` for both Android and
+iOS builds: tag releases use the `vMAJOR.MINOR.PATCH` tag exactly, and manual
+dispatches bump the patch component from the latest matching tag once one exists.
+For a minor or major version release, update the default version and create the
+matching release tag intentionally.
 
 Google references:
 
