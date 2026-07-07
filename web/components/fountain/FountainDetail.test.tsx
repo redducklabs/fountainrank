@@ -46,12 +46,42 @@ const base: Detail = {
   ],
 };
 
+type PhotoOut = components["schemas"]["PhotoOut"];
+function photo(id: string): PhotoOut {
+  return {
+    id,
+    url: `/api/v1/photos/${id}`,
+    thumbnail_url: `/api/v1/photos/${id}/thumb`,
+    width: 800,
+    height: 600,
+    uploaded_by: null,
+    created_at: "2026-07-07T00:00:00Z",
+    is_own: false,
+  };
+}
+function propsWithPhotos(photos: PhotoOut[]) {
+  return { detail: base, notes: [], now, isAuthenticated: false, photos };
+}
+
 describe("FountainDetail", () => {
   it("renders the prominent Info, Details, and Photos tabs", () => {
     render(<FountainDetail detail={base} notes={[]} now={now} isAuthenticated={false} />);
     expect(screen.getByRole("tab", { name: "Info" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tab", { name: "Details" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Photos" })).toBeInTheDocument();
+  });
+  it("shows the newest photo as a hero at the top of the Info tab", () => {
+    render(<FountainDetail {...propsWithPhotos([photo("a"), photo("b")])} />);
+    expect(screen.getByRole("button", { name: "See all 2 photos" })).toBeInTheDocument();
+  });
+  it("shows no hero on the Info tab when there are no photos", () => {
+    render(<FountainDetail {...propsWithPhotos([])} />);
+    expect(screen.queryByRole("button", { name: /see all/i })).not.toBeInTheDocument();
+  });
+  it("activating the hero switches to the Photos tab", () => {
+    render(<FountainDetail {...propsWithPhotos([photo("a")])} />);
+    fireEvent.click(screen.getByRole("button", { name: "See all 1 photo" }));
+    expect(screen.getByRole("tab", { name: "Photos" })).toHaveAttribute("aria-selected", "true");
   });
   it("working + overall + votes (graphical hero + dimension stars)", () => {
     render(<FountainDetail detail={base} notes={[]} now={now} isAuthenticated={false} />);
