@@ -54,29 +54,42 @@ export function FountainDetailTabs({
             );
           })}
         </View>
-        {/* All bodies stay mounted; inactive ones are hidden (display:none) so form input and
-            scroll position survive a switch. Each body owns its own ScrollView. */}
-        {tabs.map((tab) => {
-          const selected = tab.id === active;
-          return (
-            <ScrollView
-              key={tab.id}
-              style={selected ? styles.panel : styles.panelHidden}
-              contentContainerStyle={styles.panelContent}
-              refreshControl={
-                onRefresh ? (
-                  <RefreshControl
-                    refreshing={Boolean(refreshing)}
-                    onRefresh={onRefresh}
-                    tintColor={colors.brandBlue}
-                  />
-                ) : undefined
-              }
-            >
-              {tab.content}
-            </ScrollView>
-          );
-        })}
+        {/* All tab bodies stay mounted so in-progress form input and each tab's scroll position
+            survive a switch. Each panel is wrapped in a View that is flex:1 when active and
+            collapsed to height:0 (overflow hidden) when inactive — the inactive ScrollView stays
+            mounted but takes no space and is clipped. NB: `display:"none"` did NOT reliably collapse
+            a flex:1 ScrollView on the New Architecture (all three stacked, each clipped to 1/3), and
+            an absolute-fill overlay swallowed touches on the active panel — the height:0 wrapper
+            avoids both. */}
+        <View style={styles.panels}>
+          {tabs.map((tab) => {
+            const selected = tab.id === active;
+            return (
+              <View
+                key={tab.id}
+                style={selected ? styles.panelWrap : styles.panelWrapHidden}
+                accessibilityElementsHidden={!selected}
+                importantForAccessibility={selected ? "auto" : "no-hide-descendants"}
+              >
+                <ScrollView
+                  style={styles.scroll}
+                  contentContainerStyle={styles.panelContent}
+                  refreshControl={
+                    onRefresh ? (
+                      <RefreshControl
+                        refreshing={Boolean(refreshing)}
+                        onRefresh={onRefresh}
+                        tintColor={colors.brandBlue}
+                      />
+                    ) : undefined
+                  }
+                >
+                  {tab.content}
+                </ScrollView>
+              </View>
+            );
+          })}
+        </View>
       </View>
     </TabsContext.Provider>
   );
@@ -101,8 +114,12 @@ const styles = StyleSheet.create({
   tabSelected: { borderBottomColor: colors.brandBlue },
   tabLabel: { ...typography.body, fontWeight: "700", color: colors.textMuted },
   tabLabelSelected: { color: colors.brandBlue },
-  panel: { flex: 1 },
-  panelHidden: { flex: 1, display: "none" },
+  // The panels container fills the space below the tab bar. The active panel wrapper is flex:1;
+  // inactive wrappers collapse to height 0 (content clipped but still mounted).
+  panels: { flex: 1 },
+  panelWrap: { flex: 1 },
+  panelWrapHidden: { height: 0, overflow: "hidden" },
+  scroll: { flex: 1 },
   // Horizontal insets come from the screen's ScreenContainer padding; only add vertical
   // breathing room + inter-item gap here so tab content aligns with the tab bar.
   panelContent: { paddingVertical: spacing.md, gap: spacing.md },
