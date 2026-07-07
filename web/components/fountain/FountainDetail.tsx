@@ -8,6 +8,7 @@ import { AttributeList } from "./AttributeList";
 import { NotesList } from "./NotesList";
 import { ContributeSection } from "./ContributeSection";
 import { PhotoGallery } from "./PhotoGallery";
+import { PhotoHero } from "./PhotoHero";
 import { FountainDetailTabs } from "./FountainDetailTabs";
 import { ReportControl } from "./ReportControl";
 import { REPORT_CATEGORIES } from "./reportCategories";
@@ -38,6 +39,7 @@ export function FountainDetail({
   const dir = `https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}`;
   const primary = (
     <div className="space-y-4">
+      <PhotoHero photos={photos} />
       <div>
         <h1 className="text-lg font-bold text-brand-ink">
           {locationLabel ?? "Public drinking fountain"}

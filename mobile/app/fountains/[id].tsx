@@ -2,17 +2,8 @@ import type { components } from "@fountainrank/api-client";
 import { CONTRIBUTION_POINTS } from "@fountainrank/contributions";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Stack, router, useLocalSearchParams } from "expo-router";
-import { useState } from "react";
-import {
-  Alert,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { useState, type ReactNode } from "react";
+import { Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { AttributeContributionForm } from "../../components/fountain/AttributeContributionForm";
 import { WaterCelebration } from "../../components/feedback/WaterCelebration";
@@ -70,7 +61,6 @@ export default function FountainDetailScreen() {
   const { client, config } = useApi();
   const auth = useAuth();
   const queryClient = useQueryClient();
-  const [showMoreDetails, setShowMoreDetails] = useState(false);
   const [celebrationKey, setCelebrationKey] = useState(0);
   const [celebrationPoints, setCelebrationPoints] = useState<number | null>(null);
   const [reportTarget, setReportTarget] = useState<ReportTarget | null>(null);
@@ -155,7 +145,7 @@ export default function FountainDetailScreen() {
 
   const attributeTypesQuery = useQuery({
     queryKey: ["attribute-types"],
-    enabled: fountainId != null && auth.status === "authenticated" && showMoreDetails,
+    enabled: fountainId != null && auth.status === "authenticated",
     queryFn: async (): Promise<AttributeTypeOut[]> =>
       unwrap(await client.GET("/api/v1/attribute-types")),
   });
@@ -411,6 +401,7 @@ export default function FountainDetailScreen() {
     void detailQuery.refetch();
     void notesQuery.refetch();
     void viewerQuery.refetch();
+    void photosQuery.refetch();
   };
 
   // Invalid route id (bad deep link / unexpected param) — honest, non-retryable.
@@ -434,71 +425,29 @@ export default function FountainDetailScreen() {
         }}
         onRetry={refetchAll}
       >
-        <ScrollView
-          contentContainerStyle={styles.scroll}
-          refreshControl={
-            <RefreshControl
-              refreshing={detailQuery.isRefetching || notesQuery.isRefetching}
-              onRefresh={refetchAll}
-              tintColor={colors.brandBlue}
-            />
-          }
-        >
-          {detailQuery.data ? (
-            <FountainDetail
-              detail={detailQuery.data}
-              notes={displayNotes}
-              notesError={notesQuery.isError}
-              onRetryNotes={() => void notesQuery.refetch()}
-              photos={photosQuery.data}
-              apiBaseUrl={config.apiBaseUrl}
-              onReportPhoto={
-                auth.status === "authenticated"
-                  ? (photo) => setReportTarget({ contentType: "photo", contentId: photo.id })
-                  : undefined
-              }
-              onDeletePhoto={auth.status === "authenticated" ? confirmDeletePhoto : undefined}
-              onReportNote={
-                auth.status === "authenticated"
-                  ? (note) => setReportTarget({ contentType: "note", contentId: note.id })
-                  : undefined
-              }
-              onReportFountain={
-                auth.status === "authenticated"
-                  ? () => setReportTarget({ contentType: "fountain", contentId: fountainId })
-                  : undefined
-              }
-              adminControls={
-                adminDetail ? (
-                  <AdminControls
-                    detail={adminDetail}
-                    pending={
-                      adminUpdateMutation.isPending ||
-                      adminDeleteMutation.isPending ||
-                      adminNoteMutation.isPending
-                    }
-                    onUpdate={async (patch) => {
-                      await adminUpdateMutation.mutateAsync(patch);
-                    }}
-                    onDelete={async () => {
-                      await adminDeleteMutation.mutateAsync();
-                    }}
-                    onSetNoteHidden={async (noteId, isHidden) => {
-                      await adminNoteMutation.mutateAsync({ noteId, isHidden });
-                    }}
-                  />
-                ) : undefined
-              }
-              contribution={
+        {detailQuery.data
+          ? (() => {
+              // Narrow `detailQuery.data` to a local so the contribution nodes (which read
+              // `detail.dimensions` / `detail.condition_points_eligible_at`) typecheck.
+              const detail = detailQuery.data;
+              // Each tab's contribution controls get their own auth-gated ContributePanel,
+              // mirroring web's per-tab ContributeSection. Only how the forms are grouped
+              // changes; the mutations/handlers are unchanged.
+              const wrapContribution = (children: ReactNode) => (
                 <ContributePanel
                   authStatus={auth.status}
                   onSignIn={async () => {
                     await auth.signIn();
                   }}
                 >
+                  {children}
+                </ContributePanel>
+              );
+              const infoContribution = wrapContribution(
+                <>
                   <RatingContributionForm
                     fountainId={fountainId}
-                    dimensions={detailQuery.data.dimensions}
+                    dimensions={detail.dimensions}
                     pending={ratingMutation.isPending}
                     onSubmit={async (body) => {
                       try {
@@ -509,10 +458,37 @@ export default function FountainDetailScreen() {
                       }
                     }}
                   />
+                  <PhotoUploadButton
+                    pending={photoUploadMutation.isPending}
+                    message={photoUploadMessage}
+                    onPick={(asset) => {
+                      void pickAndUploadPhoto(asset);
+                    }}
+                  />
+                </>,
+              );
+              const detailsContribution = wrapContribution(
+                <>
+                  <AttributeContributionForm
+                    fountainId={fountainId}
+                    attributeTypes={attributeTypesQuery.data ?? []}
+                    pending={attributeMutation.isPending}
+                    isLoading={attributeTypesQuery.isLoading}
+                    isError={attributeTypesQuery.isError}
+                    onRetry={() => void attributeTypesQuery.refetch()}
+                    onSubmit={async (body) => {
+                      try {
+                        await attributeMutation.mutateAsync(body);
+                        return { ok: true };
+                      } catch (error) {
+                        return handleMutationError(error);
+                      }
+                    }}
+                  />
                   <ConditionContributionForm
                     fountainId={fountainId}
                     pending={conditionMutation.isPending}
-                    conditionPointsEligibleAt={detailQuery.data?.condition_points_eligible_at}
+                    conditionPointsEligibleAt={detail.condition_points_eligible_at}
                     onSubmit={async (body) => {
                       try {
                         await conditionMutation.mutateAsync(body);
@@ -534,47 +510,75 @@ export default function FountainDetailScreen() {
                       }
                     }}
                   />
-                  <PhotoUploadButton
-                    pending={photoUploadMutation.isPending}
-                    message={photoUploadMessage}
-                    onPick={(asset) => {
-                      void pickAndUploadPhoto(asset);
-                    }}
-                  />
-                  <Pressable
-                    accessibilityRole="button"
-                    onPress={() => setShowMoreDetails((current) => !current)}
-                    style={styles.secondaryButton}
-                  >
-                    <Text style={styles.secondaryButtonText}>
-                      {showMoreDetails ? "Hide More Details" : "More Details"}
-                    </Text>
-                  </Pressable>
-                  {showMoreDetails ? (
-                    <AttributeContributionForm
-                      fountainId={fountainId}
-                      attributeTypes={attributeTypesQuery.data ?? []}
-                      pending={attributeMutation.isPending}
-                      isLoading={attributeTypesQuery.isLoading}
-                      isError={attributeTypesQuery.isError}
-                      onRetry={() => void attributeTypesQuery.refetch()}
-                      onSubmit={async (body) => {
-                        try {
-                          await attributeMutation.mutateAsync(body);
-                          return { ok: true };
-                        } catch (error) {
-                          return handleMutationError(error);
+                </>,
+              );
+              const photosContribution = wrapContribution(
+                <PhotoUploadButton
+                  pending={photoUploadMutation.isPending}
+                  message={photoUploadMessage}
+                  onPick={(asset) => {
+                    void pickAndUploadPhoto(asset);
+                  }}
+                />,
+              );
+              return (
+                <FountainDetail
+                  detail={detail}
+                  notes={displayNotes}
+                  notesError={notesQuery.isError}
+                  onRetryNotes={() => void notesQuery.refetch()}
+                  photos={photosQuery.data}
+                  apiBaseUrl={config.apiBaseUrl}
+                  onReportPhoto={
+                    auth.status === "authenticated"
+                      ? (photo) => setReportTarget({ contentType: "photo", contentId: photo.id })
+                      : undefined
+                  }
+                  onDeletePhoto={auth.status === "authenticated" ? confirmDeletePhoto : undefined}
+                  onReportNote={
+                    auth.status === "authenticated"
+                      ? (note) => setReportTarget({ contentType: "note", contentId: note.id })
+                      : undefined
+                  }
+                  onReportFountain={
+                    auth.status === "authenticated"
+                      ? () => setReportTarget({ contentType: "fountain", contentId: fountainId })
+                      : undefined
+                  }
+                  adminControls={
+                    adminDetail ? (
+                      <AdminControls
+                        detail={adminDetail}
+                        pending={
+                          adminUpdateMutation.isPending ||
+                          adminDeleteMutation.isPending ||
+                          adminNoteMutation.isPending
                         }
-                      }}
-                    />
-                  ) : null}
-                </ContributePanel>
-              }
-              now={now}
-              webBaseUrl={config.webBaseUrl}
-            />
-          ) : null}
-        </ScrollView>
+                        onUpdate={async (patch) => {
+                          await adminUpdateMutation.mutateAsync(patch);
+                        }}
+                        onDelete={async () => {
+                          await adminDeleteMutation.mutateAsync();
+                        }}
+                        onSetNoteHidden={async (noteId, isHidden) => {
+                          await adminNoteMutation.mutateAsync({ noteId, isHidden });
+                        }}
+                      />
+                    ) : undefined
+                  }
+                  infoContribution={infoContribution}
+                  detailsContribution={detailsContribution}
+                  photosContribution={photosContribution}
+                  refreshing={
+                    detailQuery.isRefetching || notesQuery.isRefetching || photosQuery.isRefetching
+                  }
+                  onRefresh={refetchAll}
+                  now={now}
+                  webBaseUrl={config.webBaseUrl}
+                />
+              );
+            })()
+          : null}
         <WaterCelebration triggerKey={celebrationKey} points={celebrationPoints} />
       </QueryStateView>
       <ReportContentButton
@@ -787,22 +791,9 @@ function AdminControls({
 }
 
 const styles = StyleSheet.create({
-  scroll: { paddingVertical: spacing.md, gap: spacing.md },
   centered: { flex: 1, alignItems: "center", justifyContent: "center", gap: spacing.sm },
   notFoundTitle: { ...typography.title, color: colors.brandBlue },
   notFoundNote: { ...typography.body, color: colors.textMuted },
-  secondaryButton: {
-    alignSelf: "flex-start",
-    minHeight: 44,
-    justifyContent: "center",
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
-  secondaryButtonText: { ...typography.body, color: colors.brandBlue, fontWeight: "700" },
   adminWrap: {
     borderTopColor: colors.border,
     borderTopWidth: 1,

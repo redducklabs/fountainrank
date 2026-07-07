@@ -3,11 +3,14 @@ import type React from "react";
 import { Alert, Linking, Platform, Pressable, Share, StyleSheet, Text, View } from "react-native";
 
 import { formatAverage, formatDate, formatVotes } from "../../lib/map/format";
+import { photosTabLabel } from "../../lib/detail/fountain-detail";
 import { fountainShareUrl, shareContent } from "../../lib/share-url";
 import { colors, spacing, typography } from "../../theme";
 import { AttributeList } from "./AttributeList";
+import { FountainDetailTabs } from "./FountainDetailTabs";
 import { NotesList } from "./NotesList";
 import { PhotoCarousel } from "./PhotoCarousel";
+import { PhotoHero } from "./PhotoHero";
 import { Stars } from "./Stars";
 import { StatusBlock } from "./StatusBlock";
 
@@ -21,7 +24,11 @@ export function FountainDetail({
   notesError,
   onRetryNotes,
   adminControls,
-  contribution,
+  infoContribution,
+  detailsContribution,
+  photosContribution,
+  refreshing,
+  onRefresh,
   now,
   webBaseUrl,
   photos,
@@ -36,7 +43,15 @@ export function FountainDetail({
   notesError?: boolean;
   onRetryNotes?: () => void;
   adminControls?: React.ReactNode;
-  contribution?: React.ReactNode;
+  /** Contribution controls for the Info tab (rating + add photo). */
+  infoContribution?: React.ReactNode;
+  /** Contribution controls for the Details tab (attributes + condition + note). */
+  detailsContribution?: React.ReactNode;
+  /** Contribution controls for the Photos tab (add photo). */
+  photosContribution?: React.ReactNode;
+  /** Pull-to-refresh state/handler, forwarded to each tab's ScrollView. */
+  refreshing?: boolean;
+  onRefresh?: () => void;
   now: Date;
   webBaseUrl: string;
   photos?: PhotoOut[];
@@ -50,6 +65,7 @@ export function FountainDetail({
 }) {
   const { latitude, longitude } = detail.location;
   const contextComment = detail.comments || detail.placement_note;
+  const resolvedPhotos = photos ?? [];
   const directionsUrl = `https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}`;
   const openDirections = () => {
     Linking.openURL(directionsUrl).catch(() => {
@@ -66,8 +82,10 @@ export function FountainDetail({
     });
   };
 
-  return (
-    <View style={styles.wrap}>
+  const infoBody = (
+    <View style={styles.body}>
+      <PhotoHero photos={resolvedPhotos} apiBaseUrl={apiBaseUrl} />
+
       <View style={styles.headerBlock}>
         <Text style={styles.title}>Public drinking fountain</Text>
         <StatusBlock
@@ -77,15 +95,6 @@ export function FountainDetail({
           now={now}
         />
       </View>
-
-      {photos && photos.length > 0 ? (
-        <PhotoCarousel
-          photos={photos}
-          apiBaseUrl={apiBaseUrl}
-          onReport={onReportPhoto}
-          onDelete={onDeletePhoto}
-        />
-      ) : null}
 
       {detail.average_rating != null ? (
         <View style={styles.heroRow}>
@@ -138,6 +147,31 @@ export function FountainDetail({
         </View>
       ) : null}
 
+      {infoContribution}
+
+      <View style={styles.actions}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Get directions"
+          onPress={openDirections}
+          style={styles.directions}
+        >
+          <Text style={styles.directionsText}>Directions</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Share this fountain"
+          onPress={onShare}
+          style={styles.share}
+        >
+          <Text style={styles.shareText}>Share</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+
+  const detailsBody = (
+    <View style={styles.body}>
       <AttributeList attributes={detail.attributes} />
 
       {contextComment ? (
@@ -164,31 +198,12 @@ export function FountainDetail({
 
       {adminControls}
 
-      {contribution}
+      {detailsContribution}
 
       <Text style={styles.footer}>
         {`Added ${formatDate(detail.created_at)}`}
         {detail.last_rated_at ? ` · Last rated ${formatDate(detail.last_rated_at)}` : ""}
       </Text>
-
-      <View style={styles.actions}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Get directions"
-          onPress={openDirections}
-          style={styles.directions}
-        >
-          <Text style={styles.directionsText}>Directions</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Share this fountain"
-          onPress={onShare}
-          style={styles.share}
-        >
-          <Text style={styles.shareText}>Share</Text>
-        </Pressable>
-      </View>
 
       {onReportFountain ? (
         <Pressable
@@ -203,10 +218,39 @@ export function FountainDetail({
       ) : null}
     </View>
   );
+
+  const photosBody = (
+    <View style={styles.body}>
+      {resolvedPhotos.length > 0 ? (
+        <PhotoCarousel
+          photos={resolvedPhotos}
+          apiBaseUrl={apiBaseUrl}
+          onReport={onReportPhoto}
+          onDelete={onDeletePhoto}
+        />
+      ) : (
+        <Text style={styles.emptyPhotos}>No photos have been added yet.</Text>
+      )}
+
+      {photosContribution}
+    </View>
+  );
+
+  return (
+    <FountainDetailTabs
+      refreshing={refreshing}
+      onRefresh={onRefresh}
+      tabs={[
+        { id: "info", label: "Info", content: infoBody },
+        { id: "details", label: "Details", content: detailsBody },
+        { id: "photos", label: photosTabLabel(resolvedPhotos.length), content: photosBody },
+      ]}
+    />
+  );
 }
 
 const styles = StyleSheet.create({
-  wrap: { gap: spacing.md },
+  body: { gap: spacing.md },
   headerBlock: { gap: spacing.xs },
   title: { ...typography.heading, color: colors.brandBlue },
   heroRow: { flexDirection: "row", alignItems: "center", gap: spacing.md },
@@ -245,6 +289,7 @@ const styles = StyleSheet.create({
   notesError: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
   notesErrorText: { ...typography.meta, color: colors.textMuted },
   notesRetry: { ...typography.meta, color: colors.brandBlue, fontWeight: "700" },
+  emptyPhotos: { ...typography.body, color: colors.textMuted },
   footer: { ...typography.meta, color: colors.textMuted },
   actions: { flexDirection: "row", alignItems: "center", gap: spacing.sm, flexWrap: "wrap" },
   directions: {
