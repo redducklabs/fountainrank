@@ -4,7 +4,7 @@ import { Pressable, StyleSheet, View } from "react-native";
 
 import { heroPhoto, seeAllPhotosLabel } from "../../lib/detail/fountain-detail";
 import { resolvePhotoUrl } from "../../lib/detail/photo-carousel";
-import { colors, spacing } from "../../theme";
+import { colors } from "../../theme";
 import { useFountainDetailTabs } from "./FountainDetailTabs";
 
 type PhotoOut = components["schemas"]["PhotoOut"];
