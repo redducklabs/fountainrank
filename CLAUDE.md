@@ -16,6 +16,17 @@
 
 ---
 
+## Local Development (Windows/WSL) - MANDATORY
+
+**🚨 Codex runs in WSL against this same checkout, so build artifacts are often cross-OS. Know what verifies locally vs. what only CI can confirm — and never claim a local green you didn't get. 🚨**
+
+- **ALWAYS** run the backend mirror via an isolated `UV_PROJECT_ENVIRONMENT`; **NEVER** delete Codex's `.venv` / `node_modules` (they're Linux artifacts — work around, don't clobber).
+- **CI-only on this host:** component-render + full JS unit suites, `expo-doctor` truth (the local hoisted linker gives a false pass), and mobile's stricter React-Compiler lint. Verify these via CI, not locally.
+
+**🔗 MANDATORY: Read `claude_help/local-dev.md` BEFORE running local checks, building the mobile app locally, or doing browser/visual verification. NOT optional.**
+
+---
+
 ## Development Process - CRITICAL
 
 **🚨 Keep project knowledge in the repo, not in agent memory. Write design/plan/handoff docs as you go. 🚨**
@@ -71,6 +82,8 @@
 - **NEVER** run state-mutating Terraform locally (`apply`/`destroy`/`import`/`state`). Local Terraform is **read-only**: `init`/`validate`/`fmt`/`plan`.
 - **NEVER** run `kubectl apply`/`helm upgrade` against a cluster by hand — deploy via CI.
 - **ALWAYS** verify `kubectl config current-context` before any kubectl read.
+- **Deploy is a MANUAL CI action** — merging to `main` does **NOT** deploy (`deploy.yml` = `v*.*.*` tag or `workflow_dispatch`); run `gh workflow run deploy.yml --ref main` after a merge.
+- **ALWAYS `plan` first and read the WHOLE blast radius** — a count-gated resource live in state is a silent-destroy trap, and changing the DOKS `node_size` is `ForceNew` (recreates the whole cluster + needs a redeploy).
 
 **🔗 MANDATORY: Read `claude_help/kubernetes-infra.md` BEFORE any infrastructure, Terraform, or Kubernetes work. NOT optional.**
 
@@ -107,6 +120,16 @@
 - **ALWAYS** keep email secrets out of the repo; reference env var names only.
 
 **🔗 MANDATORY: Read `claude_help/email.md` BEFORE touching email sending, templates, or the Logto email connector. NOT optional.**
+
+---
+
+## SEO Operations - MANDATORY
+
+**🚨 SEO measurement runs through the local seo-agent (Search Console + Bing configured; GA4 needs its own project/property). Use explicit project/site identifiers — never the ambient `gcloud` project. 🚨**
+
+- **ALWAYS** use the `seo` skill and site name `fountainrank`; keep service-account keys / API keys out of logs and out of the repo.
+
+**🔗 MANDATORY: Read `claude_help/seo.md` BEFORE any SEO-agent, Search Console, GA4, or Bing Webmaster work (operational spoke for `docs/runbooks/seo.md`). NOT optional.**
 
 ---
 
@@ -163,11 +186,13 @@
 | `docs/plans/` (dated) | The active implementation plan for the current phase |
 | `claude_help/development-process.md` | BEFORE any development work |
 | `claude_help/testing-ci.md` | BEFORE writing tests, touching CI, or opening a PR |
+| `claude_help/local-dev.md` | BEFORE running local checks, building the mobile app locally, or browser/visual verification (Windows/WSL host: what verifies locally vs. CI-only) |
 | `claude_help/codex-review-process.md` | BEFORE finalizing a spec/plan and BEFORE merging any PR |
 | `claude_help/kubernetes-infra.md` | BEFORE any infrastructure / Terraform / Kubernetes work |
 | `claude_help/github-cli.md` | BEFORE any `gh` GitHub operation |
 | `claude_help/github-environments.md` | BEFORE touching CI environments or secrets |
 | `claude_help/oauth-sso.md` | BEFORE any auth / Logto / SSO work (external-registrations checklist) |
 | `claude_help/email.md` | BEFORE touching email sending, templates, or the Logto email connector |
+| `claude_help/seo.md` | BEFORE any SEO-agent / Search Console / GA4 / Bing Webmaster / SEO-measurement work |
 | `docs/setup/README.md` | The owner runbook for external accounts/credentials (DigitalOcean, DNS, Google OAuth + Gmail, Apple, GitHub secrets, Logto) + master secret inventory |
 | `docs/style-guide.md` | BEFORE creating any new UI element (created in the UI phase) |

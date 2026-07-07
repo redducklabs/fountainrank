@@ -9,8 +9,9 @@ adapter, not a second source of truth.
 code, test, commit, database, Docker, infrastructure, UI, auth, email, or
 migration work, read `CLAUDE.md` and the files it points to:
 
-- `claude_help/*.md` — process runbooks (development, testing/CI, Codex review,
-  Kubernetes/infra, GitHub CLI, GitHub environments, OAuth/SSO, email).
+- `claude_help/*.md` — process runbooks (development, testing/CI, local dev on the
+  Windows/WSL host, Codex review, Kubernetes/infra, GitHub CLI, GitHub
+  environments, OAuth/SSO, email, SEO).
 - `docs/specs/2026-06-16-architecture-and-foundation-design.md` — the design.
 - `docs/design/*.md` — standing architecture references.
 

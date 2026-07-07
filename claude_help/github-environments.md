@@ -1,7 +1,9 @@
 # GitHub Environments & Secrets
 
-How CI/CD configuration and secrets are organized. The concrete workflows and
-environment definitions land in plan 0f; this is the convention.
+How CI/CD configuration and secrets are organized. The workflows and the
+`production` environment are live (`ci.yml`, `deploy.yml`, `terraform.yml`,
+`basemap-upload.yml`, `mobile-store-release.yml`, `security-audit.yml`); this is
+the convention they follow.
 
 ## Principles
 
@@ -12,7 +14,7 @@ environment definitions land in plan 0f; this is the convention.
   with required reviewers/protection on production where appropriate.
 - Non-secret config goes in repo/environment **variables**, not secrets.
 
-## Expected secret names (illustrative — finalized in 0f)
+## Secret names (by convention)
 
 | Name | Purpose |
 |---|---|
@@ -25,6 +27,17 @@ environment definitions land in plan 0f; this is the convention.
 | `LOGTO_*` | Logto app endpoints/credentials consumed by web/mobile/backend |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | Gmail-API sending (Workspace delegation) |
 | `FROM_EMAIL` / `BASE_URL` | email sender + link base |
+
+## The `production` environment has no branch policy
+
+The `production` GitHub environment has **no `deployment_branch_policy`** (it is
+`null`), so a `workflow_dispatch` from **any branch** — not just `main` — can
+access its secrets (`SPACES_*`, `DIGITALOCEAN_ACCESS_TOKEN`, etc.). The practical
+upshot: you can verify an infra/workflow change **on its feature branch before
+merging** (e.g. `gh workflow run basemap-upload.yml --ref feat/...`) rather than
+being forced to merge-then-dispatch. Verify with
+`gh api repos/redducklabs/fountainrank/environments/production --jq '.deployment_branch_policy'`
+→ `null`; re-check before relying on it, since branch protection can change.
 
 ## Runner placement
 

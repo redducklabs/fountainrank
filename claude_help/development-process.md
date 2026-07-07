@@ -13,8 +13,9 @@ development task. `CLAUDE.md` is the hub; this is the "how we work" spoke.
    with bite-sized, testable tasks. Get the plan Codex-reviewed.
 3. **Implement task-by-task.** One task at a time, TDD where it applies, frequent
    commits. Don't batch unrelated changes.
-4. **Verify, then claim.** Run the checks yourself (see `testing-ci.md`). Never
-   say something works or is "done" without having run it.
+4. **Verify, then claim.** Run the checks yourself (see `testing-ci.md`; and
+   `local-dev.md` for what is verifiable on this Windows/WSL host vs. what only CI
+   can confirm). Never say something works or is "done" without having run it.
 
 ## Keep knowledge in the repo
 
@@ -25,12 +26,15 @@ repo should be able to continue from these files alone.
 
 ## Git policy
 
-- **Phase 0 (foundation):** commit **directly to `main`**. There is no CI to gate
-  against yet; the goal is to stand the repo up.
-- **After Phase 0:** branch → PR → CI green + Codex `VERDICT: APPROVED` + all
-  comments addressed → **squash-merge**.
+- **All work goes on a branch → PR → CI green + Codex `VERDICT: APPROVED` + every
+  PR comment addressed → squash-merge.** Phase 0's direct-to-`main` allowance is
+  **over** (see `CLAUDE.md` → *Source Control Strategy*). "Green / ready to merge"
+  *includes* Codex approval — CI is necessary but not sufficient.
+- **Always squash-merge** (`gh pr merge <N> --squash`) — never a merge commit,
+  never rebase-merge — to keep the linear `<title> (#PR)` history, even when a
+  branch bundles multiple topics.
 - **Conventional Commits:** `feat:`, `fix:`, `docs:`, `chore:`, `build:`, `ci:`,
-  `test:`, `refactor:`.
+  `test:`, `refactor:`. Frequent commits, one task at a time.
 - **No AI attribution** in commit messages or PR bodies — ever. No
   "Generated with Claude", no "Co-Authored-By: Claude", no AI markers.
 - **No time estimates** in any artifact.
@@ -51,5 +55,5 @@ context and a clear, verifiable deliverable.
 ## Definition of done
 
 A task is done only when: the requirement is implemented, tests exist and pass,
-the local CI-mirror checks are green, and (post-Phase-0) the PR's CI + Codex
-review are green. See `testing-ci.md` and `codex-review-process.md`.
+the local CI-mirror checks are green, and the PR's CI + Codex review are green.
+See `testing-ci.md` and `codex-review-process.md`.
