@@ -66,22 +66,47 @@ export function unwrap<T>(result: FetchResult<T>): T {
  */
 export type MobileApiClient = Pick<ApiClient, "GET" | "POST" | "PUT" | "PATCH" | "DELETE"> & {
   /**
-   * Multipart upload (e.g. fountain photos). openapi-fetch's typed client doesn't
-   * fit multipart/form-data bodies, AND React Native's fetch only streams a file
-   * FormData when it is passed directly as `fetch(url, { body: formData })` - not
-   * wrapped in a `new Request(...)` - so this method cannot reuse `sanitizingFetch`
-   * (every other verb's shared path) without breaking the upload. It instead builds
-   * its own headers using the SAME `getAccessToken`/`buildAuthHeaders` auth path (no
-   * second, unaudited auth mechanism) and calls the raw fetch directly. Do not set
-   * `Content-Type`; React Native sets the multipart boundary itself.
+   * Multipart file upload (e.g. fountain photos). openapi-fetch's typed client doesn't fit
+   * multipart/form-data bodies, AND React Native's New Architecture rejects the `{ uri, name,
+   * type }` FormData file-part shape at request time (`Error: Unsupported FormDataPart
+   * implementation`), so a `fetch(url, { body: formData })` upload throws before the request ever
+   * leaves the device. This method instead delegates to a NATIVE multipart uploader
+   * (`expo-file-system`'s `uploadAsync`, injected as `uploadFile` by the provider), which streams
+   * the file from its `uri` without going through RN's FormData/Blob layer. It builds its own
+   * headers using the SAME `getAccessToken`/`buildAuthHeaders` auth path (no second, unaudited
+   * auth mechanism). Do not set `Content-Type`; the native uploader sets the multipart boundary.
    */
-  uploadMultipart(path: string, formData: FormData): Promise<{ status: number; detail?: unknown }>;
+  uploadMultipart(
+    path: string,
+    file: { uri: string; type: string },
+  ): Promise<{ status: number; detail?: unknown }>;
 };
 
 type MakeClientOptions = Parameters<typeof makeClient>[1];
+
+/**
+ * A native multipart file uploader (e.g. `expo-file-system`'s `uploadAsync`), injected by the
+ * provider so `lib/api.ts` stays free of native-module imports and remains unit-testable in Node.
+ * Performs a `multipart/form-data` POST with the file at `fileUri` as one part (named `fieldName`)
+ * and resolves with the HTTP status + raw response body. Used instead of `fetch`+`FormData`
+ * because React Native's New Architecture rejects the `{ uri, name, type }` FormData file-part
+ * shape (`Error: Unsupported FormDataPart implementation`), throwing before the request is sent.
+ */
+export type NativeFileUpload = (
+  url: string,
+  fileUri: string,
+  options: {
+    httpMethod: "POST";
+    fieldName: string;
+    mimeType?: string;
+    headers: Record<string, string>;
+  },
+) => Promise<{ status: number; body: string }>;
+
 export type CreateApiClientOptions = MakeClientOptions & {
   getAccessToken?: () => Promise<string | null | undefined>;
   shouldAttachAuth?: (request: Request) => boolean;
+  uploadFile?: NativeFileUpload;
 };
 
 function requestPath(input: Request): string {
@@ -166,6 +191,7 @@ export function createApiClient(
   const {
     getAccessToken,
     shouldAttachAuth = isAuthenticatedApiRequest,
+    uploadFile,
     ...clientOptions
   } = options ?? {};
   const baseFetch = clientOptions.fetch ?? ((input: Request) => globalThis.fetch(input));
@@ -209,19 +235,18 @@ export function createApiClient(
 
   const uploadMultipart = async (
     path: string,
-    formData: FormData,
+    file: { uri: string; type: string },
   ): Promise<{ status: number; detail?: unknown }> => {
+    if (!uploadFile) {
+      // The provider always injects `uploadFile`; a missing one is a wiring bug, not a runtime
+      // condition, so fail loudly rather than silently no-op an upload.
+      throw new Error("uploadMultipart requires a native uploadFile implementation");
+    }
     const url = `${baseUrl}${path}`;
-    // React Native's fetch only streams a multipart file FormData (the
-    // `{ uri, name, type }` file-part shape) when the FormData is passed DIRECTLY
-    // as `fetch(url, { body: formData })`. Wrapping the FormData in a `new
-    // Request(...)` (as every other verb does via `sanitizingFetch`) breaks RN's
-    // native multipart handling: the file body is silently dropped and the
-    // request never leaves the device. So this method builds its own headers
-    // (mirroring `sanitizingFetch`'s auth-attach + x-dev-strip behavior) and
-    // calls the raw fetch in the `(url, init)` form instead of going through
-    // `sanitizingFetch`/`new Request`. Do not "simplify" this back to
-    // `sanitizingFetch` - that reintroduces the bug.
+    // Build the auth header via the SAME token path as `sanitizingFetch` (no second, unaudited
+    // auth mechanism). A token-provider failure surfaces as AuthSessionError, never a silent
+    // tokenless upload. No x-dev-strip step is needed: these headers are built here from scratch
+    // (only ever an Authorization header), so an x-dev* header can never appear.
     const headers: Record<string, string> = {};
     if (getAccessToken && shouldAttachAuth(new Request(url, { method: "POST" }))) {
       let token: string | null | undefined;
@@ -232,27 +257,27 @@ export function createApiClient(
       }
       Object.assign(headers, buildAuthHeaders(token));
     }
-    // No x-dev-strip step is needed here: this method builds `headers` itself
-    // from scratch (only ever an Authorization header), so an x-dev* header can
-    // never appear - there is no caller-supplied header channel to sanitize.
-    // Do NOT set Content-Type; React Native derives the multipart boundary from
-    // the FormData itself.
-    // `clientOptions.fetch` is typed narrowly (`(input: Request) => Promise<Response>`)
-    // to match openapi-fetch's `ClientOptions`, but the value actually configured
-    // (real `globalThis.fetch`, or a test mock standing in for it) always supports
-    // the standard `(url, init)` calling form - it is only ever used that way here.
-    const rawFetch = (clientOptions.fetch as typeof fetch | undefined) ?? globalThis.fetch;
-    const res = await rawFetch(url, { method: "POST", body: formData, headers });
-    if (res.ok) {
+    // Delegate to the native uploader (expo-file-system `uploadAsync`, MULTIPART). It streams the
+    // file from `file.uri` as a multipart/form-data part named "file" and sets the boundary +
+    // Content-Type itself. This replaces a `fetch(url, { body: formData })` upload, which throws
+    // `Error: Unsupported FormDataPart implementation` on RN's New Architecture (the `{ uri, name,
+    // type }` file-part shape is rejected before the request is sent). Do NOT set Content-Type.
+    const res = await uploadFile(url, file.uri, {
+      httpMethod: "POST",
+      fieldName: "file",
+      mimeType: file.type,
+      headers,
+    });
+    if (res.status >= 200 && res.status < 300) {
       return { status: res.status };
     }
-    // On failure, best-effort read the JSON body's `detail` field (e.g. the upload
-    // endpoint's two distinct 409 shapes - `display_name_required` vs
-    // `photo_limit_fountain`/`photo_limit_user` - are only distinguishable this way; see
-    // `mapPhotoUploadError`). A non-JSON or empty error body must never throw here.
+    // On failure, best-effort read the JSON body's `detail` field (e.g. the upload endpoint's two
+    // distinct 409 shapes - `display_name_required` vs `photo_limit_fountain`/`photo_limit_user` -
+    // are only distinguishable this way; see `mapPhotoUploadError`). A non-JSON or empty error
+    // body must never throw here.
     let detail: unknown;
     try {
-      const body: unknown = await res.json();
+      const body: unknown = JSON.parse(res.body);
       detail = (body as { detail?: unknown } | null)?.detail;
     } catch {
       detail = undefined;

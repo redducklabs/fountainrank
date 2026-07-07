@@ -1,7 +1,7 @@
 import { isAuthSessionError } from "../auth/state";
 import { mapContributionError, type ContributionError } from "../contributions/state";
 
-/** The minimal shape `buildPhotoFormData` needs from an `expo-image-picker`
+/** The minimal shape `buildPhotoUpload` needs from an `expo-image-picker`
  *  `ImagePickerAsset` — kept narrow so this stays unit-testable without the native module. */
 export type PickedPhotoAsset = {
   uri: string;
@@ -9,19 +9,16 @@ export type PickedPhotoAsset = {
   mimeType?: string | null;
 };
 
-/** Build the multipart body for `client.uploadMultipart(...)`. React Native's `fetch`
- *  recognizes the `{ uri, name, type }` shape as a file part (unlike web, where a `Blob`/`File`
- *  is required) - see `mobile/lib/api.ts`'s `uploadMultipart` for the shared sanitized path
- *  this is sent through. Falls back to a generic JPEG name/type when the picker didn't supply
- *  one (`launchImageLibraryAsync({ quality: 0.9 })` without `allowsEditing` always emits JPEG). */
-export function buildPhotoFormData(asset: PickedPhotoAsset): FormData {
-  const formData = new FormData();
-  const name = asset.fileName?.trim() || `photo-${Date.now()}.jpg`;
+/** Build the `{ uri, type }` descriptor for `client.uploadMultipart(...)`, which streams the file
+ *  via the native `expo-file-system` uploader (see `mobile/lib/api.ts`). We deliberately do NOT
+ *  build a `FormData` here: React Native's New Architecture rejects the `{ uri, name, type }`
+ *  FormData file-part shape (`Error: Unsupported FormDataPart implementation`), so a `fetch`-based
+ *  multipart upload throws before the request leaves the device. Falls back to a generic JPEG mime
+ *  type when the picker didn't supply one (`launchImageLibraryAsync({ quality: 0.9 })` without
+ *  `allowsEditing` always emits JPEG); the native uploader derives the filename from the `uri`. */
+export function buildPhotoUpload(asset: PickedPhotoAsset): { uri: string; type: string } {
   const type = asset.mimeType?.trim() || "image/jpeg";
-  // React Native's FormData accepts this file-descriptor object even though it isn't a real
-  // `Blob` - cast through `unknown` since `FormData.append`'s DOM typing only allows `Blob`.
-  formData.append("file", { uri: asset.uri, name, type } as unknown as Blob);
-  return formData;
+  return { uri: asset.uri, type };
 }
 
 /** Thrown by the upload mutation for a non-2xx `uploadMultipart` result, carrying both the
