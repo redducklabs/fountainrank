@@ -326,10 +326,7 @@ export default function FountainDetailScreen() {
     }): Promise<void> => {
       if (fountainId == null) throw new Error("missing fountain id");
       const upload = buildPhotoUpload(asset);
-      const result = await client.uploadMultipart(
-        `/api/v1/fountains/${fountainId}/photos`,
-        upload,
-      );
+      const result = await client.uploadMultipart(`/api/v1/fountains/${fountainId}/photos`, upload);
       if (result.status < 200 || result.status >= 300) {
         throw new PhotoUploadError(result.status, result.detail);
       }
