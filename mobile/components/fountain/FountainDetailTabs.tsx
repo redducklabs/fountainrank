@@ -103,5 +103,7 @@ const styles = StyleSheet.create({
   tabLabelSelected: { color: colors.brandBlue },
   panel: { flex: 1 },
   panelHidden: { flex: 1, display: "none" },
-  panelContent: { padding: spacing.md, gap: spacing.md },
+  // Horizontal insets come from the screen's ScreenContainer padding; only add vertical
+  // breathing room + inter-item gap here so tab content aligns with the tab bar.
+  panelContent: { paddingVertical: spacing.md, gap: spacing.md },
 });
