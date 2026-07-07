@@ -8,6 +8,7 @@ import {
   createApiClient,
   isAuthenticatedApiRequest,
   unwrap,
+  type NativeFileUpload,
 } from "./api";
 
 describe("buildAuthHeaders", () => {
@@ -463,73 +464,87 @@ describe("isAuthenticatedApiRequest - admin photo-reports + photo list", () => {
 });
 
 describe("createApiClient.uploadMultipart", () => {
-  it("sends the FormData body DIRECTLY (not wrapped in a Request) and attaches the bearer token", async () => {
-    // Regression guard for the RN multipart bug: React Native's fetch only streams
-    // a file FormData when it is passed as `fetch(url, init)` with `init.body` set
-    // to the SAME FormData instance directly - wrapping it in `new Request(...)`
-    // silently drops the file body. Assert on `init` directly (not by reconstructing
-    // a Request from `input`), since reconstructing would mask exactly this bug.
-    let receivedInput: unknown = null;
-    let receivedInit: RequestInit | undefined;
-    const fetchMock: typeof fetch = async (input, init) => {
-      receivedInput = input;
-      receivedInit = init;
-      return new Response(JSON.stringify({ id: "photo-1" }), {
-        status: 201,
-        headers: { "content-type": "application/json" },
-      });
+  it("delegates to the native uploader with the file uri, field name, mime type, and bearer token", async () => {
+    // The upload goes through the injected native uploader (expo-file-system `uploadAsync`), NOT
+    // `fetch`+`FormData`: React Native's New Architecture rejects the `{ uri, name, type }`
+    // FormData file-part shape (`Error: Unsupported FormDataPart implementation`), throwing before
+    // the request is sent. Assert the uploader receives the resolved URL, the raw file uri, the
+    // "file" field name, the mime type, and the bearer token (with no Content-Type / x-dev*).
+    const received: {
+      url?: string;
+      fileUri?: string;
+      options?: Parameters<NativeFileUpload>[2];
+    } = {};
+    const uploadFile: NativeFileUpload = async (url, fileUri, options) => {
+      received.url = url;
+      received.fileUri = fileUri;
+      received.options = options;
+      return { status: 201, body: JSON.stringify({ id: "photo-1" }) };
     };
     const client = createApiClient("https://api.fountainrank.com", {
-      fetch: fetchMock,
+      uploadFile,
       getAccessToken: async () => "token123",
     });
 
-    const formData = new FormData();
-    formData.append("file", new Blob(["data"], { type: "image/jpeg" }), "photo.jpg");
-
     const result = await client.uploadMultipart(
       "/api/v1/fountains/123e4567-e89b-12d3-a456-426614174000/photos",
-      formData,
+      { uri: "file:///cache/photo.jpg", type: "image/jpeg" },
     );
 
     expect(result).toEqual({ status: 201 });
-    expect(receivedInput).toBe(
+    expect(received.url).toBe(
       "https://api.fountainrank.com/api/v1/fountains/123e4567-e89b-12d3-a456-426614174000/photos",
     );
-    // The exact same FormData instance, passed as `init.body` - NOT wrapped in a
-    // `new Request(...)`, which is what broke RN's native multipart handling.
-    expect(receivedInit?.body).toBe(formData);
-    const headers = new Headers(receivedInit?.headers);
-    expect(headers.get("authorization")).toBe("Bearer token123");
-    // Content-Type is left for the runtime (React Native) to set the multipart
-    // boundary; the client must not hardcode it.
-    expect(headers.has("content-type")).toBe(false);
-    expect([...headers.keys()].some((k) => k.toLowerCase().startsWith("x-dev"))).toBe(false);
+    expect(received.fileUri).toBe("file:///cache/photo.jpg");
+    expect(received.options?.httpMethod).toBe("POST");
+    expect(received.options?.fieldName).toBe("file");
+    expect(received.options?.mimeType).toBe("image/jpeg");
+    const headerKeys = Object.keys(received.options?.headers ?? {});
+    expect(received.options?.headers.Authorization).toBe("Bearer token123");
+    // The native uploader sets the multipart Content-Type/boundary itself; the client must not.
+    expect(headerKeys.some((k) => k.toLowerCase() === "content-type")).toBe(false);
+    expect(headerKeys.some((k) => k.toLowerCase().startsWith("x-dev"))).toBe(false);
   });
 
-  it("does not call the underlying fetch when the token provider fails - raises AuthSessionError instead", async () => {
-    let fetchCalled = false;
-    const fetchMock: typeof fetch = async () => {
-      fetchCalled = true;
-      return new Response(null, { status: 200 });
+  it("parses the error body's detail field on a non-2xx native upload", async () => {
+    // The two distinct 409 shapes (photo_limit_* vs display_name_required) are only
+    // distinguishable via the response body's `detail`, so a non-2xx must surface it.
+    const uploadFile: NativeFileUpload = async () => ({
+      status: 409,
+      body: JSON.stringify({ detail: "photo_limit_user" }),
+    });
+    const client = createApiClient("https://api.fountainrank.com", {
+      uploadFile,
+      getAccessToken: async () => "token123",
+    });
+
+    const result = await client.uploadMultipart(
+      "/api/v1/fountains/123e4567-e89b-12d3-a456-426614174000/photos",
+      { uri: "file:///cache/photo.jpg", type: "image/jpeg" },
+    );
+    expect(result).toEqual({ status: 409, detail: "photo_limit_user" });
+  });
+
+  it("does not call the native uploader when the token provider fails - raises AuthSessionError instead", async () => {
+    let uploadCalled = false;
+    const uploadFile: NativeFileUpload = async () => {
+      uploadCalled = true;
+      return { status: 200, body: "" };
     };
     const client = createApiClient("https://api.fountainrank.com", {
-      fetch: fetchMock,
+      uploadFile,
       getAccessToken: async () => {
         throw new Error("expired");
       },
     });
 
-    const formData = new FormData();
-    formData.append("file", new Blob(["data"], { type: "image/jpeg" }), "photo.jpg");
-
     await expect(
-      client.uploadMultipart(
-        "/api/v1/fountains/123e4567-e89b-12d3-a456-426614174000/photos",
-        formData,
-      ),
+      client.uploadMultipart("/api/v1/fountains/123e4567-e89b-12d3-a456-426614174000/photos", {
+        uri: "file:///cache/photo.jpg",
+        type: "image/jpeg",
+      }),
     ).rejects.toBeInstanceOf(AuthSessionError);
-    expect(fetchCalled).toBe(false);
+    expect(uploadCalled).toBe(false);
   });
 
   it("strips an x-dev* header on the shared sanitizing fetch that other verbs use", async () => {

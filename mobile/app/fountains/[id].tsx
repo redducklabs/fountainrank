@@ -30,7 +30,7 @@ import type { ContributionError } from "../../lib/contributions/state";
 import { contributionErrorText, mapContributionError } from "../../lib/contributions/state";
 import { normalizeFountainId } from "../../lib/detail/id";
 import {
-  buildPhotoFormData,
+  buildPhotoUpload,
   mapPhotoUploadError,
   PhotoUploadError,
 } from "../../lib/detail/photo-upload";
@@ -325,11 +325,8 @@ export default function FountainDetailScreen() {
       mimeType?: string | null;
     }): Promise<void> => {
       if (fountainId == null) throw new Error("missing fountain id");
-      const formData = buildPhotoFormData(asset);
-      const result = await client.uploadMultipart(
-        `/api/v1/fountains/${fountainId}/photos`,
-        formData,
-      );
+      const upload = buildPhotoUpload(asset);
+      const result = await client.uploadMultipart(`/api/v1/fountains/${fountainId}/photos`, upload);
       if (result.status < 200 || result.status >= 300) {
         throw new PhotoUploadError(result.status, result.detail);
       }

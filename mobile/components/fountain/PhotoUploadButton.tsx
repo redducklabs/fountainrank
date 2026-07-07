@@ -9,8 +9,8 @@ type Message = { tone: "ok" | "err"; text: string } | null;
 
 /** Auth-gated "Add photo" control for the contribution panel. Owns the `expo-image-picker`
  *  library flow (permission request + single-image pick, JPEG output via `quality: 0.9` with
- *  no `allowsEditing`); the caller owns building the upload `FormData` and the mutation itself
- *  (`buildPhotoFormData` / `photoUploadMutation` in `app/fountains/[id].tsx`) so this stays a
+ *  no `allowsEditing`); the caller owns building the upload descriptor and the mutation itself
+ *  (`buildPhotoUpload` / `photoUploadMutation` in `app/fountains/[id].tsx`) so this stays a
  *  thin, focused picker trigger like the other contribution forms. */
 export function PhotoUploadButton({
   pending,

@@ -1,48 +1,28 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { AuthSessionError } from "../auth/state";
 import { ApiError } from "../api";
-import { buildPhotoFormData, mapPhotoUploadError, PhotoUploadError } from "./photo-upload";
+import { buildPhotoUpload, mapPhotoUploadError, PhotoUploadError } from "./photo-upload";
 
-// The DOM `FormData` implementation (used by vitest's jsdom/node environment) only accepts a
-// `Blob`/`string` value and silently stringifies anything else via `toString()` - it cannot
-// round-trip the `{ uri, name, type }` file-descriptor object React Native's `FormData`
-// natively accepts. Stub `FormData` with a minimal fake that just records `append` calls so
-// this test exercises `buildPhotoFormData`'s actual output shape (RN's real behavior), not an
-// artifact of the test environment's stricter `FormData`.
-class FakeFormData {
-  calls: [string, unknown][] = [];
-  append(key: string, value: unknown): void {
-    this.calls.push([key, value]);
-  }
-}
-
-afterEach(() => {
-  vi.unstubAllGlobals();
-});
-
-describe("buildPhotoFormData", () => {
-  it("uses the asset's fileName/mimeType when present", () => {
-    vi.stubGlobal("FormData", FakeFormData);
-    const formData = buildPhotoFormData({
-      uri: "file:///photo.jpg",
-      fileName: "sunset.jpg",
-      mimeType: "image/jpeg",
-    }) as unknown as FakeFormData;
-    expect(formData.calls).toEqual([
-      ["file", { uri: "file:///photo.jpg", name: "sunset.jpg", type: "image/jpeg" }],
-    ]);
+describe("buildPhotoUpload", () => {
+  it("passes the asset's uri and mimeType through (fileName is not needed - the native uploader derives it)", () => {
+    expect(
+      buildPhotoUpload({ uri: "file:///photo.png", fileName: "sunset.png", mimeType: "image/png" }),
+    ).toEqual({ uri: "file:///photo.png", type: "image/png" });
   });
 
-  it("falls back to a generic JPEG name/type when the picker omits them", () => {
-    vi.stubGlobal("FormData", FakeFormData);
-    const formData = buildPhotoFormData({ uri: "file:///photo.jpg" }) as unknown as FakeFormData;
-    const [key, value] = formData.calls[0];
-    const file = value as { uri: string; name: string; type: string };
-    expect(key).toBe("file");
-    expect(file.uri).toBe("file:///photo.jpg");
-    expect(file.name).toMatch(/^photo-\d+\.jpg$/);
-    expect(file.type).toBe("image/jpeg");
+  it("falls back to a generic JPEG type when the picker omits the mime type", () => {
+    expect(buildPhotoUpload({ uri: "file:///photo.jpg" })).toEqual({
+      uri: "file:///photo.jpg",
+      type: "image/jpeg",
+    });
+  });
+
+  it("treats a blank mime type as the JPEG fallback", () => {
+    expect(buildPhotoUpload({ uri: "file:///photo.jpg", mimeType: "   " })).toEqual({
+      uri: "file:///photo.jpg",
+      type: "image/jpeg",
+    });
   });
 });
 
