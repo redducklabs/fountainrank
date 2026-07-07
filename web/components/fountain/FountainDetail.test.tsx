@@ -81,7 +81,8 @@ describe("FountainDetail", () => {
   it("activating the hero switches to the Photos tab", () => {
     render(<FountainDetail {...propsWithPhotos([photo("a")])} />);
     fireEvent.click(screen.getByRole("button", { name: "See all 1 photo" }));
-    expect(screen.getByRole("tab", { name: "Photos" })).toHaveAttribute("aria-selected", "true");
+    // With one photo the Photos tab's accessible name is "Photos (1)", so match by prefix.
+    expect(screen.getByRole("tab", { name: /^Photos/ })).toHaveAttribute("aria-selected", "true");
   });
   it("working + overall + votes (graphical hero + dimension stars)", () => {
     render(<FountainDetail detail={base} notes={[]} now={now} isAuthenticated={false} />);

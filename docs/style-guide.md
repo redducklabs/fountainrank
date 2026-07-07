@@ -290,8 +290,11 @@ context (`useFountainDetailTabs`) so content inside a panel (the hero) can switc
 **Mobile parity (`mobile/components/fountain/FountainDetailTabs.tsx`).** The native detail screen
 mirrors the same three tabs with a segmented control below the screen header. It owns the active-tab
 state and exposes `setActive` through the same context shape (so the Info hero can open Photos). All
-three tab bodies stay mounted — inactive ones are hidden with `display: "none"` so in-progress form
-input and each tab's scroll position survive a switch — and each body owns its own `ScrollView`
+three tab bodies stay mounted — each panel is wrapped in a `View` that is `flex:1` when active and
+`height:0` (overflow hidden) when inactive, so in-progress form input and each tab's scroll position
+survive a switch. (`display:"none"` did not collapse a `flex:1` `ScrollView` on the New Architecture —
+all three stacked, each clipped to a third of the height — and an absolute-fill overlay swallowed taps
+on the active panel's content; the `height:0` wrapper avoids both.) Each body owns its own `ScrollView`
 carrying the shared pull-to-refresh. Tab buttons use `accessibilityRole="button"` with
 `accessibilityState={{ selected }}` and a `"<label> tab"` accessibility label (RN `tab`/`tablist`
 roles are intentionally **not** used for portability); the selected tab shows a brand-blue bottom
