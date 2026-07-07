@@ -282,7 +282,22 @@ The drawer body starts with prominent top tabs (`FountainDetailTabs`): **Info** 
 status, rating summary, rating controls, add-photo control, directions, and sharing; **Details** for
 attributes, placement context, notes, admin controls, and secondary contribution forms; **Photos**
 for the gallery plus another add-photo control. Tab panels own their scrolling so the tabs and close
-button stay available throughout long content.
+button stay available throughout long content. When at least one photo exists, the **Info** tab leads
+with a full-width tappable **photo hero** (the newest photo) that switches to the **Photos** tab — see
+*Photo hero* under *Fountain photos*. The tabs component exposes its `setActive` via a small React
+context (`useFountainDetailTabs`) so content inside a panel (the hero) can switch tabs.
+
+**Mobile parity (`mobile/components/fountain/FountainDetailTabs.tsx`).** The native detail screen
+mirrors the same three tabs with a segmented control below the screen header. It owns the active-tab
+state and exposes `setActive` through the same context shape (so the Info hero can open Photos). All
+three tab bodies stay mounted — inactive ones are hidden with `display: "none"` so in-progress form
+input and each tab's scroll position survive a switch — and each body owns its own `ScrollView`
+carrying the shared pull-to-refresh. Tab buttons use `accessibilityRole="button"` with
+`accessibilityState={{ selected }}` and a `"<label> tab"` accessibility label (RN `tab`/`tablist`
+roles are intentionally **not** used for portability); the selected tab shows a brand-blue bottom
+underline and label. Each tab's contribution controls are wrapped in their own auth-gated
+`ContributePanel`, mirroring web's per-tab `ContributeSection` (Info: rate + add photo; Details:
+attributes + condition + note; Photos: add photo).
 
 ### Auth buttons (`web/components/SignInButton.tsx`, `SignOutButton.tsx`)
 
@@ -1697,6 +1712,17 @@ pending-report badge (`docs/specs/2026-07-04-fountain-photos-design.md` §11–1
 the shipped W3–W8 implementation — the markup/classes below are what actually ships, not the
 pre-UI draft. Reuses the existing detail-panel, form, and admin-controls tokens above — no
 new design language.
+
+### Photo hero (`web/components/fountain/PhotoHero.tsx`, `mobile/components/fountain/PhotoHero.tsx`)
+
+The single newest photo, shown full-width at the **top of the Info tab** on both web and mobile when
+at least one photo exists — the only photo shown on Info; the full set lives on the Photos tab. It is
+a button/`Pressable` (`accessibilityRole="button"`, accessible label `"See all N photos"`, pluralized)
+that switches to the **Photos** tab via the `FountainDetailTabs` context, so the whole gallery is one
+tap away. It reuses the carousel's 4:3 aspect and the same API-relative URL resolution: on web the
+`<img>` `src` is `resolveApiBaseUrl()` prefixed onto `photos[0].url` (never the raw path — that would
+point at the Next.js origin in split-origin deploys); on mobile an `expo-image` `Image` with
+`resolvePhotoUrl(apiBaseUrl, photos[0].url)`. Renders nothing when there are no photos.
 
 ### Photo carousel (`web/components/fountain/PhotoCarousel.tsx`)
 
