@@ -207,12 +207,13 @@ git commit -m "feat(web): expose setActive from FountainDetailTabs via context"
 `web/components/fountain/PhotoHero.test.tsx` — mock BOTH the api base and the tabs hook so `PhotoHero` never hits the throwing hook without a provider:
 
 ```tsx
-import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
+// This repo hoists mock factories above top-level consts, so a mock fn the factory closes
+// over MUST come from `vi.hoisted()` (see web/lib/server/api.test.ts, AttributeForm.test.tsx).
+const { setActive } = vi.hoisted(() => ({ setActive: vi.fn() }));
 vi.mock("../../lib/api", () => ({ resolveApiBaseUrl: () => "http://api" }));
-const setActive = vi.fn();
 vi.mock("./FountainDetailTabs", () => ({ useFountainDetailTabs: () => ({ setActive }) }));
 
 import { PhotoHero } from "./PhotoHero";
@@ -231,9 +232,9 @@ describe("PhotoHero (web)", () => {
     render(<PhotoHero photos={[photo("a"), photo("b")]} />);
     expect(document.querySelector("img")?.getAttribute("src")).toBe("http://api/api/v1/photos/a");
   });
-  it("switches to the Photos tab when activated", async () => {
+  it("switches to the Photos tab when activated", () => {
     render(<PhotoHero photos={[photo("a")]} />);
-    await userEvent.click(screen.getByRole("button", { name: /see all/i }));
+    fireEvent.click(screen.getByRole("button", { name: /see all/i }));
     expect(setActive).toHaveBeenCalledWith("photos");
   });
 });
@@ -317,12 +318,14 @@ it("shows no hero on the Info tab when there are no photos", () => {
   expect(screen.queryByRole("button", { name: /see all/i })).not.toBeInTheDocument();
 });
 
-it("activating the hero switches to the Photos tab", async () => {
+it("activating the hero switches to the Photos tab", () => {
   render(<FountainDetail {...propsWithPhotos([photo("a")])} />);
-  await userEvent.click(screen.getByRole("button", { name: /see all/i }));
+  fireEvent.click(screen.getByRole("button", { name: /see all/i }));
   expect(screen.getByRole("tab", { name: /photos/i })).toHaveAttribute("aria-selected", "true");
 });
 ```
+
+Use `fireEvent` from `@testing-library/react` (add it to the file's existing import — the repo standard is `fireEvent`, not `@testing-library/user-event`, which web does not declare).
 
 - [ ] **Step 2: Run to verify the new ones fail**
 
