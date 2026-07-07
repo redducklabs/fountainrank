@@ -85,9 +85,12 @@ The Photos tab label includes the count when > 0 (`Photos (N)`), matching web.
 ### 5.2 The hero photo + tab-switch wiring
 
 - **Which photo:** `photos[0]` (newest). Rendered only when `photos.length > 0`.
-- **Aspect / source:** reuse each platform's existing photo rendering — web
-  `<img>` with `photo.url`; mobile `expo-image` `Image` with
-  `resolvePhotoUrl(apiBaseUrl, photos[0].url)` at the carousel's 4:3 aspect.
+- **Aspect / source:** reuse each platform's existing photo-URL resolution — do
+  **not** use the raw `photo.url` on web (it is an API-relative path that would
+  point the browser at the Next.js origin in split-origin deployments). Web
+  `PhotoHero` resolves the URL with the **same helper web `PhotoCarousel` uses**
+  (`resolveApiBaseUrl()`); mobile uses `resolvePhotoUrl(apiBaseUrl, photos[0].url)`,
+  both at the carousel's 4:3 aspect.
 - **Interaction:** the hero is a button/`Pressable` labeled to convey it opens
   all photos; activating it selects the Photos tab.
 - **Wiring:** because tab bodies are built before the tabs component renders,
@@ -117,24 +120,50 @@ header — matches the web screenshot.)
 
 **Mobile** (larger — adopt the tab structure):
 - New `mobile/components/fountain/FountainDetailTabs.tsx`: a segmented control
-  (three buttons) under the native header, rendering the active tab's body, with
-  a context exposing `setActive` (mirrors web's shape and a11y `tablist`/`tab`
-  roles adapted to RN accessibility props).
+  (three buttons) under the native header. **All three tab bodies stay mounted;
+  only the inactive ones are visually hidden** (`display: "none"` via style,
+  mirroring web's `hidden`), so in-progress form input, query state, and each
+  tab's scroll position survive tab switches — never conditionally render only
+  the active body. It owns the active-tab `useState` and exposes `setActive`
+  through a context (`FountainDetailTabsContext`). Tab buttons use
+  `accessibilityRole="button"` with `accessibilityState={{ selected }}` and clear
+  labels — the app's existing segmented-choice pattern; RN `accessibilityRole="tab"`
+  /`"tablist"` is deliberately **not** used (not established on the app's RN
+  version / not portable here).
 - New `mobile/components/fountain/PhotoHero.tsx`: newest-photo hero, tappable →
-  Photos tab (via the tabs context).
+  Photos tab (via the tabs context). `accessibilityRole="button"`, label
+  "See all N photos".
 - Restructure `mobile/components/fountain/FountainDetail.tsx` into three tab
   bodies matching the table in §5.1, reusing all existing pieces (`StatusBlock`,
   `Stars`, dimension bars, `AttributeList`, `NotesList`, `PhotoCarousel`, and the
   contribution forms). Move the full `PhotoCarousel` into the Photos tab.
-- **Retire the "More Details" toggle** in `mobile/app/fountains/[id].tsx`: the
-  `AttributeContributionForm` moves into the Details tab body (always available
-  to signed-in users, like web). The `attributeTypesQuery` `enabled` gate changes
-  from `showMoreDetails` to "authenticated" (it still only fetches when signed
-  in); the `showMoreDetails` state and the toggle `Pressable` are removed.
-- The contribution forms are split across the Info/Details/Photos tab bodies to
-  match web's per-variant grouping (Info: rating + add-photo; Details:
-  attributes + condition + note; Photos: add-photo). The existing mutations and
-  handlers in `[id].tsx` are unchanged — only where each form is rendered moves.
+- **Split the single `contribution` prop into three.** Today `[id].tsx` builds
+  one opaque `contribution` node (`ContributePanel` + every form) and passes it
+  to `FountainDetail` as a single prop (`mobile/app/fountains/[id].tsx:492-571`,
+  `mobile/components/fountain/FountainDetail.tsx:167`). That single-node boundary
+  cannot feed three tabs, so replace it with **three separate nodes built in
+  `[id].tsx` — `infoContribution`, `detailsContribution`, `photosContribution`**
+  — each wrapped in its **own `ContributePanel`** (the auth gate), mirroring web's
+  per-tab `ContributeSection`:
+  - `infoContribution`: `RatingContributionForm` + `PhotoUploadButton`.
+  - `detailsContribution`: `AttributeContributionForm` + `ConditionContributionForm` + `NoteContributionForm`.
+  - `photosContribution`: `PhotoUploadButton`.
+
+  The two `PhotoUploadButton` instances (Info + Photos) share the same
+  `photoUploadMessage` state and `pickAndUploadPhoto` handler in `[id].tsx`
+  (matching web, which renders `PhotoUpload` in both the `primary` and `photos`
+  variants). A signed-out user sees each tab's own `ContributePanel` sign-in
+  prompt, exactly like web's per-tab prompts. All existing mutations/handlers in
+  `[id].tsx` are unchanged — only how the forms are grouped into the three nodes
+  changes.
+- **Retire the "More Details" toggle** in `[id].tsx`: the
+  `AttributeContributionForm` now lives in `detailsContribution` (always
+  available to signed-in users, like web). The `attributeTypesQuery` `enabled`
+  gate changes from `... && showMoreDetails` to authenticated-only.
+  **Tradeoff (intentional):** attribute types are then fetched eagerly on every
+  signed-in detail view rather than on first expand; `GET /api/v1/attribute-types`
+  is public and the payload is small, so this is acceptable. The
+  `showMoreDetails` state and the toggle `Pressable` are removed.
 
 ### 5.5 Reused vs new components
 
@@ -147,34 +176,45 @@ header — matches the web screenshot.)
 
 ## 6. Testing
 
-- **Web:** update `FountainDetail.test.tsx` for the hero on Info + tab count/labels;
-  add a test that activating the hero shows the Photos panel; keep
+- **Web:** update `FountainDetail.test.tsx` for the hero on Info + the tab
+  count/labels; add a test that activating the hero switches to the Photos panel;
+  add a **zero-photo** case (no hero; "Photos" label without a count); keep
   `PhotoCarousel`/`PhotoGallery` tests. `format:check`, `lint`, `typecheck`,
   `vitest`, `build` via CI.
-- **Mobile:** unit-test the new `FountainDetailTabs` (switching selects the right
-  body; default is Info) and `PhotoHero` (renders newest photo; activating calls
-  the context `setActive("photos")`); keep existing detail/carousel tests. `tsc`,
-  the render tests run in CI (hoisted-linker duplicate blocks them locally), and
-  a manual emulator pass (tabs switch, hero → Photos, upload still works).
+- **Mobile:** unit-test the new `FountainDetailTabs` (default is Info; switching
+  shows the right body **while inactive bodies stay mounted — typed input in one
+  tab survives switching away and back**) and `PhotoHero` (renders `photos[0]`;
+  activating calls the context `setActive("photos")`). Add cases for: **zero
+  photos / `photosQuery.data` undefined** (no hero, no crash); the **`Photos (N)`
+  count label updating** after upload/delete; the **hero showing the new newest
+  photo after `photos[0]` is deleted**; and the **unauthenticated** state showing
+  each tab's own `ContributePanel` sign-in prompt. Keep existing detail/carousel
+  tests. `tsc` + the render tests run in CI (hoisted-linker duplicate blocks them
+  locally), plus a manual emulator pass (tabs switch, form input survives a
+  switch, hero → Photos, upload still works).
 - **Visual:** confirm on web (CI/preview) and the Android emulator that the three
   tabs render and the hero-to-Photos jump works.
 
 ## 7. Style Guide
 
-Per the project UI rule, document the new **tab bar (segmented control)** and
-**photo hero** components in `docs/style-guide.md` (purpose, structure, states,
-a11y, example), on both platforms.
+Per the project UI rule, update `docs/style-guide.md` **in place**: extend the
+existing fountain-detail **tabs** section (which already documents web
+`FountainDetailTabs`) with the mobile segmented-control tab bar, and extend the
+existing fountain-**photo/carousel** section with the new **photo hero** — rather
+than adding disconnected component notes. Cover purpose, structure, states, a11y,
+and an example for each new/changed component on both platforms.
 
 ## 8. Risks / Open Questions
 
-- **Tab state reset:** switching tabs must not remount/refetch queries (they live
-  in `[id].tsx` above the tabs, so this holds) or drop in-progress form input.
-  Hidden tab bodies stay mounted (web uses `hidden`); mobile should keep bodies
-  mounted (render all, show active) to preserve form state and scroll position,
-  matching web.
-- **Accessibility:** mobile tab buttons use RN `accessibilityRole="tab"` /
-  `accessibilityState={{ selected }}`; the hero uses `accessibilityRole="button"`
-  ​with a clear label ("See all N photos").
+- **Tab state preservation:** switching tabs must not remount/refetch queries
+  (they live in `[id].tsx` above the tabs, so this holds) or drop in-progress form
+  input. Both platforms keep **all** tab bodies mounted and hide the inactive ones
+  (web `hidden`; mobile `display:"none"` — see §5.4), preserving form state and
+  scroll position; a mobile test asserts typed input survives a tab switch (§6).
+- **Accessibility:** mobile tab buttons use `accessibilityRole="button"` +
+  `accessibilityState={{ selected }}` + clear labels (see §5.4 for why not
+  `role="tab"`); the hero uses `accessibilityRole="button"` with a clear label
+  ("See all N photos"). Web keeps its existing `tablist`/`tab` roles.
 - **Scope / delivery:** one PR covering both web + mobile (one coherent parity
   feature; CI covers both workspaces). May be split into web-then-mobile PRs if
   review size warrants — decided at plan time.
