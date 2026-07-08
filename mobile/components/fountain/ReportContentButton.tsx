@@ -1,5 +1,16 @@
 import { useState } from "react";
-import { Modal, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import {
+  Keyboard,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 
 import type { ContributionError } from "../../lib/contributions/state";
 import { contributionErrorText } from "../../lib/contributions/state";
@@ -44,6 +55,7 @@ export function ReportContentButton({
   const [submitted, setSubmitted] = useState(false);
 
   async function submit() {
+    Keyboard.dismiss();
     const result = await onSubmit(category, note.trim() || undefined);
     if (result.ok) {
       setSubmitted(true);
@@ -55,76 +67,98 @@ export function ReportContentButton({
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={styles.overlay}>
-        <View style={styles.sheet}>
-          <Text style={styles.title}>{`Report ${noun}`}</Text>
-
-          <Text style={styles.label}>Reason</Text>
-          <View style={styles.categories}>
-            {categories.map((c) => {
-              const selected = c.value === category;
-              return (
-                <Pressable
-                  key={c.value}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected }}
-                  disabled={pending || submitted}
-                  onPress={() => setCategory(c.value)}
-                  style={[styles.chip, selected ? styles.chipSelected : null]}
-                >
-                  <Text style={selected ? styles.chipTextSelected : styles.chipText}>
-                    {c.label}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-
-          <Text style={styles.label}>Note (optional)</Text>
-          <TextInput
-            accessibilityLabel="Report note"
-            value={note}
-            editable={!pending && !submitted}
-            maxLength={500}
-            multiline
-            onChangeText={setNote}
-            style={styles.input}
-          />
-
-          {message ? (
-            <Text
-              accessibilityRole="text"
-              accessibilityLiveRegion="polite"
-              style={[styles.message, message.tone === "ok" ? styles.ok : styles.err]}
-            >
-              {message.text}
-            </Text>
-          ) : null}
-
-          <View style={styles.actions}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        style={styles.overlay}
+      >
+        <ScrollView
+          bounces={false}
+          contentContainerStyle={styles.scrollContent}
+          keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+          keyboardShouldPersistTaps="handled"
+        >
+          <Pressable accessible={false} onPress={Keyboard.dismiss} style={styles.dismissArea}>
             <Pressable
-              accessibilityRole="button"
-              disabled={pending}
-              onPress={onClose}
-              style={styles.secondaryButton}
+              accessible={false}
+              onPress={(event) => event.stopPropagation()}
+              style={styles.sheet}
             >
-              <Text style={styles.secondaryText}>{submitted ? "Close" : "Cancel"}</Text>
+              <Text style={styles.title}>{`Report ${noun}`}</Text>
+
+              <Text style={styles.label}>Reason</Text>
+              <View style={styles.categories}>
+                {categories.map((c) => {
+                  const selected = c.value === category;
+                  return (
+                    <Pressable
+                      key={c.value}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected }}
+                      disabled={pending || submitted}
+                      onPress={() => setCategory(c.value)}
+                      style={[styles.chip, selected ? styles.chipSelected : null]}
+                    >
+                      <Text style={selected ? styles.chipTextSelected : styles.chipText}>
+                        {c.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+
+              <Text style={styles.label}>Note (optional)</Text>
+              <TextInput
+                accessibilityLabel="Report note"
+                value={note}
+                editable={!pending && !submitted}
+                maxLength={500}
+                multiline
+                blurOnSubmit
+                onChangeText={setNote}
+                onSubmitEditing={Keyboard.dismiss}
+                returnKeyType="done"
+                scrollEnabled
+                style={styles.input}
+              />
+
+              {message ? (
+                <Text
+                  accessibilityRole="text"
+                  accessibilityLiveRegion="polite"
+                  style={[styles.message, message.tone === "ok" ? styles.ok : styles.err]}
+                >
+                  {message.text}
+                </Text>
+              ) : null}
+
+              <View style={styles.actions}>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={pending}
+                  onPress={onClose}
+                  style={styles.secondaryButton}
+                >
+                  <Text style={styles.secondaryText}>{submitted ? "Close" : "Cancel"}</Text>
+                </Pressable>
+                {!submitted ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={pending}
+                    onPress={() => {
+                      void submit();
+                    }}
+                    style={[styles.primaryButton, pending ? styles.disabled : null]}
+                  >
+                    <Text style={styles.primaryText}>
+                      {pending ? "Submitting…" : "Submit report"}
+                    </Text>
+                  </Pressable>
+                ) : null}
+              </View>
             </Pressable>
-            {!submitted ? (
-              <Pressable
-                accessibilityRole="button"
-                disabled={pending}
-                onPress={() => {
-                  void submit();
-                }}
-                style={[styles.primaryButton, pending ? styles.disabled : null]}
-              >
-                <Text style={styles.primaryText}>{pending ? "Submitting…" : "Submit report"}</Text>
-              </Pressable>
-            ) : null}
-          </View>
-        </View>
-      </View>
+          </Pressable>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -133,9 +167,16 @@ const styles = StyleSheet.create({
   overlay: {
     flex: 1,
     backgroundColor: "rgba(15, 23, 42, 0.4)",
+  },
+  scrollContent: {
+    flexGrow: 1,
+    padding: spacing.lg,
+  },
+  dismissArea: {
+    flex: 1,
+    width: "100%",
     alignItems: "center",
     justifyContent: "center",
-    padding: spacing.lg,
   },
   sheet: {
     width: "100%",
