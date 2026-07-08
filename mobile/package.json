@@ -48,7 +48,7 @@
     "eslint": "9.39.4",
     "eslint-config-expo": "56.0.4",
     "typescript": "6.0.3",
-    "vitest": "4.1.9"
+    "vitest": "4.1.10"
   },
   "expo": {
     "doctor": {
