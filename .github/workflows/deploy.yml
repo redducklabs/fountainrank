@@ -71,7 +71,7 @@ jobs:
         with:
           node-version: "22"
       - uses: pnpm/action-setup@v6.0.9
-      - uses: astral-sh/setup-uv@v8.2.0
+      - uses: astral-sh/setup-uv@v8.3.1
       - run: uv sync --frozen
         working-directory: backend
       - run: pnpm install --frozen-lockfile

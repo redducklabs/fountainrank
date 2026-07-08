@@ -20,7 +20,7 @@ jobs:
     runs-on: redducklabs-runners
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v8.2.0
+      - uses: astral-sh/setup-uv@v8.3.1
       - name: Export locked backend deps (no hashes; pip-audit --no-deps audits the pinned set)
         working-directory: backend
         # --no-hashes: `uv export` emits a cross-platform hash SUBSET that pip's
@@ -96,7 +96,7 @@ jobs:
         with:
           node-version: "22"
       - uses: pnpm/action-setup@v6.0.9
-      - uses: astral-sh/setup-uv@v8.2.0
+      - uses: astral-sh/setup-uv@v8.3.1
       - run: uv sync --frozen
         working-directory: backend
       - run: pnpm install --frozen-lockfile
