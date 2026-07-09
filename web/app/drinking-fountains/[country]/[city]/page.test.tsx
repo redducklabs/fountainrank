@@ -26,9 +26,21 @@ vi.mock("next/link", () => ({
 vi.mock("../../../../components/SiteHeader", () => ({
   SiteHeader: () => <div data-testid="hdr" />,
 }));
+vi.mock("../../../../components/fountain/FountainList", () => ({
+  FountainList: ({ fountains }: { fountains: { id: string; rating_count: number }[] }) => (
+    <ul>
+      {fountains.map((f) => (
+        <li key={f.id}>
+          <a href={`/fountains/${f.id}`}>Drinking fountain</a>
+          <span>{f.rating_count} ratings</span>
+        </li>
+      ))}
+    </ul>
+  ),
+}));
 vi.mock("../../../../lib/server/log", () => ({ log: vi.fn() }));
 
-import CityPage, { generateMetadata } from "./page";
+import CityPage, { buildCityBreadcrumbStructuredData, generateMetadata } from "./page";
 
 const PLACE = {
   id: "p1",
@@ -65,9 +77,13 @@ it("renders the city name, count, and ranked fountain links", async () => {
 
   expect((await screen.findByRole("heading", { level: 1 })).textContent).toContain("San Diego");
   expect(await screen.findByText(/12 public drinking fountains/)).toBeTruthy();
+  expect(await screen.findByText(/community rating, working status, and location/i)).toBeTruthy();
   const fountainLink = await screen.findByRole("link", { name: /Drinking fountain/ });
   expect(fountainLink.getAttribute("href")).toBe("/fountains/f1");
   expect(screen.getByText(/8 ratings/)).toBeTruthy();
+  const script = document.querySelector<HTMLScriptElement>('script[type="application/ld+json"]');
+  expect(script).not.toBeNull();
+  expect(JSON.parse(script?.textContent ?? "{}")["@type"]).toBe("BreadcrumbList");
 });
 
 it("404s when the city does not resolve", async () => {
@@ -94,13 +110,51 @@ it("renders an error (not a 404) when the backend is unreachable", async () => {
   expect(notFound).not.toHaveBeenCalled();
 });
 
+it("does not render JSON-LD when the city is noindex", async () => {
+  getCityFountainsServer.mockResolvedValue({
+    data: { ...CITY, indexable: false },
+    status: 200,
+  });
+
+  render(await CityPage({ params: params("us", "san-diego") }));
+  await screen.findByRole("heading", { level: 1 });
+  expect(document.querySelector('script[type="application/ld+json"]')).toBeNull();
+});
+
 it("generateMetadata: title + canonical + indexable for a ready city", async () => {
   getCityFountainsServer.mockResolvedValue({ data: CITY, status: 200 });
 
   const meta = await generateMetadata({ params: params("us", "san-diego") });
   expect(meta.title).toBe("Drinking fountains in San Diego");
   expect(meta.alternates?.canonical).toBe("/drinking-fountains/us/san-diego");
+  expect(meta.description).toContain("public drinking fountains and water bottle refill stations");
+  expect(meta.description).toContain("community ratings, working status, and locations");
   expect(meta.robots).toBeUndefined(); // indexable -> no noindex override
+});
+
+it("builds breadcrumb JSON-LD for a city page", () => {
+  const data = buildCityBreadcrumbStructuredData(PLACE);
+  expect(data["@type"]).toBe("BreadcrumbList");
+  expect(data.itemListElement).toEqual([
+    {
+      "@type": "ListItem",
+      position: 1,
+      name: "FountainRank",
+      item: "https://fountainrank.com",
+    },
+    {
+      "@type": "ListItem",
+      position: 2,
+      name: "Drinking fountains in US",
+      item: "https://fountainrank.com/drinking-fountains/us",
+    },
+    {
+      "@type": "ListItem",
+      position: 3,
+      name: "Drinking fountains in San Diego",
+      item: "https://fountainrank.com/drinking-fountains/us/san-diego",
+    },
+  ]);
 });
 
 it("generateMetadata: noindex when below the thin-content gate", async () => {
