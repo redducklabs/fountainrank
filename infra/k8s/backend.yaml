@@ -64,6 +64,23 @@ spec:
                 secretKeyRef:
                   name: fountainrank-secrets
                   key: logto-email-webhook-token
+            # Logto Management API M2M app for account deletion. App id/secret are
+            # secretKeyRefs; resource/base URL are optional non-secret deploy vars so
+            # self-hosted Logto can use a distinct OSS API indicator and HTTP API host.
+            - name: LOGTO_MANAGEMENT_APP_ID
+              valueFrom:
+                secretKeyRef:
+                  name: fountainrank-secrets
+                  key: logto-management-app-id
+            - name: LOGTO_MANAGEMENT_APP_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: fountainrank-secrets
+                  key: logto-management-app-secret
+            - name: LOGTO_MANAGEMENT_RESOURCE
+              value: "${LOGTO_MANAGEMENT_RESOURCE}"
+            - name: LOGTO_MANAGEMENT_API_BASE_URL
+              value: "${LOGTO_MANAGEMENT_API_BASE_URL}"
             # Geocoding proxy (LocationIQ) — the only secret; missing key -> 503 geocoding_disabled
             # (backend/app/config.py::geocoding_enabled). See §8.4/§15 of the mobile map UX design.
             - name: GEOCODING_API_KEY

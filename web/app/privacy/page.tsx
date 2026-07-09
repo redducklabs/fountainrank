@@ -7,7 +7,7 @@ export const metadata: Metadata = {
   alternates: { canonical: "/privacy" },
 };
 
-const lastUpdated = "June 30, 2026";
+const lastUpdated = "July 9, 2026";
 
 const sections = [
   {
@@ -52,7 +52,8 @@ const sections = [
     title: "Data Retention",
     body: [
       "We keep account information while your account is active or as needed to operate the service.",
-      "Community submissions may remain available after account deletion when needed to preserve the usefulness and integrity of the public fountain map, unless removal is required by law or appropriate for safety, privacy, or moderation reasons.",
+      "You can delete your account from the Profile page on web and mobile. Account deletion removes your FountainRank account, profile information, notes, and uploaded photos, then signs you out.",
+      "Fountain ratings and fountain details you contributed may remain available after account deletion without your account attached, so the public fountain map and rating aggregates stay useful for everyone. We may also remove retained community data when required by law or appropriate for safety, privacy, or moderation reasons.",
       "Logs and diagnostics are kept for a limited period appropriate for security, debugging, and operations.",
     ],
   },
@@ -61,7 +62,7 @@ const sections = [
     body: [
       "You can choose not to create an account, but rating, adding fountains, uploading photos, and some other features require sign-in.",
       "You can disable location access through your browser or device settings.",
-      "You can request access, correction, deletion, or export of personal information by contacting us.",
+      "You can initiate account deletion from the Profile page on web and mobile, or request access, correction, deletion, or export of personal information by contacting us.",
       "You can stop receiving non-essential communications if any are offered. Transactional authentication and security messages may still be sent when needed.",
     ],
   },

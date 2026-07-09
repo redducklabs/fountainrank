@@ -55,6 +55,31 @@ class User(Base):
     )
 
 
+class DeletedAccount(Base):
+    __tablename__ = "deleted_accounts"
+    __table_args__ = (
+        CheckConstraint("identity_delete_status IN ('pending','done')", name="identity_status"),
+        Index(
+            "ix_deleted_accounts_identity_pending",
+            "deleted_at",
+            postgresql_where=text("identity_delete_status = 'pending'"),
+        ),
+    )
+
+    logto_user_id: Mapped[str] = mapped_column(String, primary_key=True)
+    identity_delete_status: Mapped[str] = mapped_column(
+        String, nullable=False, server_default=text("'pending'")
+    )
+    identity_delete_attempts: Mapped[int] = mapped_column(nullable=False, server_default=text("0"))
+    identity_delete_last_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    identity_delete_error: Mapped[str | None] = mapped_column(String, nullable=True)
+    deleted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class RatingType(Base):
     __tablename__ = "rating_types"
     # place_type scopes dimensions to a kind of place (#44). All current rows are
@@ -73,15 +98,11 @@ class Fountain(Base):
     __tablename__ = "fountains"
     __table_args__ = (
         # Short CHECK names: the naming convention (ck_%(table_name)s_%(constraint_name)s)
-        # renders these to ck_fountains_created_source / ck_fountains_user_source_requires_user.
-        # The migration's op.create_check_constraint ALSO applies the convention, so it passes
-        # the SAME short names (passing the full name double-prefixes). Verified via
-        # pg_constraint in tests, since alembic check ignores CHECK names/defs.
+        # renders this to ck_fountains_created_source. The migration's
+        # op.create_check_constraint ALSO applies the convention, so it passes the SAME short name
+        # (passing the full name double-prefixes). Verified via pg_constraint in tests, since
+        # alembic check ignores CHECK names/defs.
         CheckConstraint("created_source IN ('user','osm','admin_import')", name="created_source"),
-        CheckConstraint(
-            "created_source <> 'user' OR added_by_user_id IS NOT NULL",
-            name="user_source_requires_user",
-        ),
         # Derived current_status (#40) is public API state — constrain it. Short name
         # renders to ck_fountains_current_status (NULL = fall back to baseline is_working).
         CheckConstraint(
@@ -167,9 +188,10 @@ class Rating(Base):
     fountain_id: Mapped[uuid.UUID] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("fountains.id", ondelete="CASCADE"), nullable=False
     )
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=True
     )
+    deleted_actor_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
     rating_type_id: Mapped[int] = mapped_column(
         SmallInteger, ForeignKey("rating_types.id"), nullable=False
     )
@@ -375,13 +397,12 @@ class AttributeObservation(Base):
         ForeignKey("fountains.id", ondelete="CASCADE", name="fk_attribute_observations_fountain"),
         nullable=False,
     )
-    # NOT NULL in slice 1 — every observation is a user observation. The deferred
-    # OSM tag-mapping pass adds the nullable-user import path then (spec §6.2).
-    user_id: Mapped[uuid.UUID] = mapped_column(
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE", name="fk_attribute_observations_user"),
-        nullable=False,
+        nullable=True,
     )
+    deleted_actor_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
     attribute_type_id: Mapped[int] = mapped_column(
         SmallInteger,
         ForeignKey("attribute_types.id", name="fk_attribute_observations_attr_type"),
@@ -552,11 +573,12 @@ class ConditionReport(Base):
         ForeignKey("fountains.id", ondelete="CASCADE", name="fk_condition_reports_fountain"),
         nullable=False,
     )
-    user_id: Mapped[uuid.UUID] = mapped_column(
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE", name="fk_condition_reports_user"),
-        nullable=False,
+        nullable=True,
     )
+    deleted_actor_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
     status: Mapped[str] = mapped_column(String, nullable=False)
     is_proximate: Mapped[bool] = mapped_column(nullable=False, server_default=text("false"))
     is_hidden: Mapped[bool] = mapped_column(nullable=False, server_default=text("false"))

@@ -28,8 +28,8 @@ pytestmark = pytest.mark.asyncio
 
 
 async def _add_fountain(session, *, created_source: str = "admin_import") -> Fountain:
-    # created_source defaults to a non-'user' source so no added_by_user_id is required
-    # (the ck_fountains_user_source_requires_user CHECK).
+    # created_source defaults to a non-'user' source because these tests do not care about
+    # ownership.
     fountain = Fountain(
         location=point_geography(37.5, -122.2),
         is_working=True,

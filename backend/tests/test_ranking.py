@@ -40,6 +40,18 @@ async def test_recompute_sets_denormalized_fields(session):
     assert f.last_rated_at is not None
 
 
+async def test_recompute_counts_deleted_actor_ratings(session):
+    f, user = await _make_fountain(session)
+    session.add(
+        Rating(fountain_id=f.id, user_id=None, deleted_actor_id=user.id, rating_type_id=1, stars=5)
+    )
+    await session.flush()
+    await recompute_fountain_ranking(session, f.id)
+    await session.refresh(f)
+    assert f.rating_count == 1
+    assert f.average_rating == 5.0
+
+
 async def test_recompute_clears_state_when_ratings_removed(session):
     from sqlalchemy import delete
 

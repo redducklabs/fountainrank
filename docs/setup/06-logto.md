@@ -108,7 +108,8 @@ buttons; set branding (logo, colors) to match the eventual style guide.
 | Web `LOGTO_APP_ID` / `LOGTO_APP_SECRET`            | web config                                                | id = variable, secret = **secret** |
 | Native app ID                                      | mobile config (`EXPO_PUBLIC_LOGTO_APP_ID`)                | variable                           |
 | Native auth confirmation flag                      | mobile config (`EXPO_PUBLIC_LOGTO_NATIVE_AUTH_CONFIRMED`) | variable                           |
-| M2M app ID / secret                                | backend config                                            | id = variable, secret = **secret** |
+| M2M app ID / secret                                | backend account deletion                                  | GitHub Env **secrets**             |
+| Management API resource / base URL                 | backend account deletion                                  | Optional GitHub Env variables      |
 
 **Hand me:** the endpoint and app IDs (not secrets) so I can wire the
 web/mobile/backend config in Phase 2. **You keep / set yourself:** the app
@@ -126,11 +127,15 @@ every deploy run.
 
 **GitHub → Settings → Environments → `production`:**
 
-| Item                  | Type                      | Value                                                                     |
-| --------------------- | ------------------------- | ------------------------------------------------------------------------- |
-| `LOGTO_APP_ID`        | **Variable** (not secret) | The real App ID from Step 1 above                                         |
-| `LOGTO_APP_SECRET`    | **Secret**                | The real App Secret from Step 1 above                                     |
-| `LOGTO_COOKIE_SECRET` | **Secret**                | A random string ≥ 32 characters (generate with `openssl rand -base64 32`) |
+| Item                            | Type                      | Value                                                                         |
+| ------------------------------- | ------------------------- | ----------------------------------------------------------------------------- |
+| `LOGTO_APP_ID`                  | **Variable** (not secret) | The real App ID from Step 1 above                                             |
+| `LOGTO_APP_SECRET`              | **Secret**                | The real App Secret from Step 1 above                                         |
+| `LOGTO_COOKIE_SECRET`           | **Secret**                | A random string ≥ 32 characters (generate with `openssl rand -base64 32`)     |
+| `LOGTO_MANAGEMENT_APP_ID`       | **Secret**                | M2M app ID for backend account deletion                                       |
+| `LOGTO_MANAGEMENT_APP_SECRET`   | **Secret**                | M2M app secret for backend account deletion                                   |
+| `LOGTO_MANAGEMENT_RESOURCE`     | **Variable** (optional)   | Management API resource indicator when it differs from `{LOGTO_ENDPOINT}/api` |
+| `LOGTO_MANAGEMENT_API_BASE_URL` | **Variable** (optional)   | Management API HTTP base URL when it differs from `{LOGTO_ENDPOINT}/api`      |
 
 Do **not** paste the actual secret values here or into any file tracked by git.
 

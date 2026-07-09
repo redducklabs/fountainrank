@@ -191,6 +191,8 @@ jobs:
           LOGTO_EMAIL_WEBHOOK_TOKEN: ${{ secrets.LOGTO_EMAIL_WEBHOOK_TOKEN }}
           LOGTO_APP_SECRET: ${{ secrets.LOGTO_APP_SECRET }}
           LOGTO_COOKIE_SECRET: ${{ secrets.LOGTO_COOKIE_SECRET }}
+          LOGTO_MANAGEMENT_APP_ID: ${{ secrets.LOGTO_MANAGEMENT_APP_ID }}
+          LOGTO_MANAGEMENT_APP_SECRET: ${{ secrets.LOGTO_MANAGEMENT_APP_SECRET }}
           GEOCODING_API_KEY: ${{ secrets.GEOCODING_API_KEY }}
           SPACES_ENDPOINT: ${{ secrets.SPACES_ENDPOINT }}
           SPACES_REGION: ${{ secrets.SPACES_REGION }}
@@ -201,6 +203,10 @@ jobs:
           tmp="$(mktemp -d)"
           trap 'rm -rf "$tmp"' EXIT
           printf '%s\n' "$DATABASE_CA_CERT" > "$tmp/database-ca.crt"
+          if [ -z "$LOGTO_MANAGEMENT_APP_ID" ] || [ -z "$LOGTO_MANAGEMENT_APP_SECRET" ]; then
+            echo "LOGTO_MANAGEMENT_APP_ID and LOGTO_MANAGEMENT_APP_SECRET are required for account deletion" >&2
+            exit 1
+          fi
           # Spaces (photos) keys are optional until the owner provisions a
           # bucket-create-capable Spaces key (see infra/terraform/main.tf). Only add
           # --from-literal for keys that are actually set: an unset GitHub secret
@@ -224,6 +230,8 @@ jobs:
             --from-literal=logto-email-webhook-token="$LOGTO_EMAIL_WEBHOOK_TOKEN" \
             --from-literal=logto-app-secret="$LOGTO_APP_SECRET" \
             --from-literal=logto-cookie-secret="$LOGTO_COOKIE_SECRET" \
+            --from-literal=logto-management-app-id="$LOGTO_MANAGEMENT_APP_ID" \
+            --from-literal=logto-management-app-secret="$LOGTO_MANAGEMENT_APP_SECRET" \
             --from-literal=geocoding-api-key="$GEOCODING_API_KEY" \
             "${extra[@]}" \
             --from-file=database-ca.crt="$tmp/database-ca.crt" \
@@ -235,9 +243,11 @@ jobs:
           GOOGLE_DELEGATED_USER: ${{ vars.GOOGLE_DELEGATED_USER }}
           FROM_EMAIL: ${{ vars.FROM_EMAIL }}
           LOGTO_APP_ID: ${{ vars.LOGTO_APP_ID }}
+          LOGTO_MANAGEMENT_RESOURCE: ${{ vars.LOGTO_MANAGEMENT_RESOURCE }}
+          LOGTO_MANAGEMENT_API_BASE_URL: ${{ vars.LOGTO_MANAGEMENT_API_BASE_URL }}
           ADMIN_SUBJECTS: ${{ vars.ADMIN_SUBJECTS }}
         run: |
-          export NAMESPACE ENVIRONMENT IMAGE_TAG REGISTRY DOMAIN GOOGLE_DELEGATED_USER FROM_EMAIL LOGTO_APP_ID ADMIN_SUBJECTS
+          export NAMESPACE ENVIRONMENT IMAGE_TAG REGISTRY DOMAIN GOOGLE_DELEGATED_USER FROM_EMAIL LOGTO_APP_ID LOGTO_MANAGEMENT_RESOURCE LOGTO_MANAGEMENT_API_BASE_URL ADMIN_SUBJECTS
           for f in backend web logto ingress basemap-tiles; do
             envsubst < "infra/k8s/$f.yaml" | kubectl apply -f -
           done

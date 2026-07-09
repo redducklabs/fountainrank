@@ -12,26 +12,28 @@ locally everything here is read-only / dry-run (see `claude_help/kubernetes-infr
   - `secrets.yaml` + `registry-secret.yaml` — 📄 reference only (document the key
     contract). CI creates these secrets **imperatively** from GitHub Environment secrets +
     the Terraform DB outputs. Required keys in `fountainrank-secrets`: `database-url` (app),
-    `logto-db-url` (Logto), and (email) `google-service-account-json` +
-    `logto-email-webhook-token`. E.g.
+    `logto-db-url` (Logto), email keys, and account-deletion Management API keys
+    (`logto-management-app-id`, `logto-management-app-secret`). E.g.
     `kubectl create secret generic fountainrank-secrets -n "$NAMESPACE" --from-literal=database-url="$DATABASE_URL" --from-literal=logto-db-url="$LOGTO_DB_URL" --dry-run=client -o yaml | kubectl apply -f -`
     and `doctl registry kubernetes-manifest fountainrank --name regcred --namespace "$NAMESPACE" | kubectl apply -f -`
     (the Secret name `regcred` must match `imagePullSecrets`). Applying the committed
     placeholders would overwrite real secrets with empties.
   - `ingress-nginx.yaml` — 📄 documents the **Helm** install command (NodePort 30080/30443
-    + `controller.config.*`); ingress-nginx is Helm-installed, not `kubectl apply`-ed.
+    - `controller.config.*`); ingress-nginx is Helm-installed, not `kubectl apply`-ed.
 
 ## envsubst variables
 
-| Variable | Example | Source |
-|---|---|---|
-| `${NAMESPACE}` | `fountainrank` | deploy workflow |
-| `${ENVIRONMENT}` | `production` | deploy workflow |
-| `${IMAGE_TAG}` | git SHA | build job |
-| `${REGISTRY}` | `registry.digitalocean.com/fountainrank` | `DO_REGISTRY` |
-| `${DOMAIN}` | `fountainrank.com` | deploy workflow |
-| `${GOOGLE_DELEGATED_USER}` | `noreply@fountainrank.com` | `GOOGLE_DELEGATED_USER` var (email) |
-| `${FROM_EMAIL}` | `noreply@fountainrank.com` | `FROM_EMAIL` var (email) |
+| Variable                           | Example                                  | Source                                       |
+| ---------------------------------- | ---------------------------------------- | -------------------------------------------- |
+| `${NAMESPACE}`                     | `fountainrank`                           | deploy workflow                              |
+| `${ENVIRONMENT}`                   | `production`                             | deploy workflow                              |
+| `${IMAGE_TAG}`                     | git SHA                                  | build job                                    |
+| `${REGISTRY}`                      | `registry.digitalocean.com/fountainrank` | `DO_REGISTRY`                                |
+| `${DOMAIN}`                        | `fountainrank.com`                       | deploy workflow                              |
+| `${GOOGLE_DELEGATED_USER}`         | `noreply@fountainrank.com`               | `GOOGLE_DELEGATED_USER` var (email)          |
+| `${FROM_EMAIL}`                    | `noreply@fountainrank.com`               | `FROM_EMAIL` var (email)                     |
+| `${LOGTO_MANAGEMENT_RESOURCE}`     | `https://default.logto.app/api`          | optional `LOGTO_MANAGEMENT_RESOURCE` var     |
+| `${LOGTO_MANAGEMENT_API_BASE_URL}` | `https://auth.fountainrank.com/api`      | optional `LOGTO_MANAGEMENT_API_BASE_URL` var |
 
 ## Deploy flow (CI, Phase 0f)
 

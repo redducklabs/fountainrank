@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, Image, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { DisplayNameForm } from "../../components/account/DisplayNameForm";
 import { ScreenContainer } from "../../components/ScreenContainer";
@@ -25,6 +25,7 @@ export default function AccountScreen() {
   const auth = useAuth();
   const queryClient = useQueryClient();
   const [message, setMessage] = useState<string | null>(null);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const profileQuery = useQuery({
     queryKey: PROFILE_QUERY_KEY,
     enabled: shouldEnableProfileQuery(auth.status),
@@ -78,6 +79,45 @@ export default function AccountScreen() {
     clearProfile();
   };
 
+  const onDeleteAccount = async () => {
+    setMessage(null);
+    Alert.alert(
+      "Delete account?",
+      "This permanently deletes your FountainRank account, profile, notes, and photos. Fountain ratings and fountain details you contributed will stay on the public map without your account attached.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete account",
+          style: "destructive",
+          onPress: () => {
+            void (async () => {
+              setIsDeletingAccount(true);
+              try {
+                const { response } = await client.DELETE("/api/v1/me");
+                if (!response.ok) {
+                  setMessage("Account deletion did not complete. Please try again.");
+                  return;
+                }
+                queryClient.clear();
+                try {
+                  await auth.signOut();
+                } catch {
+                  auth.markReauthRequired();
+                  setMessage("Account deleted. Please sign in again before continuing.");
+                }
+              } catch {
+                setMessage("Account deletion did not complete. Please try again.");
+              } finally {
+                queryClient.clear();
+                setIsDeletingAccount(false);
+              }
+            })();
+          },
+        },
+      ],
+    );
+  };
+
   return (
     <ScreenContainer>
       <View style={styles.body}>
@@ -97,6 +137,9 @@ export default function AccountScreen() {
             isError={profileQuery.isError}
             onRetry={() => profileQuery.refetch()}
             onSignOut={onSignOut}
+            onDeleteAccount={onDeleteAccount}
+            isDeletingAccount={isDeletingAccount}
+            message={message}
           />
         ) : (
           <SignedOut
@@ -151,6 +194,9 @@ function SignedInProfile({
   isError,
   onRetry,
   onSignOut,
+  onDeleteAccount,
+  isDeletingAccount,
+  message,
 }: {
   profile: MeProfile | null;
   contributions: MeContributionsOut | null;
@@ -158,6 +204,9 @@ function SignedInProfile({
   isError: boolean;
   onRetry: () => void;
   onSignOut: () => Promise<void>;
+  onDeleteAccount: () => Promise<void>;
+  isDeletingAccount: boolean;
+  message: string | null;
 }) {
   if (isLoading) {
     return <InlineLoading label="Loading profile..." />;
@@ -177,7 +226,13 @@ function SignedInProfile({
     return (
       <View style={styles.section}>
         <DisplayNameForm initialValue="" required />
+        {message ? <Text style={styles.warning}>{message}</Text> : null}
         <SecondaryButton label="Sign out" onPress={onSignOut} />
+        <DestructiveButton
+          label={isDeletingAccount ? "Deleting account..." : "Delete account"}
+          disabled={isDeletingAccount}
+          onPress={onDeleteAccount}
+        />
       </View>
     );
   }
@@ -220,7 +275,13 @@ function SignedInProfile({
         </View>
       ) : null}
       <DisplayNameForm initialValue={profile.display_name} required={false} />
+      {message ? <Text style={styles.warning}>{message}</Text> : null}
       <SecondaryButton label="Sign out" onPress={onSignOut} />
+      <DestructiveButton
+        label={isDeletingAccount ? "Deleting account..." : "Delete account"}
+        disabled={isDeletingAccount}
+        onPress={onDeleteAccount}
+      />
     </View>
   );
 }
@@ -279,6 +340,34 @@ function SecondaryButton({ label, onPress }: { label: string; onPress: () => Pro
   );
 }
 
+function DestructiveButton({
+  label,
+  disabled,
+  onPress,
+}: {
+  label: string;
+  disabled?: boolean;
+  onPress: () => Promise<void>;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ disabled: Boolean(disabled) }}
+      disabled={disabled}
+      onPress={() => {
+        void onPress();
+      }}
+      style={({ pressed }) => [
+        styles.destructiveButton,
+        disabled ? styles.disabledButton : null,
+        pressed && !disabled ? styles.pressedDestructiveButton : null,
+      ]}
+    >
+      <Text style={styles.destructiveButtonText}>{label}</Text>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
   body: { flex: 1, gap: spacing.md },
   title: { ...typography.title, color: colors.brandBlue },
@@ -306,9 +395,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
   },
   secondaryButtonText: { ...typography.body, color: colors.brandBlue, fontWeight: "600" },
+  destructiveButton: {
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: colors.danger,
+    borderRadius: 8,
+    paddingHorizontal: spacing.lg,
+  },
+  destructiveButtonText: { ...typography.body, color: colors.danger, fontWeight: "700" },
   disabledButton: { opacity: 0.55 },
   pressedButton: { backgroundColor: colors.brandYellowHover },
   pressedSecondaryButton: { backgroundColor: colors.surface },
+  pressedDestructiveButton: { backgroundColor: "#FEF2F2" },
   profileRow: { flexDirection: "row", alignItems: "center", gap: spacing.md },
   avatar: { width: 64, height: 64, borderRadius: 32, backgroundColor: colors.surface },
   avatarFallback: {

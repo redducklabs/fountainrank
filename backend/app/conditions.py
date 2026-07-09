@@ -20,7 +20,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -40,6 +40,10 @@ _CATEGORY = {
     "hours_limited": "degraded",
 }
 _SEVERITY = {"ok": 1, "degraded": 2, "not_working": 3}
+
+
+def condition_actor_expr():
+    return func.coalesce(ConditionReport.user_id, ConditionReport.deleted_actor_id)
 
 
 @dataclass(frozen=True)
@@ -102,15 +106,18 @@ async def recompute_fountain_status(
     rows = (
         await session.execute(
             select(
-                ConditionReport.status, ConditionReport.user_id, ConditionReport.created_at
+                ConditionReport.status,
+                condition_actor_expr().label("actor_id"),
+                ConditionReport.created_at,
             ).where(
                 ConditionReport.fountain_id == fountain_id,
                 ConditionReport.is_hidden.is_(False),
+                condition_actor_expr().is_not(None),
             )
         )
     ).all()
     result = derive_status(
-        [(r.status, r.user_id, r.created_at) for r in rows],
+        [(r.status, r.actor_id, r.created_at) for r in rows],
         now=now,
         freshness_days=settings.condition_freshness_days,
         corroboration_min=settings.condition_corroboration_min,

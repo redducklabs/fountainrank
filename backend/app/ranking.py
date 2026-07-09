@@ -8,13 +8,17 @@ from app.config import get_settings
 from app.models import Fountain, Rating
 
 
+def rating_actor_expr():
+    return func.coalesce(Rating.user_id, Rating.deleted_actor_id)
+
+
 async def recompute_fountain_ranking(session: AsyncSession, fountain_id: uuid.UUID) -> None:
     """Recompute and store a fountain's denormalized rating fields. The caller owns
     the transaction (commit happens upstream)."""
     vote_count, average = (
         await session.execute(
             select(
-                func.count(func.distinct(Rating.user_id)),
+                func.count(func.distinct(rating_actor_expr())),
                 func.avg(Rating.stars),
             ).where(Rating.fountain_id == fountain_id)
         )

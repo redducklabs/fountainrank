@@ -64,6 +64,10 @@ Authenticated read (caller's own data only):
 
 - `GET /api/v1/me/contributions` — the caller's contribution-point stats + recent
   contribution events (the gamification substrate). Auth required.
+- `DELETE /api/v1/me` — delete the caller's account. Removes the local account,
+  Logto identity, notes, photos, upload attempts, and report history; detaches
+  retained fountain ratings/details from the user so public fountain data
+  remains available.
 
 Writes (require auth — see below):
 
@@ -91,6 +95,27 @@ Writes (require auth — see below):
 token must be issued for the API Resource `https://api.fountainrank.com`. The dev-auth
 headers below are a local-only convenience, active solely when `DEV_AUTH_ENABLED=true`
 (default `false` in production) and only when no `Authorization` header is sent.
+
+Account deletion also requires Logto Management API M2M credentials so
+`DELETE /api/v1/me` can delete the authoritative Logto identity. Configure these
+env vars in production:
+
+- `LOGTO_MANAGEMENT_APP_ID`
+- `LOGTO_MANAGEMENT_APP_SECRET`
+- `LOGTO_MANAGEMENT_RESOURCE` (optional OAuth resource indicator; defaults to
+  `{LOGTO_ENDPOINT}/api`)
+- `LOGTO_MANAGEMENT_API_BASE_URL` (optional HTTP API base URL; defaults to
+  `{LOGTO_ENDPOINT}/api`)
+
+The API tombstones the Logto subject before returning success, so stale pre-delete
+tokens cannot recreate the local account. If Logto identity deletion is unavailable
+after the local delete commits, the `deleted_accounts` row remains
+`identity_delete_status='pending'`. If Spaces deletion is unavailable, photo
+object keys remain as pending `storage_cleanup` rows. Retry both with:
+
+```bash
+uv run python -m app.account_deletion_cleanup --limit 100
+```
 
 ### Local dev-auth fallback
 

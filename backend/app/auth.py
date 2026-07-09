@@ -10,7 +10,7 @@ from app.config import Settings, get_settings
 from app.db import get_session
 from app.display import resolved_display_name
 from app.logto_auth import AuthError, JwksCache, validate_bearer_token
-from app.models import User
+from app.models import DeletedAccount, User
 
 logger = logging.getLogger("app.auth")
 
@@ -37,6 +37,15 @@ async def get_or_create_user(
     `uq_users_logto_user_id` -> IntegrityError -> 500. We INSERT ... ON CONFLICT DO
     NOTHING and re-select the winner instead, so concurrent provisioning converges on
     one row without erroring."""
+    deleted = (
+        await session.execute(
+            select(DeletedAccount).where(DeletedAccount.logto_user_id == logto_user_id)
+        )
+    ).scalar_one_or_none()
+    if deleted is not None:
+        logger.warning("auth rejected for deleted account")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="account deleted")
+
     existing = (
         await session.execute(select(User).where(User.logto_user_id == logto_user_id))
     ).scalar_one_or_none()

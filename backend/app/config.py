@@ -136,6 +136,12 @@ class Settings(BaseSettings):
     logto_endpoint: str = "https://auth.fountainrank.com"
     # The registered API Resource indicator; becomes the JWT `aud` the backend requires.
     logto_audience: str = "https://api.fountainrank.com"
+    # Logto Management API M2M credentials. Required for account deletion so the backend can
+    # delete the authoritative Logto identity after the user confirms in-app deletion.
+    logto_management_app_id: str | None = None
+    logto_management_app_secret: str | None = None
+    logto_management_resource: str | None = None
+    logto_management_api_base_url: str | None = None
     # How long a fetched JWKS key set is trusted before a refetch is allowed.
     logto_jwks_cache_ttl_seconds: int = 3600
 
@@ -150,6 +156,22 @@ class Settings(BaseSettings):
     @property
     def logto_userinfo_uri(self) -> str:
         return f"{self.logto_issuer}/me"
+
+    @property
+    def logto_management_api_resource(self) -> str:
+        return self.logto_management_resource or f"{self.logto_endpoint.rstrip('/')}/api"
+
+    @property
+    def logto_management_api_base(self) -> str:
+        return self.logto_management_api_base_url or f"{self.logto_endpoint.rstrip('/')}/api"
+
+    @property
+    def logto_token_uri(self) -> str:
+        return f"{self.logto_issuer}/token"
+
+    @property
+    def logto_management_configured(self) -> bool:
+        return bool(self.logto_management_app_id and self.logto_management_app_secret)
 
     # --- Email (Logto HTTP email connector -> Gmail API) ---
     # The Google service-account JSON key (whole file, as a string), the impersonated

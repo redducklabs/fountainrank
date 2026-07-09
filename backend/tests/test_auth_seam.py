@@ -1,6 +1,7 @@
 import asyncio
 
 import pytest
+from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -8,7 +9,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.auth import get_or_create_user
 from app.config import Settings, get_settings
 from app.main import app
-from app.models import User
+from app.models import DeletedAccount, User
 
 
 async def test_get_or_create_user_is_idempotent(session):
@@ -20,6 +21,21 @@ async def test_get_or_create_user_is_idempotent(session):
         session, logto_user_id="logto-abc", email="ignored@example.com", display_name="ignored"
     )
     assert again.id == first.id  # reused, not duplicated
+
+
+async def test_get_or_create_user_rejects_deleted_subject(session):
+    session.add(DeletedAccount(logto_user_id="logto-deleted"))
+    await session.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_or_create_user(
+            session,
+            logto_user_id="logto-deleted",
+            email="deleted@example.com",
+            display_name="Deleted",
+        )
+
+    assert exc_info.value.status_code == 401
 
 
 async def test_get_or_create_user_is_concurrency_safe(engine):
