@@ -51,29 +51,20 @@ def upgrade() -> None:
     # User-added fountains must survive account deletion. Preserve created_source='user'
     # and clear only the owner pointer.
     op.execute("ALTER TABLE fountains DROP CONSTRAINT ck_fountains_user_source_requires_user")
+    # DROP NOT NULL is metadata-only and independent of the FK, so the existing
+    # ON DELETE CASCADE constraints are left in place: dropping and recreating them would
+    # take ACCESS EXCLUSIVE and re-validate every row of the largest contribution tables.
     op.add_column(
         "ratings",
         sa.Column("deleted_actor_id", postgresql.UUID(as_uuid=True), nullable=True),
     )
-    op.drop_constraint("fk_ratings_user_id_users", "ratings", type_="foreignkey")
     op.alter_column(
         "ratings", "user_id", existing_type=postgresql.UUID(as_uuid=True), nullable=True
     )
-    op.create_foreign_key(
-        "fk_ratings_user_id_users",
-        "ratings",
-        "users",
-        ["user_id"],
-        ["id"],
-        ondelete="CASCADE",
-    )
 
     op.add_column(
         "attribute_observations",
         sa.Column("deleted_actor_id", postgresql.UUID(as_uuid=True), nullable=True),
-    )
-    op.drop_constraint(
-        "fk_attribute_observations_user", "attribute_observations", type_="foreignkey"
     )
     op.alter_column(
         "attribute_observations",
@@ -81,88 +72,60 @@ def upgrade() -> None:
         existing_type=postgresql.UUID(as_uuid=True),
         nullable=True,
     )
-    op.create_foreign_key(
-        "fk_attribute_observations_user",
-        "attribute_observations",
-        "users",
-        ["user_id"],
-        ["id"],
-        ondelete="CASCADE",
-    )
 
     op.add_column(
         "condition_reports",
         sa.Column("deleted_actor_id", postgresql.UUID(as_uuid=True), nullable=True),
     )
-    op.drop_constraint("fk_condition_reports_user", "condition_reports", type_="foreignkey")
     op.alter_column(
         "condition_reports",
         "user_id",
         existing_type=postgresql.UUID(as_uuid=True),
         nullable=True,
     )
-    op.create_foreign_key(
-        "fk_condition_reports_user",
-        "condition_reports",
-        "users",
-        ["user_id"],
-        ["id"],
-        ondelete="CASCADE",
+
+    # `reason` is the operator triage column on the storage-cleanup ledger; account deletion
+    # is not moderation, so it gets its own value rather than borrowing 'moderation_delete'.
+    # Both ops apply the ck naming convention, so they take the SHORT name (see app/models.py).
+    op.drop_constraint("reason", "storage_cleanup", type_="check")
+    op.create_check_constraint(
+        "reason",
+        "storage_cleanup",
+        "reason IN ('upload_orphan','moderation_delete','account_delete')",
     )
 
 
 def downgrade() -> None:
+    # Destructive by necessity: the anonymized rows have no owner to restore, so restoring
+    # NOT NULL means dropping the fountain signal contributed by deleted accounts.
     op.execute("DELETE FROM ratings WHERE user_id IS NULL")
     op.execute("DELETE FROM attribute_observations WHERE user_id IS NULL")
     op.execute("DELETE FROM condition_reports WHERE user_id IS NULL")
 
-    op.drop_constraint("fk_condition_reports_user", "condition_reports", type_="foreignkey")
+    op.execute("DELETE FROM storage_cleanup WHERE reason = 'account_delete'")
+    op.drop_constraint("reason", "storage_cleanup", type_="check")
+    op.create_check_constraint(
+        "reason", "storage_cleanup", "reason IN ('upload_orphan','moderation_delete')"
+    )
+
     op.alter_column(
         "condition_reports",
         "user_id",
         existing_type=postgresql.UUID(as_uuid=True),
         nullable=False,
-    )
-    op.create_foreign_key(
-        "fk_condition_reports_user",
-        "condition_reports",
-        "users",
-        ["user_id"],
-        ["id"],
-        ondelete="CASCADE",
     )
     op.drop_column("condition_reports", "deleted_actor_id")
 
-    op.drop_constraint(
-        "fk_attribute_observations_user", "attribute_observations", type_="foreignkey"
-    )
     op.alter_column(
         "attribute_observations",
         "user_id",
         existing_type=postgresql.UUID(as_uuid=True),
         nullable=False,
     )
-    op.create_foreign_key(
-        "fk_attribute_observations_user",
-        "attribute_observations",
-        "users",
-        ["user_id"],
-        ["id"],
-        ondelete="CASCADE",
-    )
     op.drop_column("attribute_observations", "deleted_actor_id")
 
-    op.drop_constraint("fk_ratings_user_id_users", "ratings", type_="foreignkey")
     op.alter_column(
         "ratings", "user_id", existing_type=postgresql.UUID(as_uuid=True), nullable=False
-    )
-    op.create_foreign_key(
-        "fk_ratings_user_id_users",
-        "ratings",
-        "users",
-        ["user_id"],
-        ["id"],
-        ondelete="CASCADE",
     )
     op.drop_column("ratings", "deleted_actor_id")
 

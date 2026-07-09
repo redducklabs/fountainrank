@@ -5,6 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import delete, func, select, tuple_, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
@@ -13,7 +14,11 @@ from app.config import Settings, get_settings
 from app.db import get_session
 from app.display import resolved_display_name
 from app.geo import latitude_of, longitude_of
-from app.logto_management import LogtoManagementClient, LogtoManagementError
+from app.logto_management import (
+    LogtoManagementClient,
+    LogtoManagementError,
+    identity_error_detail,
+)
 from app.models import (
     AttributeObservation,
     ConditionReport,
@@ -118,7 +123,7 @@ async def _delete_photo_objects_for_account(
         try:
             await run_in_threadpool(storage.delete_object, key)
         except Exception:
-            logger.error(
+            logger.exception(
                 "account deletion photo cleanup remains pending because object deletion failed",
                 extra={"object_key": key},
             )
@@ -141,7 +146,7 @@ async def _mark_logto_delete_done(session: AsyncSession, logto_user_id: str) -> 
 
 
 async def _mark_logto_delete_pending(
-    session: AsyncSession, logto_user_id: str, error: Exception
+    session: AsyncSession, logto_user_id: str, error: LogtoManagementError
 ) -> None:
     await session.execute(
         update(DeletedAccount)
@@ -150,7 +155,7 @@ async def _mark_logto_delete_pending(
             identity_delete_status="pending",
             identity_delete_attempts=DeletedAccount.identity_delete_attempts + 1,
             identity_delete_last_attempt_at=datetime.now(tz=UTC),
-            identity_delete_error=type(error).__name__,
+            identity_delete_error=identity_error_detail(error),
         )
     )
     await session.commit()
@@ -254,8 +259,14 @@ async def delete_me(
     )
     await session.execute(delete(ContributionEvent).where(ContributionEvent.user_id == user_id))
     for key in photo_keys:
-        session.add(StorageCleanup(object_key=key, reason="moderation_delete"))
-    session.add(DeletedAccount(logto_user_id=logto_user_id))
+        session.add(StorageCleanup(object_key=key, reason="account_delete"))
+    # A double-submitted delete would otherwise lose the tombstone PK race and 500 after the
+    # first request already removed the account. The rest of this handler is a no-op replay.
+    await session.execute(
+        pg_insert(DeletedAccount)
+        .values(logto_user_id=logto_user_id)
+        .on_conflict_do_nothing(index_elements=["logto_user_id"])
+    )
     await session.execute(delete(User).where(User.id == user_id))
     await session.commit()
 

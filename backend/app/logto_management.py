@@ -13,6 +13,16 @@ class LogtoManagementError(Exception):
     """Raised when a required Logto Management API operation cannot complete."""
 
 
+IDENTITY_ERROR_DETAIL_MAX_LEN = 500
+
+
+def identity_error_detail(exc: LogtoManagementError) -> str:
+    """Compact description for `deleted_accounts.identity_delete_error`, so an operator can
+    tell a misconfiguration from a 5xx without a debugger. Safe to persist: every
+    LogtoManagementError message is static text plus an HTTP status — never a credential."""
+    return f"{type(exc).__name__}: {exc}"[:IDENTITY_ERROR_DETAIL_MAX_LEN]
+
+
 @dataclass(frozen=True)
 class LogtoManagementClient:
     settings: Settings

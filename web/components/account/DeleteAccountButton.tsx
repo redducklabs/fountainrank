@@ -38,7 +38,7 @@ export function DeleteAccountButton() {
         {pending ? "Deleting account..." : "Delete account"}
       </button>
       {error ? (
-        <p role="status" aria-live="polite" className="max-w-sm text-sm text-red-100">
+        <p role="alert" className="max-w-sm text-sm text-red-100">
           {error}
         </p>
       ) : null}

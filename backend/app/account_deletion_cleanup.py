@@ -9,7 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
 from app.db import get_sessionmaker
-from app.logto_management import LogtoManagementClient, LogtoManagementError
+from app.logging_config import configure_logging
+from app.logto_management import (
+    LogtoManagementClient,
+    LogtoManagementError,
+    identity_error_detail,
+)
 from app.models import DeletedAccount, StorageCleanup
 from app.storage import get_storage
 
@@ -46,11 +51,15 @@ async def retry_pending_identity_deletions(
                 .values(
                     identity_delete_attempts=DeletedAccount.identity_delete_attempts + 1,
                     identity_delete_last_attempt_at=now,
-                    identity_delete_error=type(exc).__name__,
+                    identity_delete_error=identity_error_detail(exc),
                 )
             )
             await session.commit()
-            logger.warning("pending logto identity delete retry failed")
+            logger.warning(
+                "pending logto identity delete retry failed",
+                extra={"sub": logto_user_id},
+                exc_info=exc,
+            )
             continue
         succeeded += 1
         await session.execute(
@@ -84,6 +93,11 @@ async def retry_pending_storage_deletions(
     )
     storage = get_storage(settings)
     if storage is None:
+        if rows:
+            logger.warning(
+                "storage object delete retry skipped because storage is unavailable",
+                extra={"pending_rows": len(rows)},
+            )
         return 0, len(rows)
 
     succeeded = 0
@@ -97,7 +111,10 @@ async def retry_pending_storage_deletions(
             row.attempts += 1
             row.last_attempt_at = now
             await session.commit()
-            logger.warning("pending storage object delete retry failed")
+            logger.exception(
+                "pending storage object delete retry failed",
+                extra={"object_key": row.object_key, "attempts": row.attempts},
+            )
             continue
         succeeded += 1
         row.attempts += 1
@@ -116,7 +133,18 @@ async def _main_async(limit: int) -> int:
         storage_succeeded, storage_failed = await retry_pending_storage_deletions(
             session, settings, limit=limit
         )
-    print(
+    logger.info(
+        "account_deletion_cleanup_complete",
+        extra={
+            "identity_deletes_succeeded": identity_succeeded,
+            "identity_deletes_failed": identity_failed,
+            "storage_deletes_succeeded": storage_succeeded,
+            "storage_deletes_failed": storage_failed,
+        },
+    )
+    # Diagnostics already went through structured logging above. This ONE stdout line is the
+    # CLI's machine-readable RESULT contract for operators/CI.
+    print(  # documented CLI result contract
         " ".join(
             [
                 f"identity_deletes_succeeded={identity_succeeded}",
@@ -130,6 +158,8 @@ async def _main_async(limit: int) -> int:
 
 
 def main() -> None:
+    settings = get_settings()
+    configure_logging(level=settings.log_level, fmt=settings.log_format)
     parser = argparse.ArgumentParser(description="Retry pending account deletion cleanup.")
     parser.add_argument("--limit", type=int, default=100)
     args = parser.parse_args()

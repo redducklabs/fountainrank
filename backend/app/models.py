@@ -764,7 +764,9 @@ class StorageCleanup(Base):
 
     __tablename__ = "storage_cleanup"
     __table_args__ = (
-        CheckConstraint("reason IN ('upload_orphan','moderation_delete')", name="reason"),
+        CheckConstraint(
+            "reason IN ('upload_orphan','moderation_delete','account_delete')", name="reason"
+        ),
         CheckConstraint("status IN ('pending','done')", name="status"),
         Index(
             "ix_storage_cleanup_pending_created",

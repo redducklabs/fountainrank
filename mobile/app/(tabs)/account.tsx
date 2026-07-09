@@ -94,10 +94,17 @@ export default function AccountScreen() {
               setIsDeletingAccount(true);
               try {
                 const { response } = await client.DELETE("/api/v1/me");
+                if (response.status === 401) {
+                  auth.markReauthRequired();
+                  setMessage("Your session expired. Please sign in again.");
+                  return;
+                }
                 if (!response.ok) {
                   setMessage("Account deletion did not complete. Please try again.");
                   return;
                 }
+                // Only once the account is actually gone: on a failed delete the signed-in
+                // profile is still valid and must not be evicted.
                 queryClient.clear();
                 try {
                   await auth.signOut();
@@ -108,7 +115,6 @@ export default function AccountScreen() {
               } catch {
                 setMessage("Account deletion did not complete. Please try again.");
               } finally {
-                queryClient.clear();
                 setIsDeletingAccount(false);
               }
             })();

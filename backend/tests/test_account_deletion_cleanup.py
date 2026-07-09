@@ -48,7 +48,9 @@ async def test_retry_pending_identity_deletions_leaves_failure_pending(session, 
     await session.refresh(deleted)
     assert deleted.identity_delete_status == "pending"
     assert deleted.identity_delete_attempts == 1
-    assert deleted.identity_delete_error == "LogtoManagementError"
+    # The ledger records the failure reason, not just the exception class, so an operator can
+    # tell a misconfiguration from a transient 5xx.
+    assert deleted.identity_delete_error == "LogtoManagementError: down"
 
 
 @pytest.mark.asyncio

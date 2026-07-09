@@ -70,26 +70,26 @@ available (you don't need them all at once — 0e/0f tell you when each is read)
 
 **Secrets** (sensitive):
 
-| Name                                                      | From                                                                                                                                       |
-| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `DIGITALOCEAN_ACCESS_TOKEN`                               | `01-digitalocean.md`                                                                                                                       |
-| `SPACES_ACCESS_KEY` / `SPACES_SECRET_KEY`                 | `01-digitalocean.md`                                                                                                                       |
-| `DATABASE_URL`                                            | DO Managed Postgres (0e/0f)                                                                                                                |
-| `LOGTO_DB_URL`                                            | DO Managed Postgres / Logto DB (0e/0f)                                                                                                     |
-| `DATABASE_CA_CERT`                                        | DO Managed Postgres CA PEM (`doctl databases get <id>` / console) — mounted as `database-ca.crt` for the backend's asyncpg verify-full TLS |
-| `GOOGLE_SERVICE_ACCOUNT_JSON`                             | `03-google-cloud.md`                                                                                                                       |
-| `LOGTO_EMAIL_WEBHOOK_TOKEN`                               | self-generated random (≥32 chars); also set as the Logto HTTP email connector auth token (`06-logto.md`). Consumed by `deploy.yml`         |
-| `LOGTO_MANAGEMENT_APP_ID` / `LOGTO_MANAGEMENT_APP_SECRET` | Logto M2M app for backend account deletion (`06-logto.md`). Consumed by `deploy.yml`                                                       |
-| `LOGTO_*` (endpoint/app/secret as needed)                 | `06-logto.md`                                                                                                                              |
+| Name | From |
+|---|---|
+| `DIGITALOCEAN_ACCESS_TOKEN` | `01-digitalocean.md` |
+| `SPACES_ACCESS_KEY` / `SPACES_SECRET_KEY` | `01-digitalocean.md` |
+| `DATABASE_URL` | DO Managed Postgres (0e/0f) |
+| `LOGTO_DB_URL` | DO Managed Postgres / Logto DB (0e/0f) |
+| `DATABASE_CA_CERT` | DO Managed Postgres CA PEM (`doctl databases get <id>` / console) — mounted as `database-ca.crt` for the backend's asyncpg verify-full TLS |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | `03-google-cloud.md` |
+| `LOGTO_EMAIL_WEBHOOK_TOKEN` | self-generated random (≥32 chars); also set as the Logto HTTP email connector auth token (`06-logto.md`). Consumed by `deploy.yml` |
+| `LOGTO_MANAGEMENT_APP_ID` / `LOGTO_MANAGEMENT_APP_SECRET` | Logto M2M app for backend account deletion (`06-logto.md`). Consumed by `deploy.yml` — **`deploy.yml` fails fast if either is unset** |
+| `LOGTO_*` (endpoint/app/secret as needed) | `06-logto.md` |
 
 **Variables** (non-sensitive):
 
-| Name                                                          | From                                                                                      |
-| ------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `DO_REGISTRY`                                                 | `01-digitalocean.md`                                                                      |
-| `CLUSTER_NAME`                                                | Terraform output (0e/0f)                                                                  |
-| `GOOGLE_WORKSPACE_DOMAIN` / `GOOGLE_DELEGATED_USER`           | `03-google-cloud.md`                                                                      |
-| `FROM_EMAIL` / `BASE_URL`                                     | `02` / per-environment                                                                    |
+| Name | From |
+|---|---|
+| `DO_REGISTRY` | `01-digitalocean.md` |
+| `CLUSTER_NAME` | Terraform output (0e/0f) |
+| `GOOGLE_WORKSPACE_DOMAIN` / `GOOGLE_DELEGATED_USER` | `03-google-cloud.md` |
+| `FROM_EMAIL` / `BASE_URL` | `02` / per-environment |
 | `LOGTO_MANAGEMENT_RESOURCE` / `LOGTO_MANAGEMENT_API_BASE_URL` | Optional Logto Management API resource indicator / HTTP base URL override (`06-logto.md`) |
 
 Setting a secret via `gh` (example — run it yourself; the value is never

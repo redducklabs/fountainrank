@@ -262,9 +262,9 @@ async def test_delete_me_removes_account_notes_photos_and_anonymizes_fountain_si
         .scalars()
         .all()
     )
-    assert [(row.object_key, row.status) for row in cleanup_rows] == [
-        ("photos/full.jpg", "done"),
-        ("photos/thumb.jpg", "done"),
+    assert [(row.object_key, row.status, row.reason) for row in cleanup_rows] == [
+        ("photos/full.jpg", "done", "account_delete"),
+        ("photos/thumb.jpg", "done", "account_delete"),
     ]
     tombstone = (
         await session.execute(
@@ -318,15 +318,54 @@ async def test_delete_me_returns_success_with_pending_photo_cleanup_when_storage
         .scalars()
         .all()
     )
-    assert [(row.object_key, row.status) for row in cleanup_rows] == [
-        ("photos/full.jpg", "pending"),
-        ("photos/thumb.jpg", "pending"),
+    assert [(row.object_key, row.status, row.reason) for row in cleanup_rows] == [
+        ("photos/full.jpg", "pending", "account_delete"),
+        ("photos/thumb.jpg", "pending", "account_delete"),
     ]
     assert (
         await session.execute(
             select(DeletedAccount).where(DeletedAccount.logto_user_id == logto_user_id)
         )
     ).scalar_one_or_none() is not None
+
+
+async def test_delete_me_succeeds_when_tombstone_already_exists(
+    client, test_user, session, monkeypatch
+):
+    """Two concurrent DELETE /me calls both resolve the user before either commits, so the
+    loser must replay harmlessly instead of losing the tombstone PK race with a 500."""
+
+    async def fake_delete_user(self, logto_user_id: str) -> None:
+        return None
+
+    async def fake_delete_photos(*, photo_keys, settings) -> bool:
+        return True
+
+    monkeypatch.setattr("app.logto_management.LogtoManagementClient.delete_user", fake_delete_user)
+    monkeypatch.setattr("app.routers.users._delete_photo_objects_for_account", fake_delete_photos)
+
+    user_id = test_user.id
+    logto_user_id = test_user.logto_user_id
+    session.add(DeletedAccount(logto_user_id=logto_user_id))
+    await session.commit()
+
+    resp = await client.delete("/api/v1/me")
+
+    assert resp.status_code == 204, resp.text
+    await session.rollback()
+    assert (
+        await session.execute(select(User).where(User.id == user_id))
+    ).scalar_one_or_none() is None
+    tombstones = (
+        (
+            await session.execute(
+                select(DeletedAccount).where(DeletedAccount.logto_user_id == logto_user_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(tombstones) == 1
 
 
 async def test_delete_me_returns_success_with_pending_logto_cleanup_when_unconfigured(
