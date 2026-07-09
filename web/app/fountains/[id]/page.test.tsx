@@ -73,9 +73,44 @@ vi.mock("../../../components/SiteHeader", () => ({
   SiteHeader: () => <div data-testid="site-header" />,
 }));
 
-import FountainPage, { generateMetadata } from "./page";
+import FountainPage, {
+  buildFountainBreadcrumbStructuredData,
+  buildFountainStructuredData,
+  generateMetadata,
+} from "./page";
 
 const params = Promise.resolve({ id: "f1" });
+const detail = {
+  id: "f1",
+  location: { latitude: 40.78, longitude: -73.96 },
+  is_working: true,
+  comments: null,
+  average_rating: 4.5,
+  rating_count: 8,
+  ranking_score: 0.9,
+  created_at: "2026-06-01T00:00:00Z",
+  last_rated_at: "2026-06-12T00:00:00Z",
+  current_status: "ok",
+  last_verified_at: "2026-06-12T00:00:00Z",
+  placement_note: null,
+  dimensions: [],
+  attributes: [
+    {
+      attribute_type_id: 1,
+      key: "bottle_filler",
+      name: "Bottle filler",
+      category: "features",
+      consensus_value: "yes",
+      confidence: "high",
+      yes_count: 5,
+      no_count: 0,
+      unknown_count: 0,
+      value_counts: null,
+      observation_count: 5,
+      latest_observation_value: "yes",
+    },
+  ],
+};
 
 // A minimal /place response for the h1 + metadata (public data only).
 const placeIn = (city: { name: string; country_code: string } | null, indexable: boolean) => ({
@@ -103,6 +138,7 @@ beforeEach(() => {
   getViewerFn.mockResolvedValue({ state: "anonymous" });
   getTokenFn.mockResolvedValue(null);
   getPhotos.mockResolvedValue({ data: [], status: 200 });
+  getDetail.mockResolvedValue({ data: undefined, status: 0 });
   // Default: no place resolved (backend down / no city) — the h1 falls back, metadata noindexes.
   getPlaceFn.mockResolvedValue({ data: undefined, status: 0 });
 });
@@ -209,7 +245,7 @@ describe("FountainPage route (standalone)", () => {
   });
 
   it("passes a city location label to the detail h1 when the place resolves (public data)", async () => {
-    getDetail.mockResolvedValue({ data: { id: "f1" }, status: 200 });
+    getDetail.mockResolvedValue({ data: detail, status: 200 });
     getNotes.mockResolvedValue({ data: [], status: 200 });
     getPlaceFn.mockResolvedValue(placeIn({ name: "Manhattan", country_code: "us" }, true));
     render(await FountainPage({ params }));
@@ -219,6 +255,66 @@ describe("FountainPage route (standalone)", () => {
     );
     // The h1 label uses PUBLIC place data, not the viewer/admin detail path.
     expect(getPlaceFn).toHaveBeenCalledWith("f1", expect.any(String));
+  });
+
+  it("links an indexable fountain detail page back to its city page", async () => {
+    getDetail.mockResolvedValue({ data: detail, status: 200 });
+    getNotes.mockResolvedValue({ data: [], status: 200 });
+    getPlaceFn.mockResolvedValue(placeIn({ name: "Manhattan", country_code: "us" }, true));
+    render(await FountainPage({ params }));
+    expect(
+      await screen.findByRole("link", { name: /drinking fountains in Manhattan/i }),
+    ).toHaveAttribute("href", "/drinking-fountains/us/manhattan");
+  });
+
+  it("builds conservative JSON-LD for indexable public detail pages", () => {
+    const place = placeIn({ name: "Manhattan", country_code: "us" }, true).data;
+    const data = buildFountainStructuredData({ id: "f1", place, detail });
+    expect(data["@type"]).toBe("Place");
+    expect(data.name).toBe("Public drinking fountain in Manhattan");
+    expect(data.geo).toEqual({
+      "@type": "GeoCoordinates",
+      latitude: 40.78,
+      longitude: -73.96,
+    });
+    expect(data.aggregateRating).toEqual({
+      "@type": "AggregateRating",
+      ratingValue: 4.5,
+      reviewCount: 8,
+      bestRating: 5,
+      worstRating: 1,
+    });
+    expect(data.additionalProperty).toContainEqual({
+      "@type": "PropertyValue",
+      name: "Bottle filler",
+      value: "Yes",
+    });
+  });
+
+  it("builds breadcrumb JSON-LD from home to city to fountain", () => {
+    const place = placeIn({ name: "Manhattan", country_code: "us" }, true).data;
+    const data = buildFountainBreadcrumbStructuredData({ id: "f1", place });
+    expect(data["@type"]).toBe("BreadcrumbList");
+    expect(data.itemListElement).toEqual([
+      {
+        "@type": "ListItem",
+        position: 1,
+        name: "FountainRank",
+        item: "https://fountainrank.com",
+      },
+      {
+        "@type": "ListItem",
+        position: 2,
+        name: "Drinking fountains in Manhattan",
+        item: "https://fountainrank.com/drinking-fountains/us/manhattan",
+      },
+      {
+        "@type": "ListItem",
+        position: 3,
+        name: "Public drinking fountain in Manhattan",
+        item: "https://fountainrank.com/fountains/f1",
+      },
+    ]);
   });
 
   it("omits the location label when no city resolves (fallback h1)", async () => {
@@ -231,10 +327,14 @@ describe("FountainPage route (standalone)", () => {
 });
 
 describe("FountainPage generateMetadata", () => {
-  it("city + indexable: city title, canonical, no noindex override", async () => {
+  it("city + indexable: richer city title, description, canonical, no noindex override", async () => {
     getPlaceFn.mockResolvedValue(placeIn({ name: "Manhattan", country_code: "us" }, true));
+    getDetail.mockResolvedValue({ data: detail, status: 200 });
     const meta = await generateMetadata({ params });
-    expect(meta.title).toBe("Drinking fountain in Manhattan");
+    expect(meta.title).toBe("4.5-rated drinking fountain in Manhattan");
+    expect(meta.description).toContain("Verified working.");
+    expect(meta.description).toContain("Rated 4.5 from 8 ratings.");
+    expect(meta.description).toContain("Reported features include bottle filler.");
     expect(meta.alternates?.canonical).toBe("/fountains/f1");
     expect(meta.robots).toBeUndefined();
   });
@@ -242,7 +342,7 @@ describe("FountainPage generateMetadata", () => {
   it("below the §7 predicate (indexable=false): rendered but noindex, still followable", async () => {
     getPlaceFn.mockResolvedValue(placeIn({ name: "Manhattan", country_code: "us" }, false));
     const meta = await generateMetadata({ params });
-    expect(meta.title).toBe("Drinking fountain in Manhattan");
+    expect(meta.title).toBe("Public drinking fountain in Manhattan");
     expect(meta.robots).toEqual({ index: false, follow: true });
   });
 

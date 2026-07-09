@@ -8,6 +8,8 @@ import { SiteHeader } from "../../../../components/SiteHeader";
 import { cityPath, countryPath, getCityFountainsServer } from "../../../../lib/places";
 import type { CityFountainsOut } from "../../../../lib/places";
 import { log } from "../../../../lib/server/log";
+import { jsonLdScript } from "../../../../lib/seo/jsonld";
+import { SITE_URL } from "../../../../lib/seo/site";
 
 export const dynamic = "force-dynamic";
 const shell = "mx-auto min-h-dvh max-w-2xl bg-surface-raised px-6 py-10";
@@ -25,6 +27,37 @@ const loadCity = cache(
   },
 );
 
+function cityDescription(place: CityFountainsOut["place"]): string {
+  return `Find ${place.fountain_count.toLocaleString()} public drinking fountains and water bottle refill stations in ${place.name}. Compare community ratings, working status, and locations before opening directions on FountainRank.`;
+}
+
+export function buildCityBreadcrumbStructuredData(place: CityFountainsOut["place"]) {
+  return {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: [
+      {
+        "@type": "ListItem",
+        position: 1,
+        name: "FountainRank",
+        item: SITE_URL,
+      },
+      {
+        "@type": "ListItem",
+        position: 2,
+        name: `Drinking fountains in ${place.country_code.toUpperCase()}`,
+        item: `${SITE_URL}${countryPath(place.country_code)}`,
+      },
+      {
+        "@type": "ListItem",
+        position: 3,
+        name: `Drinking fountains in ${place.name}`,
+        item: `${SITE_URL}${cityPath(place.country_code, place.slug)}`,
+      },
+    ],
+  };
+}
+
 export async function generateMetadata({
   params,
 }: {
@@ -35,7 +68,7 @@ export async function generateMetadata({
   if (!data) return { robots: { index: false, follow: false } };
   const { place, indexable } = data;
   const title = `Drinking fountains in ${place.name}`;
-  const description = `Find ${place.fountain_count.toLocaleString()} public drinking fountains and water bottle refill stations in ${place.name} — ranked and reviewed on FountainRank.`;
+  const description = cityDescription(place);
   const canonical = cityPath(place.country_code, place.slug);
   return {
     title,
@@ -87,10 +120,21 @@ export default async function CityPage({
   // the sticky canonical slug, so search engines see one URL per city.
   const canonical = cityPath(place.country_code, place.slug);
   if (`/drinking-fountains/${country}/${city}` !== canonical) permanentRedirect(canonical);
+  const structuredJson = data.indexable
+    ? jsonLdScript(buildCityBreadcrumbStructuredData(place))
+    : null;
 
   return (
     <>
       <SiteHeader variant="bar" />
+      {structuredJson ? (
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: structuredJson,
+          }}
+        />
+      ) : null}
       <main className={shell}>
         <Link href={countryPath(place.country_code)} className="text-sm text-brand-ink underline">
           ← All of {place.country_code.toUpperCase()}
@@ -102,6 +146,10 @@ export default async function CityPage({
           {place.fountain_count.toLocaleString()} public drinking fountains and bottle-refill
           stations in {place.name}.
           {fountains.length < place.fountain_count ? ` Showing the top ${fountains.length}.` : ""}
+        </p>
+        <p className="mt-3 text-sm leading-6 text-muted">
+          Use this city guide to compare nearby public water fountains by community rating, working
+          status, and location before opening directions.
         </p>
 
         {fountains.length > 0 ? (
