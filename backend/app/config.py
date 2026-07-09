@@ -5,6 +5,11 @@ from typing import Annotated
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+# Logto OSS (self-hosted, tenant id "default") always identifies its Management API by this
+# literal indicator — it is NOT the URL Logto is served from. See Logto's OSS troubleshooting:
+# "Logto Cloud: https://[tenant-id].logto.app/api — Logto Open Source: https://default.logto.app/api".
+LOGTO_OSS_MANAGEMENT_API_RESOURCE = "https://default.logto.app/api"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=None, extra="ignore")
@@ -137,9 +142,11 @@ class Settings(BaseSettings):
     # The registered API Resource indicator; becomes the JWT `aud` the backend requires.
     logto_audience: str = "https://api.fountainrank.com"
     # Logto Management API M2M credentials. Required for account deletion so the backend can
-    # delete the authoritative Logto identity after the user confirms in-app deletion.
+    # delete the authoritative Logto identity after the user confirms in-app deletion. In CI these
+    # are sourced from the pre-existing LOGTO_M2M_APP_ID / LOGTO_M2M_APP_SECRET (see deploy.yml).
     logto_management_app_id: str | None = None
     logto_management_app_secret: str | None = None
+    # Both default correctly for self-hosted Logto; override only for a Logto Cloud tenant.
     logto_management_resource: str | None = None
     logto_management_api_base_url: str | None = None
     # How long a fetched JWKS key set is trusted before a refetch is allowed.
@@ -159,10 +166,19 @@ class Settings(BaseSettings):
 
     @property
     def logto_management_api_resource(self) -> str:
-        return self.logto_management_resource or f"{self.logto_endpoint.rstrip('/')}/api"
+        """OAuth `resource` indicator for the Management API access token.
+
+        NOT derived from `logto_endpoint`: on self-hosted Logto (OSS) the indicator is the
+        literal `https://default.logto.app/api` regardless of where Logto is actually served
+        from — only Logto *Cloud* uses `https://<tenant-id>.logto.app/api`. Getting this wrong
+        fails the token request with `invalid_target`, which would strand every account
+        deletion at `identity_delete_status='pending'`. Override for a Cloud tenant."""
+        return self.logto_management_resource or LOGTO_OSS_MANAGEMENT_API_RESOURCE
 
     @property
     def logto_management_api_base(self) -> str:
+        """HTTP base URL the Management API is actually served from — unlike the resource
+        indicator above, this DOES follow our own endpoint."""
         return self.logto_management_api_base_url or f"{self.logto_endpoint.rstrip('/')}/api"
 
     @property

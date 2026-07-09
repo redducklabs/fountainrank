@@ -191,8 +191,10 @@ jobs:
           LOGTO_EMAIL_WEBHOOK_TOKEN: ${{ secrets.LOGTO_EMAIL_WEBHOOK_TOKEN }}
           LOGTO_APP_SECRET: ${{ secrets.LOGTO_APP_SECRET }}
           LOGTO_COOKIE_SECRET: ${{ secrets.LOGTO_COOKIE_SECRET }}
-          LOGTO_MANAGEMENT_APP_ID: ${{ secrets.LOGTO_MANAGEMENT_APP_ID }}
-          LOGTO_MANAGEMENT_APP_SECRET: ${{ secrets.LOGTO_MANAGEMENT_APP_SECRET }}
+          # Account deletion reuses the already-provisioned Logto M2M app. Per repo convention
+          # the app id is a non-sensitive variable; only the secret is a secret.
+          LOGTO_MANAGEMENT_APP_ID: ${{ vars.LOGTO_M2M_APP_ID }}
+          LOGTO_MANAGEMENT_APP_SECRET: ${{ secrets.LOGTO_M2M_APP_SECRET }}
           GEOCODING_API_KEY: ${{ secrets.GEOCODING_API_KEY }}
           SPACES_ENDPOINT: ${{ secrets.SPACES_ENDPOINT }}
           SPACES_REGION: ${{ secrets.SPACES_REGION }}
@@ -204,7 +206,7 @@ jobs:
           trap 'rm -rf "$tmp"' EXIT
           printf '%s\n' "$DATABASE_CA_CERT" > "$tmp/database-ca.crt"
           if [ -z "$LOGTO_MANAGEMENT_APP_ID" ] || [ -z "$LOGTO_MANAGEMENT_APP_SECRET" ]; then
-            echo "LOGTO_MANAGEMENT_APP_ID and LOGTO_MANAGEMENT_APP_SECRET are required for account deletion" >&2
+            echo "vars.LOGTO_M2M_APP_ID and secrets.LOGTO_M2M_APP_SECRET are required for account deletion (DELETE /api/v1/me)" >&2
             exit 1
           fi
           # Spaces (photos) keys are optional until the owner provisions a

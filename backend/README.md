@@ -100,10 +100,12 @@ Account deletion also requires Logto Management API M2M credentials so
 `DELETE /api/v1/me` can delete the authoritative Logto identity. Configure these
 env vars in production:
 
-- `LOGTO_MANAGEMENT_APP_ID`
-- `LOGTO_MANAGEMENT_APP_SECRET`
+- `LOGTO_MANAGEMENT_APP_ID` (CI sources this from `vars.LOGTO_M2M_APP_ID`)
+- `LOGTO_MANAGEMENT_APP_SECRET` (CI sources this from `secrets.LOGTO_M2M_APP_SECRET`)
 - `LOGTO_MANAGEMENT_RESOURCE` (optional OAuth resource indicator; defaults to
-  `{LOGTO_ENDPOINT}/api`)
+  `https://default.logto.app/api` — the literal indicator every **self-hosted** Logto
+  uses, regardless of where it is served from. Set this only on Logto **Cloud**, where
+  the indicator is `https://<tenant-id>.logto.app/api`.)
 - `LOGTO_MANAGEMENT_API_BASE_URL` (optional HTTP API base URL; defaults to
   `{LOGTO_ENDPOINT}/api`)
 
