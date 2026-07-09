@@ -145,7 +145,7 @@ export function buildFountainStructuredData({
           aggregateRating: {
             "@type": "AggregateRating",
             ratingValue: Number(detail.average_rating.toFixed(1)),
-            reviewCount: detail.rating_count,
+            ratingCount: detail.rating_count,
             bestRating: 5,
             worstRating: 1,
           },

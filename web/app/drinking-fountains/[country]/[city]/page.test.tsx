@@ -81,6 +81,9 @@ it("renders the city name, count, and ranked fountain links", async () => {
   const fountainLink = await screen.findByRole("link", { name: /Drinking fountain/ });
   expect(fountainLink.getAttribute("href")).toBe("/fountains/f1");
   expect(screen.getByText(/8 ratings/)).toBeTruthy();
+  const script = document.querySelector<HTMLScriptElement>('script[type="application/ld+json"]');
+  expect(script).not.toBeNull();
+  expect(JSON.parse(script?.textContent ?? "{}")["@type"]).toBe("BreadcrumbList");
 });
 
 it("404s when the city does not resolve", async () => {
@@ -105,6 +108,17 @@ it("renders an error (not a 404) when the backend is unreachable", async () => {
   render(await CityPage({ params: params("us", "san-diego") }));
   expect(await screen.findByText(/Couldn.t load this city/)).toBeTruthy();
   expect(notFound).not.toHaveBeenCalled();
+});
+
+it("does not render JSON-LD when the city is noindex", async () => {
+  getCityFountainsServer.mockResolvedValue({
+    data: { ...CITY, indexable: false },
+    status: 200,
+  });
+
+  render(await CityPage({ params: params("us", "san-diego") }));
+  await screen.findByRole("heading", { level: 1 });
+  expect(document.querySelector('script[type="application/ld+json"]')).toBeNull();
 });
 
 it("generateMetadata: title + canonical + indexable for a ready city", async () => {

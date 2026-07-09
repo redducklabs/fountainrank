@@ -267,6 +267,43 @@ describe("FountainPage route (standalone)", () => {
     ).toHaveAttribute("href", "/drinking-fountains/us/manhattan");
   });
 
+  it("renders JSON-LD for indexable public detail pages", async () => {
+    getDetail.mockResolvedValue({ data: detail, status: 200 });
+    getNotes.mockResolvedValue({ data: [], status: 200 });
+    getPlaceFn.mockResolvedValue(placeIn({ name: "Manhattan", country_code: "us" }, true));
+    render(await FountainPage({ params }));
+    await screen.findByTestId("detail");
+    const script = document.querySelector<HTMLScriptElement>('script[type="application/ld+json"]');
+    expect(script).not.toBeNull();
+    const data = JSON.parse(script?.textContent ?? "[]");
+    expect(data).toHaveLength(2);
+    expect(data[0]["@type"]).toBe("Place");
+    expect(data[1]["@type"]).toBe("BreadcrumbList");
+  });
+
+  it("does not render JSON-LD for noindex detail pages", async () => {
+    getDetail.mockResolvedValue({ data: detail, status: 200 });
+    getNotes.mockResolvedValue({ data: [], status: 200 });
+    getPlaceFn.mockResolvedValue(placeIn({ name: "Manhattan", country_code: "us" }, false));
+    render(await FountainPage({ params }));
+    await screen.findByTestId("detail");
+    expect(document.querySelector('script[type="application/ld+json"]')).toBeNull();
+  });
+
+  it("does not render JSON-LD for admin detail pages", async () => {
+    getViewerFn.mockResolvedValue({
+      state: "authed",
+      displayName: "Mod",
+      avatarUrl: null,
+      isAdmin: true,
+    });
+    getAdminDetail.mockResolvedValue({ data: detail, status: 200 });
+    getPlaceFn.mockResolvedValue(placeIn({ name: "Manhattan", country_code: "us" }, true));
+    render(await FountainPage({ params }));
+    await screen.findByTestId("detail");
+    expect(document.querySelector('script[type="application/ld+json"]')).toBeNull();
+  });
+
   it("builds conservative JSON-LD for indexable public detail pages", () => {
     const place = placeIn({ name: "Manhattan", country_code: "us" }, true).data;
     const data = buildFountainStructuredData({ id: "f1", place, detail });
@@ -280,7 +317,7 @@ describe("FountainPage route (standalone)", () => {
     expect(data.aggregateRating).toEqual({
       "@type": "AggregateRating",
       ratingValue: 4.5,
-      reviewCount: 8,
+      ratingCount: 8,
       bestRating: 5,
       worstRating: 1,
     });
