@@ -18,30 +18,41 @@ type RateRequest = components["schemas"]["RateRequest"];
 
 type Message = { tone: "ok" | "err"; text: string } | null;
 
-export function RatingContributionForm({
-  fountainId,
-  dimensions,
-  pending,
-  onSubmit,
-}: {
-  fountainId: string;
-  dimensions: Dimension[];
-  pending: boolean;
-  onSubmit: (body: RateRequest) => Promise<{ ok: true } | { ok: false; error: ContributionError }>;
-}) {
-  // Track only the user's explicit taps; the effective stars fall back to the caller's
-  // saved rating (`your_rating`). Deriving this each render instead of syncing via an
-  // effect means a previously-rated fountain pre-fills correctly even when `your_rating`
-  // loads after mount or changes on sign-in, and the user's edits always win (#65).
-  const [edits, setEdits] = useState<Record<number, number>>({});
-  const [message, setMessage] = useState<Message>(null);
-  const hasExistingRating = dimensions.some((dimension) => dimension.your_rating != null);
-  const stars: Record<number, number | undefined> = Object.fromEntries(
+// Effective stars = the user's explicit tap for a dimension, else their saved `your_rating`, else
+// undefined. Derived (not synced via an effect) so a previously-rated fountain pre-fills even when
+// `your_rating` loads after mount, and the user's edits always win (#65). Exported so the screen's
+// add-photo flush (#1) can build the same payload the form would.
+export function effectiveStars(
+  dimensions: Dimension[],
+  edits: Record<number, number>,
+): Record<number, number | undefined> {
+  return Object.fromEntries(
     dimensions.map((dimension) => [
       dimension.rating_type_id,
       edits[dimension.rating_type_id] ?? dimension.your_rating ?? undefined,
     ]),
   );
+}
+
+export function RatingContributionForm({
+  fountainId,
+  dimensions,
+  pending,
+  onSubmit,
+  edits,
+  onStarPress,
+}: {
+  fountainId: string;
+  dimensions: Dimension[];
+  pending: boolean;
+  onSubmit: (body: RateRequest) => Promise<{ ok: true } | { ok: false; error: ContributionError }>;
+  // The draft lives in the screen (lifted from local state) so "Add photo" can flush it (#1).
+  edits: Record<number, number>;
+  onStarPress: (ratingTypeId: number, value: number) => void;
+}) {
+  const [message, setMessage] = useState<Message>(null);
+  const hasExistingRating = dimensions.some((dimension) => dimension.your_rating != null);
+  const stars = effectiveStars(dimensions, edits);
   // Coord-less build drives the points preview + the submit-disabled state; submit() rebuilds
   // with coords (fetched on the tap) so a location prompt never fires just from rendering.
   const previewPayload = buildRatingPayload(fountainId, stars);
@@ -86,12 +97,7 @@ export function RatingContributionForm({
                   accessibilityLabel={`${dimension.name} ${value} stars`}
                   accessibilityState={{ selected }}
                   disabled={pending}
-                  onPress={() =>
-                    setEdits((current) => ({
-                      ...current,
-                      [dimension.rating_type_id]: value,
-                    }))
-                  }
+                  onPress={() => onStarPress(dimension.rating_type_id, value)}
                   style={styles.starButton}
                 >
                   <Text style={[styles.star, selected ? styles.starSelected : null]}>★</Text>
