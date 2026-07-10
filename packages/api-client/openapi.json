@@ -4083,7 +4083,7 @@
           "users"
         ],
         "summary": "Delete Me",
-        "description": "Delete the caller's FountainRank account and personal content.\n\nRatings, attribute observations, condition reports, and user-added fountain rows are retained\nas anonymized fountain signal so public ratings/details do not change. Notes and photos are\nremoved because they are authored profile content.",
+        "description": "Delete the caller's FountainRank account and personal content.\n\nRatings, attribute observations, condition reports, and user-added fountain rows are retained\nbut detached from the account, so public ratings/details do not change. Notes and photos are\nremoved because they are authored profile content.\n\nThe local deletion commits first and is irreversible. The Logto identity and the stored photo\nobjects are then cleaned up on a best-effort basis, so a cleanup failure never fails the\nrequest; whatever could not be cleaned up is retried by the account-deletion cleanup job.",
         "operationId": "delete_me_api_v1_me_delete",
         "parameters": [
           {

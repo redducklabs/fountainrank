@@ -721,8 +721,12 @@ export interface paths {
          * @description Delete the caller's FountainRank account and personal content.
          *
          *     Ratings, attribute observations, condition reports, and user-added fountain rows are retained
-         *     as anonymized fountain signal so public ratings/details do not change. Notes and photos are
+         *     but detached from the account, so public ratings/details do not change. Notes and photos are
          *     removed because they are authored profile content.
+         *
+         *     The local deletion commits first and is irreversible. The Logto identity and the stored photo
+         *     objects are then cleaned up on a best-effort basis, so a cleanup failure never fails the
+         *     request; whatever could not be cleaned up is retried by the account-deletion cleanup job.
          */
         delete: operations["delete_me_api_v1_me_delete"];
         options?: never;

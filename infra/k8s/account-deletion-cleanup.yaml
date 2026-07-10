@@ -34,6 +34,17 @@ spec:
             version: ${IMAGE_TAG}
         spec:
           restartPolicy: OnFailure
+          # Hardened pod security. The image already runs as the non-root `app` user
+          # (uid/gid 1000, backend/Dockerfile), but the scanners read the manifest, not the
+          # image — state it explicitly. The cleanup process only talks to Postgres, Logto,
+          # and Spaces; it needs no root, no extra capabilities, and no writable root fs.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
           imagePullSecrets:
             - name: regcred
           volumes:
@@ -43,6 +54,9 @@ spec:
                 items:
                   - key: database-ca.crt
                     path: database-ca.crt
+            # Writable scratch under readOnlyRootFilesystem (defensive; boto3/httpx need none).
+            - name: tmp
+              emptyDir: {}
           containers:
             - name: account-deletion-cleanup
               image: ${REGISTRY}/fountainrank-backend:${IMAGE_TAG}
@@ -111,10 +125,18 @@ spec:
                       name: fountainrank-secrets
                       key: spaces-secret-key
                       optional: true
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
               volumeMounts:
                 - name: db-ca
                   mountPath: /var/run/secrets/fountainrank
                   readOnly: true
+                - name: tmp
+                  mountPath: /tmp
               resources:
                 requests:
                   memory: "128Mi"
