@@ -182,7 +182,7 @@ CHECK on `status` enum (short name `status`). Index `(fountain_id, created_at de
   - **Symmetric corroboration (Codex review-2):** EVERY authoritative state — `ok`, `degraded`, AND `not_working` — requires **≥`condition_corroboration_min` distinct users** (default 2) supporting that state among the most-recent in-window reports. The authoritative `current_status` is the corroborated state with the most recent corroborating activity, breaking ties by severity. This applies to recovery too: a corroborated outage is cleared to `ok` **only when ≥2 distinct users** report `working` more recently — a single `working` report can NOT flip a corroborated outage back to working (it only updates `last_verified_at`). One actor cannot flip the public pin in either direction.
   - A single **uncorroborated** outage report (when no corroborated outage is already in effect) yields `current_status = reported_issue` — a softer "issue reported (unconfirmed)" advisory that does **not** flip the pin. A single uncorroborated `working` report against a corroborated outage leaves the authoritative outage in place.
   - `NULL` when there is no corroborated signal in-window → the pin falls back to baseline `is_working` (a `reported_issue` advisory may still be surfaced alongside the baseline).
-- The public map pin's working/not-working presentation changes from baseline `is_working` only when `current_status` is **authoritative** (`ok`/`not_working`/`degraded`); `reported_issue` is surfaced as an advisory badge, not a status flip. `is_proximate` is client-asserted and is **not** used as trust input (documented limitation; server-side proximity verification is future work).
+- The public map pin's working/not-working presentation changes from baseline `is_working` only when `current_status` is **authoritative** (`ok`/`not_working`/`degraded`); `reported_issue` is surfaced as an advisory badge, not a status flip. `is_proximate` is now **server-computed** from optional client coordinates (#3) and is **not** used as trust input in the current ranking (available for later trust weighting).
 - The bbox/nearby payload gains `current_status` + `last_verified_at` (additive, optional fields — existing clients ignore them). Exact rule lives in `conditions.py`, unit-tested (including the one-bad-actor case), tunable.
 
 (This is Slice 2 work; specified here so the model is coherent. Recency/trust weighting beyond distinct-user corroboration remains a documented future enhancement.)
@@ -319,7 +319,7 @@ This section exists so the build never has to repaint. Source: `temp/gameificati
 - **Anti-farming safeguards (designed into the substrate):**
   - dedup_key unique index → no double-award on re-edit.
   - per-day dedup + per-(user,fountain,day) cap on repeatable actions (verify/condition).
-  - `is_proximate` recorded on condition reports for future server-side proximity verification (documented as **client-asserted only** for now — not a security control yet).
+  - `is_proximate` recorded on condition reports — now **server-computed** from optional client coordinates (#3, see `docs/specs/2026-07-10-detail-ux-proximity-and-signout-design.md`); a best-effort quality signal, still not a security control (fabricated coordinates remain possible).
   - confirmation bonus (`is_confirmed`) rewards corroborated contributions over solo ones.
   - duplicate fountains: the existing 409-proximity guard prevents duplicate *fountains*; the add→confirm hook means a near-duplicate add routes to rating the existing one (no full add points for a dup).
   - leaderboards weight by events (accepted contributions), not raw row writes.
@@ -381,5 +381,5 @@ Resolved in Codex spec-review loop A (review-1):
 
 Remaining (accepted) risks:
 - Consensus/current-status weighting beyond distinct-user corroboration (recency/trust) is deferred; documented and tunable.
-- `is_proximate` is client-asserted, explicitly not a security control; server-side proximity verification is future work.
+- `is_proximate` is now **server-computed** from optional client coordinates (ratings + condition reports), per `docs/specs/2026-07-10-detail-ux-proximity-and-signout-design.md` (#3). It can no longer be self-asserted `true`; it remains untrustworthy against fabricated coordinates, so it is still a best-effort quality signal, not a security control. Ratings additionally reject a reported location beyond 50 mi.
 - `comments` (owner add-time note) and `fountain_notes` (multi-user) coexist intentionally per #41; mild redundancy accepted.
