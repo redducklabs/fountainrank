@@ -48,7 +48,21 @@ describe("nativeAuthConfig", () => {
         // POST /api/v1/me/sync; without them the Account name is a raw opaque id (#103).
         scopes: ["email", "profile"],
         resources: ["https://api.fountainrank.com"],
+        // Force re-auth so a surviving Logto session can't silently re-log-in the last user (#6).
+        prompt: ["login", "consent"],
       },
     });
+  });
+
+  it("forces re-authentication with prompt=login (#6)", () => {
+    const result = nativeAuthConfig({
+      ...CONFIG,
+      logtoAppId: "abc123",
+      logtoNativeAuthConfirmed: true,
+    });
+    expect(result.state).toBe("configured");
+    if (result.state === "configured") {
+      expect(result.logtoConfig.prompt).toEqual(["login", "consent"]);
+    }
   });
 });
