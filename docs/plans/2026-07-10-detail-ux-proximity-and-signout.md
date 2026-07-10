@@ -18,7 +18,7 @@
 - **Regenerate generated artifacts:** after any backend schema change, run `./run.ps1 generate` and **commit** `packages/api-client/openapi.json` + `packages/api-client/src/schema.d.ts`.
 - **A failed rating never blocks the (ungated) photo upload** (spec §4.1).
 - **No new animation dependency.** Mobile uses built-in `Animated`; web uses CSS. No Reanimated/Lottie/framer-motion/confetti. CI's `minimumReleaseAge` gate blocks deps < 24h anyway.
-- **Commit order (each commit leaves the tree green):** Phase A backend #3 → Phase B #3 clients → Phase C #1 → Phase D #2/#5 → Phase E #4 → Phase F #6. Conventional Commits; **no AI attribution; no time estimates.**
+- **Commit order (each commit leaves the tree green):** Phase A backend #3 → Phase B #3 clients → Phase C #1 → Phase D #2/#5 → Phase E #4 → Phase F #6. Conventional Commits; **no AI attribution; no time estimates.** The per-task commits are **intra-PR review checkpoints** — the PR is squash-merged (repo rule), so after merge the whole change is a single `<title> (#PR)` commit on `main`. Post-merge rollback is by reverting that squash commit or a follow-up fix, **not** by reverting one issue's commit; the per-issue separation buys reviewability of the branch diff, not independent rollback from `main`.
 - **CI is the source of truth.** Backend mirror: `./run.ps1 check -Backend` (ruff check + ruff format --check + alembic upgrade head + alembic check + pytest). JS: `pnpm --filter <pkg> typecheck|lint|test`. Mobile component render, full JS suites, expo-doctor, and React-Compiler lint are **CI-only** on this Windows/WSL host (`claude_help/local-dev.md`).
 - **#6 does not close on merge.** Two Logto-console changes (register post-logout redirect URI; Google connector Prompts = `select_account`) are a release gate documented in `docs/setup/06-logto.md` (spec §4.6.3).
 
@@ -307,11 +307,34 @@ git commit -m "feat(backend): RateRequest optional both-or-neither coordinates (
 
 - [ ] **Step 1: Write the failing tests**
 
-Add to `backend/tests/test_fountains.py`. Use a helper for the fountain's own coordinates (read them, or use the coordinates the fountain was created with).
+Add to `backend/tests/test_fountains.py`. Read the fountain's own coordinates back with the same
+centralized helpers the handler uses, so the test needs no knowledge of how the fixture placed it:
+
+```python
+from sqlalchemy import func, select
+from app.geo import latitude_of, longitude_of
+from app.models import Rating
+
+
+async def _fountain_coords(session, fountain_id) -> tuple[float, float]:
+    lat, lng = (
+        await session.execute(
+            select(latitude_of(Fountain.location), longitude_of(Fountain.location)).where(
+                Fountain.id == fountain_id
+            )
+        )
+    ).one()
+    return float(lat), float(lng)
+```
+
+Use `await _fountain_coords(session, existing_fountain.id)` wherever a test needs the fountain's own
+location. (If `existing_fountain`/`rating_type` are not the exact fixture names in this file, use the
+nearest existing rating-test fixtures — grep `test_fountains.py` for an existing `submit_ratings` test
+and mirror its setup.)
 
 ```python
 async def test_rating_within_radius_sets_proximate(client, session, existing_fountain, rating_type):
-    lat, lng = existing_fountain_coords  # the coords the fountain was created at
+    lat, lng = await _fountain_coords(session, existing_fountain.id)
     resp = await client.post(
         f"/api/v1/fountains/{existing_fountain.id}/ratings",
         json={"ratings": [{"rating_type_id": rating_type.id, "stars": 5}],
@@ -345,7 +368,7 @@ async def test_rating_without_coords_is_accepted_not_proximate(client, session, 
 
 
 async def test_rerate_without_coords_does_not_downgrade_proximate(client, session, existing_fountain, rating_type):
-    lat, lng = existing_fountain_coords
+    lat, lng = await _fountain_coords(session, existing_fountain.id)
     await client.post(f"/api/v1/fountains/{existing_fountain.id}/ratings",
                       json={"ratings": [{"rating_type_id": rating_type.id, "stars": 5}], "latitude": lat, "longitude": lng})
     # Re-rate with NO coords: stars change, but is_proximate stays true.
@@ -362,7 +385,27 @@ Run: `uv run pytest tests/test_fountains.py -k "proximate or outside_radius" -v`
 
 - [ ] **Step 3: Gate the handler**
 
-In `submit_ratings`, after the fountain is loaded + `_validate_rating_types`, before `_upsert_ratings`:
+First add the settings dependency and the geo import — **neither exists in this handler today**.
+`submit_ratings` currently takes only `fountain_id, payload, session, user`; add a fourth parameter:
+
+```python
+async def submit_ratings(
+    fountain_id: uuid.UUID,
+    payload: RateRequest,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(require_named_user),
+    settings: Settings = Depends(get_settings),
+) -> FountainDetail:
+```
+
+`Settings` and `get_settings` are already imported at `fountains.py:14`. Extend the geo import at
+`fountains.py:42` to include `within_radius`:
+
+```python
+from app.geo import latitude_of, longitude_of, point_geography, within_radius
+```
+
+Then, after the fountain is loaded + `_validate_rating_types`, before `_upsert_ratings`:
 
 ```python
     is_proximate = False
@@ -394,7 +437,7 @@ Then pass it through:
     )
 ```
 
-Import `within_radius` from `app.geo` and `settings` from config as the module already does (check the existing imports; `settings` is already used for `duplicate_threshold_m` etc.). Confirm `logger` exists in this module (it does — used elsewhere); if not, `logger = logging.getLogger("app")`.
+`logger` already exists in this module (used by `_validate_rating_types` etc.); if a search shows it does not, add `logger = logging.getLogger("app")` near the top.
 
 - [ ] **Step 4: Make the upsert monotonic**
 
@@ -427,12 +470,15 @@ async def _upsert_ratings(
             "updated_at": func.now(),
             # MONOTONIC: absence of a coordinate is UNKNOWN, not negative — never overwrite
             # a prior verified true with false (spec §4.5).
-            "is_proximate": Rating.is_proximate.op("OR")(stmt.excluded.is_proximate),
+            "is_proximate": or_(Rating.is_proximate, stmt.excluded.is_proximate),
         },
     ).returning(Rating.rating_type_id, Rating.id)
 ```
 
-Prefer `sqlalchemy.or_(Rating.is_proximate, stmt.excluded.is_proximate)` if it renders correctly in the `SET`; verify the generated SQL is `is_proximate = ratings.is_proximate OR excluded.is_proximate`. (If `or_` on the excluded pseudo-table misrenders, fall back to `sqlalchemy.func.bool_or` is NOT applicable here — use the explicit `Rating.is_proximate.op("OR")(stmt.excluded.is_proximate)` form above.)
+Import `or_` from `sqlalchemy`. This renders as `ratings.is_proximate OR excluded.is_proximate` in
+the Postgres dialect (SQLAlchemy qualifies the target column as `ratings.is_proximate` and the
+insert pseudo-table as `excluded.is_proximate`, so there is no ambiguity). The monotonic-re-rate test
+in Step 1 is the guard that this rendered correctly.
 
 - [ ] **Step 5: Run tests — expect pass**
 
@@ -470,7 +516,7 @@ async def test_condition_true_is_proximate_rejected(client, existing_fountain):
 
 
 async def test_condition_derives_proximate_from_coords(client, session, existing_fountain):
-    lat, lng = existing_fountain_coords
+    lat, lng = await _fountain_coords(session, existing_fountain.id)  # helper defined in Task A4
     resp = await client.post(
         f"/api/v1/fountains/{existing_fountain.id}/conditions",
         json={"status": "working", "latitude": lat, "longitude": lng},
@@ -496,30 +542,37 @@ async def test_condition_no_coords_is_not_proximate(client, session, existing_fo
 
 Replace `ConditionReportRequest` in `backend/app/schemas.py`:
 
+The `is_proximate: true` → `422 {"detail": "is_proximate_is_server_computed"}` contract requires an
+exact string `detail`. A Pydantic validator `ValueError` produces a **list-shaped** `detail`, which
+would fail the Step 1 test — so the `true` check goes in the **handler** (Step 4) as an
+`HTTPException`, and the validator holds only the both-or-neither coords rule:
+
 ```python
 class ConditionReportRequest(BaseModel):
     status: ConditionStatus
     # DEPRECATED (spec §4.5): proximity is now server-computed. Kept for backward compatibility —
     # false/null accepted (both first-party clients historically send false); true is rejected
-    # because a client may not self-assert proximity it never had.
+    # in the handler (not here) so the 422 detail is the exact string the test asserts.
     is_proximate: bool | None = Field(default=None, deprecated=True)
     latitude: float | None = Field(default=None, ge=-90.0, le=90.0)
     longitude: float | None = Field(default=None, ge=-180.0, le=180.0)
 
     @model_validator(mode="after")
-    def _validate(self) -> "ConditionReportRequest":
-        if self.is_proximate is True:
-            raise ValueError("is_proximate_is_server_computed")
+    def _coords_both_or_neither(self) -> "ConditionReportRequest":
         if (self.latitude is None) != (self.longitude is None):
             raise ValueError("latitude and longitude must be supplied together")
         return self
 ```
 
-> Note: a `ValueError` in a validator surfaces as a 422 whose `detail` is a list of errors, not a bare string. To return `{"detail": "is_proximate_is_server_computed"}` exactly, do the `is_proximate is True` check **in the handler** and raise `HTTPException(422, detail="is_proximate_is_server_computed")` there, keeping only the both-or-neither rule in the validator. Implement it in the handler (Step 4) and keep the validator to coords-only; adjust the schema above to drop the `is_proximate is True` branch from `_validate`.
+Ensure `model_validator` is imported from `pydantic`.
 
 - [ ] **Step 4: Update the handler**
 
-In `submit_condition`, after loading the fountain, before building the `ConditionReport`:
+First add the settings dependency to `submit_condition` (it has none today) — append
+`settings: Settings = Depends(get_settings)` to its parameter list, exactly as A4 did for
+`submit_ratings`. `within_radius` is already added to the geo import by A4.
+
+Then, in `submit_condition`, after loading the fountain, before building the `ConditionReport`:
 
 ```python
     if payload.is_proximate is True:
@@ -571,21 +624,41 @@ git commit -m "feat(backend): server-derive condition is_proximate; reject clien
 **Interfaces:**
 - Produces: a `RequestValidationError` handler that logs `[{loc, type}]` (field + error type) with **no `input` / `ctx`**, and returns the **same JSON body FastAPI produces by default** (status 422), so no response shape changes.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the failing tests**
+
+The privacy assertion alone is weak — FastAPI's default handler logs no body, so `"999" not in
+caplog.text` passes *before* the handler exists. So also assert the sanitized log **is** emitted
+(proving the handler ran) and that a valid 422's response body keeps FastAPI's default list shape
+(proving the handler did not change the API contract):
 
 ```python
-async def test_validation_error_does_not_log_submitted_value(client, existing_fountain, caplog):
-    with caplog.at_level("INFO"):
+async def test_validation_error_logs_sanitized_fields_only(client, existing_fountain, caplog):
+    with caplog.at_level("INFO", logger="app"):
         resp = await client.post(
             f"/api/v1/fountains/{existing_fountain.id}/ratings",
             json={"ratings": [{"rating_type_id": 1, "stars": 5}], "latitude": 999.0, "longitude": 1.0},
         )
     assert resp.status_code == 422
-    # The out-of-range coordinate must not appear anywhere in the logs.
+    # The out-of-range coordinate must never reach the log stream (spec §7).
     assert "999" not in caplog.text
+    # The sanitized record WAS emitted, and carries loc/type but not the raw input.
+    rec = next(r for r in caplog.records if r.message == "request validation failed")
+    assert rec.errors  # list of {loc, type}
+    assert all("input" not in e and "ctx" not in e for e in rec.errors)
+
+
+async def test_validation_error_response_body_unchanged(client, existing_fountain):
+    # The 422 response body keeps FastAPI's default list-shaped `detail` — no API-wide change.
+    resp = await client.post(
+        f"/api/v1/fountains/{existing_fountain.id}/ratings",
+        json={"ratings": []},  # min_length violation -> default validation error
+    )
+    assert resp.status_code == 422
+    assert isinstance(resp.json()["detail"], list)
+    assert resp.json()["detail"][0]["type"]  # standard Pydantic error entry
 ```
 
-- [ ] **Step 2: Run it — expect failure** (default FastAPI logs may include the value, or the assertion baseline is set; if the default handler logs nothing, this test still guards against a future body-logging regression — keep it).
+- [ ] **Step 2: Run them — expect failure** (`request validation failed` record does not yet exist).
 
 - [ ] **Step 3: Add the handler**
 
@@ -803,7 +876,16 @@ git commit -m "feat(web): attach rating/condition coordinates; map 403 to too_fa
 
 - [ ] **Step 1: Extract the adapter (no behavior change first)**
 
-Create `mobile/lib/location-request.ts` exporting `requestCurrentCoords`, moving `requestPermission` + `getCurrentPosition` out of `useForegroundLocation.ts`. Have the hook import `requestCurrentCoords` (or the two sub-adapters) so `lib/location.ts` stays free of an `expo-location` import. Run `pnpm --filter mobile typecheck` — expect PASS with no behavior change.
+Create `mobile/lib/location-request.ts` exporting `requestCurrentCoords`, moving **only** the expo
+adapters (`requestPermission` wrapping `Location.requestForegroundPermissionsAsync()` +
+`getCurrentPosition` wrapping `Location.getCurrentPositionAsync`/`getLastKnownPositionAsync`) out of
+`useForegroundLocation.ts`. **Leave `resolveCurrentPosition` / `fetchForegroundPosition` /
+`foregroundLocationReducer` in `mobile/lib/location.ts` untouched** — that module has no
+`expo-location` import today and its existing pure tests (`mobile/lib/location.test.ts`) must keep
+passing unchanged. `useForegroundLocation` is the only current owner of those adapters; have it import
+`requestCurrentCoords` (which internally composes the extracted adapters with `resolveCurrentPosition`
+from `lib/location.ts`). Run `pnpm --filter mobile typecheck test -- location` — expect PASS with no
+behavior change.
 
 - [ ] **Step 2: Write the failing payload + error tests**
 
@@ -891,32 +973,97 @@ git add web/components/fountain/FountainDetail.tsx web/components/fountain/Ratin
 git commit -m "feat(web): add photo submits the unsaved rating draft (#1)"
 ```
 
-## Task C2: Mobile — lift the draft, flush on photo upload
+## Task C2: Mobile — extract a testable flush helper, then wire the screen
+
+The core §4.1 rule (a failed rating never blocks the ungated photo upload) is orchestration, not
+rendering — so it is extracted into a pure helper with real unit coverage, and only the thin screen
+wiring is left to typecheck/lint + emulator. This keeps the load-bearing behavior in CI, not in
+manual QA.
 
 **Files:**
-- Modify: `mobile/app/fountains/[id].tsx` (own the draft `edits` state), `mobile/components/fountain/RatingContributionForm.tsx` (controlled), `mobile/components/fountain/PhotoUploadButton.tsx` (flush)
-- Test: pure logic already covered by B1; screen wiring is emulator-verified.
+- Create: `mobile/lib/contributions/add-photo-flow.ts` + `add-photo-flow.test.ts`
+- Modify: `mobile/app/fountains/[id].tsx` (own the draft `edits`; call the helper), `mobile/components/fountain/RatingContributionForm.tsx` (controlled), `mobile/components/fountain/PhotoUploadButton.tsx` (invoke the flow)
 
 **Interfaces:**
 - Consumes: `isRatingDraftDirty` (B1), `buildRatingPayload` + `requestCurrentCoords` (B3).
 - Produces: `RatingContributionForm` becomes controlled — props `stars: Record<number, number>` and `onStarPress(ratingTypeId, value)`; the draft `edits` lives in `FountainDetailScreen`.
+- Produces: `flushRatingThenUpload({ isDirty, submitRating, uploadPhoto })` — awaits `submitRating` only when `isDirty`, **always** awaits `uploadPhoto`, and returns `{ ratingOutcome: "skipped" | "ok" | "failed", uploaded: boolean }`.
 
-- [ ] **Step 1: Make the form controlled**
+- [ ] **Step 1: Write the failing helper tests**
 
-Lift `edits`/`setEdits` from `RatingContributionForm` to `FountainDetailScreen`. Pass `stars` + `onStarPress` down. The form's `submit()` still calls the rating mutation; the screen owns the draft so the photo flow can read it.
+`mobile/lib/contributions/add-photo-flow.test.ts`:
 
-- [ ] **Step 2: Flush on Add photo**
+```ts
+import { flushRatingThenUpload } from "./add-photo-flow";
 
-In the photo pick handler, before uploading: if `isRatingDraftDirty(dimensions, edits)`, build the rating payload with `requestCurrentCoords()` and call `ratingMutation.mutateAsync`, catching failure. **Always** proceed to the photo upload regardless of the rating outcome. On rating success clear `edits` + celebrate; on `too_far`/other failure keep `edits` and surface the notice, but upload anyway.
+test("clean draft: rating skipped, photo uploaded", async () => {
+  const submitRating = vi.fn();
+  const uploadPhoto = vi.fn().mockResolvedValue(undefined);
+  const r = await flushRatingThenUpload({ isDirty: false, submitRating, uploadPhoto });
+  expect(submitRating).not.toHaveBeenCalled();
+  expect(uploadPhoto).toHaveBeenCalledOnce();
+  expect(r).toEqual({ ratingOutcome: "skipped", uploaded: true });
+});
 
-- [ ] **Step 3: Typecheck + lint (CI verifies render)**
+test("dirty draft: rating submitted BEFORE upload; both happen", async () => {
+  const order: string[] = [];
+  const submitRating = vi.fn(async () => { order.push("rate"); return { ok: true as const }; });
+  const uploadPhoto = vi.fn(async () => { order.push("upload"); });
+  const r = await flushRatingThenUpload({ isDirty: true, submitRating, uploadPhoto });
+  expect(order).toEqual(["rate", "upload"]);
+  expect(r).toEqual({ ratingOutcome: "ok", uploaded: true });
+});
 
-Run: `pnpm --filter mobile typecheck lint`.
+test("rating fails (e.g. too_far): photo STILL uploads", async () => {
+  const submitRating = vi.fn(async () => ({ ok: false as const, error: "too_far" as const }));
+  const uploadPhoto = vi.fn().mockResolvedValue(undefined);
+  const r = await flushRatingThenUpload({ isDirty: true, submitRating, uploadPhoto });
+  expect(uploadPhoto).toHaveBeenCalledOnce();
+  expect(r).toEqual({ ratingOutcome: "failed", uploaded: true });
+});
+```
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 2: Run — expect failure.** `pnpm --filter mobile test -- add-photo-flow`
+
+- [ ] **Step 3: Implement the helper**
+
+```ts
+// mobile/lib/contributions/add-photo-flow.ts
+type RatingResult = { ok: true } | { ok: false; error: string };
+
+export async function flushRatingThenUpload({
+  isDirty,
+  submitRating,
+  uploadPhoto,
+}: {
+  isDirty: boolean;
+  submitRating: () => Promise<RatingResult>;
+  uploadPhoto: () => Promise<void>;
+}): Promise<{ ratingOutcome: "skipped" | "ok" | "failed"; uploaded: boolean }> {
+  let ratingOutcome: "skipped" | "ok" | "failed" = "skipped";
+  if (isDirty) {
+    const res = await submitRating();
+    ratingOutcome = res.ok ? "ok" : "failed";
+  }
+  await uploadPhoto();
+  return { ratingOutcome, uploaded: true };
+}
+```
+
+- [ ] **Step 4: Run — expect pass.**
+
+- [ ] **Step 5: Make the form controlled + wire the screen**
+
+Lift `edits`/`setEdits` from `RatingContributionForm` to `FountainDetailScreen`; pass `stars` + `onStarPress`. In the photo pick handler, call `flushRatingThenUpload` with: `isDirty = isRatingDraftDirty(dimensions, edits)`; `submitRating` = a thunk that builds the payload via `buildRatingPayload(..., await requestCurrentCoords())` and calls `ratingMutation.mutateAsync` mapped to `{ok}`/`{ok:false,error}`; `uploadPhoto` = the existing upload thunk. On `ratingOutcome === "ok"` clear `edits` + celebrate; on `"failed"` keep `edits` + show the notice (special-case `too_far`).
+
+- [ ] **Step 6: Typecheck + lint (CI verifies render)**
+
+Run: `pnpm --filter mobile test -- add-photo-flow` then `pnpm --filter mobile typecheck lint`.
+
+- [ ] **Step 7: Commit**
 
 ```bash
-git add "mobile/app/fountains/[id].tsx" mobile/components/fountain/RatingContributionForm.tsx mobile/components/fountain/PhotoUploadButton.tsx
+git add mobile/lib/contributions/add-photo-flow.ts mobile/lib/contributions/add-photo-flow.test.ts "mobile/app/fountains/[id].tsx" mobile/components/fountain/RatingContributionForm.tsx mobile/components/fountain/PhotoUploadButton.tsx
 git commit -m "feat(mobile): add photo submits the unsaved rating draft (#1)"
 ```
 
@@ -969,7 +1116,22 @@ git commit -m "feat(mobile): celebration uses the pin logo, pop-and-settle (#2, 
 
 - [ ] **Step 3: Implement**
 
-Update `WaterCelebration`, keyframes, the six dispatchers (`RatingForm`, `AttributeForm`, `ConditionForm`, `NoteForm`, `PhotoUpload`, `useAddFountainMode`) to `new CustomEvent("fountainrank:contribution", { detail: { points } })`, and the three listeners (`ContributionStatusOverlay`, `MapBrowser`, `HeaderPoints`) to read `(e as CustomEvent<{points?:number}>).detail?.points`. Where a dispatcher knows the awarded points (e.g. `ActionResult.pointsAwarded`), pass it; otherwise omit.
+Update `WaterCelebration` + keyframes. Convert **all six** dispatchers to
+`new CustomEvent("fountainrank:contribution", { detail: { points } })`:
+
+| Dispatcher | Points source |
+|---|---|
+| `RatingForm.tsx:41` | `chosen.length * CONTRIBUTION_POINTS.rate` (or `res.pointsAwarded` if present) |
+| `AttributeForm.tsx:55` | `observations.length * CONTRIBUTION_POINTS.observe_attribute` |
+| `ConditionForm.tsx:54` | `res.pointsAwarded` (server-authoritative `condition_points_awarded`) |
+| `NoteForm.tsx:26` | `CONTRIBUTION_POINTS.add_note` |
+| `PhotoUpload.tsx:25` | omit (no per-upload points preview exists; first-photo award is server-only) |
+| `useAddFountainMode.tsx:182` | the awarded add-fountain points already in scope |
+
+Update the three listeners (`ContributionStatusOverlay:12`, `MapBrowser:462`, `HeaderPoints:17`) to
+read `(e as CustomEvent<{ points?: number }>).detail?.points` **defensively** — a bare `Event` (from
+a stale dispatcher or a test) has no `detail`, so `?.points` must yield `undefined` and render no
+number rather than throw. Do not assume `detail` is present.
 
 - [ ] **Step 4: Run web tests + typecheck/lint — expect pass**
 
@@ -992,7 +1154,16 @@ git commit -m "feat(web): celebration parity — pin logo + points number (#2, #
 
 - [ ] **Step 1: Wrap the panels + set scroll props**
 
-Wrap the `panels` container in `KeyboardAvoidingView` carrying `style={styles.panels}` (it takes over the `flex:1`; the flex chain depth is unchanged), `behavior={Platform.OS === "ios" ? "padding" : "height"}`, and `keyboardVerticalOffset={<measured header + tab-bar height>}`. Add `keyboardShouldPersistTaps="handled"` and `keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}` to each per-tab `ScrollView`. Do not add a fourth ScrollView.
+Wrap the `panels` container in `KeyboardAvoidingView` carrying `style={styles.panels}` (it takes over the `flex:1`; the flex chain depth is unchanged) and `behavior={Platform.OS === "ios" ? "padding" : "height"}`.
+
+Obtain `keyboardVerticalOffset` from the navigation header height rather than a hardcoded guess:
+`const headerHeight = useHeaderHeight();` (from `@react-navigation/elements`, already transitively
+available via expo-router) and pass `keyboardVerticalOffset={headerHeight}`. This screen renders under
+a nav header, so a zero offset leaves the input occluded by exactly that height. If `useHeaderHeight`
+is not resolvable in this expo-router setup, fall back to measuring the tab bar's `onLayout` height
+into state and use that; do not leave the offset at 0.
+
+Add `keyboardShouldPersistTaps="handled"` and `keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}` to each per-tab `ScrollView`. Do not add a fourth ScrollView.
 
 - [ ] **Step 2: Typecheck + lint**
 
@@ -1048,7 +1219,8 @@ git commit -m "fix(mobile): force re-auth on sign-in with prompt=login (#6)"
 - Modify: `mobile/providers/auth-provider.tsx`
 
 **Interfaces:**
-- Produces: `endSessionUrl({ endSessionEndpoint, clientId, postLogoutRedirectUri }): string` — `${endSessionEndpoint}?client_id=...&post_logout_redirect_uri=...`, URI-encoded, **no `id_token_hint`** (not in Logto's contract — `@logto/js/lib/core/sign-out.js`).
+- Produces: `endSessionUrl({ endSessionEndpoint, clientId, postLogoutRedirectUri }): string` — `${endSessionEndpoint}?client_id=...&post_logout_redirect_uri=...`, URI-encoded, **no `id_token_hint`** (not in Logto's contract — `@logto/js/lib/core/sign-out.js`). This is the only pure/unit-tested export of `logout.ts`.
+- Produces: `discoverEndSessionEndpoint(logtoEndpoint: string): Promise<string>` — fetches `{logtoEndpoint}/oidc/.well-known/openid-configuration`, returns `end_session_endpoint`, falls back to `{logtoEndpoint}/oidc/session/end` on any error. It does network I/O, so it lives in `auth-provider.tsx` (not in the pure `logout.ts`); it is exercised via the provider, not a pure unit test.
 - Produces: `auth-provider` `signOut` calls `logto.signOut()` then opens the end-session URL via `WebBrowser.openAuthSessionAsync`, logging `end_session_completed` / `end_session_failed` (WARNING) without swallowing the partial-failure state.
 
 - [ ] **Step 1: Write the failing test**
@@ -1078,7 +1250,33 @@ export function endSessionUrl({
 
 - [ ] **Step 4: Wire the provider**
 
-In `auth-provider.tsx` `signOut`: discover `end_session_endpoint` from `{endpoint}/oidc/.well-known/openid-configuration` (fallback `{endpoint}/oidc/session/end`), build the URL via `endSessionUrl`, call `logto.signOut()` (clears local tokens), then `await WebBrowser.openAuthSessionAsync(url, postLogoutRedirectUri)` inside try/catch. On success log `end_session_completed`; on failure log `end_session_failed` at WARNING (no tokens, no claims) and still report sign-out success to the UI (`prompt=login` is the safety net). The `post_logout_redirect_uri` MUST be the registered native callback (release gate F4).
+In `auth-provider.tsx` `signOut`, in this exact order so the local session is durably cleared even
+when provider logout fails:
+
+1. `log("info", "signout_started")`.
+2. `await logto.signOut()` — **awaited first**; this revokes the refresh token and clears secure
+   storage. Local sign-out must not depend on any subsequent network step. Log `tokens_cleared`.
+3. Best-effort provider logout, wrapped so **every** failure mode is caught — discovery fetch
+   failure, malformed discovery JSON, a missing `end_session_endpoint` (fall back to
+   `{endpoint}/oidc/session/end`), and `WebBrowser.openAuthSessionAsync` rejecting (which it may do
+   when the `post_logout_redirect_uri` is not yet registered — release gate F3):
+
+   ```ts
+   try {
+     const endpoint = await discoverEndSessionEndpoint(config.logtoEndpoint); // fetch well-known; fallback session/end
+     const url = endSessionUrl({ endSessionEndpoint: endpoint, clientId: config.logtoAppId, postLogoutRedirectUri });
+     await WebBrowser.openAuthSessionAsync(url, postLogoutRedirectUri);
+     log("info", "end_session_completed");
+   } catch (err) {
+     log("warn", "end_session_failed", { reason: (err as Error).name }); // no tokens, no claims
+   }
+   ```
+
+4. Report sign-out success to the UI regardless — the local session is gone and `prompt=login`
+   guarantees the next sign-in re-authenticates. The `WARNING` `end_session_failed` event is what
+   makes the "locally signed out; provider session may remain" state diagnosable (spec §7).
+
+The `post_logout_redirect_uri` MUST be the registered native callback (release gate F3).
 
 - [ ] **Step 5: Run tests + typecheck/lint — expect pass.**
 
