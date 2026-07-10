@@ -25,10 +25,10 @@ export type ContributionCoords = { latitude: number; longitude: number };
 
 // Only latitude/longitude reach the wire (the client-side Coords also carries `accuracy`, which the
 // API does not accept). Returns {} when no coords, so it spreads cleanly into a request body.
-function coordFields(coords?: ContributionCoords | null): ContributionCoords | Record<string, never> {
-  return coords == null
-    ? {}
-    : { latitude: coords.latitude, longitude: coords.longitude };
+function coordFields(
+  coords?: ContributionCoords | null,
+): ContributionCoords | Record<string, never> {
+  return coords == null ? {} : { latitude: coords.latitude, longitude: coords.longitude };
 }
 
 export function buildRatingPayload(

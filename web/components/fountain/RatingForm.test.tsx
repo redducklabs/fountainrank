@@ -9,7 +9,13 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
 import { RatingForm } from "./RatingForm";
 import { RatingDraftProvider } from "./RatingDraftContext";
 
-type Dim = { rating_type_id: number; name: string; average_rating: number | null; vote_count: number; your_rating?: number | null };
+type Dim = {
+  rating_type_id: number;
+  name: string;
+  average_rating: number | null;
+  vote_count: number;
+  your_rating?: number | null;
+};
 function renderForm(dimensions: Dim[]) {
   return render(
     <RatingDraftProvider dimensions={dimensions}>

@@ -29,7 +29,10 @@ export function PhotoUpload({ fountainId }: { fountainId: string }) {
       let ratingError: ContributeError | null = null;
       if (isRatingDraftDirty(dimensions, edits)) {
         const ratings = dimensions
-          .map((d) => ({ rating_type_id: d.rating_type_id, stars: edits[d.rating_type_id] ?? d.your_rating ?? 0 }))
+          .map((d) => ({
+            rating_type_id: d.rating_type_id,
+            stars: edits[d.rating_type_id] ?? d.your_rating ?? 0,
+          }))
           .filter((r) => r.stars > 0);
         const coords = await getCurrentPositionSafe();
         const rres = await submitRating(fountainId, ratings, coords ?? undefined);
