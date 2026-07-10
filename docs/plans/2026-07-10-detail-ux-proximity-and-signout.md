@@ -31,10 +31,10 @@
 - `backend/app/config.py` — add `rating_max_distance_m = 80_467.0`, `proximate_radius_m = 100.0`.
 - `backend/app/models.py` — add `Rating.is_proximate`.
 - `backend/migrations/versions/0023_ratings_is_proximate.py` — additive column, reversible.
-- `backend/app/schemas.py` — `RateRequest` + `ConditionReportRequest` gain optional `latitude`/`longitude`; both-or-neither validators; `ConditionReportRequest.is_proximate` deprecated + `true` rejected via validator.
+- `backend/app/schemas.py` — `RateRequest` + `ConditionReportRequest` gain optional `latitude`/`longitude`; both-or-neither validators; `ConditionReportRequest.is_proximate` deprecated (`true` rejected **in the handler** so the 422 `detail` is the exact string, not a Pydantic error list).
 - `backend/app/routers/fountains.py` — `submit_ratings` proximity gate + monotonic upsert; `submit_condition` server-derives `is_proximate`.
 - `backend/app/main.py` — add `RequestValidationError` handler (logging-only).
-- `backend/tests/test_fountains.py`, `backend/tests/test_contributions.py` — new tests.
+- `backend/tests/test_ratings_api.py` (rating proximity + validation-log privacy), `backend/tests/test_conditions_api.py` (condition is_proximate) — extend existing modules.
 
 **Generated**
 - `packages/api-client/openapi.json`, `packages/api-client/src/schema.d.ts` — regenerated + committed.
@@ -242,27 +242,28 @@ git commit -m "feat(backend): add ratings.is_proximate column + migration 0023 (
 
 **Files:**
 - Modify: `backend/app/schemas.py` (`RateRequest`)
-- Test: `backend/tests/test_fountains.py`
+- Test: `backend/tests/test_ratings_api.py`
 
 **Interfaces:**
 - Produces: `RateRequest.latitude: float | None`, `RateRequest.longitude: float | None`, rejected with 422 unless both present or both absent.
 
 - [ ] **Step 1: Write the failing test**
 
-Add to `backend/tests/test_fountains.py` (use existing auth/fountain fixtures — mirror a nearby rating test for the client + fountain setup):
+Add to the existing `backend/tests/test_ratings_api.py`, using its `_add_fountain(client)` helper and `rating_type_id` literal `1`:
 
 ```python
-async def test_rating_latitude_without_longitude_is_422(client, existing_fountain, rating_type):
+async def test_rating_latitude_without_longitude_is_422(client):
+    fid = await _add_fountain(client)
     resp = await client.post(
-        f"/api/v1/fountains/{existing_fountain.id}/ratings",
-        json={"ratings": [{"rating_type_id": rating_type.id, "stars": 5}], "latitude": 40.0},
+        f"/api/v1/fountains/{fid}/ratings",
+        json={"ratings": [{"rating_type_id": 1, "stars": 5}], "latitude": 40.0},
     )
     assert resp.status_code == 422
 ```
 
 - [ ] **Step 2: Run it — expect failure** (currently 200/other).
 
-Run: `uv run pytest tests/test_fountains.py::test_rating_latitude_without_longitude_is_422 -v`
+Run (in `backend/`): `uv run pytest tests/test_ratings_api.py::test_rating_latitude_without_longitude_is_422 -v`
 
 - [ ] **Step 3: Extend `RateRequest`**
 
@@ -286,12 +287,12 @@ Ensure `model_validator` is imported from `pydantic`.
 
 - [ ] **Step 4: Run tests — expect pass**
 
-Run: `uv run pytest tests/test_fountains.py::test_rating_latitude_without_longitude_is_422 -v`
+Run: `uv run pytest tests/test_ratings_api.py::test_rating_latitude_without_longitude_is_422 -v`
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add backend/app/schemas.py backend/tests/test_fountains.py
+git add backend/app/schemas.py backend/tests/test_ratings_api.py
 git commit -m "feat(backend): RateRequest optional both-or-neither coordinates (#3)"
 ```
 
@@ -299,7 +300,7 @@ git commit -m "feat(backend): RateRequest optional both-or-neither coordinates (
 
 **Files:**
 - Modify: `backend/app/routers/fountains.py` (`submit_ratings`, `_upsert_ratings`)
-- Test: `backend/tests/test_fountains.py`
+- Test: `backend/tests/test_ratings_api.py`
 
 **Interfaces:**
 - Consumes: `within_radius` (A1), `settings.rating_max_distance_m` (A1), `Rating.is_proximate` (A2), `RateRequest.latitude/longitude` (A3).
@@ -307,81 +308,73 @@ git commit -m "feat(backend): RateRequest optional both-or-neither coordinates (
 
 - [ ] **Step 1: Write the failing tests**
 
-Add to `backend/tests/test_fountains.py`. Read the fountain's own coordinates back with the same
-centralized helpers the handler uses, so the test needs no knowledge of how the fixture placed it:
+Add these to the **existing** `backend/tests/test_ratings_api.py` (there is no `test_fountains.py`).
+That module already has a `_add_fountain(client)` helper that creates a fountain at a **known fixed
+location `(37.7749, -122.4194)`** and returns its id, and uses `rating_type_id` literals `1`/`3`.
+Reuse that helper and those known coords — no coordinate read-back is needed. Query the row via the
+`session` fixture from `conftest.py`. Add `from sqlalchemy import func, select` and
+`from app.models import Rating` to the module imports.
 
 ```python
-from sqlalchemy import func, select
-from app.geo import latitude_of, longitude_of
-from app.models import Rating
+FOUNTAIN_LAT, FOUNTAIN_LNG = 37.7749, -122.4194  # the coords _add_fountain places the fountain at
 
 
-async def _fountain_coords(session, fountain_id) -> tuple[float, float]:
-    lat, lng = (
-        await session.execute(
-            select(latitude_of(Fountain.location), longitude_of(Fountain.location)).where(
-                Fountain.id == fountain_id
-            )
-        )
-    ).one()
-    return float(lat), float(lng)
-```
-
-Use `await _fountain_coords(session, existing_fountain.id)` wherever a test needs the fountain's own
-location. (If `existing_fountain`/`rating_type` are not the exact fixture names in this file, use the
-nearest existing rating-test fixtures — grep `test_fountains.py` for an existing `submit_ratings` test
-and mirror its setup.)
-
-```python
-async def test_rating_within_radius_sets_proximate(client, session, existing_fountain, rating_type):
-    lat, lng = await _fountain_coords(session, existing_fountain.id)
+async def test_rating_within_radius_sets_proximate(client, session):
+    fid = await _add_fountain(client)
     resp = await client.post(
-        f"/api/v1/fountains/{existing_fountain.id}/ratings",
-        json={"ratings": [{"rating_type_id": rating_type.id, "stars": 5}],
-              "latitude": lat, "longitude": lng},
+        f"/api/v1/fountains/{fid}/ratings",
+        json={"ratings": [{"rating_type_id": 1, "stars": 5}],
+              "latitude": FOUNTAIN_LAT, "longitude": FOUNTAIN_LNG},
     )
     assert resp.status_code == 200
-    row = (await session.execute(select(Rating).where(Rating.fountain_id == existing_fountain.id))).scalar_one()
+    row = (await session.execute(select(Rating).where(Rating.fountain_id == uuid.UUID(fid)))).scalar_one()
     assert row.is_proximate is True
 
 
-async def test_rating_outside_radius_is_403_and_writes_nothing(client, session, existing_fountain, rating_type):
+async def test_rating_outside_radius_is_403_and_writes_nothing(client, session):
+    fid = await _add_fountain(client)
     resp = await client.post(
-        f"/api/v1/fountains/{existing_fountain.id}/ratings",
-        json={"ratings": [{"rating_type_id": rating_type.id, "stars": 5}],
-              "latitude": 0.0, "longitude": 0.0},  # far from the fountain
+        f"/api/v1/fountains/{fid}/ratings",
+        json={"ratings": [{"rating_type_id": 1, "stars": 5}],
+              "latitude": 0.0, "longitude": 0.0},  # ~thousands of km away
     )
     assert resp.status_code == 403
     assert resp.json()["detail"] == "outside_rating_radius"
-    count = (await session.execute(select(func.count()).select_from(Rating).where(Rating.fountain_id == existing_fountain.id))).scalar_one()
+    count = (await session.execute(
+        select(func.count()).select_from(Rating).where(Rating.fountain_id == uuid.UUID(fid))
+    )).scalar_one()
     assert count == 0
 
 
-async def test_rating_without_coords_is_accepted_not_proximate(client, session, existing_fountain, rating_type):
+async def test_rating_without_coords_is_accepted_not_proximate(client, session):
+    fid = await _add_fountain(client)
     resp = await client.post(
-        f"/api/v1/fountains/{existing_fountain.id}/ratings",
-        json={"ratings": [{"rating_type_id": rating_type.id, "stars": 4}]},
+        f"/api/v1/fountains/{fid}/ratings",
+        json={"ratings": [{"rating_type_id": 1, "stars": 4}]},
     )
     assert resp.status_code == 200
-    row = (await session.execute(select(Rating).where(Rating.fountain_id == existing_fountain.id))).scalar_one()
+    row = (await session.execute(select(Rating).where(Rating.fountain_id == uuid.UUID(fid)))).scalar_one()
     assert row.is_proximate is False
 
 
-async def test_rerate_without_coords_does_not_downgrade_proximate(client, session, existing_fountain, rating_type):
-    lat, lng = await _fountain_coords(session, existing_fountain.id)
-    await client.post(f"/api/v1/fountains/{existing_fountain.id}/ratings",
-                      json={"ratings": [{"rating_type_id": rating_type.id, "stars": 5}], "latitude": lat, "longitude": lng})
-    # Re-rate with NO coords: stars change, but is_proximate stays true.
-    await client.post(f"/api/v1/fountains/{existing_fountain.id}/ratings",
-                      json={"ratings": [{"rating_type_id": rating_type.id, "stars": 3}]})
-    row = (await session.execute(select(Rating).where(Rating.fountain_id == existing_fountain.id))).scalar_one()
+async def test_rerate_without_coords_does_not_downgrade_proximate(client, session):
+    fid = await _add_fountain(client)
+    await client.post(f"/api/v1/fountains/{fid}/ratings",
+                      json={"ratings": [{"rating_type_id": 1, "stars": 5}],
+                            "latitude": FOUNTAIN_LAT, "longitude": FOUNTAIN_LNG})
+    # Re-rate with NO coords: stars change, but is_proximate stays true (MONOTONIC).
+    await client.post(f"/api/v1/fountains/{fid}/ratings",
+                      json={"ratings": [{"rating_type_id": 1, "stars": 3}]})
+    row = (await session.execute(select(Rating).where(Rating.fountain_id == uuid.UUID(fid)))).scalar_one()
     assert row.stars == 3
     assert row.is_proximate is True
 ```
 
+(`uuid` is already imported by the existing 404 test in this module; if not, add `import uuid`.)
+
 - [ ] **Step 2: Run them — expect failure.**
 
-Run: `uv run pytest tests/test_fountains.py -k "proximate or outside_radius" -v`
+Run (in `backend/`): `uv run pytest tests/test_ratings_api.py -k "proximate or outside_radius" -v`
 
 - [ ] **Step 3: Gate the handler**
 
@@ -482,14 +475,14 @@ in Step 1 is the guard that this rendered correctly.
 
 - [ ] **Step 5: Run tests — expect pass**
 
-Run: `uv run pytest tests/test_fountains.py -k "proximate or outside_radius" -v`
+Run: `uv run pytest tests/test_ratings_api.py -k "proximate or outside_radius" -v`
 Expected: PASS (all four).
 
 - [ ] **Step 6: Full backend mirror + commit**
 
 ```bash
 ./run.ps1 check -Backend
-git add backend/app/routers/fountains.py backend/tests/test_fountains.py
+git add backend/app/routers/fountains.py backend/tests/test_ratings_api.py
 git commit -m "feat(backend): reject out-of-radius ratings (403) + monotonic is_proximate (#3)"
 ```
 
@@ -498,45 +491,55 @@ git commit -m "feat(backend): reject out-of-radius ratings (403) + monotonic is_
 **Files:**
 - Modify: `backend/app/schemas.py` (`ConditionReportRequest`)
 - Modify: `backend/app/routers/fountains.py` (`submit_condition`)
-- Test: `backend/tests/test_fountains.py`
+- Test: `backend/tests/test_conditions_api.py`
 
 **Interfaces:**
 - Produces: `ConditionReportRequest.latitude/longitude` optional both-or-neither; `is_proximate` field deprecated — `true` → 422 `{"detail": "is_proximate_is_server_computed"}`; server computes `is_proximate` from coords via `within_radius(..., proximate_radius_m)`.
 
 - [ ] **Step 1: Write the failing tests**
 
+Add to the existing `backend/tests/test_conditions_api.py`. It creates its fountain at
+`LOC = {"latitude": 5.0, "longitude": 6.0}` via `_add_fountain(client)`, and imports
+`ConditionReport` for row assertions (add it to the module's `from app.models import ...` if absent).
+Use `LOC` directly for the "within radius" case — the fountain sits at exactly those coords, so it is
+inside the default 100 m `proximate_radius_m`.
+
 ```python
-async def test_condition_true_is_proximate_rejected(client, existing_fountain):
+async def test_condition_true_is_proximate_rejected(client):
+    fid = await _add_fountain(client)
     resp = await client.post(
-        f"/api/v1/fountains/{existing_fountain.id}/conditions",
+        f"/api/v1/fountains/{fid}/conditions",
         json={"status": "working", "is_proximate": True},
     )
     assert resp.status_code == 422
     assert resp.json()["detail"] == "is_proximate_is_server_computed"
 
 
-async def test_condition_derives_proximate_from_coords(client, session, existing_fountain):
-    lat, lng = await _fountain_coords(session, existing_fountain.id)  # helper defined in Task A4
+async def test_condition_derives_proximate_from_coords(client, session):
+    fid = await _add_fountain(client)
     resp = await client.post(
-        f"/api/v1/fountains/{existing_fountain.id}/conditions",
-        json={"status": "working", "latitude": lat, "longitude": lng},
+        f"/api/v1/fountains/{fid}/conditions",
+        json={"status": "working", "latitude": LOC["latitude"], "longitude": LOC["longitude"]},
     )
     assert resp.status_code == 200
-    row = (await session.execute(select(ConditionReport).where(ConditionReport.fountain_id == existing_fountain.id))).scalar_one()
+    row = (await session.execute(select(ConditionReport).where(ConditionReport.fountain_id == uuid.UUID(fid)))).scalar_one()
     assert row.is_proximate is True
 
 
-async def test_condition_no_coords_is_not_proximate(client, session, existing_fountain):
+async def test_condition_no_coords_is_not_proximate(client, session):
+    fid = await _add_fountain(client)
     resp = await client.post(
-        f"/api/v1/fountains/{existing_fountain.id}/conditions",
+        f"/api/v1/fountains/{fid}/conditions",
         json={"status": "working"},
     )
     assert resp.status_code == 200
-    row = (await session.execute(select(ConditionReport).where(ConditionReport.fountain_id == existing_fountain.id))).scalar_one()
+    row = (await session.execute(select(ConditionReport).where(ConditionReport.fountain_id == uuid.UUID(fid)))).scalar_one()
     assert row.is_proximate is False
 ```
 
 - [ ] **Step 2: Run them — expect failure.**
+
+Run (in `backend/`): `uv run pytest tests/test_conditions_api.py -k "proximate" -v`
 
 - [ ] **Step 3: Update the schema**
 
@@ -604,14 +607,14 @@ Then change the `ConditionReport(...)` construction to use the derived value:
 - [ ] **Step 5: Run tests + full backend mirror**
 
 ```bash
-uv run pytest tests/test_fountains.py -k "condition" -v
+uv run pytest tests/test_conditions_api.py -k "proximate" -v
 ./run.ps1 check -Backend
 ```
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add backend/app/schemas.py backend/app/routers/fountains.py backend/tests/test_fountains.py
+git add backend/app/schemas.py backend/app/routers/fountains.py backend/tests/test_conditions_api.py
 git commit -m "feat(backend): server-derive condition is_proximate; reject client true (422) (#3)"
 ```
 
@@ -619,23 +622,25 @@ git commit -m "feat(backend): server-derive condition is_proximate; reject clien
 
 **Files:**
 - Modify: `backend/app/main.py`
-- Test: `backend/tests/test_main.py` (or the nearest existing app-level test module)
+- Test: `backend/tests/test_ratings_api.py` (it already POSTs ratings; the coordinate-validation path lives there). There is no `test_main.py`.
 
 **Interfaces:**
 - Produces: a `RequestValidationError` handler that logs `[{loc, type}]` (field + error type) with **no `input` / `ctx`**, and returns the **same JSON body FastAPI produces by default** (status 422), so no response shape changes.
 
 - [ ] **Step 1: Write the failing tests**
 
-The privacy assertion alone is weak — FastAPI's default handler logs no body, so `"999" not in
-caplog.text` passes *before* the handler exists. So also assert the sanitized log **is** emitted
-(proving the handler ran) and that a valid 422's response body keeps FastAPI's default list shape
-(proving the handler did not change the API contract):
+Add to `backend/tests/test_ratings_api.py`, reusing its `_add_fountain(client)` helper. The privacy
+assertion alone is weak — FastAPI's default handler logs no body, so `"999" not in caplog.text` passes
+*before* the handler exists. So also assert the sanitized log **is** emitted (proving the handler ran)
+and that a valid 422's response body keeps FastAPI's default list shape (proving the handler did not
+change the API contract):
 
 ```python
-async def test_validation_error_logs_sanitized_fields_only(client, existing_fountain, caplog):
+async def test_validation_error_logs_sanitized_fields_only(client, caplog):
+    fid = await _add_fountain(client)
     with caplog.at_level("INFO", logger="app"):
         resp = await client.post(
-            f"/api/v1/fountains/{existing_fountain.id}/ratings",
+            f"/api/v1/fountains/{fid}/ratings",
             json={"ratings": [{"rating_type_id": 1, "stars": 5}], "latitude": 999.0, "longitude": 1.0},
         )
     assert resp.status_code == 422
@@ -647,10 +652,11 @@ async def test_validation_error_logs_sanitized_fields_only(client, existing_foun
     assert all("input" not in e and "ctx" not in e for e in rec.errors)
 
 
-async def test_validation_error_response_body_unchanged(client, existing_fountain):
+async def test_validation_error_response_body_unchanged(client):
+    fid = await _add_fountain(client)
     # The 422 response body keeps FastAPI's default list-shaped `detail` — no API-wide change.
     resp = await client.post(
-        f"/api/v1/fountains/{existing_fountain.id}/ratings",
+        f"/api/v1/fountains/{fid}/ratings",
         json={"ratings": []},  # min_length violation -> default validation error
     )
     assert resp.status_code == 422
@@ -688,15 +694,15 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 Ensure `Response` and `Request` are imported.
 
-- [ ] **Step 4: Run test — expect pass**
+- [ ] **Step 4: Run tests — expect pass**
 
-Run: `uv run pytest tests/test_main.py -k validation -v`
+Run: `uv run pytest tests/test_ratings_api.py -k validation -v`
 
 - [ ] **Step 5: Full backend mirror + commit**
 
 ```bash
 ./run.ps1 check -Backend
-git add backend/app/main.py backend/tests/test_main.py
+git add backend/app/main.py backend/tests/test_ratings_api.py
 git commit -m "feat(backend): log-only RequestValidationError handler; never log coordinates (#3)"
 ```
 
@@ -1126,7 +1132,7 @@ Update `WaterCelebration` + keyframes. Convert **all six** dispatchers to
 | `ConditionForm.tsx:54` | `res.pointsAwarded` (server-authoritative `condition_points_awarded`) |
 | `NoteForm.tsx:26` | `CONTRIBUTION_POINTS.add_note` |
 | `PhotoUpload.tsx:25` | omit (no per-upload points preview exists; first-photo award is server-only) |
-| `useAddFountainMode.tsx:182` | the awarded add-fountain points already in scope |
+| `useAddFountainMode.tsx:182` | **omit** — `AddFountainResult` (`web/lib/add-fountain.ts`) is `{ ok: true; fountainId }` and carries no points; do not invent a value. (Extending the add-fountain contract to return awarded points is out of scope — a separate change.) |
 
 Update the three listeners (`ContributionStatusOverlay:12`, `MapBrowser:462`, `HeaderPoints:17`) to
 read `(e as CustomEvent<{ points?: number }>).detail?.points` **defensively** — a bare `Event` (from
@@ -1156,12 +1162,15 @@ git commit -m "feat(web): celebration parity — pin logo + points number (#2, #
 
 Wrap the `panels` container in `KeyboardAvoidingView` carrying `style={styles.panels}` (it takes over the `flex:1`; the flex chain depth is unchanged) and `behavior={Platform.OS === "ios" ? "padding" : "height"}`.
 
-Obtain `keyboardVerticalOffset` from the navigation header height rather than a hardcoded guess:
-`const headerHeight = useHeaderHeight();` (from `@react-navigation/elements`, already transitively
-available via expo-router) and pass `keyboardVerticalOffset={headerHeight}`. This screen renders under
-a nav header, so a zero offset leaves the input occluded by exactly that height. If `useHeaderHeight`
-is not resolvable in this expo-router setup, fall back to measuring the tab bar's `onLayout` height
-into state and use that; do not leave the offset at 0.
+This screen renders under an expo-router native stack header (`<Stack.Screen options={{ headerShown:
+true, title: "Fountain" }} />` in `[id].tsx`). **Do not import `@react-navigation/elements` /
+`useHeaderHeight`** — it is not in `mobile/package.json` or the lockfile, and adding a dependency is
+gated by CI's 24h `minimumReleaseAge` rule. On Android's native stack the header is a separate view
+above the screen frame, so the `KeyboardAvoidingView`'s own measured frame origin already begins below
+it; **start with `keyboardVerticalOffset={0}`.** If emulator verification (Step 3) shows the input
+still occluded, measure the offset with **built-ins only**: capture the panels container's on-screen Y
+via `onLayout` → `ref.measureInWindow((x, y) => setKavOffset(y))` into state and pass
+`keyboardVerticalOffset={kavOffset}`. No new dependency either way.
 
 Add `keyboardShouldPersistTaps="handled"` and `keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}` to each per-tab `ScrollView`. Do not add a fourth ScrollView.
 
