@@ -121,8 +121,11 @@ outcome never gates the upload. The photo upload always proceeds.
   photo upload too (`require_named_user` guards both), so nothing is lost.
 - Rating draft is clean → upload the photo, no rating call.
 
-In every branch the draft stars and the picked asset survive, so the user can retry the rating
-without re-tapping stars or re-picking a photo.
+**Retention.** The draft stars survive every branch in which the rating did not succeed, so the user
+can retry without re-tapping. The picked asset is retained only while it is still needed — that is,
+when the **upload** fails. After a successful upload the asset is cleared from picker/upload state
+even if the accompanying rating failed; the photo is already durably stored, and holding the asset
+would invite a duplicate upload on the rating retry.
 
 ### 4.2 + 4.3 Celebration redesign (#2, #5)
 
@@ -266,9 +269,21 @@ remote submission, and a `false` can only ever originate from "no coordinates su
 meaning is thus precise and stable:
 
 > `ratings.is_proximate = true` ⟺ at least one submission of this rating was made with coordinates
-> verified within `rating_max_distance_m` of the fountain.
+> verified within `rating_max_distance_m` of **the fountain's location as stored at the time of that
+> submission**.
 
-This is documented on the column and covered by a dedicated test (§9).
+The "as stored at submission time" qualifier is load-bearing: submitted coordinates are never
+persisted (§6), and an admin may later correct a fountain's location. A historical `true` therefore
+cannot be re-derived, and does not assert proximity to the fountain's *current* coordinates. This
+exact wording goes in the column comment.
+
+**Concurrency.** `submit_ratings` already takes a `Fountain … FOR UPDATE` lock before
+`_upsert_ratings` (`fountains.py:876-887`), so same-fountain submissions serialize. Independently,
+`ratings.is_proximate OR excluded.is_proximate` is safe under row conflict regardless of the lock,
+because the `OR` reads the conflicting row's committed value inside the same statement. The
+monotonicity property does not depend on the lock.
+
+Covered by a dedicated regression test (§9).
 
 **Why 403.** `422` already means "validation" to the clients (`mapContributionError`,
 `mobile/lib/contributions/state.ts:39`); the request here is well-formed and the server is refusing
@@ -419,7 +434,7 @@ Google").
 | `ConditionRequest.latitude`, `ConditionRequest.longitude` | additive, optional |
 | `ConditionRequest.is_proximate` | **deprecated** — derived server-side; `true` now rejected with `422` |
 | `403 outside_rating_radius` on `POST /fountains/{id}/ratings` | new failure mode |
-| `422 is_proximate_is_server_computed` on `POST /fountains/{id}/condition` | new failure mode |
+| `422 is_proximate_is_server_computed` on `POST /fountains/{fountain_id}/conditions` | new failure mode |
 | `settings.rating_max_distance_m` | new config, default `80467.0` (50 mi) |
 | `settings.proximate_radius_m` | new config, default `100.0` |
 | `geo.within_radius(...)` | new shared helper; no bare `ST_DWithin` in handlers |
@@ -454,6 +469,15 @@ Three residual vectors are named rather than papered over:
    the rejected value. For an out-of-range latitude this returns the coordinate to **the caller who
    just sent it** — no disclosure to a third party — but it must never reach a log. This design adds a
    `RequestValidationError` handler that logs the *field name and error type only*, never `input`.
+
+   **The handler must not change the 422 response body.** A `RequestValidationError` handler is
+   global, so it governs the response for every endpoint, not just the two that accept coordinates.
+   It therefore returns FastAPI's **default validation payload byte-for-byte unchanged** (including
+   `input`) and alters *logging only*. Stripping `input` from responses would be an API-wide breaking
+   change to the `422` shape, would contradict "no breaking response-shape change" (§5), and would
+   force a regeneration of every client's error handling — all to redact a value the caller itself
+   just transmitted. The privacy boundary being defended here is **the log stream**, not the
+   response to the sender.
 2. **Body-logging middleware.** None exists. Adding request- or response-body logging to this service
    is prohibited by §7 for as long as coordinates are accepted on any endpoint.
 3. **Upstream proxy/ingress logs.** Out of the application's control. Coordinates travel in the
