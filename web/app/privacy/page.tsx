@@ -15,7 +15,7 @@ const sections = [
     body: [
       "Account information, such as your email address, display name, and sign-in provider identifiers when you create or use an account.",
       "Fountain contributions, such as fountain locations, ratings, comments, reports, and photos you choose to submit.",
-      "Approximate or precise location information when you allow the app or website to use your device location to find nearby fountains or add a fountain. You can control location permissions in your browser or device settings.",
+      "Approximate or precise location information when you allow the app or website to use your device location to find nearby fountains, add a fountain, or verify that you are near a fountain when you submit a rating or a condition report. When it is used to verify proximity for a rating or condition report, your coordinates are checked against the fountain's location and then discarded — they are not stored. You can control location permissions in your browser or device settings.",
       "Technical information, such as device, browser, IP address, request logs, diagnostics, and security events needed to operate, secure, and debug the service.",
       "Authentication and email delivery information processed through our sign-in providers and email systems, such as Google, Apple, and Logto.",
     ],
