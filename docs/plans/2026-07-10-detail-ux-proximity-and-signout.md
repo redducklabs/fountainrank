@@ -370,7 +370,8 @@ async def test_rerate_without_coords_does_not_downgrade_proximate(client, sessio
     assert row.is_proximate is True
 ```
 
-(`uuid` is already imported by the existing 404 test in this module; if not, add `import uuid`.)
+Add a **top-level** `import uuid` to `backend/tests/test_ratings_api.py` (the existing 404 test
+imports it function-locally, which does not make it visible to these new module-level tests).
 
 - [ ] **Step 2: Run them — expect failure.**
 
