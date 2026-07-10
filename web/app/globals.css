@@ -79,6 +79,32 @@
   }
 }
 
+/* Reward burst: the pin logo pops-and-settles then fades, mirroring the mobile WaterCelebration. */
+@keyframes celebration-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.7);
+  }
+  18% {
+    opacity: 1;
+  }
+  32% {
+    transform: scale(1.08);
+  }
+  70% {
+    opacity: 1;
+    transform: scale(0.96);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+.celebration-burst {
+  animation: celebration-pop 1300ms ease-out both;
+}
+
 @keyframes water-squirt {
   0% {
     opacity: 0;

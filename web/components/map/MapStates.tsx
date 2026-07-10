@@ -100,7 +100,7 @@ export function PointsBadge({
   );
 }
 
-export function WaterCelebration({ triggerKey }: { triggerKey: number }) {
+export function WaterCelebration({ triggerKey, points }: { triggerKey: number; points?: number }) {
   if (triggerKey === 0) return null;
   return (
     <div
@@ -108,11 +108,21 @@ export function WaterCelebration({ triggerKey }: { triggerKey: number }) {
       aria-hidden="true"
       className="pointer-events-none absolute inset-x-0 bottom-16 z-50 flex justify-center motion-reduce:hidden"
     >
-      <span className="water-drop water-drop-1" />
-      <span className="water-drop water-drop-2" />
-      <span className="water-drop water-drop-3" />
-      <span className="water-drop water-drop-4" />
-      <span className="water-drop water-drop-5" />
+      <div className="relative flex flex-col items-center">
+        <span className="water-drop water-drop-1" />
+        <span className="water-drop water-drop-2" />
+        <span className="water-drop water-drop-3" />
+        <span className="water-drop water-drop-4" />
+        <span className="water-drop water-drop-5" />
+        {/* The FountainRank pin logo (never redrawn) pops-and-settles; +N points when known (#2, #5). */}
+        <div className="celebration-burst flex flex-col items-center gap-1 rounded-full border-2 border-accent-gold bg-white px-6 py-4 shadow-lg">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/icon.png" alt="" width={48} height={48} />
+          {points != null && points > 0 ? (
+            <span className="text-lg font-black tabular-nums text-brand">+{points} points</span>
+          ) : null}
+        </div>
+      </div>
     </div>
   );
 }

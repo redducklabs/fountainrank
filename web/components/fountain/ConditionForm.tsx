@@ -8,6 +8,7 @@ import {
   conditionPointsPreview,
 } from "@fountainrank/contributions";
 import { submitCondition } from "../../app/actions/contribute";
+import { dispatchContribution } from "../../lib/contribution-event";
 import { getCurrentPositionSafe } from "../../lib/geo/current-position";
 import { conditionStatusLabel } from "../../lib/map/format";
 import { PointsPreview } from "../contributions/PointsPreview";
@@ -54,7 +55,7 @@ export function ConditionForm({
               ? `Thanks — you earned ${earned} points.`
               : "Thanks — saved. (Already counted recently, so no points this time.)",
         });
-        window.dispatchEvent(new Event("fountainrank:contribution"));
+        dispatchContribution(earned);
         router.refresh();
       } else {
         setMsg({ tone: "err", text: errorText(res.error) });

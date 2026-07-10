@@ -3,6 +3,7 @@ import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { isRatingDraftDirty } from "@fountainrank/contributions";
 import { submitRating, uploadPhoto, type ContributeError } from "../../app/actions/contribute";
+import { dispatchContribution } from "../../lib/contribution-event";
 import { getCurrentPositionSafe } from "../../lib/geo/current-position";
 import { errorText } from "./contributeError";
 import { useRatingDraft } from "./RatingDraftContext";
@@ -34,14 +35,14 @@ export function PhotoUpload({ fountainId }: { fountainId: string }) {
         const rres = await submitRating(fountainId, ratings, coords ?? undefined);
         if (rres.ok) {
           clear();
-          window.dispatchEvent(new Event("fountainrank:contribution"));
+          dispatchContribution();
         } else {
           ratingError = rres.error;
         }
       }
       const res = await uploadPhoto(fountainId, formData);
       if (res.ok) {
-        window.dispatchEvent(new Event("fountainrank:contribution"));
+        dispatchContribution();
         router.refresh();
         setMsg(
           ratingError

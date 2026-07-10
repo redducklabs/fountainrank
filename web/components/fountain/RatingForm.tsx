@@ -2,8 +2,9 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { components } from "@fountainrank/api-client";
-import { ratingPointsPreview } from "@fountainrank/contributions";
+import { CONTRIBUTION_POINTS, ratingPointsPreview } from "@fountainrank/contributions";
 import { submitRating } from "../../app/actions/contribute";
+import { dispatchContribution } from "../../lib/contribution-event";
 import { getCurrentPositionSafe } from "../../lib/geo/current-position";
 import { errorText } from "./contributeError";
 import { useRatingDraft } from "./RatingDraftContext";
@@ -45,7 +46,7 @@ export function RatingForm({
       if (res.ok) {
         clear();
         setMsg({ tone: "ok", text: "Thanks — your rating was saved." });
-        window.dispatchEvent(new Event("fountainrank:contribution"));
+        dispatchContribution(chosen.length * CONTRIBUTION_POINTS.rate);
         router.refresh();
       } else {
         setMsg({ tone: "err", text: errorText(res.error) });

@@ -1,23 +1,26 @@
 "use client";
 import { useEffect, useState } from "react";
+import { CONTRIBUTION_EVENT, contributionPoints } from "../../lib/contribution-event";
 import { WaterCelebration } from "../map/MapStates";
 
 export function ContributionStatusOverlay() {
   const [celebrationKey, setCelebrationKey] = useState(0);
+  const [points, setPoints] = useState<number | undefined>(undefined);
 
   useEffect(() => {
-    const onContribution = () => {
+    const onContribution = (e: Event) => {
+      setPoints(contributionPoints(e));
       setCelebrationKey((key) => key + 1);
     };
-    window.addEventListener("fountainrank:contribution", onContribution);
+    window.addEventListener(CONTRIBUTION_EVENT, onContribution);
     return () => {
-      window.removeEventListener("fountainrank:contribution", onContribution);
+      window.removeEventListener(CONTRIBUTION_EVENT, onContribution);
     };
   }, []);
 
   return (
     <div className="pointer-events-none fixed inset-x-0 top-16 bottom-0 z-40">
-      <WaterCelebration triggerKey={celebrationKey} />
+      <WaterCelebration triggerKey={celebrationKey} points={points} />
     </div>
   );
 }

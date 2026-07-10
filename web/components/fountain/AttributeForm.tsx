@@ -1,8 +1,9 @@
 "use client";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { attributePointsPreview } from "@fountainrank/contributions";
+import { attributePointsPreview, CONTRIBUTION_POINTS } from "@fountainrank/contributions";
 import { submitAttributes } from "../../app/actions/contribute";
+import { dispatchContribution } from "../../lib/contribution-event";
 import { buildAttributeGroups, fetchAttributeTypes } from "../../lib/catalog";
 import { AttributeObservationFields } from "../map/AttributeObservationFields";
 import { PointsPreview } from "../contributions/PointsPreview";
@@ -52,7 +53,7 @@ export function AttributeForm({ fountainId }: { fountainId: string }) {
       const res = await submitAttributes(fountainId, observations);
       if (res.ok) {
         setMsg({ tone: "ok", text: "Thanks — your observations were saved." });
-        window.dispatchEvent(new Event("fountainrank:contribution"));
+        dispatchContribution(observations.length * CONTRIBUTION_POINTS.observe_attribute);
         router.refresh();
       } else {
         setMsg({ tone: "err", text: errorText(res.error) });
