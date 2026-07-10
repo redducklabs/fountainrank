@@ -1,3 +1,5 @@
+import base64
+
 import httpx
 import pytest
 
@@ -33,7 +35,11 @@ async def test_delete_user_fetches_token_and_deletes_user():
     await client.delete_user("logto|abc")
 
     assert [request.method for request in requests] == ["POST", "DELETE"]
-    assert b"client_secret=secret" in requests[0].content
+    # client_secret_basic: credentials ride the Authorization header, never the form body,
+    # so a request-body log can't capture the M2M secret.
+    expected = base64.b64encode(b"m2m-app:secret").decode()
+    assert requests[0].headers["authorization"] == f"Basic {expected}"
+    assert b"client_secret" not in requests[0].content
     assert b"resource=https%3A%2F%2Fdefault.logto.app%2Fapi" in requests[0].content
     assert b"scope=all" in requests[0].content
     assert requests[1].url == "https://auth.example.com/api/users/logto%7Cabc"

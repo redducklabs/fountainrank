@@ -161,6 +161,43 @@ async def _mark_logto_delete_pending(
     await session.commit()
 
 
+async def _rollback_quietly(session: AsyncSession) -> None:
+    """Return the session to a usable state after a failed post-commit cleanup step, so the
+    next step still gets a chance to run. A rollback failure here is itself non-fatal — the
+    local deletion is already committed — but it is logged, never swallowed."""
+    try:
+        await session.rollback()
+    except Exception:
+        logger.exception("rollback after a failed account-deletion cleanup step failed")
+
+
+async def _finish_photo_cleanup(
+    session: AsyncSession, settings: Settings, photo_keys: list[str]
+) -> None:
+    if not await _delete_photo_objects_for_account(photo_keys=photo_keys, settings=settings):
+        return
+    if not photo_keys:
+        return
+    await session.execute(
+        update(StorageCleanup)
+        .where(StorageCleanup.object_key.in_(photo_keys), StorageCleanup.status == "pending")
+        .values(status="done")
+    )
+    await session.commit()
+
+
+async def _finish_identity_cleanup(
+    session: AsyncSession, settings: Settings, logto_user_id: str
+) -> None:
+    try:
+        await LogtoManagementClient(settings).delete_user(logto_user_id)
+    except LogtoManagementError as exc:
+        logger.exception("account deletion identity cleanup remains pending")
+        await _mark_logto_delete_pending(session, logto_user_id, exc)
+    else:
+        await _mark_logto_delete_done(session, logto_user_id)
+
+
 @router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_me(
     current_user: Annotated[User, Depends(get_current_user)],
@@ -270,23 +307,28 @@ async def delete_me(
     await session.execute(delete(User).where(User.id == user_id))
     await session.commit()
 
-    photos_deleted = await _delete_photo_objects_for_account(
-        photo_keys=photo_keys, settings=settings
-    )
-    if photos_deleted and photo_keys:
-        await session.execute(
-            update(StorageCleanup)
-            .where(StorageCleanup.object_key.in_(photo_keys), StorageCleanup.status == "pending")
-            .values(status="done")
-        )
-        await session.commit()
+    # Past this commit the local deletion is irreversible and durable: the tombstone already
+    # blocks re-auth, and both ledgers record whatever still needs cleaning. So every remaining
+    # step is BEST EFFORT and must never turn into a non-2xx — a 500 here would tell the user
+    # "deletion did not complete" about an account that is gone and can never sign in again.
+    # Failures stay `pending` for `app.account_deletion_cleanup` to retry.
     try:
-        await LogtoManagementClient(settings).delete_user(logto_user_id)
-    except LogtoManagementError as exc:
-        logger.exception("account deletion identity cleanup remains pending")
-        await _mark_logto_delete_pending(session, logto_user_id, exc)
-    else:
-        await _mark_logto_delete_done(session, logto_user_id)
+        await _finish_photo_cleanup(session, settings, photo_keys)
+    except Exception:
+        logger.exception(
+            "account deletion post-commit cleanup failed; ledger row remains pending",
+            extra={"cleanup_step": "photo"},
+        )
+        await _rollback_quietly(session)
+    try:
+        await _finish_identity_cleanup(session, settings, logto_user_id)
+    except Exception:
+        logger.exception(
+            "account deletion post-commit cleanup failed; ledger row remains pending",
+            extra={"cleanup_step": "identity"},
+        )
+        await _rollback_quietly(session)
+
     logger.info(
         "account deleted",
         extra={

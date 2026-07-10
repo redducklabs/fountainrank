@@ -110,10 +110,23 @@ env vars in production:
   `{LOGTO_ENDPOINT}/api`)
 
 The API tombstones the Logto subject before returning success, so stale pre-delete
-tokens cannot recreate the local account. If Logto identity deletion is unavailable
-after the local delete commits, the `deleted_accounts` row remains
-`identity_delete_status='pending'`. If Spaces deletion is unavailable, photo
-object keys remain as pending `storage_cleanup` rows. Retry both with:
+tokens cannot recreate the local account. Once the local deletion transaction commits
+it is irreversible, so everything after it — Spaces object deletion and the Logto
+identity delete — is **best effort** and can never fail the request: `DELETE /api/v1/me`
+returns `204` regardless. If Logto identity deletion is unavailable, the
+`deleted_accounts` row remains `identity_delete_status='pending'`. If Spaces deletion is
+unavailable, photo object keys remain as pending `storage_cleanup` rows.
+
+Both ledgers are drained automatically by the hourly
+`fountainrank-account-deletion-cleanup` CronJob (`infra/k8s/account-deletion-cleanup.yaml`),
+which runs the command below. It exits non-zero while any row is still failing, so a
+persistent failure (e.g. the M2M app losing its Management API role) surfaces as a
+**Failed Job** rather than silently stranding a Logto identity. Check it with
+`kubectl get cronjob,jobs -n fountainrank -l app=fountainrank-account-deletion-cleanup`
+and read the pod logs (structured JSON; the failure reason is also persisted to
+`deleted_accounts.identity_delete_error`).
+
+To drain the ledgers by hand:
 
 ```bash
 uv run python -m app.account_deletion_cleanup --limit 100

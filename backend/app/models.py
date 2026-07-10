@@ -191,6 +191,11 @@ class Rating(Base):
     user_id: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=True
     )
+    # Account deletion detaches the row: user_id -> NULL, deleted_actor_id <- the old user id.
+    # This is a PSEUDONYMOUS internal actor key, NOT anonymization — it is stable per deleted
+    # user. It exists only so distinct-actor aggregates (vote counts, condition corroboration)
+    # are unchanged by a deletion, and it is never exposed by the public API. The same pattern
+    # applies to AttributeObservation and ConditionReport.
     deleted_actor_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
     rating_type_id: Mapped[int] = mapped_column(
         SmallInteger, ForeignKey("rating_types.id"), nullable=False

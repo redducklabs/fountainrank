@@ -50,12 +50,17 @@ class LogtoManagementClient:
         raise LogtoManagementError(f"logto user delete failed with status {response.status_code}")
 
     async def _fetch_access_token(self, client: httpx.AsyncClient) -> str:
+        # `client_secret_basic` — the auth method Logto registers M2M apps with, and the shape
+        # every Logto doc shows. Keeping the secret out of the form body also keeps it out of
+        # anything that logs request bodies. Per RFC 6749 §2.3.1 the id and secret are
+        # form-urlencoded before base64; Logto's oidc-provider decodeURIComponent()s them back.
+        app_id = self.settings.logto_management_app_id or ""
+        app_secret = self.settings.logto_management_app_secret or ""
         response = await client.post(
             self.settings.logto_token_uri,
+            auth=(quote(app_id, safe=""), quote(app_secret, safe="")),
             data={
                 "grant_type": "client_credentials",
-                "client_id": self.settings.logto_management_app_id,
-                "client_secret": self.settings.logto_management_app_secret,
                 "resource": self.settings.logto_management_api_resource,
                 "scope": "all",
             },

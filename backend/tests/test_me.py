@@ -329,6 +329,102 @@ async def test_delete_me_returns_success_with_pending_photo_cleanup_when_storage
     ).scalar_one_or_none() is not None
 
 
+async def test_delete_me_returns_204_when_storage_cleanup_raises_unexpectedly(
+    client, test_user, session, monkeypatch
+):
+    """Post-commit cleanup is best effort. The local account is already irreversibly gone, so an
+    unexpected storage error must not surface as a 500 telling the user deletion failed."""
+
+    async def fake_delete_user(self, logto_user_id: str) -> None:
+        return None
+
+    def exploding_get_storage(settings):
+        raise RuntimeError("boto3 client construction blew up")
+
+    monkeypatch.setattr("app.logto_management.LogtoManagementClient.delete_user", fake_delete_user)
+    monkeypatch.setattr("app.routers.users.get_storage", exploding_get_storage)
+
+    user_id = test_user.id
+    logto_user_id = test_user.logto_user_id
+    fountain_id = (
+        await session.execute(
+            text(
+                "INSERT INTO fountains (id, location, created_source, added_by_user_id) "
+                "VALUES (gen_random_uuid(), "
+                "ST_SetSRID(ST_MakePoint(-122.42, 37.77), 4326)::geography, "
+                "'user', :user_id) RETURNING id"
+            ),
+            {"user_id": user_id},
+        )
+    ).scalar_one()
+    session.add(
+        FountainPhoto(
+            fountain_id=fountain_id,
+            user_id=user_id,
+            storage_key="photos/full.jpg",
+            thumbnail_key="photos/thumb.jpg",
+            content_type="image/jpeg",
+            width=1,
+            height=1,
+            byte_size=1,
+        )
+    )
+    await session.commit()
+
+    resp = await client.delete("/api/v1/me")
+
+    assert resp.status_code == 204, resp.text
+    await session.rollback()
+    assert (
+        await session.execute(select(User).where(User.id == user_id))
+    ).scalar_one_or_none() is None
+    # Photo objects stay on the ledger for the retry CLI...
+    cleanup_rows = (await session.execute(select(StorageCleanup))).scalars().all()
+    assert {row.status for row in cleanup_rows} == {"pending"}
+    # ...and the identity cleanup still ran despite the photo step failing.
+    tombstone = (
+        await session.execute(
+            select(DeletedAccount).where(DeletedAccount.logto_user_id == logto_user_id)
+        )
+    ).scalar_one()
+    assert tombstone.identity_delete_status == "done"
+
+
+async def test_delete_me_returns_204_when_logto_client_raises_unexpectedly(
+    client, test_user, session, monkeypatch
+):
+    """A non-LogtoManagementError escaping the Logto client must not 500 the request either;
+    the tombstone simply stays pending for the retry CLI."""
+
+    async def exploding_delete_user(self, logto_user_id: str) -> None:
+        raise RuntimeError("unexpected client bug")
+
+    async def fake_delete_photos(*, photo_keys, settings) -> bool:
+        return True
+
+    monkeypatch.setattr(
+        "app.logto_management.LogtoManagementClient.delete_user", exploding_delete_user
+    )
+    monkeypatch.setattr("app.routers.users._delete_photo_objects_for_account", fake_delete_photos)
+
+    user_id = test_user.id
+    logto_user_id = test_user.logto_user_id
+
+    resp = await client.delete("/api/v1/me")
+
+    assert resp.status_code == 204, resp.text
+    await session.rollback()
+    assert (
+        await session.execute(select(User).where(User.id == user_id))
+    ).scalar_one_or_none() is None
+    tombstone = (
+        await session.execute(
+            select(DeletedAccount).where(DeletedAccount.logto_user_id == logto_user_id)
+        )
+    ).scalar_one()
+    assert tombstone.identity_delete_status == "pending"
+
+
 async def test_delete_me_succeeds_when_tombstone_already_exists(
     client, test_user, session, monkeypatch
 ):

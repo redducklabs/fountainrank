@@ -1,4 +1,8 @@
-"""account deletion: anonymize retained fountain signal
+"""account deletion: detach retained fountain signal from the account
+
+`deleted_actor_id` is a PSEUDONYMOUS internal actor key, not anonymization: it is the deleted
+user's old UUID, retained solely so distinct-actor aggregates (vote counts, condition
+corroboration) survive the deletion unchanged. It is never exposed by the public API.
 
 Revision ID: 0022_account_deletion
 Revises: 0021_content_reports
@@ -96,7 +100,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Destructive by necessity: the anonymized rows have no owner to restore, so restoring
+    # Destructive by necessity: the detached rows have no owner to restore, so restoring
     # NOT NULL means dropping the fountain signal contributed by deleted accounts.
     op.execute("DELETE FROM ratings WHERE user_id IS NULL")
     op.execute("DELETE FROM attribute_observations WHERE user_id IS NULL")

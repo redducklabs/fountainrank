@@ -7,8 +7,8 @@ locally everything here is read-only / dry-run (see `claude_help/kubernetes-infr
   separate Logto DB, Spaces photos/pmtiles + CDN, LB + LE SAN cert, DNS A records,
   registry), assigned to the `FountainRank` project. See `terraform/README.md`.
 - **`k8s/`** — raw YAML templated with `envsubst` (substituted in CI). The deploy
-  **`kubectl apply` set** is `namespace.yaml`, `backend.yaml`, `web.yaml`, `logto.yaml`,
-  `ingress.yaml`. The rest are **not** applied directly:
+  **`kubectl apply` set** is `namespace.yaml`, `backend.yaml`, `account-deletion-cleanup.yaml`,
+  `web.yaml`, `logto.yaml`, `ingress.yaml`. The rest are **not** applied directly:
   - `secrets.yaml` + `registry-secret.yaml` — 📄 reference only (document the key
     contract). CI creates these secrets **imperatively** from GitHub Environment secrets +
     the Terraform DB outputs. Required keys in `fountainrank-secrets`: `database-url` (app),
@@ -21,6 +21,10 @@ locally everything here is read-only / dry-run (see `claude_help/kubernetes-infr
     placeholders would overwrite real secrets with empties.
   - `ingress-nginx.yaml` — 📄 documents the **Helm** install command (NodePort 30080/30443
     + `controller.config.*`); ingress-nginx is Helm-installed, not `kubectl apply`-ed.
+
+  `account-deletion-cleanup.yaml` is an hourly **CronJob** on the backend image that drains the
+  `deleted_accounts` / `storage_cleanup` pending ledgers left by `DELETE /api/v1/me`. It exits
+  non-zero while any row still fails, so a persistent failure shows up as a Failed Job.
 
 ## envsubst variables
 

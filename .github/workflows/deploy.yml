@@ -250,7 +250,7 @@ jobs:
           ADMIN_SUBJECTS: ${{ vars.ADMIN_SUBJECTS }}
         run: |
           export NAMESPACE ENVIRONMENT IMAGE_TAG REGISTRY DOMAIN GOOGLE_DELEGATED_USER FROM_EMAIL LOGTO_APP_ID LOGTO_MANAGEMENT_RESOURCE LOGTO_MANAGEMENT_API_BASE_URL ADMIN_SUBJECTS
-          for f in backend web logto ingress basemap-tiles; do
+          for f in backend account-deletion-cleanup web logto ingress basemap-tiles; do
             envsubst < "infra/k8s/$f.yaml" | kubectl apply -f -
           done
       # Migrations run BEFORE gating backend readiness: /readyz runs a PostGIS query,
