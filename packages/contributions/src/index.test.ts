@@ -6,6 +6,7 @@ import {
   conditionPointsBlocked,
   conditionPointsEligibleInText,
   conditionPointsPreview,
+  isRatingDraftDirty,
   notePointsPreview,
   ratingPointsPreview,
   totalPreviewPoints,
@@ -76,5 +77,24 @@ describe("conditionPointsEligibleInText", () => {
   });
   it("never shows 'about 0 minutes' for a tiny remaining window", () => {
     expect(conditionPointsEligibleInText("2026-06-01T12:00:10Z", now)).toBe("about 1 minute");
+  });
+});
+
+describe("isRatingDraftDirty", () => {
+  const dims = [
+    { rating_type_id: 1, your_rating: 3 },
+    { rating_type_id: 2, your_rating: null },
+  ];
+  it("no edits -> not dirty", () => {
+    expect(isRatingDraftDirty(dims, {})).toBe(false);
+  });
+  it("edit equal to saved -> not dirty", () => {
+    expect(isRatingDraftDirty(dims, { 1: 3 })).toBe(false);
+  });
+  it("edit differs from saved -> dirty", () => {
+    expect(isRatingDraftDirty(dims, { 1: 5 })).toBe(true);
+  });
+  it("edit on a previously-unrated dimension -> dirty", () => {
+    expect(isRatingDraftDirty(dims, { 2: 4 })).toBe(true);
   });
 });
