@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { flushRatingThenUpload } from "./add-photo-flow";
+import { flushRatingThenUpload, singleFlight } from "./add-photo-flow";
 
 describe("flushRatingThenUpload (#1)", () => {
   it("clean draft: rating skipped, photo uploaded", async () => {
@@ -32,5 +32,37 @@ describe("flushRatingThenUpload (#1)", () => {
     const r = await flushRatingThenUpload({ isDirty: true, submitRating, uploadPhoto });
     expect(uploadPhoto).toHaveBeenCalledOnce();
     expect(r).toEqual({ ratingOutcome: "failed", uploaded: true });
+  });
+});
+
+describe("singleFlight (#1)", () => {
+  it("ignores a second call while the first is in flight", async () => {
+    let resolve!: () => void;
+    const action = vi.fn(() => new Promise<void>((r) => (resolve = r)));
+    const guarded = singleFlight(action);
+
+    const first = guarded();
+    guarded(); // second tap during the flush — must be ignored
+    expect(action).toHaveBeenCalledTimes(1);
+
+    resolve();
+    await first;
+    expect(action).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows a new call once the previous one settles", async () => {
+    const action = vi.fn().mockResolvedValue(undefined);
+    const guarded = singleFlight(action);
+    await guarded();
+    await guarded();
+    expect(action).toHaveBeenCalledTimes(2);
+  });
+
+  it("clears the in-flight flag even when the action throws", async () => {
+    const action = vi.fn().mockRejectedValueOnce(new Error("boom")).mockResolvedValue(undefined);
+    const guarded = singleFlight(action);
+    await expect(guarded()).rejects.toThrow("boom");
+    await guarded(); // not stuck after the throw
+    expect(action).toHaveBeenCalledTimes(2);
   });
 });
