@@ -128,7 +128,20 @@ class FountainDetail(BaseModel):
 
 class ConditionReportRequest(BaseModel):
     status: ConditionStatus
-    is_proximate: bool = False
+    # DEPRECATED (spec §4.5): proximity is now server-computed. Kept for backward compatibility —
+    # false/null accepted (both first-party clients historically send false); true is rejected
+    # in the handler (not here) so the 422 detail is the exact string the test asserts.
+    # Marked deprecated in the OpenAPI schema via json_schema_extra (not Pydantic's deprecated=True,
+    # which emits a runtime DeprecationWarning on every server-side read of the field).
+    is_proximate: bool | None = Field(default=None, json_schema_extra={"deprecated": True})
+    latitude: float | None = Field(default=None, ge=-90.0, le=90.0)
+    longitude: float | None = Field(default=None, ge=-180.0, le=180.0)
+
+    @model_validator(mode="after")
+    def _coords_both_or_neither(self) -> "ConditionReportRequest":
+        if (self.latitude is None) != (self.longitude is None):
+            raise ValueError("latitude and longitude must be supplied together")
+        return self
 
 
 class DuplicateFountainConflict(BaseModel):
@@ -162,6 +175,15 @@ class AddFountainRequest(BaseModel):
 
 class RateRequest(BaseModel):
     ratings: list[RatingInput] = Field(min_length=1)
+    # Optional client-asserted location for the proximity guard (spec §4.5). Both-or-neither.
+    latitude: float | None = Field(default=None, ge=-90.0, le=90.0)
+    longitude: float | None = Field(default=None, ge=-180.0, le=180.0)
+
+    @model_validator(mode="after")
+    def _coords_both_or_neither(self) -> "RateRequest":
+        if (self.latitude is None) != (self.longitude is None):
+            raise ValueError("latitude and longitude must be supplied together")
+        return self
 
 
 class MeResponse(BaseModel):

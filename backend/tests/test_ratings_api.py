@@ -1,14 +1,21 @@
 import asyncio
+import uuid
 
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import func, select
 
 from app.config import Settings, get_settings
 from app.main import app
+from app.models import Rating
+
+# The coordinates _add_fountain places the fountain at (used by the proximity tests below).
+FOUNTAIN_LAT, FOUNTAIN_LNG = 37.7749, -122.4194
 
 
 async def _add_fountain(client) -> str:
     resp = await client.post(
-        "/api/v1/fountains", json={"location": {"latitude": 37.7749, "longitude": -122.4194}}
+        "/api/v1/fountains",
+        json={"location": {"latitude": FOUNTAIN_LAT, "longitude": FOUNTAIN_LNG}},
     )
     assert resp.status_code == 201
     return resp.json()["id"]
@@ -112,3 +119,122 @@ async def test_concurrent_ratings_keep_aggregates_consistent():
     body = detail.json()
     assert body["rating_count"] == 2  # both distinct users counted
     assert abs(body["average_rating"] - 3.0) < 1e-9  # mean of 5 and 1
+
+
+# --- Rating proximity guard (#3, spec §4.5) ---
+
+
+async def test_rating_latitude_without_longitude_is_422(client):
+    fid = await _add_fountain(client)
+    resp = await client.post(
+        f"/api/v1/fountains/{fid}/ratings",
+        json={"ratings": [{"rating_type_id": 1, "stars": 5}], "latitude": 40.0},
+    )
+    assert resp.status_code == 422
+
+
+async def test_rating_within_radius_sets_proximate(client, session):
+    fid = await _add_fountain(client)
+    resp = await client.post(
+        f"/api/v1/fountains/{fid}/ratings",
+        json={
+            "ratings": [{"rating_type_id": 1, "stars": 5}],
+            "latitude": FOUNTAIN_LAT,
+            "longitude": FOUNTAIN_LNG,
+        },
+    )
+    assert resp.status_code == 200
+    row = (
+        await session.execute(select(Rating).where(Rating.fountain_id == uuid.UUID(fid)))
+    ).scalar_one()
+    assert row.is_proximate is True
+
+
+async def test_rating_outside_radius_is_403_and_writes_nothing(client, session):
+    fid = await _add_fountain(client)
+    resp = await client.post(
+        f"/api/v1/fountains/{fid}/ratings",
+        json={
+            "ratings": [{"rating_type_id": 1, "stars": 5}],
+            "latitude": 0.0,
+            "longitude": 0.0,
+        },  # ~thousands of km away
+    )
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == "outside_rating_radius"
+    count = (
+        await session.execute(
+            select(func.count()).select_from(Rating).where(Rating.fountain_id == uuid.UUID(fid))
+        )
+    ).scalar_one()
+    assert count == 0
+
+
+async def test_rating_without_coords_is_accepted_not_proximate(client, session):
+    fid = await _add_fountain(client)
+    resp = await client.post(
+        f"/api/v1/fountains/{fid}/ratings",
+        json={"ratings": [{"rating_type_id": 1, "stars": 4}]},
+    )
+    assert resp.status_code == 200
+    row = (
+        await session.execute(select(Rating).where(Rating.fountain_id == uuid.UUID(fid)))
+    ).scalar_one()
+    assert row.is_proximate is False
+
+
+async def test_rerate_without_coords_does_not_downgrade_proximate(client, session):
+    fid = await _add_fountain(client)
+    await client.post(
+        f"/api/v1/fountains/{fid}/ratings",
+        json={
+            "ratings": [{"rating_type_id": 1, "stars": 5}],
+            "latitude": FOUNTAIN_LAT,
+            "longitude": FOUNTAIN_LNG,
+        },
+    )
+    # Re-rate with NO coords: stars change, but is_proximate stays true (MONOTONIC).
+    await client.post(
+        f"/api/v1/fountains/{fid}/ratings",
+        json={"ratings": [{"rating_type_id": 1, "stars": 3}]},
+    )
+    row = (
+        await session.execute(select(Rating).where(Rating.fountain_id == uuid.UUID(fid)))
+    ).scalar_one()
+    assert row.stars == 3
+    assert row.is_proximate is True
+
+
+# --- Validation-error logging privacy (#3, spec §6/§7) ---
+
+
+async def test_validation_error_logs_sanitized_fields_only(client, caplog):
+    fid = await _add_fountain(client)
+    with caplog.at_level("INFO", logger="app"):
+        resp = await client.post(
+            f"/api/v1/fountains/{fid}/ratings",
+            json={
+                "ratings": [{"rating_type_id": 1, "stars": 5}],
+                "latitude": 999.0,
+                "longitude": 1.0,
+            },
+        )
+    assert resp.status_code == 422
+    # The out-of-range coordinate must never reach the log stream (spec §7).
+    assert "999" not in caplog.text
+    # The sanitized record WAS emitted, and carries loc/type but not the raw input.
+    rec = next(r for r in caplog.records if r.getMessage() == "request validation failed")
+    assert rec.errors  # list of {loc, type}
+    assert all("input" not in e and "ctx" not in e for e in rec.errors)
+
+
+async def test_validation_error_response_body_unchanged(client):
+    fid = await _add_fountain(client)
+    # The 422 response body keeps FastAPI's default list-shaped `detail` — no API-wide change.
+    resp = await client.post(
+        f"/api/v1/fountains/{fid}/ratings",
+        json={"ratings": []},  # min_length violation -> default validation error
+    )
+    assert resp.status_code == 422
+    assert isinstance(resp.json()["detail"], list)
+    assert resp.json()["detail"][0]["type"]  # standard Pydantic error entry

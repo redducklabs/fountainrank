@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import JSONResponse
 from geoalchemy2 import Geography, Geometry
-from sqlalchemy import cast, func, select
+from sqlalchemy import cast, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,7 +39,7 @@ from app.filters import (
     discovery_filters,
     fountain_indexable_predicate,
 )
-from app.geo import latitude_of, longitude_of, point_geography
+from app.geo import latitude_of, longitude_of, point_geography, within_radius
 from app.locks import ADD_FOUNTAIN_LOCK_KEY
 from app.membership import recompute_fountain_membership
 from app.models import (
@@ -110,7 +110,12 @@ async def _validate_rating_types(session: AsyncSession, ratings: list[RatingInpu
 
 
 async def _upsert_ratings(
-    session: AsyncSession, *, fountain_id: uuid.UUID, user_id: uuid.UUID, ratings: list[RatingInput]
+    session: AsyncSession,
+    *,
+    fountain_id: uuid.UUID,
+    user_id: uuid.UUID,
+    ratings: list[RatingInput],
+    is_proximate: bool,
 ) -> dict[int, uuid.UUID]:
     # Atomic upsert via ON CONFLICT on the (fountain_id, user_id, rating_type_id) unique
     # constraint. A SELECT-then-INSERT would race two concurrent submissions for the same
@@ -129,6 +134,7 @@ async def _upsert_ratings(
                 "user_id": user_id,
                 "rating_type_id": rating_type_id,
                 "stars": stars,
+                "is_proximate": is_proximate,
             }
             for rating_type_id, stars in stars_by_type.items()
         ]
@@ -138,7 +144,14 @@ async def _upsert_ratings(
     # to the exact ratings row for future confirmation/moderation.
     stmt = stmt.on_conflict_do_update(
         index_elements=["fountain_id", "user_id", "rating_type_id"],
-        set_={"stars": stmt.excluded.stars, "updated_at": func.now()},
+        set_={
+            "stars": stmt.excluded.stars,
+            "updated_at": func.now(),
+            # MONOTONIC: absence of a coordinate is UNKNOWN, not negative — never overwrite
+            # a prior verified true with false (spec §4.5). Renders as
+            # `is_proximate = ratings.is_proximate OR excluded.is_proximate`.
+            "is_proximate": or_(Rating.is_proximate, stmt.excluded.is_proximate),
+        },
     ).returning(Rating.rating_type_id, Rating.id)
     result = await session.execute(stmt)
     rating_ids = {row.rating_type_id: row.id for row in result}
@@ -829,8 +842,14 @@ async def add_fountain(
             )
         )
     if payload.ratings:
+        # Inline ratings on add-fountain are not proximity-checked (the add flow does not assert the
+        # rater's GPS against the pin); is_proximate=False means "no location asserted" (spec §4.5).
         rating_ids = await _upsert_ratings(
-            session, fountain_id=fountain.id, user_id=user.id, ratings=payload.ratings
+            session,
+            fountain_id=fountain.id,
+            user_id=user.id,
+            ratings=payload.ratings,
+            is_proximate=False,
         )
         await recompute_fountain_ranking(session, fountain.id)
         specs += _rating_contribution_specs(
@@ -872,6 +891,7 @@ async def submit_ratings(
     payload: RateRequest,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(require_named_user),
+    settings: Settings = Depends(get_settings),
 ) -> FountainDetail:
     # Lock the parent fountain row for the txn so concurrent raters serialize their
     # aggregate recompute. The per-rating ON CONFLICT keeps the rating ROWS race-safe,
@@ -890,8 +910,32 @@ async def submit_ratings(
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="fountain not found")
 
     await _validate_rating_types(session, payload.ratings)
+
+    is_proximate = False
+    if payload.latitude is not None and payload.longitude is not None:
+        proximate = (
+            await session.execute(
+                select(
+                    within_radius(
+                        Fountain.location,
+                        payload.latitude,
+                        payload.longitude,
+                        settings.rating_max_distance_m,
+                    )
+                ).where(Fountain.id == fountain.id)
+            )
+        ).scalar_one()
+        if not proximate:
+            logger.info("rating rejected: outside radius", extra={"fountain_id": str(fountain.id)})
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail="outside_rating_radius")
+        is_proximate = True
+
     rating_ids = await _upsert_ratings(
-        session, fountain_id=fountain.id, user_id=user.id, ratings=payload.ratings
+        session,
+        fountain_id=fountain.id,
+        user_id=user.id,
+        ratings=payload.ratings,
+        is_proximate=is_proximate,
     )
     await recompute_fountain_ranking(session, fountain.id)
     # Rebuild the location as a SQL expression (binding a loaded WKBElement would need
@@ -984,6 +1028,7 @@ async def submit_condition(
     payload: ConditionReportRequest,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(require_named_user),
+    settings: Settings = Depends(get_settings),
 ) -> FountainDetail:
     # One captured timestamp drives the row created_at, the status recompute window, and the
     # rolling-24h condition point-window gate (#124) — so they can never straddle a boundary.
@@ -999,11 +1044,33 @@ async def submit_condition(
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="fountain not found")
     prev_status = fountain.current_status
 
+    # is_proximate is server-computed (spec §4.5). The request field is deprecated: false/null are
+    # accepted for backward compatibility, but a client asserting true is rejected — it must not be
+    # able to self-assert a proximity it may not have.
+    if payload.is_proximate is True:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, detail="is_proximate_is_server_computed"
+        )
+    is_proximate = False
+    if payload.latitude is not None and payload.longitude is not None:
+        is_proximate = (
+            await session.execute(
+                select(
+                    within_radius(
+                        Fountain.location,
+                        payload.latitude,
+                        payload.longitude,
+                        settings.proximate_radius_m,
+                    )
+                ).where(Fountain.id == fountain.id)
+            )
+        ).scalar_one()
+
     report = ConditionReport(
         fountain_id=fountain.id,
         user_id=user.id,
         status=payload.status,
-        is_proximate=payload.is_proximate,
+        is_proximate=is_proximate,
         created_at=report_time,
     )
     session.add(report)
