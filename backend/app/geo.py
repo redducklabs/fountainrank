@@ -14,3 +14,17 @@ def latitude_of(location_col) -> ColumnElement:
 
 def longitude_of(location_col) -> ColumnElement:
     return func.ST_X(cast(location_col, Geometry))
+
+
+def within_radius(
+    location_col, latitude: float, longitude: float, radius_m: float
+) -> ColumnElement:
+    """True when `location_col` is within `radius_m` metres of (latitude, longitude).
+
+    All proximity checks route through here so the (lon, lat) ordering lives in exactly
+    one place (see point_geography). `ST_DWithin` on geography uses metres and is
+    inclusive at the boundary.
+    """
+    return func.ST_DWithin(
+        cast(location_col, Geography), point_geography(latitude, longitude), radius_m
+    )
