@@ -21,9 +21,20 @@ function positiveInteger(value: number): boolean {
   return Number.isInteger(value) && value > 0;
 }
 
+export type ContributionCoords = { latitude: number; longitude: number };
+
+// Only latitude/longitude reach the wire (the client-side Coords also carries `accuracy`, which the
+// API does not accept). Returns {} when no coords, so it spreads cleanly into a request body.
+function coordFields(coords?: ContributionCoords | null): ContributionCoords | Record<string, never> {
+  return coords == null
+    ? {}
+    : { latitude: coords.latitude, longitude: coords.longitude };
+}
+
 export function buildRatingPayload(
   fountainId: string,
   starsByRatingType: Record<number, number | undefined>,
+  coords?: ContributionCoords | null,
 ): BuildResult<RateRequest> {
   if (!validFountainId(fountainId)) return { ok: false };
   const ratings = Object.entries(starsByRatingType)
@@ -47,17 +58,19 @@ export function buildRatingPayload(
   ) {
     return { ok: false };
   }
-  return { ok: true, value: { ratings } };
+  return { ok: true, value: { ratings, ...coordFields(coords) } };
 }
 
 export function buildConditionPayload(
   fountainId: string,
   status: string,
+  coords?: ContributionCoords | null,
 ): BuildResult<ConditionReportRequest> {
   if (!validFountainId(fountainId) || !isConditionStatus(status)) {
     return { ok: false };
   }
-  return { ok: true, value: { status, is_proximate: false } };
+  // is_proximate is derived server-side now (#3) — do not send it.
+  return { ok: true, value: { status, ...coordFields(coords) } };
 }
 
 export function attributeOptions(type: AttributeTypeOut): string[] {

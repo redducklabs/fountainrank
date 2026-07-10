@@ -10,6 +10,7 @@ import { AccessibilityInfo, Platform, Pressable, StyleSheet, Text, View } from "
 import type { ContributionError } from "../../lib/contributions/state";
 import { buildRatingPayload } from "../../lib/contributions/payloads";
 import { contributionErrorText } from "../../lib/contributions/state";
+import { requestCurrentCoords } from "../../lib/location-request";
 import { colors, spacing, typography } from "../../theme";
 
 type Dimension = components["schemas"]["DimensionSummary"];
@@ -41,11 +42,16 @@ export function RatingContributionForm({
       edits[dimension.rating_type_id] ?? dimension.your_rating ?? undefined,
     ]),
   );
-  const payload = buildRatingPayload(fountainId, stars);
-  const preview = ratingPointsPreview(payload.ok ? payload.value.ratings.length : 0);
+  // Coord-less build drives the points preview + the submit-disabled state; submit() rebuilds
+  // with coords (fetched on the tap) so a location prompt never fires just from rendering.
+  const previewPayload = buildRatingPayload(fountainId, stars);
+  const preview = ratingPointsPreview(previewPayload.ok ? previewPayload.value.ratings.length : 0);
 
   async function submit() {
     setMessage(null);
+    // Best-effort location for the proximity guard (#3); never blocks (null ok -> unverified).
+    const coords = await requestCurrentCoords();
+    const payload = buildRatingPayload(fountainId, stars, coords);
     if (!payload.ok) {
       setMessage({ tone: "err", text: "Choose at least one rating." });
       return;
@@ -98,7 +104,7 @@ export function RatingContributionForm({
       <PointsPreview lines={preview} />
       <SubmitButton
         label={hasExistingRating ? "Update rating" : "Submit rating"}
-        disabled={pending || !payload.ok}
+        disabled={pending || !previewPayload.ok}
         onPress={submit}
       />
       <ContributionMessage message={message} />

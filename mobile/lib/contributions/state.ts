@@ -14,6 +14,8 @@ export type ContributionError =
   | "needs_name"
   | "network"
   | "server"
+  // Rating-only: 403 outside_rating_radius — the client's location is >50 mi from the fountain (#3).
+  | "too_far"
   // Photo-upload-only conflict: `photo_limit_fountain`/`photo_limit_user` (distinct from the
   // shared `needs_name` 409 gate) — see `mapPhotoUploadError` in `lib/detail/photo-upload.ts`.
   | "photo_limit"
@@ -35,6 +37,7 @@ export function mapContributionError(error: unknown): ContributionError {
   }
   if (error instanceof ApiError) {
     if (error.status === 401) return "unauthenticated";
+    if (error.status === 403) return "too_far"; // rating outside the 50 mi radius (#3)
     if (error.status === 404) return "not_found";
     if (error.status === 422) return "validation";
     // These detail writes have only ONE 409 shape — the name gate (require_named_user).
@@ -61,6 +64,8 @@ export function contributionErrorText(error: ContributionError): string {
       return "Please check your input and try again.";
     case "needs_name":
       return "Add a display name on the Profile tab to contribute.";
+    case "too_far":
+      return "You need to be within 50 mi of this fountain to rate it.";
     case "network":
       return "Check your connection and try again.";
     case "server":
