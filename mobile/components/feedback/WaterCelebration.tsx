@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { AccessibilityInfo, Animated, StyleSheet, View } from "react-native";
+import { AccessibilityInfo, Animated, Image, StyleSheet, View } from "react-native";
 
 import { colors } from "../../theme";
 
@@ -77,10 +77,11 @@ export function WaterCelebration({
               },
         ]}
       >
-        <View style={styles.iconCircle}>
-          <View style={styles.dropStem} />
-          <View style={styles.dropBowl} />
-        </View>
+        <Image
+          source={require("../../assets/logo-pin.png")}
+          style={styles.pin}
+          resizeMode="contain"
+        />
         {points != null && points > 0 ? (
           <Animated.Text
             accessibilityRole="text"
@@ -146,47 +147,28 @@ const styles = StyleSheet.create({
     left: 0,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(10, 53, 126, 0.18)",
+    // Lighter scrim than before so the moment reads as an overlay, not a page/modal change (#2).
+    backgroundColor: "rgba(10, 53, 126, 0.10)",
   },
   burst: {
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 999,
-    backgroundColor: colors.brandBlue,
+    // White pill + gold ring so the blue FountainRank pin logo (#5) reads clearly against it.
+    backgroundColor: colors.onBrand,
     borderColor: colors.brandYellow,
     borderWidth: 3,
     paddingHorizontal: 28,
     paddingVertical: 22,
     minWidth: 190,
   },
-  iconCircle: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#0E4DA4",
-    borderColor: colors.onBrand,
-    borderWidth: 1,
-    overflow: "hidden",
-  },
-  dropStem: {
-    width: 10,
-    height: 24,
-    borderRadius: 5,
-    backgroundColor: "#5FC5F0",
-  },
-  dropBowl: {
-    width: 34,
-    height: 16,
-    borderBottomLeftRadius: 18,
-    borderBottomRightRadius: 18,
-    backgroundColor: "#5FC5F0",
-    marginTop: -3,
+  pin: {
+    width: 56,
+    height: 56,
   },
   pointsText: {
     marginTop: 10,
-    color: colors.brandYellow,
+    color: colors.brandBlue,
     fontSize: 24,
     lineHeight: 28,
     fontWeight: "900",
