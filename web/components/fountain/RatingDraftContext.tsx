@@ -1,5 +1,5 @@
 "use client";
-import { createContext, useContext, useState } from "react";
+import { createContext, useCallback, useContext, useMemo, useState } from "react";
 
 // Only the fields the draft actually needs (the dirty check + building the rating payload). The full
 // DimensionSummary from FountainDetail is structurally assignable to this.
@@ -34,12 +34,17 @@ export function RatingDraftProvider({
   children: React.ReactNode;
 }) {
   const [edits, setEdits] = useState<Record<number, number>>({});
-  const setEdit = (ratingTypeId: number, value: number) =>
-    setEdits((current) => ({ ...current, [ratingTypeId]: value }));
-  const clear = () => setEdits({});
-  return (
-    <RatingDraftContext.Provider value={{ dimensions, edits, setEdit, clear }}>
-      {children}
-    </RatingDraftContext.Provider>
+  // Stable identities so a consumer that keys an effect on setEdit/clear (or the value object) does
+  // not re-run every render — an unmemoized setEdit caused an infinite effect loop in tests.
+  const setEdit = useCallback(
+    (ratingTypeId: number, value: number) =>
+      setEdits((current) => ({ ...current, [ratingTypeId]: value })),
+    [],
   );
+  const clear = useCallback(() => setEdits({}), []);
+  const value = useMemo(
+    () => ({ dimensions, edits, setEdit, clear }),
+    [dimensions, edits, setEdit, clear],
+  );
+  return <RatingDraftContext.Provider value={value}>{children}</RatingDraftContext.Provider>;
 }

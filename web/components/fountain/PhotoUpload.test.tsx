@@ -17,12 +17,14 @@ import { RatingDraftProvider, useRatingDraft } from "./RatingDraftContext";
 type Dimension = { rating_type_id: number; name: string; your_rating: number | null };
 const DIMS: Dimension[] = [{ rating_type_id: 1, name: "Clarity", your_rating: null }];
 
-// Seeds a star edit into the draft context so PhotoUpload sees a dirty draft.
+// Seeds a star edit into the draft context (once, on mount) so PhotoUpload sees a dirty draft.
 function SeedEdit({ ratingTypeId, value }: { ratingTypeId: number; value: number }) {
   const { setEdit } = useRatingDraft();
   useEffect(() => {
     setEdit(ratingTypeId, value);
-  }, [ratingTypeId, value, setEdit]);
+    // Seed exactly once; setEdit is stable (memoized in the provider).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   return null;
 }
 
