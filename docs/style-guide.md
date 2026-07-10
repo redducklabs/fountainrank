@@ -393,11 +393,13 @@ clients. It saves the user's chosen name (stored backend-side as a `nickname` ov
 - **Change-name variant (`required={false}`):** a labelled text input pre-filled with the current
   display name (the IdP name if present, else blank), `maxLength={80}`, with a **Save** button. Shown
   in the normal signed-in account view alongside the profile.
-- **First-sign-in gate variant (`required`):** shown on its own (no other account body, no dismiss —
-  only Sign out escapes) when the resolved public name is "Anonymous". Adds a heading ("Choose a
-  display name") + one line of helper copy, a blank input, and a **Continue** button. This is the
-  hard gate: a name-less account is routed here after sign-in and cannot contribute until a name is
-  set (the backend also rejects contribution writes with `409 display_name_required`).
+- **First-sign-in gate variant (`required`):** shown on its own (no other account body) when the
+  resolved public name is "Anonymous". Adds a heading ("Choose a display name") + one line of helper
+  copy, a blank input, and a **Continue** button. Sign out and Delete account remain available from
+  this state so a newly created account can leave or be deleted before completing setup. This is the
+  hard contribution gate: a name-less account is routed here after sign-in and cannot contribute
+  until a name is set (the backend also rejects contribution writes with
+  `409 display_name_required`).
 - **Styling:** web uses the gradient-surface tokens (white label, `bg-white/10` input, crown-gold
   `bg-[#F2C200]` navy-text button); mobile uses the theme tokens (`colors.surface` input,
   `colors.brandYellow` button) matching the account tab.
@@ -408,6 +410,27 @@ clients. It saves the user's chosen name (stored backend-side as a `nickname` ov
   state; status/error text is announced (`role="status"`, `aria-live="polite"` on web).
 - **Mobile root gate (`mobile/app/(tabs)/_layout.tsx`):** because sign-in can begin from the map, a
   mounted watcher routes an authenticated, still-name-less user to the Profile tab's gate variant.
+
+### Account deletion (`web/components/account/DeleteAccountButton.tsx`, `mobile/app/(tabs)/account.tsx`)
+
+The signed-in Account/Profile surface includes a destructive **Delete account** control below Sign
+out. It is present in the normal signed-in state and in the first-sign-in/name-required state on web
+and mobile.
+
+- **Web button:** white-on-brand page treatment with a red destructive outline/text
+  (`border-red-200`, `text-red-100`), rounded-full, matching the account page's Sign out sizing.
+- **Mobile button:** full-width outlined destructive treatment using `colors.danger` for the border
+  and label, `minHeight: 44`, `borderRadius: 8`, and the same horizontal padding as secondary
+  account buttons. Pressed state fills `#FEF2F2` (a light-red wash with no theme token yet);
+  disabled state uses the shared opacity treatment.
+- **Confirmation:** web uses `window.confirm`; mobile uses native `Alert.alert` with Cancel and a
+  destructive "Delete account" action. The message states that the account, profile, notes, and
+  photos are deleted, while fountain ratings and fountain details remain on the public map without
+  the account attached.
+- **Completion:** on successful API deletion, sign out. Mobile also clears the query cache so the
+  Profile tab returns to the signed-out state.
+- **Failures:** rendered as inline danger text and announced assertively (`role="alert"` on web). A
+  `401` is reported as an expired session and prompts re-authentication rather than a retry.
 
 ### Admin moderation controls (`web/components/admin/FountainAdminControls.tsx`)
 

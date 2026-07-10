@@ -37,7 +37,7 @@ async def clean_db(engine):
                 "content_reports, upload_attempts, storage_cleanup, fountain_photos, "
                 "fountain_import_events, osm_fountain_import_candidates, "
                 "fountain_provenances, osm_fountain_import_runs, ratings, fountains, "
-                "place_boundary_cells, place_boundaries, users "
+                "place_boundary_cells, place_boundaries, users, deleted_accounts "
                 "RESTART IDENTITY CASCADE"
             )
         )

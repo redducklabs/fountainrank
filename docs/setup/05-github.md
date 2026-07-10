@@ -79,6 +79,7 @@ available (you don't need them all at once — 0e/0f tell you when each is read)
 | `DATABASE_CA_CERT` | DO Managed Postgres CA PEM (`doctl databases get <id>` / console) — mounted as `database-ca.crt` for the backend's asyncpg verify-full TLS |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | `03-google-cloud.md` |
 | `LOGTO_EMAIL_WEBHOOK_TOKEN` | self-generated random (≥32 chars); also set as the Logto HTTP email connector auth token (`06-logto.md`). Consumed by `deploy.yml` |
+| `LOGTO_M2M_APP_SECRET` | Logto M2M app secret; reused by backend account deletion (`06-logto.md`). Consumed by `deploy.yml` — **`deploy.yml` fails fast if it (or `vars.LOGTO_M2M_APP_ID`) is unset** |
 | `LOGTO_*` (endpoint/app/secret as needed) | `06-logto.md` |
 
 **Variables** (non-sensitive):
@@ -89,6 +90,8 @@ available (you don't need them all at once — 0e/0f tell you when each is read)
 | `CLUSTER_NAME` | Terraform output (0e/0f) |
 | `GOOGLE_WORKSPACE_DOMAIN` / `GOOGLE_DELEGATED_USER` | `03-google-cloud.md` |
 | `FROM_EMAIL` / `BASE_URL` | `02` / per-environment |
+| `LOGTO_M2M_APP_ID` | Logto M2M app ID; reused by backend account deletion (`06-logto.md`). Consumed by `deploy.yml` |
+| `LOGTO_MANAGEMENT_RESOURCE` / `LOGTO_MANAGEMENT_API_BASE_URL` | Optional Logto Management API resource indicator / HTTP base URL override — only needed on Logto Cloud (`06-logto.md`) |
 
 Setting a secret via `gh` (example — run it yourself; the value is never
 committed):

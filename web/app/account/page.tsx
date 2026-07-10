@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { DeleteAccountButton } from "../../components/account/DeleteAccountButton";
 import { DisplayNameForm } from "../../components/account/DisplayNameForm";
 import { SignInButton } from "../../components/SignInButton";
 import { SignOutButton } from "../../components/SignOutButton";
@@ -63,6 +64,7 @@ export default async function AccountPage({
         <main className={shell}>
           <DisplayNameForm initialValue="" required />
           <SignOutButton />
+          <DeleteAccountButton />
         </main>
       </>
     );
@@ -99,6 +101,7 @@ export default async function AccountPage({
           My rated water fountains
         </Link>
         <SignOutButton />
+        <DeleteAccountButton />
       </main>
     </>
   );

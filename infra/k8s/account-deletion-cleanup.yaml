@@ -1,0 +1,146 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: fountainrank-account-deletion-cleanup
+  namespace: ${NAMESPACE}
+  labels:
+    app: fountainrank-account-deletion-cleanup
+    component: backend
+spec:
+  # DELETE /api/v1/me commits the local delete first, then cleans up the Logto identity and the
+  # Spaces photo objects on a best-effort basis. Anything that fails is left as a `pending` row in
+  # `deleted_accounts` / `storage_cleanup`. Those ledgers MUST be drained by something other than an
+  # operator remembering to: a stranded identity delete means the Logto account (and its email)
+  # outlives the user's deletion request, which is exactly what the Apple 5.1.1(v) / GDPR obligation
+  # forbids. Hourly at :17 to stay clear of the top-of-hour cron pile-up.
+  schedule: "17 * * * *"
+  timeZone: "Etc/UTC"
+  concurrencyPolicy: Forbid
+  # Don't fire a stampede of catch-up runs after a control-plane outage; the next hour suffices.
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      # The CLI exits non-zero when any ledger row is still failing, so a persistently broken
+      # cleanup (e.g. the M2M app losing its Management API role) surfaces as a Failed Job rather
+      # than silently succeeding. Keep the retry count low so that signal isn't buried.
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app: fountainrank-account-deletion-cleanup
+            component: backend
+            version: ${IMAGE_TAG}
+        spec:
+          restartPolicy: OnFailure
+          # Hardened pod security. The image already runs as the non-root `app` user
+          # (uid/gid 1000, backend/Dockerfile), but the scanners read the manifest, not the
+          # image — state it explicitly. The cleanup process only talks to Postgres, Logto,
+          # and Spaces; it needs no root, no extra capabilities, and no writable root fs.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          imagePullSecrets:
+            - name: regcred
+          volumes:
+            - name: db-ca
+              secret:
+                secretName: fountainrank-secrets
+                items:
+                  - key: database-ca.crt
+                    path: database-ca.crt
+            # Writable scratch under readOnlyRootFilesystem (defensive; boto3/httpx need none).
+            - name: tmp
+              emptyDir: {}
+          containers:
+            - name: account-deletion-cleanup
+              image: ${REGISTRY}/fountainrank-backend:${IMAGE_TAG}
+              command:
+                - python
+                - -m
+                - app.account_deletion_cleanup
+                - --limit
+                - "100"
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: fountainrank-secrets
+                      key: database-url
+                - name: DB_SSL_ROOT_CERT
+                  value: /var/run/secrets/fountainrank/database-ca.crt
+                # Retrying a pending identity delete needs the same M2M credentials the API uses.
+                - name: LOGTO_MANAGEMENT_APP_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: fountainrank-secrets
+                      key: logto-management-app-id
+                - name: LOGTO_MANAGEMENT_APP_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: fountainrank-secrets
+                      key: logto-management-app-secret
+                - name: LOGTO_MANAGEMENT_RESOURCE
+                  value: "${LOGTO_MANAGEMENT_RESOURCE}"
+                - name: LOGTO_MANAGEMENT_API_BASE_URL
+                  value: "${LOGTO_MANAGEMENT_API_BASE_URL}"
+                # LOGTO_ENDPOINT is deliberately NOT set (as in the backend Deployment): it is not
+                # exported for envsubst, so "${LOGTO_ENDPOINT}" would render empty and silently
+                # break the derived token URI. The Settings default is the correct endpoint.
+                # Retrying a pending photo delete needs the Spaces credentials. Optional for the
+                # same reason as the backend Deployment: unset -> get_storage() returns None and
+                # the storage sweep reports the rows as still pending instead of crashing.
+                - name: SPACES_ENDPOINT
+                  valueFrom:
+                    secretKeyRef:
+                      name: fountainrank-secrets
+                      key: spaces-endpoint
+                      optional: true
+                - name: SPACES_REGION
+                  valueFrom:
+                    secretKeyRef:
+                      name: fountainrank-secrets
+                      key: spaces-region
+                      optional: true
+                - name: SPACES_BUCKET
+                  valueFrom:
+                    secretKeyRef:
+                      name: fountainrank-secrets
+                      key: spaces-bucket
+                      optional: true
+                - name: SPACES_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: fountainrank-secrets
+                      key: spaces-access-key
+                      optional: true
+                - name: SPACES_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: fountainrank-secrets
+                      key: spaces-secret-key
+                      optional: true
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+              volumeMounts:
+                - name: db-ca
+                  mountPath: /var/run/secrets/fountainrank
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                requests:
+                  memory: "128Mi"
+                  cpu: "50m"
+                limits:
+                  memory: "256Mi"
+                  cpu: "250m"

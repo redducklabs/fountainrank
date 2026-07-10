@@ -305,7 +305,7 @@ async def serialize_fountain_detail(
                 RatingType.id,
                 RatingType.name,
                 func.avg(Rating.stars),
-                func.count(func.distinct(Rating.user_id)),
+                func.count(func.distinct(func.coalesce(Rating.user_id, Rating.deleted_actor_id))),
             )
             .select_from(RatingType)
             .outerjoin(

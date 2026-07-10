@@ -7,19 +7,24 @@ locally everything here is read-only / dry-run (see `claude_help/kubernetes-infr
   separate Logto DB, Spaces photos/pmtiles + CDN, LB + LE SAN cert, DNS A records,
   registry), assigned to the `FountainRank` project. See `terraform/README.md`.
 - **`k8s/`** — raw YAML templated with `envsubst` (substituted in CI). The deploy
-  **`kubectl apply` set** is `namespace.yaml`, `backend.yaml`, `web.yaml`, `logto.yaml`,
-  `ingress.yaml`. The rest are **not** applied directly:
+  **`kubectl apply` set** is `namespace.yaml`, `backend.yaml`, `account-deletion-cleanup.yaml`,
+  `web.yaml`, `logto.yaml`, `ingress.yaml`. The rest are **not** applied directly:
   - `secrets.yaml` + `registry-secret.yaml` — 📄 reference only (document the key
     contract). CI creates these secrets **imperatively** from GitHub Environment secrets +
     the Terraform DB outputs. Required keys in `fountainrank-secrets`: `database-url` (app),
-    `logto-db-url` (Logto), and (email) `google-service-account-json` +
-    `logto-email-webhook-token`. E.g.
+    `logto-db-url` (Logto), (email) `google-service-account-json` +
+    `logto-email-webhook-token`, and (account deletion) `logto-management-app-id` +
+    `logto-management-app-secret`. E.g.
     `kubectl create secret generic fountainrank-secrets -n "$NAMESPACE" --from-literal=database-url="$DATABASE_URL" --from-literal=logto-db-url="$LOGTO_DB_URL" --dry-run=client -o yaml | kubectl apply -f -`
     and `doctl registry kubernetes-manifest fountainrank --name regcred --namespace "$NAMESPACE" | kubectl apply -f -`
     (the Secret name `regcred` must match `imagePullSecrets`). Applying the committed
     placeholders would overwrite real secrets with empties.
   - `ingress-nginx.yaml` — 📄 documents the **Helm** install command (NodePort 30080/30443
     + `controller.config.*`); ingress-nginx is Helm-installed, not `kubectl apply`-ed.
+
+  `account-deletion-cleanup.yaml` is an hourly **CronJob** on the backend image that drains the
+  `deleted_accounts` / `storage_cleanup` pending ledgers left by `DELETE /api/v1/me`. It exits
+  non-zero while any row still fails, so a persistent failure shows up as a Failed Job.
 
 ## envsubst variables
 
@@ -32,6 +37,8 @@ locally everything here is read-only / dry-run (see `claude_help/kubernetes-infr
 | `${DOMAIN}` | `fountainrank.com` | deploy workflow |
 | `${GOOGLE_DELEGATED_USER}` | `noreply@fountainrank.com` | `GOOGLE_DELEGATED_USER` var (email) |
 | `${FROM_EMAIL}` | `noreply@fountainrank.com` | `FROM_EMAIL` var (email) |
+| `${LOGTO_MANAGEMENT_RESOURCE}` | `https://default.logto.app/api` | optional `LOGTO_MANAGEMENT_RESOURCE` var |
+| `${LOGTO_MANAGEMENT_API_BASE_URL}` | `https://auth.fountainrank.com/api` | optional `LOGTO_MANAGEMENT_API_BASE_URL` var |
 
 ## Deploy flow (CI, Phase 0f)
 

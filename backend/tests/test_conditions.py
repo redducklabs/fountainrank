@@ -140,3 +140,29 @@ async def test_recompute_excludes_hidden(session):
     await recompute_fountain_status(session, f.id)
     await session.refresh(f)
     assert f.current_status == "reported_issue"
+
+
+@pytest.mark.asyncio
+async def test_recompute_counts_deleted_actor_reports(session):
+    actor_id = uuid.uuid4()
+    f = Fountain(
+        location=point_geography(1.0, 2.0),
+        is_working=True,
+        created_source="user",
+        added_by_user_id=None,
+    )
+    session.add(f)
+    await session.flush()
+    session.add(
+        ConditionReport(
+            fountain_id=f.id,
+            user_id=None,
+            deleted_actor_id=actor_id,
+            status="broken",
+        )
+    )
+    await session.flush()
+
+    await recompute_fountain_status(session, f.id)
+    await session.refresh(f)
+    assert f.current_status == "reported_issue"

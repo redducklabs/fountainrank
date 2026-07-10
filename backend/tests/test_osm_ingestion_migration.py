@@ -47,8 +47,7 @@ async def test_fountains_check_constraints_present_by_definition(session):
     defs = {name: definition for (name, definition) in rows}
     cs = defs["ck_fountains_created_source"].lower()
     assert "created_source" in cs and "user" in cs and "osm" in cs and "admin_import" in cs
-    owner = defs["ck_fountains_user_source_requires_user"].lower().replace(" ", "")
-    assert "added_by_user_idisnotnull" in owner and "created_source" in owner
+    assert "ck_fountains_user_source_requires_user" not in defs
 
 
 @pytest.mark.asyncio
@@ -76,11 +75,10 @@ async def test_fountain_and_provenance_indexes_present(session):
 
 
 @pytest.mark.asyncio
-async def test_user_source_requires_user_check_enforced(session):
-    # A user-source fountain with no owner must violate the owner CHECK.
-    with pytest.raises(IntegrityError):
-        await session.execute(text(_insert_fountain_sql("user", "NULL")))
-        await session.flush()
+async def test_user_source_allows_deleted_account_owner(session):
+    # Account deletion preserves user-added fountain details by clearing added_by_user_id.
+    await session.execute(text(_insert_fountain_sql("user", "NULL")))
+    await session.flush()
 
 
 @pytest.mark.asyncio

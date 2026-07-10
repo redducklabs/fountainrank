@@ -29,16 +29,31 @@ async def test_rating_types_place_type_backfilled(session):
 
 
 @pytest.mark.asyncio
-async def test_attribute_observations_user_id_not_null(session):
-    nn = (
+async def test_retained_contribution_authors_can_be_anonymized(session):
+    rows = (
         await session.execute(
             text(
-                "SELECT is_nullable FROM information_schema.columns "
-                "WHERE table_name='attribute_observations' AND column_name='user_id'"
+                "SELECT table_name || '.' || column_name AS column_name, is_nullable "
+                "FROM information_schema.columns "
+                "WHERE (table_name, column_name) IN ("
+                "('ratings', 'user_id'), "
+                "('ratings', 'deleted_actor_id'), "
+                "('attribute_observations', 'user_id'), "
+                "('attribute_observations', 'deleted_actor_id'), "
+                "('condition_reports', 'user_id'), "
+                "('condition_reports', 'deleted_actor_id'))"
             )
         )
-    ).scalar_one()
-    assert nn == "NO"
+    ).all()
+    cols = {row.column_name: row.is_nullable for row in rows}
+    assert cols == {
+        "ratings.user_id": "YES",
+        "ratings.deleted_actor_id": "YES",
+        "attribute_observations.user_id": "YES",
+        "attribute_observations.deleted_actor_id": "YES",
+        "condition_reports.user_id": "YES",
+        "condition_reports.deleted_actor_id": "YES",
+    }
 
 
 @pytest.mark.asyncio

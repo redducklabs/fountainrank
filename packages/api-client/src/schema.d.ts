@@ -716,7 +716,19 @@ export interface paths {
         get: operations["get_me_api_v1_me_get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete Me
+         * @description Delete the caller's FountainRank account and personal content.
+         *
+         *     Ratings, attribute observations, condition reports, and user-added fountain rows are retained
+         *     but detached from the account, so public ratings/details do not change. Notes and photos are
+         *     removed because they are authored profile content.
+         *
+         *     The local deletion commits first and is irreversible. The Logto identity and the stored photo
+         *     objects are then cleaned up on a best-effort basis, so a cleanup failure never fails the
+         *     request; whatever could not be cleaned up is retried by the account-deletion cleanup job.
+         */
+        delete: operations["delete_me_api_v1_me_delete"];
         options?: never;
         head?: never;
         /** Update Me */
@@ -3070,6 +3082,38 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["MeResponse"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_me_api_v1_me_delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "X-Dev-User"?: string | null;
+                "X-Dev-Email"?: string | null;
+                "X-Dev-Name"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

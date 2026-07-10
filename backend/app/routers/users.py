@@ -1,16 +1,39 @@
 import logging
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select, tuple_
+from fastapi.concurrency import run_in_threadpool
+from sqlalchemy import delete, func, select, tuple_, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
 from app.badges import earned_badges
+from app.config import Settings, get_settings
 from app.db import get_session
 from app.display import resolved_display_name
 from app.geo import latitude_of, longitude_of
-from app.models import ContributionEvent, Fountain, User, UserContributionStats
+from app.logto_management import (
+    LogtoManagementClient,
+    LogtoManagementError,
+    identity_error_detail,
+)
+from app.models import (
+    AttributeObservation,
+    ConditionReport,
+    ContentReport,
+    ContributionEvent,
+    DeletedAccount,
+    Fountain,
+    FountainNote,
+    FountainPhoto,
+    Rating,
+    StorageCleanup,
+    UploadAttempt,
+    User,
+    UserContributionStats,
+)
 from app.schemas import (
     BadgeOut,
     ContributionEventOut,
@@ -23,6 +46,7 @@ from app.schemas import (
     SyncProfileRequest,
     UpdateMeRequest,
 )
+from app.storage import get_storage
 from app.userinfo import (
     SYNTHETIC_EMAIL_DOMAIN,
     UserinfoError,
@@ -80,6 +104,243 @@ async def update_me(
     await session.commit()
     logger.info("display name set", extra={"user_id": str(current_user.id)})  # never the value
     return me_response(current_user)
+
+
+async def _delete_photo_objects_for_account(
+    *,
+    photo_keys: list[str],
+    settings: Settings,
+) -> bool:
+    if not photo_keys:
+        return True
+    storage = get_storage(settings)
+    if storage is None:
+        logger.warning(
+            "account deletion photo cleanup remains pending because storage is unavailable"
+        )
+        return False
+    for key in photo_keys:
+        try:
+            await run_in_threadpool(storage.delete_object, key)
+        except Exception:
+            logger.exception(
+                "account deletion photo cleanup remains pending because object deletion failed",
+                extra={"object_key": key},
+            )
+            return False
+    return True
+
+
+async def _mark_logto_delete_done(session: AsyncSession, logto_user_id: str) -> None:
+    await session.execute(
+        update(DeletedAccount)
+        .where(DeletedAccount.logto_user_id == logto_user_id)
+        .values(
+            identity_delete_status="done",
+            identity_delete_attempts=DeletedAccount.identity_delete_attempts + 1,
+            identity_delete_last_attempt_at=datetime.now(tz=UTC),
+            identity_delete_error=None,
+        )
+    )
+    await session.commit()
+
+
+async def _mark_logto_delete_pending(
+    session: AsyncSession, logto_user_id: str, error: LogtoManagementError
+) -> None:
+    await session.execute(
+        update(DeletedAccount)
+        .where(DeletedAccount.logto_user_id == logto_user_id)
+        .values(
+            identity_delete_status="pending",
+            identity_delete_attempts=DeletedAccount.identity_delete_attempts + 1,
+            identity_delete_last_attempt_at=datetime.now(tz=UTC),
+            identity_delete_error=identity_error_detail(error),
+        )
+    )
+    await session.commit()
+
+
+async def _rollback_quietly(session: AsyncSession) -> None:
+    """Return the session to a usable state after a failed post-commit cleanup step, so the
+    next step still gets a chance to run. A rollback failure here is itself non-fatal — the
+    local deletion is already committed — but it is logged, never swallowed."""
+    try:
+        await session.rollback()
+    except Exception:
+        logger.exception("rollback after a failed account-deletion cleanup step failed")
+
+
+async def _finish_photo_cleanup(
+    session: AsyncSession, settings: Settings, photo_keys: list[str]
+) -> None:
+    if not await _delete_photo_objects_for_account(photo_keys=photo_keys, settings=settings):
+        return
+    if not photo_keys:
+        return
+    await session.execute(
+        update(StorageCleanup)
+        .where(StorageCleanup.object_key.in_(photo_keys), StorageCleanup.status == "pending")
+        .values(status="done")
+    )
+    await session.commit()
+
+
+async def _finish_identity_cleanup(
+    session: AsyncSession, settings: Settings, logto_user_id: str
+) -> None:
+    try:
+        await LogtoManagementClient(settings).delete_user(logto_user_id)
+    except LogtoManagementError as exc:
+        logger.exception("account deletion identity cleanup remains pending")
+        await _mark_logto_delete_pending(session, logto_user_id, exc)
+    else:
+        await _mark_logto_delete_done(session, logto_user_id)
+
+
+@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_me(
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> None:
+    """Delete the caller's FountainRank account and personal content.
+
+    Ratings, attribute observations, condition reports, and user-added fountain rows are retained
+    but detached from the account, so public ratings/details do not change. Notes and photos are
+    removed because they are authored profile content.
+
+    The local deletion commits first and is irreversible. The Logto identity and the stored photo
+    objects are then cleaned up on a best-effort basis, so a cleanup failure never fails the
+    request; whatever could not be cleaned up is retried by the account-deletion cleanup job.
+    """
+    user_id = current_user.id
+    logto_user_id = current_user.logto_user_id
+
+    photo_rows = (
+        await session.execute(
+            select(FountainPhoto.id, FountainPhoto.storage_key, FountainPhoto.thumbnail_key).where(
+                FountainPhoto.user_id == user_id
+            )
+        )
+    ).all()
+    photo_ids = [row.id for row in photo_rows]
+    photo_keys = [key for row in photo_rows for key in (row.storage_key, row.thumbnail_key)]
+    note_ids = (
+        (await session.execute(select(FountainNote.id).where(FountainNote.user_id == user_id)))
+        .scalars()
+        .all()
+    )
+
+    if photo_ids:
+        await session.execute(
+            delete(ContentReport).where(
+                ContentReport.content_type == "photo", ContentReport.content_id.in_(photo_ids)
+            )
+        )
+    if note_ids:
+        await session.execute(
+            delete(ContentReport).where(
+                ContentReport.content_type == "note", ContentReport.content_id.in_(note_ids)
+            )
+        )
+
+    # Reports filed by this user are account data. Moderator references to this user are cleared so
+    # unrelated moderated content no longer carries an account/profile reference.
+    await session.execute(delete(ContentReport).where(ContentReport.reporter_user_id == user_id))
+    await session.execute(
+        update(ContentReport)
+        .where(ContentReport.resolved_by_user_id == user_id)
+        .values(resolved_by_user_id=None)
+    )
+    await session.execute(
+        update(FountainNote)
+        .where(FountainNote.hidden_by_user_id == user_id)
+        .values(hidden_by_user_id=None)
+    )
+    await session.execute(
+        update(FountainPhoto)
+        .where(FountainPhoto.hidden_by_user_id == user_id)
+        .values(hidden_by_user_id=None)
+    )
+    await session.execute(
+        update(AttributeObservation)
+        .where(AttributeObservation.hidden_by_user_id == user_id)
+        .values(hidden_by_user_id=None)
+    )
+    await session.execute(
+        update(ConditionReport)
+        .where(ConditionReport.hidden_by_user_id == user_id)
+        .values(hidden_by_user_id=None)
+    )
+
+    await session.execute(delete(FountainNote).where(FountainNote.user_id == user_id))
+    await session.execute(delete(FountainPhoto).where(FountainPhoto.user_id == user_id))
+    await session.execute(delete(UploadAttempt).where(UploadAttempt.user_id == user_id))
+    await session.execute(
+        update(Fountain).where(Fountain.added_by_user_id == user_id).values(added_by_user_id=None)
+    )
+    await session.execute(
+        update(Rating)
+        .where(Rating.user_id == user_id)
+        .values(user_id=None, deleted_actor_id=user_id)
+    )
+    await session.execute(
+        update(AttributeObservation)
+        .where(AttributeObservation.user_id == user_id)
+        .values(user_id=None, deleted_actor_id=user_id)
+    )
+    await session.execute(
+        update(ConditionReport)
+        .where(ConditionReport.user_id == user_id)
+        .values(user_id=None, deleted_actor_id=user_id)
+    )
+    await session.execute(
+        delete(UserContributionStats).where(UserContributionStats.user_id == user_id)
+    )
+    await session.execute(delete(ContributionEvent).where(ContributionEvent.user_id == user_id))
+    for key in photo_keys:
+        session.add(StorageCleanup(object_key=key, reason="account_delete"))
+    # A double-submitted delete would otherwise lose the tombstone PK race and 500 after the
+    # first request already removed the account. The rest of this handler is a no-op replay.
+    await session.execute(
+        pg_insert(DeletedAccount)
+        .values(logto_user_id=logto_user_id)
+        .on_conflict_do_nothing(index_elements=["logto_user_id"])
+    )
+    await session.execute(delete(User).where(User.id == user_id))
+    await session.commit()
+
+    # Past this commit the local deletion is irreversible and durable: the tombstone already
+    # blocks re-auth, and both ledgers record whatever still needs cleaning. So every remaining
+    # step is BEST EFFORT and must never turn into a non-2xx — a 500 here would tell the user
+    # "deletion did not complete" about an account that is gone and can never sign in again.
+    # Failures stay `pending` for `app.account_deletion_cleanup` to retry.
+    try:
+        await _finish_photo_cleanup(session, settings, photo_keys)
+    except Exception:
+        logger.exception(
+            "account deletion post-commit cleanup failed; ledger row remains pending",
+            extra={"cleanup_step": "photo"},
+        )
+        await _rollback_quietly(session)
+    try:
+        await _finish_identity_cleanup(session, settings, logto_user_id)
+    except Exception:
+        logger.exception(
+            "account deletion post-commit cleanup failed; ledger row remains pending",
+            extra={"cleanup_step": "identity"},
+        )
+        await _rollback_quietly(session)
+
+    logger.info(
+        "account deleted",
+        extra={
+            "user_id": str(user_id),
+            "photos_deleted": len(photo_ids),
+            "notes_deleted": len(note_ids),
+        },
+    )
 
 
 # Defensive guardrail for the unpaginated per-user aggregate (#170, spec §3.1): bound the

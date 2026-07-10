@@ -64,6 +64,10 @@ Authenticated read (caller's own data only):
 
 - `GET /api/v1/me/contributions` — the caller's contribution-point stats + recent
   contribution events (the gamification substrate). Auth required.
+- `DELETE /api/v1/me` — delete the caller's account. Removes the local account,
+  Logto identity, notes, photos, upload attempts, and report history; detaches
+  retained fountain ratings/details from the user so public fountain data
+  remains available.
 
 Writes (require auth — see below):
 
@@ -91,6 +95,42 @@ Writes (require auth — see below):
 token must be issued for the API Resource `https://api.fountainrank.com`. The dev-auth
 headers below are a local-only convenience, active solely when `DEV_AUTH_ENABLED=true`
 (default `false` in production) and only when no `Authorization` header is sent.
+
+Account deletion also requires Logto Management API M2M credentials so
+`DELETE /api/v1/me` can delete the authoritative Logto identity. Configure these
+env vars in production:
+
+- `LOGTO_MANAGEMENT_APP_ID` (CI sources this from `vars.LOGTO_M2M_APP_ID`)
+- `LOGTO_MANAGEMENT_APP_SECRET` (CI sources this from `secrets.LOGTO_M2M_APP_SECRET`)
+- `LOGTO_MANAGEMENT_RESOURCE` (optional OAuth resource indicator; defaults to
+  `https://default.logto.app/api` — the literal indicator every **self-hosted** Logto
+  uses, regardless of where it is served from. Set this only on Logto **Cloud**, where
+  the indicator is `https://<tenant-id>.logto.app/api`.)
+- `LOGTO_MANAGEMENT_API_BASE_URL` (optional HTTP API base URL; defaults to
+  `{LOGTO_ENDPOINT}/api`)
+
+The API tombstones the Logto subject before returning success, so stale pre-delete
+tokens cannot recreate the local account. Once the local deletion transaction commits
+it is irreversible, so everything after it — Spaces object deletion and the Logto
+identity delete — is **best effort** and can never fail the request: `DELETE /api/v1/me`
+returns `204` regardless. If Logto identity deletion is unavailable, the
+`deleted_accounts` row remains `identity_delete_status='pending'`. If Spaces deletion is
+unavailable, photo object keys remain as pending `storage_cleanup` rows.
+
+Both ledgers are drained automatically by the hourly
+`fountainrank-account-deletion-cleanup` CronJob (`infra/k8s/account-deletion-cleanup.yaml`),
+which runs the command below. It exits non-zero while any row is still failing, so a
+persistent failure (e.g. the M2M app losing its Management API role) surfaces as a
+**Failed Job** rather than silently stranding a Logto identity. Check it with
+`kubectl get cronjob,jobs -n fountainrank -l app=fountainrank-account-deletion-cleanup`
+and read the pod logs (structured JSON; the failure reason is also persisted to
+`deleted_accounts.identity_delete_error`).
+
+To drain the ledgers by hand:
+
+```bash
+uv run python -m app.account_deletion_cleanup --limit 100
+```
 
 ### Local dev-auth fallback
 
