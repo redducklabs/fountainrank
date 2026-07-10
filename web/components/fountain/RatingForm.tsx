@@ -6,6 +6,7 @@ import { ratingPointsPreview } from "@fountainrank/contributions";
 import { submitRating } from "../../app/actions/contribute";
 import { getCurrentPositionSafe } from "../../lib/geo/current-position";
 import { errorText } from "./contributeError";
+import { useRatingDraft } from "./RatingDraftContext";
 import { PointsPreview } from "../contributions/PointsPreview";
 import { StarGroup } from "./StarGroup";
 
@@ -19,7 +20,8 @@ export function RatingForm({
   dimensions: Dimension[];
 }) {
   const router = useRouter();
-  const [edits, setEdits] = useState<Record<number, number>>({});
+  // The draft is lifted to a context above the tabs so "Add photo" (in another tab) can flush it (#1).
+  const { edits, setEdit, clear } = useRatingDraft();
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
   // Effective stars: an explicit edit wins, else the viewer's saved rating (#65 your_rating),
@@ -41,6 +43,7 @@ export function RatingForm({
       const coords = await getCurrentPositionSafe();
       const res = await submitRating(fountainId, ratings, coords ?? undefined);
       if (res.ok) {
+        clear();
         setMsg({ tone: "ok", text: "Thanks — your rating was saved." });
         window.dispatchEvent(new Event("fountainrank:contribution"));
         router.refresh();
@@ -64,7 +67,7 @@ export function RatingForm({
           id={d.rating_type_id}
           name={d.name}
           value={effectiveStars[d.rating_type_id] ?? 0}
-          onChange={(n) => setEdits((s) => ({ ...s, [d.rating_type_id]: n }))}
+          onChange={(n) => setEdit(d.rating_type_id, n)}
         />
       ))}
       <div className="mt-3">

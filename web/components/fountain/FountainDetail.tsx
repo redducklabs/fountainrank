@@ -10,6 +10,7 @@ import { ContributeSection } from "./ContributeSection";
 import { PhotoGallery } from "./PhotoGallery";
 import { PhotoHero } from "./PhotoHero";
 import { FountainDetailTabs } from "./FountainDetailTabs";
+import { RatingDraftProvider } from "./RatingDraftContext";
 import { ReportControl } from "./ReportControl";
 import { REPORT_CATEGORIES } from "./reportCategories";
 
@@ -184,16 +185,18 @@ export function FountainDetail({
     </div>
   );
   return (
-    <FountainDetailTabs
-      tabs={[
-        { id: "primary", label: "Info", content: primary },
-        { id: "details", label: "Details", content: details },
-        {
-          id: "photos",
-          label: `Photos${photos.length > 0 ? ` (${photos.length})` : ""}`,
-          content: photoTab,
-        },
-      ]}
-    />
+    <RatingDraftProvider dimensions={detail.dimensions}>
+      <FountainDetailTabs
+        tabs={[
+          { id: "primary", label: "Info", content: primary },
+          { id: "details", label: "Details", content: details },
+          {
+            id: "photos",
+            label: `Photos${photos.length > 0 ? ` (${photos.length})` : ""}`,
+            content: photoTab,
+          },
+        ]}
+      />
+    </RatingDraftProvider>
   );
 }
