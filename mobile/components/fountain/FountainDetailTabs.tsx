@@ -1,6 +1,15 @@
 import type React from "react";
 import { createContext, useContext, useState } from "react";
-import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import {
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 
 import { colors, spacing, typography } from "../../theme";
 
@@ -61,7 +70,17 @@ export function FountainDetailTabs({
             a flex:1 ScrollView on the New Architecture (all three stacked, each clipped to 1/3), and
             an absolute-fill overlay swallowed touches on the active panel — the height:0 wrapper
             avoids both. */}
-        <View style={styles.panels}>
+        {/* Keyboard avoidance for the text inputs on the Details tab (#4). The KAV takes over the
+            `panels` flex:1 so the flex chain (wrap → panels → panelWrap → scroll) is unchanged.
+            keyboardVerticalOffset starts at 0: the expo-router native stack header is a separate
+            view above the KAV frame, so its origin already sits below the header. `behavior="height"`
+            on Android resizes the active panel; the per-tab ScrollView then scrolls the focused
+            input into view. */}
+        <KeyboardAvoidingView
+          style={styles.panels}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          keyboardVerticalOffset={0}
+        >
           {tabs.map((tab) => {
             const selected = tab.id === active;
             return (
@@ -74,6 +93,8 @@ export function FountainDetailTabs({
                 <ScrollView
                   style={styles.scroll}
                   contentContainerStyle={styles.panelContent}
+                  keyboardShouldPersistTaps="handled"
+                  keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
                   refreshControl={
                     onRefresh ? (
                       <RefreshControl
@@ -89,7 +110,7 @@ export function FountainDetailTabs({
               </View>
             );
           })}
-        </View>
+        </KeyboardAvoidingView>
       </View>
     </TabsContext.Provider>
   );
