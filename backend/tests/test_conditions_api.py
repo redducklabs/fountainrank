@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from app.auth import get_current_user
 from app.config import Settings, get_settings
 from app.main import app
-from app.models import ContributionEvent, User, UserContributionStats
+from app.models import ConditionReport, ContributionEvent, User, UserContributionStats
 
 LOC = {"latitude": 5.0, "longitude": 6.0}
 
@@ -272,3 +272,46 @@ async def test_first_problem_report_awards_two(client):
     fid = await _add_fountain(client)
     r = await _report(client, fid, "broken")
     assert r.json()["condition_points_awarded"] == 2
+
+
+# --- Condition is_proximate server-derived (#3, spec §4.5) ---
+
+
+async def test_condition_true_is_proximate_rejected(client):
+    fid = await _add_fountain(client)
+    resp = await client.post(
+        f"/api/v1/fountains/{fid}/conditions",
+        json={"status": "working", "is_proximate": True},
+    )
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "is_proximate_is_server_computed"
+
+
+async def test_condition_derives_proximate_from_coords(client, session):
+    fid = await _add_fountain(client)
+    resp = await client.post(
+        f"/api/v1/fountains/{fid}/conditions",
+        json={"status": "working", "latitude": LOC["latitude"], "longitude": LOC["longitude"]},
+    )
+    assert resp.status_code == 200
+    row = (
+        await session.execute(
+            select(ConditionReport).where(ConditionReport.fountain_id == uuid.UUID(fid))
+        )
+    ).scalar_one()
+    assert row.is_proximate is True
+
+
+async def test_condition_no_coords_is_not_proximate(client, session):
+    fid = await _add_fountain(client)
+    resp = await client.post(
+        f"/api/v1/fountains/{fid}/conditions",
+        json={"status": "working"},
+    )
+    assert resp.status_code == 200
+    row = (
+        await session.execute(
+            select(ConditionReport).where(ConditionReport.fountain_id == uuid.UUID(fid))
+        )
+    ).scalar_one()
+    assert row.is_proximate is False

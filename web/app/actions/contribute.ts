@@ -16,6 +16,8 @@ export type ContributeError =
   | "not_found"
   | "needs_name"
   | "server"
+  // Rating-only: 403 outside_rating_radius — the client's location is >50 mi from the fountain (#3).
+  | "too_far"
   // Photo-upload-only conflict: `photo_limit_fountain`/`photo_limit_user` (distinct from the
   // shared `needs_name` 409 gate — see `uploadPhoto`).
   | "photo_limit"
@@ -51,6 +53,7 @@ function readPointsAwarded(data: unknown): number | undefined {
 function mapStatus(status: number): ActionResult {
   if (status >= 200 && status < 300) return { ok: true };
   if (status === 401) return fail("unauthenticated");
+  if (status === 403) return fail("too_far"); // rating outside the 50 mi radius (#3)
   if (status === 404) return fail("not_found");
   if (status === 422) return fail("validation");
   if (status === 429) return fail("rate_limited");
@@ -107,9 +110,12 @@ async function run(
   }
 }
 
+export type Coords = { latitude: number; longitude: number };
+
 export async function submitRating(
   fountainId: string,
   ratings: { rating_type_id: number; stars: number }[],
+  coords?: Coords,
 ): Promise<ActionResult> {
   if (!UUID_RE.test(fountainId)) return fail("validation");
   if (
@@ -129,7 +135,7 @@ export async function submitRating(
   return run(fountainId, "rate", (client) =>
     client.POST("/api/v1/fountains/{fountain_id}/ratings", {
       params: { path: { fountain_id: fountainId } },
-      body: { ratings },
+      body: { ratings, ...coords },
     }),
   );
 }
@@ -137,13 +143,14 @@ export async function submitRating(
 export async function submitCondition(
   fountainId: string,
   status: ConditionStatus,
+  coords?: Coords,
 ): Promise<ActionResult> {
   if (!UUID_RE.test(fountainId)) return fail("validation");
   if (!CONDITION_STATUSES.has(status)) return fail("validation");
   return run(fountainId, "condition", (client) =>
     client.POST("/api/v1/fountains/{fountain_id}/conditions", {
       params: { path: { fountain_id: fountainId } },
-      body: { status, is_proximate: false },
+      body: { status, ...coords },
     }),
   );
 }

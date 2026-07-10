@@ -92,3 +92,20 @@ export function conditionPointsEligibleInText(
 function countedLine(label: string, count: number, pointsEach: number): PointsLine[] {
   return count > 0 ? [{ label, points: count * pointsEach }] : [];
 }
+
+/**
+ * True when the rating draft has at least one star edit that differs from the viewer's saved
+ * rating for that dimension (#1). Used to decide whether "Add photo" should first flush an unsaved
+ * rating. An edit equal to the saved value, or no edit at all, is not dirty. A `your_rating` of null
+ * (never rated) is treated as 0, so any positive edit on it is dirty.
+ */
+export function isRatingDraftDirty(
+  dimensions: { rating_type_id: number; your_rating?: number | null }[],
+  edits: Record<number, number>,
+): boolean {
+  return dimensions.some((d) => {
+    const edit = edits[d.rating_type_id];
+    if (edit == null) return false;
+    return edit !== (d.your_rating ?? 0);
+  });
+}

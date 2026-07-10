@@ -8,6 +8,8 @@ import {
   conditionPointsPreview,
 } from "@fountainrank/contributions";
 import { submitCondition } from "../../app/actions/contribute";
+import { dispatchContribution } from "../../lib/contribution-event";
+import { getCurrentPositionSafe } from "../../lib/geo/current-position";
 import { conditionStatusLabel } from "../../lib/map/format";
 import { PointsPreview } from "../contributions/PointsPreview";
 import { errorText } from "./contributeError";
@@ -41,7 +43,9 @@ export function ConditionForm({
 
   function report(status: ConditionStatus) {
     start(async () => {
-      const res = await submitCondition(fountainId, status);
+      // Best-effort location so the server can derive is_proximate (#3); never blocks (null ok).
+      const coords = await getCurrentPositionSafe();
+      const res = await submitCondition(fountainId, status, coords ?? undefined);
       if (res.ok) {
         const earned = res.pointsAwarded ?? 0;
         setMsg({
@@ -51,7 +55,7 @@ export function ConditionForm({
               ? `Thanks — you earned ${earned} points.`
               : "Thanks — saved. (Already counted recently, so no points this time.)",
         });
-        window.dispatchEvent(new Event("fountainrank:contribution"));
+        dispatchContribution(earned);
         router.refresh();
       } else {
         setMsg({ tone: "err", text: errorText(res.error) });

@@ -1,8 +1,8 @@
 import type { components } from "@fountainrank/api-client";
-import { CONTRIBUTION_POINTS } from "@fountainrank/contributions";
+import { CONTRIBUTION_POINTS, isRatingDraftDirty } from "@fountainrank/contributions";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Stack, router, useLocalSearchParams } from "expo-router";
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { AttributeContributionForm } from "../../components/fountain/AttributeContributionForm";
@@ -12,11 +12,16 @@ import { ContributePanel } from "../../components/fountain/ContributePanel";
 import { FountainDetail } from "../../components/fountain/FountainDetail";
 import { NoteContributionForm } from "../../components/fountain/NoteContributionForm";
 import { PhotoUploadButton } from "../../components/fountain/PhotoUploadButton";
-import { RatingContributionForm } from "../../components/fountain/RatingContributionForm";
+import {
+  effectiveStars,
+  RatingContributionForm,
+} from "../../components/fountain/RatingContributionForm";
 import { ReportContentButton } from "../../components/fountain/ReportContentButton";
 import { ScreenContainer } from "../../components/ScreenContainer";
 import { QueryStateView } from "../../components/states/QueryStateView";
 import { apiErrorStatus, unwrap } from "../../lib/api";
+import { flushRatingThenUpload } from "../../lib/contributions/add-photo-flow";
+import { buildRatingPayload } from "../../lib/contributions/payloads";
 import type { ContributionError } from "../../lib/contributions/state";
 import { contributionErrorText, mapContributionError } from "../../lib/contributions/state";
 import { normalizeFountainId } from "../../lib/detail/id";
@@ -25,6 +30,7 @@ import {
   mapPhotoUploadError,
   PhotoUploadError,
 } from "../../lib/detail/photo-upload";
+import { requestCurrentCoords } from "../../lib/location-request";
 import { REPORT_CATEGORIES, reportContent, type ReportContentType } from "../../lib/detail/report";
 import { useApi } from "../../providers/api-provider";
 import { useAuth } from "../../providers/auth-provider";
@@ -64,6 +70,13 @@ export default function FountainDetailScreen() {
   const [celebrationKey, setCelebrationKey] = useState(0);
   const [celebrationPoints, setCelebrationPoints] = useState<number | null>(null);
   const [reportTarget, setReportTarget] = useState<ReportTarget | null>(null);
+  // The rating draft (explicit star taps) lives here, not in RatingContributionForm, so "Add photo"
+  // can flush an unsaved rating before uploading (#1).
+  const [ratingEdits, setRatingEdits] = useState<Record<number, number>>({});
+  // Single-flight guard for the add-photo flow (#1): the ref blocks re-entry across the whole
+  // pick → coords → rating → upload lifecycle; `addingPhoto` disables the buttons for the same span.
+  const addPhotoInFlight = useRef(false);
+  const [addingPhoto, setAddingPhoto] = useState(false);
   const [photoUploadMessage, setPhotoUploadMessage] = useState<{
     tone: "ok" | "err";
     text: string;
@@ -196,16 +209,67 @@ export default function FountainDetailScreen() {
     setPhotoUploadMessage({ tone: "err", text: contributionErrorText(mapped) });
   };
 
-  const pickAndUploadPhoto = async (asset: {
-    uri: string;
-    fileName?: string | null;
-    mimeType?: string | null;
-  }) => {
+  const pickAndUploadPhoto = async (
+    asset: { uri: string; fileName?: string | null; mimeType?: string | null },
+    dimensions: FountainDetailT["dimensions"],
+  ) => {
+    // Single-flight guard (#1): the rating flush + location fetch run BEFORE photoUploadMutation
+    // flips to pending, so without this a second "Add photo" tap in that window would double-submit
+    // the rating and upload two photos. The ref persists across renders (so the flag survives the
+    // re-created closure); `addingPhoto` state disables both buttons for the whole lifecycle. This is
+    // the same guarded-once semantics as the unit-tested `singleFlight` helper.
+    if (addPhotoInFlight.current) return;
+    addPhotoInFlight.current = true;
+    setAddingPhoto(true);
     setPhotoUploadMessage(null);
+    // #1: if the user has an unsaved rating, submit it first — but NEVER let a rating failure
+    // (including the 50 mi proximity 403) block the ungated photo upload (spec §4.1).
+    const dirty = fountainId != null && isRatingDraftDirty(dimensions, ratingEdits);
+    let ratingError: ContributionError | null = null;
     try {
-      await photoUploadMutation.mutateAsync(asset);
+      const { ratingOutcome } = await flushRatingThenUpload({
+        isDirty: dirty,
+        submitRating: async () => {
+          const coords = await requestCurrentCoords();
+          const payload = buildRatingPayload(
+            fountainId as string,
+            effectiveStars(dimensions, ratingEdits),
+            coords,
+          );
+          if (!payload.ok) {
+            ratingError = "validation";
+            return { ok: false, error: "validation" };
+          }
+          try {
+            await ratingMutation.mutateAsync(payload.value);
+            setRatingEdits({}); // draft saved -> no longer dirty
+            return { ok: true };
+          } catch (error) {
+            const result = handleMutationError(error);
+            if (!result.ok) ratingError = result.error;
+            return result;
+          }
+        },
+        uploadPhoto: async () => {
+          await photoUploadMutation.mutateAsync(asset);
+        },
+      });
+      // Photo uploaded (no throw). photoUploadMutation.onSuccess set the default "Photo added"
+      // message; override it when the flushed rating failed so the outcome isn't silent.
+      if (ratingOutcome === "failed" && ratingError) {
+        setPhotoUploadMessage({
+          tone: "ok",
+          text:
+            ratingError === "too_far"
+              ? "Photo added. Your rating wasn't saved — you're too far from this fountain to rate it."
+              : `Photo added, but your rating wasn't saved: ${contributionErrorText(ratingError)}`,
+        });
+      }
     } catch (error) {
       handlePhotoUploadError(error);
+    } finally {
+      addPhotoInFlight.current = false;
+      setAddingPhoto(false);
     }
   };
 
@@ -449,9 +513,14 @@ export default function FountainDetailScreen() {
                     fountainId={fountainId}
                     dimensions={detail.dimensions}
                     pending={ratingMutation.isPending}
+                    edits={ratingEdits}
+                    onStarPress={(ratingTypeId, value) =>
+                      setRatingEdits((current) => ({ ...current, [ratingTypeId]: value }))
+                    }
                     onSubmit={async (body) => {
                       try {
                         await ratingMutation.mutateAsync(body);
+                        setRatingEdits({}); // draft saved
                         return { ok: true };
                       } catch (error) {
                         return handleMutationError(error);
@@ -459,10 +528,10 @@ export default function FountainDetailScreen() {
                     }}
                   />
                   <PhotoUploadButton
-                    pending={photoUploadMutation.isPending}
+                    pending={photoUploadMutation.isPending || addingPhoto}
                     message={photoUploadMessage}
                     onPick={(asset) => {
-                      void pickAndUploadPhoto(asset);
+                      void pickAndUploadPhoto(asset, detail.dimensions);
                     }}
                   />
                 </>,
@@ -514,10 +583,10 @@ export default function FountainDetailScreen() {
               );
               const photosContribution = wrapContribution(
                 <PhotoUploadButton
-                  pending={photoUploadMutation.isPending}
+                  pending={photoUploadMutation.isPending || addingPhoto}
                   message={photoUploadMessage}
                   onPick={(asset) => {
-                    void pickAndUploadPhoto(asset);
+                    void pickAndUploadPhoto(asset, detail.dimensions);
                   }}
                 />,
               );

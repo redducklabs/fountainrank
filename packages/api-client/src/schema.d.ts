@@ -1106,9 +1106,13 @@ export interface components {
             status: "working" | "broken" | "low_pressure" | "dirty" | "bad_taste" | "blocked" | "seasonal_unavailable" | "hours_limited";
             /**
              * Is Proximate
-             * @default false
+             * @deprecated
              */
-            is_proximate: boolean;
+            is_proximate?: boolean | null;
+            /** Latitude */
+            latitude?: number | null;
+            /** Longitude */
+            longitude?: number | null;
         };
         /** ContributionEventOut */
         ContributionEventOut: {
@@ -1472,6 +1476,10 @@ export interface components {
         RateRequest: {
             /** Ratings */
             ratings: components["schemas"]["RatingInput"][];
+            /** Latitude */
+            latitude?: number | null;
+            /** Longitude */
+            longitude?: number | null;
         };
         /** RatingInput */
         RatingInput: {

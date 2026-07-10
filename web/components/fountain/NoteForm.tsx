@@ -1,8 +1,9 @@
 "use client";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { notePointsPreview } from "@fountainrank/contributions";
+import { CONTRIBUTION_POINTS, notePointsPreview } from "@fountainrank/contributions";
 import { submitNote } from "../../app/actions/contribute";
+import { dispatchContribution } from "../../lib/contribution-event";
 import { PointsPreview } from "../contributions/PointsPreview";
 import { errorText } from "./contributeError";
 
@@ -23,7 +24,7 @@ export function NoteForm({ fountainId }: { fountainId: string }) {
       if (res.ok) {
         setMsg({ tone: "ok", text: "Your note was saved." });
         setBody("");
-        window.dispatchEvent(new Event("fountainrank:contribution"));
+        dispatchContribution(CONTRIBUTION_POINTS.add_note);
         router.refresh();
       } else {
         setMsg({ tone: "err", text: errorText(res.error) });

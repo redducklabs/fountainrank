@@ -14,6 +14,7 @@ import {
   contributionErrorText,
   PROBLEM_CONDITION_STATUSES,
 } from "../../lib/contributions/state";
+import { requestCurrentCoords } from "../../lib/location-request";
 import { colors, spacing, typography } from "../../theme";
 import { ContributionMessage, PointsPreview, SubmitButton } from "./RatingContributionForm";
 
@@ -41,7 +42,9 @@ export function ConditionContributionForm({
 
   async function submit(status: ConditionStatus) {
     setMessage(null);
-    const payload = buildConditionPayload(fountainId, status);
+    // Best-effort location so the server can derive is_proximate (#3); never blocks (null ok).
+    const coords = await requestCurrentCoords();
+    const payload = buildConditionPayload(fountainId, status, coords);
     if (!payload.ok) {
       setMessage({ tone: "err", text: "Choose a valid status." });
       return;

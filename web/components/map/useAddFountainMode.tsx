@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import type { components } from "@fountainrank/api-client";
 import { addFountain } from "../../app/actions/add-fountain";
 import { addReducer, initialAddState } from "../../lib/add-fountain-machine";
+import { dispatchContribution } from "../../lib/contribution-event";
 import {
   buildAttributeGroups,
   fetchAttributeTypes,
@@ -179,7 +180,7 @@ export function useAddFountainMode(
       // intercepted detail modal, so leaving it active would strand it (suppressed browse, hidden
       // FAB, lingering pin) once the modal closes.
       router.push(`/fountains/${res.fountainId}`);
-      window.dispatchEvent(new Event("fountainrank:contribution"));
+      dispatchContribution(); // add-fountain awarded points aren't returned to the client (#2)
       dispatch({ type: "CANCEL" });
       resetOptional();
     } else if (res.error === "duplicate") {

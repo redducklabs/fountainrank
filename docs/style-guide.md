@@ -830,14 +830,21 @@ earn points. It **replaces** the Possible-points preview for that flow while the
 
 ### Contribution celebration
 
-A short water-squirt/droplet animation shown after successful contribution writes on web and
+A short reward animation shown after successful, point-awarding contribution writes on web and
 mobile.
 
-- Droplets use Water cyan (`#5FC5F0`) with a white edge and animate upward from the lower center of
-  the active surface.
+- Centered on the **FountainRank pin logo** — mobile uses the `assets/logo-pin.png` raster asset;
+  web uses `/icon.png`. **Never redraw the logo in code** (see _Logo assets_). The pin sits on a
+  white pill with a gold (`brandYellow`) ring so the blue crowned pin reads clearly, and does a
+  brief _pop-and-settle_ (scale `0.7 → 1.08 → 0.96`).
+- The `+N points` count renders below the pin in brand blue (mobile) / on the badge (web) when the
+  awarded points are known. Water-cyan (`#5FC5F0`) droplets play as a subordinate accent, never the
+  focal element.
+- The scrim behind the burst is a light brand-blue wash (`rgba(10,53,126,0.10)`) so the moment reads
+  as an overlay, not a navigation or modal change (the user stays on the fountain).
 - The animation is decorative (`aria-hidden` on web) and must not be the only success signal.
-- Respect reduced-motion settings: suppress the droplet motion while still showing the normal
-  success message and refreshed points total.
+- Respect reduced-motion settings: suppress the motion while still showing the normal success
+  message and refreshed points total.
 
 ### Mobile placement toast
 
@@ -2515,8 +2522,9 @@ control is shown as usable unless `auth.status === "authenticated"`.
   `detail.dimensions`. Unset dimensions submit nothing; at least one selected
   dimension is required. Submit button is brand-blue with disabled opacity.
 - **Condition form** — direct "working" confirmation plus problem chips for the
-  deployed condition statuses. Reports use `is_proximate: false` until a later
-  device/proximity flow explicitly verifies the user is at the fountain.
+  deployed condition statuses. `is_proximate` is **server-computed** from the
+  optional coordinates the client attaches on submit (best-effort; never blocks) —
+  clients no longer send the flag (#3).
 - **Attribute form** — uses the public `/api/v1/attribute-types` catalog, not
   `detail.attributes` consensus rows. Boolean attributes render `Yes` / `No` /
   `Unknown`; enum attributes render each allowed value plus `Unknown`. Catalog
@@ -2524,9 +2532,10 @@ control is shown as usable unless `auth.status === "authenticated"`.
 - **Note form** — create-only note entry with `maxLength={1000}` and a character
   count. There is no edit/delete UI because the API is list/create only.
 - **Reward animation** — successful point-awarding writes use the shared full-screen
-  `WaterCelebration` overlay. It shows a brand-blue/gold burst with the known or derived `+N points`
-  amount, then clears without trapping touches. Reduced-motion users get a static success/points
-  confirmation with no droplet motion.
+  `WaterCelebration` overlay: the FountainRank pin logo pops-and-settles on a white/gold pill with
+  the known or derived `+N points` amount and subordinate cyan droplets, over a light scrim, then
+  clears without trapping touches (see _Contribution celebration_). Reduced-motion users get a static
+  success/points confirmation with no motion.
 - **Feedback and diagnostics** — every mutation shows pending/success/error
   state in the UI. Mobile contribution payloads, note bodies, tokens, and raw
   profile data are not logged; mobile diagnosability for this slice is through

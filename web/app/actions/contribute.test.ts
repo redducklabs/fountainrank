@@ -90,6 +90,22 @@ describe("submitRating", () => {
       ok: false,
       error: "needs_name",
     });
+    // 403 = outside the 50 mi rating radius (#3).
+    POST.mockResolvedValue({ response: { status: 403 } });
+    expect(await submitRating(FID, [{ rating_type_id: 1, stars: 4 }])).toEqual({
+      ok: false,
+      error: "too_far",
+    });
+  });
+  it("passes coordinates through to the body when supplied (#3)", async () => {
+    POST.mockResolvedValue({ response: { status: 200 } });
+    await submitRating(FID, [{ rating_type_id: 1, stars: 4 }], { latitude: 40, longitude: -73 });
+    expect(POST).toHaveBeenCalledWith(
+      "/api/v1/fountains/{fountain_id}/ratings",
+      expect.objectContaining({
+        body: { ratings: [{ rating_type_id: 1, stars: 4 }], latitude: 40, longitude: -73 },
+      }),
+    );
   });
   it("treats a thrown token error as unauthenticated", async () => {
     getClient.mockRejectedValueOnce(new Error("no token"));
@@ -119,12 +135,20 @@ describe("submitCondition", () => {
     // @ts-expect-error hostile input
     expect(await submitCondition(FID, "explode")).toEqual({ ok: false, error: "validation" });
   });
-  it("posts is_proximate:false", async () => {
+  it("posts status only when no coordinates are supplied (is_proximate is server-derived, #3)", async () => {
     POST.mockResolvedValue({ response: { status: 200 } });
     await submitCondition(FID, "working");
     expect(POST).toHaveBeenCalledWith(
       "/api/v1/fountains/{fountain_id}/conditions",
-      expect.objectContaining({ body: { status: "working", is_proximate: false } }),
+      expect.objectContaining({ body: { status: "working" } }),
+    );
+  });
+  it("passes coordinates through when supplied (#3)", async () => {
+    POST.mockResolvedValue({ response: { status: 200 } });
+    await submitCondition(FID, "working", { latitude: 5, longitude: 6 });
+    expect(POST).toHaveBeenCalledWith(
+      "/api/v1/fountains/{fountain_id}/conditions",
+      expect.objectContaining({ body: { status: "working", latitude: 5, longitude: 6 } }),
     );
   });
 });

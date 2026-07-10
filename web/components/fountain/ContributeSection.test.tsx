@@ -34,8 +34,19 @@ vi.mock("../../lib/catalog", () => ({
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
 
 import { ContributeSection } from "./ContributeSection";
+import { RatingDraftProvider } from "./RatingDraftContext";
 
 const dims = [{ rating_type_id: 1, name: "Clarity", average_rating: null, vote_count: 0 }];
+
+// ContributeSection lives inside the detail tabs, below the RatingDraftProvider (#1), so tests
+// render it within one.
+function renderSection(props: React.ComponentProps<typeof ContributeSection>) {
+  return render(
+    <RatingDraftProvider dimensions={dims}>
+      <ContributeSection {...props} />
+    </RatingDraftProvider>,
+  );
+}
 
 afterEach(() => {
   cleanup();
@@ -43,7 +54,7 @@ afterEach(() => {
 });
 
 it("signed-out: renders sign-in form and NO rating/condition/note forms", () => {
-  render(<ContributeSection fountainId="fid" dimensions={dims} isAuthenticated={false} />);
+  renderSection({ fountainId: "fid", dimensions: dims, isAuthenticated: false });
   expect(screen.getByRole("button", { name: /sign in to contribute/i })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /submit rating/i })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /i checked/i })).not.toBeInTheDocument();
@@ -51,7 +62,7 @@ it("signed-out: renders sign-in form and NO rating/condition/note forms", () => 
 });
 
 it("signed-in primary variant renders rating and add-photo controls", () => {
-  render(<ContributeSection fountainId="fid" dimensions={dims} isAuthenticated={true} />);
+  renderSection({ fountainId: "fid", dimensions: dims, isAuthenticated: true });
   expect(screen.getByRole("button", { name: /submit rating/i })).toBeInTheDocument();
   expect(screen.getByLabelText(/add a photo/i)).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /i checked/i })).not.toBeInTheDocument();
@@ -60,14 +71,7 @@ it("signed-in primary variant renders rating and add-photo controls", () => {
 });
 
 it("signed-in details variant renders secondary contribution controls", () => {
-  render(
-    <ContributeSection
-      fountainId="fid"
-      dimensions={dims}
-      isAuthenticated={true}
-      variant="details"
-    />,
-  );
+  renderSection({ fountainId: "fid", dimensions: dims, isAuthenticated: true, variant: "details" });
   expect(screen.getByRole("button", { name: /i checked/i })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /save note/i })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /submit rating/i })).not.toBeInTheDocument();
@@ -76,14 +80,7 @@ it("signed-in details variant renders secondary contribution controls", () => {
 });
 
 it("signed-in photos variant renders only the add-photo control", () => {
-  render(
-    <ContributeSection
-      fountainId="fid"
-      dimensions={dims}
-      isAuthenticated={true}
-      variant="photos"
-    />,
-  );
+  renderSection({ fountainId: "fid", dimensions: dims, isAuthenticated: true, variant: "photos" });
   expect(screen.getByLabelText(/add a photo/i)).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /submit rating/i })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /i checked/i })).not.toBeInTheDocument();

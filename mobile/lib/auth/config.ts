@@ -32,6 +32,12 @@ export function nativeAuthConfig(config: MobileConfig): NativeAuthConfig {
       // runtime import so it stays loadable under the node-based vitest.
       scopes: ["email", "profile"],
       resources: [config.logtoAudience],
+      // Force re-authentication on every sign-in (#6): without `login`, the @logto/rn default is
+      // `[Prompt.Consent]` only, so a surviving Logto IdP session silently re-logs-in the last user
+      // (with Google). `consent` keeps the SDK's default consent behavior. String literals
+      // (Prompt.Login/Consent === "login"/"consent") keep this module free of an @logto runtime
+      // import so it stays loadable under the node-based vitest, as with `scopes` above.
+      prompt: ["login", "consent"] as LogtoNativeConfig["prompt"],
     },
   };
 }

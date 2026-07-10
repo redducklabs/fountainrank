@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 const { submitRating, refresh } = vi.hoisted(() => ({ submitRating: vi.fn(), refresh: vi.fn() }));
@@ -7,6 +7,22 @@ vi.mock("../../app/actions/contribute", () => ({ submitRating }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
 
 import { RatingForm } from "./RatingForm";
+import { RatingDraftProvider } from "./RatingDraftContext";
+
+type Dim = {
+  rating_type_id: number;
+  name: string;
+  average_rating: number | null;
+  vote_count: number;
+  your_rating?: number | null;
+};
+function renderForm(dimensions: Dim[]) {
+  return render(
+    <RatingDraftProvider dimensions={dimensions}>
+      <RatingForm fountainId="fid" dimensions={dimensions} />
+    </RatingDraftProvider>,
+  );
+}
 
 const dims = [
   { rating_type_id: 1, name: "Clarity", average_rating: null, vote_count: 0 },
@@ -20,21 +36,21 @@ afterEach(() => {
 
 it("disables submit until a star is set, then posts only set dimensions", async () => {
   submitRating.mockResolvedValue({ ok: true });
-  render(<RatingForm fountainId="fid" dimensions={dims} />);
+  renderForm(dims);
   const submit = screen.getByRole("button", { name: /submit rating/i });
   expect(submit).toBeDisabled();
   fireEvent.click(screen.getByRole("radio", { name: /clarity: 4 stars/i }));
   expect(submit).not.toBeDisabled();
   fireEvent.click(submit);
   await waitFor(() =>
-    expect(submitRating).toHaveBeenCalledWith("fid", [{ rating_type_id: 1, stars: 4 }]),
+    expect(submitRating).toHaveBeenCalledWith("fid", [{ rating_type_id: 1, stars: 4 }], undefined),
   );
   await waitFor(() => expect(refresh).toHaveBeenCalled());
 });
 
 it("shows success message on ok", async () => {
   submitRating.mockResolvedValue({ ok: true });
-  render(<RatingForm fountainId="fid" dimensions={dims} />);
+  renderForm(dims);
   fireEvent.click(screen.getByRole("radio", { name: /clarity: 3 stars/i }));
   fireEvent.click(screen.getByRole("button", { name: /submit rating/i }));
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/rating was saved/i));
@@ -42,7 +58,7 @@ it("shows success message on ok", async () => {
 
 it("shows error message on failure", async () => {
   submitRating.mockResolvedValue({ ok: false, error: "server" });
-  render(<RatingForm fountainId="fid" dimensions={dims} />);
+  renderForm(dims);
   fireEvent.click(screen.getByRole("radio", { name: /clarity: 1 star/i }));
   fireEvent.click(screen.getByRole("button", { name: /submit rating/i }));
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/couldn't save/i));
@@ -55,23 +71,23 @@ const ratedDims = [
 
 it("pre-fills from your_rating, shows the update affordance, and submits the saved value", async () => {
   submitRating.mockResolvedValue({ ok: true });
-  render(<RatingForm fountainId="fid" dimensions={ratedDims} />);
+  renderForm(ratedDims);
   expect(screen.getByRole("radio", { name: /clarity: 4 stars/i })).toBeChecked();
   expect(screen.getByText(/you.ve rated this fountain/i)).toBeInTheDocument();
   const submit = screen.getByRole("button", { name: /update rating/i });
   expect(submit).not.toBeDisabled();
   fireEvent.click(submit);
   await waitFor(() =>
-    expect(submitRating).toHaveBeenCalledWith("fid", [{ rating_type_id: 1, stars: 4 }]),
+    expect(submitRating).toHaveBeenCalledWith("fid", [{ rating_type_id: 1, stars: 4 }], undefined),
   );
 });
 
 it("lets an explicit edit override the pre-filled rating", async () => {
   submitRating.mockResolvedValue({ ok: true });
-  render(<RatingForm fountainId="fid" dimensions={ratedDims} />);
+  renderForm(ratedDims);
   fireEvent.click(screen.getByRole("radio", { name: /clarity: 2 stars/i }));
   fireEvent.click(screen.getByRole("button", { name: /update rating/i }));
   await waitFor(() =>
-    expect(submitRating).toHaveBeenCalledWith("fid", [{ rating_type_id: 1, stars: 2 }]),
+    expect(submitRating).toHaveBeenCalledWith("fid", [{ rating_type_id: 1, stars: 2 }], undefined),
   );
 });

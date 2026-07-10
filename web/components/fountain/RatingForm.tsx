@@ -2,9 +2,12 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { components } from "@fountainrank/api-client";
-import { ratingPointsPreview } from "@fountainrank/contributions";
+import { CONTRIBUTION_POINTS, ratingPointsPreview } from "@fountainrank/contributions";
 import { submitRating } from "../../app/actions/contribute";
+import { dispatchContribution } from "../../lib/contribution-event";
+import { getCurrentPositionSafe } from "../../lib/geo/current-position";
 import { errorText } from "./contributeError";
+import { useRatingDraft } from "./RatingDraftContext";
 import { PointsPreview } from "../contributions/PointsPreview";
 import { StarGroup } from "./StarGroup";
 
@@ -18,7 +21,8 @@ export function RatingForm({
   dimensions: Dimension[];
 }) {
   const router = useRouter();
-  const [edits, setEdits] = useState<Record<number, number>>({});
+  // The draft is lifted to a context above the tabs so "Add photo" (in another tab) can flush it (#1).
+  const { edits, setEdit, clear } = useRatingDraft();
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
   // Effective stars: an explicit edit wins, else the viewer's saved rating (#65 your_rating),
@@ -35,10 +39,14 @@ export function RatingForm({
   function submit() {
     const ratings = chosen.map(([id, s]) => ({ rating_type_id: id, stars: s }));
     start(async () => {
-      const res = await submitRating(fountainId, ratings);
+      // Best-effort location for the proximity guard (#3). Never blocks: null on denial/timeout,
+      // in which case the rating is accepted server-side but recorded as unverified.
+      const coords = await getCurrentPositionSafe();
+      const res = await submitRating(fountainId, ratings, coords ?? undefined);
       if (res.ok) {
+        clear();
         setMsg({ tone: "ok", text: "Thanks — your rating was saved." });
-        window.dispatchEvent(new Event("fountainrank:contribution"));
+        dispatchContribution(chosen.length * CONTRIBUTION_POINTS.rate);
         router.refresh();
       } else {
         setMsg({ tone: "err", text: errorText(res.error) });
@@ -60,7 +68,7 @@ export function RatingForm({
           id={d.rating_type_id}
           name={d.name}
           value={effectiveStars[d.rating_type_id] ?? 0}
-          onChange={(n) => setEdits((s) => ({ ...s, [d.rating_type_id]: n }))}
+          onChange={(n) => setEdit(d.rating_type_id, n)}
         />
       ))}
       <div className="mt-3">

@@ -71,6 +71,12 @@ class Settings(BaseSettings):
     # Award the "first in area" contribution bonus only if NO other fountain (including
     # imported ones) already exists within this radius of a new add (gamification §10).
     first_in_area_radius_m: float = 600.0
+    # Reject a rating whose client-supplied location is more than this far from the fountain
+    # (best-effort quality guard, spec §4.5 — NOT a security control). 50 statute miles.
+    rating_max_distance_m: float = 80_467.0
+    # A contribution is "proximate" when the client-supplied location is within this radius of
+    # the fountain (consumer GPS is ~5-20 m open-sky; 100 m is a conservative "at this fountain").
+    proximate_radius_m: float = 100.0
     # Operational status (#40): only reports within this many days count toward the
     # derived current_status; an authoritative status needs >= this many distinct users.
     condition_freshness_days: int = 90

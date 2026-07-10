@@ -201,6 +201,11 @@ class Rating(Base):
         SmallInteger, ForeignKey("rating_types.id"), nullable=False
     )
     stars: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    # Server-computed proximity trust signal (spec §4.5). MONOTONIC: once true it never
+    # downgrades — a re-rate with no location leaves a prior verified true intact. true ⟺ at
+    # least one submission was within rating_max_distance_m of the fountain's location AS
+    # STORED AT THAT SUBMISSION (coordinates are never persisted and cannot be re-derived).
+    is_proximate: Mapped[bool] = mapped_column(nullable=False, server_default=text("false"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

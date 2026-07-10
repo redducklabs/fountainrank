@@ -46,6 +46,13 @@ In the Logto admin console → **Applications → Create**:
 - **Native** — type **Native** (Expo / React Native). Set:
   - **Redirect URI:** the app's custom scheme, e.g.
     `com.redducklabs.fountainrank://callback` (must match the Expo config).
+  - **Post sign-out redirect URI:** `com.redducklabs.fountainrank://callback`
+    (the same custom-scheme callback). **🔴 Release gate for #6:** the mobile app now
+    performs a real RP-initiated logout (`endSessionUrl` +
+    `WebBrowser.openAuthSessionAsync`); Logto **rejects** the end-session request if this
+    post-logout URI is not registered, so sign-out then degrades to the local-only path
+    (the `end-session failed` log). Registering it is what lets sign-out actually end the
+    Logto session.
   - Record the **App ID** (native apps are public clients — no secret).
   - Mobile build variable: `EXPO_PUBLIC_LOGTO_APP_ID`.
   - Enable mobile sign-in config only after the Native app type and exact
@@ -75,6 +82,10 @@ In the Logto admin console → **Applications → Create**:
   - Logto shows this connector's **callback URI**
     (`https://auth.fountainrank.com/callback/<connector-id>`). **Copy it back
     into the Google web client's Authorized redirect URIs** (`03` Step 2).
+  - **Prompts:** set to **`select_account`**. **🔴 Release gate for #6:** without it,
+    even after the Logto session is cleared, Google auto-returns the **last** account with
+    no chooser — so a signed-out user who taps "sign in" is silently re-logged-in as the
+    previous Google user (the reported bug). `select_account` forces the account chooser.
 
 - **Apple (social):**
   - Enter **Services ID** (client id), **Team ID**, **Key ID**, and upload the
@@ -155,3 +166,12 @@ Do **not** paste the actual secret values here or into any file tracked by git.
   `claude_help/oauth-sso.md`).
 - Verify both social callbacks round-trip (Google ↔ Logto, Apple ↔ Logto)
   before relying on them in the apps.
+
+### Close criteria for the mobile sign-out fix (#6)
+
+The mobile code (prompt=login + RP-initiated logout) ships in the PR, but **issue #6 is not
+closed by merging it.** It is closed only after BOTH console changes above are applied in the
+**production** Logto — (1) the Native app's **post sign-out redirect URI**, and (2) the Google
+connector **Prompts = `select_account`** — and a device test confirms: sign out, tap sign in →
+the Logto login screen appears **and** Google shows an account chooser (no silent re-login as the
+previous user).

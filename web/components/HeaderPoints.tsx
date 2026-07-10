@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { getMyContributionStats } from "../app/actions/contributions";
+import { CONTRIBUTION_EVENT } from "../lib/contribution-event";
 import { PointsBadge } from "./map/MapStates";
 
 export function HeaderPoints({ initialTotalPoints }: { initialTotalPoints: number }) {
@@ -14,10 +15,10 @@ export function HeaderPoints({ initialTotalPoints }: { initialTotalPoints: numbe
       setTotalPoints(result.totalPoints);
     }
     const onContribution = () => void refreshPoints();
-    window.addEventListener("fountainrank:contribution", onContribution);
+    window.addEventListener(CONTRIBUTION_EVENT, onContribution);
     return () => {
       cancelled = true;
-      window.removeEventListener("fountainrank:contribution", onContribution);
+      window.removeEventListener(CONTRIBUTION_EVENT, onContribution);
     };
   }, []);
 

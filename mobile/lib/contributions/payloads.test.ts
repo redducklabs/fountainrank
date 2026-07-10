@@ -65,13 +65,37 @@ describe("buildRatingPayload", () => {
     expect(buildRatingPayload(FID, { 1: 6 })).toEqual({ ok: false });
     expect(buildRatingPayload(FID, { 1: 1.5 })).toEqual({ ok: false });
   });
+
+  it("includes latitude/longitude when coords are supplied, and omits accuracy (#3)", () => {
+    expect(buildRatingPayload(FID, { 1: 5 }, { latitude: 40, longitude: -73 })).toEqual({
+      ok: true,
+      value: { ratings: [{ rating_type_id: 1, stars: 5 }], latitude: 40, longitude: -73 },
+    });
+  });
+
+  it("omits coords entirely when none are supplied (#3)", () => {
+    const result = buildRatingPayload(FID, { 1: 5 });
+    expect(result).toEqual({ ok: true, value: { ratings: [{ rating_type_id: 1, stars: 5 }] } });
+    if (result.ok) {
+      expect("latitude" in result.value).toBe(false);
+      expect("longitude" in result.value).toBe(false);
+    }
+  });
 });
 
 describe("buildConditionPayload", () => {
-  it("builds a condition report with conservative non-proximate state", () => {
-    expect(buildConditionPayload(FID, "working")).toEqual({
+  it("builds a condition report with no is_proximate (server-derived, #3)", () => {
+    const result = buildConditionPayload(FID, "working");
+    expect(result).toEqual({ ok: true, value: { status: "working" } });
+    if (result.ok) {
+      expect("is_proximate" in result.value).toBe(false);
+    }
+  });
+
+  it("includes coords when supplied (#3)", () => {
+    expect(buildConditionPayload(FID, "working", { latitude: 5, longitude: 6 })).toEqual({
       ok: true,
-      value: { status: "working", is_proximate: false },
+      value: { status: "working", latitude: 5, longitude: 6 },
     });
   });
 

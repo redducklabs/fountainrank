@@ -20,7 +20,7 @@ it("clicking 'I checked' calls submitCondition with working", async () => {
   submitCondition.mockResolvedValue({ ok: true });
   render(<ConditionForm fountainId="fid" />);
   fireEvent.click(screen.getByRole("button", { name: /i checked/i }));
-  await waitFor(() => expect(submitCondition).toHaveBeenCalledWith("fid", "working"));
+  await waitFor(() => expect(submitCondition).toHaveBeenCalledWith("fid", "working", undefined));
   await waitFor(() => expect(refresh).toHaveBeenCalled());
 });
 
@@ -46,7 +46,9 @@ it("changing select + submit calls with that status", async () => {
   const select = screen.getByRole("combobox");
   fireEvent.change(select, { target: { value: "low_pressure" } });
   fireEvent.click(screen.getByRole("button", { name: /submit/i }));
-  await waitFor(() => expect(submitCondition).toHaveBeenCalledWith("fid", "low_pressure"));
+  await waitFor(() =>
+    expect(submitCondition).toHaveBeenCalledWith("fid", "low_pressure", undefined),
+  );
 });
 
 it("shows error message on server failure", async () => {

@@ -15,6 +15,7 @@ import { styleUrlFor, themedPinAssets, themedPillBg } from "../../lib/map/style"
 import { mapColorsFor } from "../../lib/map/colors";
 import { fetchBbox, type FountainPin } from "../../lib/fountains";
 import { resolveApiBaseUrl } from "../../lib/api";
+import { CONTRIBUTION_EVENT, contributionPoints } from "../../lib/contribution-event";
 import { pinsToFeatureCollection, type PinInput } from "../../lib/map/pins";
 import { normalizeBounds, shouldLoadPins, isAtCap } from "../../lib/map/bounds";
 import {
@@ -141,6 +142,7 @@ export default function MapBrowser({
   const [pins, setPins] = useState<FountainPin[]>([]);
   const [status, setStatus] = useState<Status>("idle");
   const [celebrationKey, setCelebrationKey] = useState(0);
+  const [celebrationPoints, setCelebrationPoints] = useState<number | undefined>(undefined);
   const [webglOk] = useState(isWebglSupported);
   // `?focus=<id>` (from the city-list / my-fountains "See on Map" links) wins over the path so
   // the map highlights that fountain on `/`; otherwise the id comes from `/fountains/<id>`.
@@ -456,12 +458,13 @@ export default function MapBrowser({
 
   useEffect(() => {
     if (!isAuthenticated) return;
-    function showCelebration() {
+    function showCelebration(e: Event) {
+      setCelebrationPoints(contributionPoints(e));
       setCelebrationKey((key) => key + 1);
     }
-    window.addEventListener("fountainrank:contribution", showCelebration);
+    window.addEventListener(CONTRIBUTION_EVENT, showCelebration);
     return () => {
-      window.removeEventListener("fountainrank:contribution", showCelebration);
+      window.removeEventListener(CONTRIBUTION_EVENT, showCelebration);
     };
   }, [isAuthenticated]);
 
@@ -552,7 +555,7 @@ export default function MapBrowser({
       {status === "capped" && <CapHint />}
       {status === "error" && <ErrorToast onRetry={retry} />}
       {!webglOk && <UnsupportedHint />}
-      <WaterCelebration triggerKey={celebrationKey} />
+      <WaterCelebration triggerKey={celebrationKey} points={celebrationPoints} />
       {webglOk && add.fab}
       {add.panel}
       {debug && (

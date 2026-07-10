@@ -1,6 +1,8 @@
 import logging
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -52,6 +54,24 @@ def create_app() -> FastAPI:
     app.include_router(users.router)
     app.include_router(email_webhook.router)
     app.include_router(geocode.router)
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_exception_handler(
+        request: Request, exc: RequestValidationError
+    ) -> Response:
+        # Log field name + error type ONLY. Pydantic's error payload carries `input` — for
+        # latitude/longitude that value IS the user's location and must never enter a log (spec §7).
+        logging.getLogger("app").info(
+            "request validation failed",
+            extra={
+                "method": request.method,
+                "path": request.url.path,
+                "errors": [{"loc": e.get("loc"), "type": e.get("type")} for e in exc.errors()],
+            },
+        )
+        # Delegate the RESPONSE to FastAPI's default handler so the 422 body is byte-for-byte
+        # unchanged (spec §6 — no API-wide response-shape change).
+        return await request_validation_exception_handler(request, exc)
 
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
