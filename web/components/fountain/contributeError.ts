@@ -10,6 +10,8 @@ export function errorText(e: ContributeError): string {
       return "Please check your input and try again.";
     case "needs_name":
       return "Add a display name on your account before contributing.";
+    case "too_far":
+      return "You need to be within 50 mi of this fountain to rate it.";
     case "photo_limit":
       return "This fountain (or your uploads here) has reached the photo limit.";
     case "rate_limited":

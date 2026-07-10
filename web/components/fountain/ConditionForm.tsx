@@ -8,6 +8,7 @@ import {
   conditionPointsPreview,
 } from "@fountainrank/contributions";
 import { submitCondition } from "../../app/actions/contribute";
+import { getCurrentPositionSafe } from "../../lib/geo/current-position";
 import { conditionStatusLabel } from "../../lib/map/format";
 import { PointsPreview } from "../contributions/PointsPreview";
 import { errorText } from "./contributeError";
@@ -41,7 +42,9 @@ export function ConditionForm({
 
   function report(status: ConditionStatus) {
     start(async () => {
-      const res = await submitCondition(fountainId, status);
+      // Best-effort location so the server can derive is_proximate (#3); never blocks (null ok).
+      const coords = await getCurrentPositionSafe();
+      const res = await submitCondition(fountainId, status, coords ?? undefined);
       if (res.ok) {
         const earned = res.pointsAwarded ?? 0;
         setMsg({

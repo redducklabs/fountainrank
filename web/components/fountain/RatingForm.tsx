@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import type { components } from "@fountainrank/api-client";
 import { ratingPointsPreview } from "@fountainrank/contributions";
 import { submitRating } from "../../app/actions/contribute";
+import { getCurrentPositionSafe } from "../../lib/geo/current-position";
 import { errorText } from "./contributeError";
 import { PointsPreview } from "../contributions/PointsPreview";
 import { StarGroup } from "./StarGroup";
@@ -35,7 +36,10 @@ export function RatingForm({
   function submit() {
     const ratings = chosen.map(([id, s]) => ({ rating_type_id: id, stars: s }));
     start(async () => {
-      const res = await submitRating(fountainId, ratings);
+      // Best-effort location for the proximity guard (#3). Never blocks: null on denial/timeout,
+      // in which case the rating is accepted server-side but recorded as unverified.
+      const coords = await getCurrentPositionSafe();
+      const res = await submitRating(fountainId, ratings, coords ?? undefined);
       if (res.ok) {
         setMsg({ tone: "ok", text: "Thanks — your rating was saved." });
         window.dispatchEvent(new Event("fountainrank:contribution"));
