@@ -12,6 +12,7 @@ import { dispatchContribution } from "../../lib/contribution-event";
 import { getCurrentPositionSafe } from "../../lib/geo/current-position";
 import { conditionStatusLabel } from "../../lib/map/format";
 import { PointsPreview } from "../contributions/PointsPreview";
+import { SpinnerButton } from "../ui/SpinnerButton";
 import { errorText } from "./contributeError";
 
 type ConditionStatus = components["schemas"]["ConditionReportRequest"]["status"];
@@ -67,14 +68,13 @@ export function ConditionForm({
     <div>
       <h3 className="text-sm font-semibold text-foreground">Is it working?</h3>
       <div className="mt-1 flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          disabled={pending}
+        <SpinnerButton
+          pending={pending}
           onClick={() => report("working")}
           className="rounded-full bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
         >
           I checked — it&rsquo;s working
-        </button>
+        </SpinnerButton>
         <button
           type="button"
           aria-expanded={showProblems}
@@ -101,14 +101,13 @@ export function ConditionForm({
               </option>
             ))}
           </select>
-          <button
-            type="button"
-            disabled={pending}
+          <SpinnerButton
+            pending={pending}
             onClick={() => report(problem)}
             className="rounded-full bg-brand px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
           >
             Submit
-          </button>
+          </SpinnerButton>
         </div>
       )}
       <div className="mt-3">

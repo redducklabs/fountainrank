@@ -7,6 +7,7 @@ import { dispatchContribution } from "../../lib/contribution-event";
 import { buildAttributeGroups, fetchAttributeTypes } from "../../lib/catalog";
 import { AttributeObservationFields } from "../map/AttributeObservationFields";
 import { PointsPreview } from "../contributions/PointsPreview";
+import { SpinnerButton } from "../ui/SpinnerButton";
 import { errorText } from "./contributeError";
 
 export function AttributeForm({ fountainId }: { fountainId: string }) {
@@ -75,14 +76,14 @@ export function AttributeForm({ fountainId }: { fountainId: string }) {
       <div className="mt-3">
         <PointsPreview lines={attributePointsPreview(observations.length)} />
       </div>
-      <button
-        type="button"
-        disabled={pending || observations.length === 0}
+      <SpinnerButton
+        pending={pending}
+        disabled={observations.length === 0}
         onClick={submit}
         className="mt-3 rounded-full bg-brand px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
       >
         Save details
-      </button>
+      </SpinnerButton>
       {msg && (
         <p
           role="status"

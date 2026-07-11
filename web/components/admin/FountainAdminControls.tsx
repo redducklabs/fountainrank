@@ -10,6 +10,7 @@ import {
   adminUpdateFountainFromForm,
   type AdminActionResult,
 } from "../../app/actions/admin";
+import { SpinnerButton } from "../ui/SpinnerButton";
 
 type AdminFountainDetail = components["schemas"]["AdminFountainDetail"];
 type AdminNoteOut = components["schemas"]["AdminNoteOut"];
@@ -130,29 +131,27 @@ export function FountainAdminControls({ detail }: { detail: AdminFountainDetail 
             className="w-full rounded-md border border-border bg-surface-raised px-3 py-2 font-normal text-foreground"
           />
         </label>
-        <button
+        <SpinnerButton
+          pending={pending}
           type="submit"
-          disabled={pending}
           className="rounded-full bg-brand px-4 py-2 text-sm font-bold text-white disabled:opacity-60"
         >
           Save edits
-        </button>
+        </SpinnerButton>
       </form>
 
       <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          disabled={pending}
+        <SpinnerButton
+          pending={pending}
           onClick={() => run(() => adminSetFountainHidden(detail.id, !detail.is_hidden))}
           className="rounded-full border border-brand px-4 py-2 text-sm font-bold text-brand-ink disabled:opacity-60"
         >
           {detail.is_hidden ? "Unhide fountain" : "Hide fountain"}
-        </button>
+        </SpinnerButton>
         {confirmDelete ? (
           <>
-            <button
-              type="button"
-              disabled={pending}
+            <SpinnerButton
+              pending={pending}
               onClick={() =>
                 run(
                   () => adminDeleteFountain(detail.id),
@@ -162,25 +161,23 @@ export function FountainAdminControls({ detail }: { detail: AdminFountainDetail 
               className="rounded-full bg-red-700 px-4 py-2 text-sm font-bold text-white disabled:opacity-60 dark:bg-red-500"
             >
               Confirm delete
-            </button>
-            <button
-              type="button"
-              disabled={pending}
+            </SpinnerButton>
+            <SpinnerButton
+              pending={pending}
               onClick={() => setConfirmDelete(false)}
               className="rounded-full border border-border px-4 py-2 text-sm font-bold text-foreground disabled:opacity-60"
             >
               Cancel
-            </button>
+            </SpinnerButton>
           </>
         ) : (
-          <button
-            type="button"
-            disabled={pending}
+          <SpinnerButton
+            pending={pending}
             onClick={() => setConfirmDelete(true)}
             className="rounded-full border border-danger px-4 py-2 text-sm font-bold text-danger disabled:opacity-60"
           >
             Delete fountain
-          </button>
+          </SpinnerButton>
         )}
       </div>
 
@@ -202,15 +199,14 @@ export function FountainAdminControls({ detail }: { detail: AdminFountainDetail 
                     {note.is_hidden ? " · hidden" : ""}
                   </p>
                 </div>
-                <button
-                  type="button"
-                  disabled={pending}
+                <SpinnerButton
+                  pending={pending}
                   aria-label={`${note.is_hidden ? "Unhide" : "Hide"} note ${noteLabel(note)}`}
                   onClick={() => run(() => adminSetNoteHidden(note.id, !note.is_hidden, detail.id))}
                   className="shrink-0 rounded-full border border-brand px-3 py-1.5 text-xs font-bold text-brand-ink disabled:opacity-60"
                 >
                   {note.is_hidden ? "Unhide" : "Hide"}
-                </button>
+                </SpinnerButton>
               </li>
             ))}
           </ul>

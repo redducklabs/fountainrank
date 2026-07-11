@@ -48,6 +48,28 @@ it("disables submit until a star is set, then posts only set dimensions", async 
   await waitFor(() => expect(refresh).toHaveBeenCalled());
 });
 
+it("shows a spinner and disables submit immediately on click, before the action resolves", async () => {
+  let resolveSubmit!: (v: { ok: true }) => void;
+  submitRating.mockReturnValue(
+    new Promise<{ ok: true }>((r) => {
+      resolveSubmit = r;
+    }),
+  );
+  const { container } = renderForm(dims);
+  fireEvent.click(screen.getByRole("radio", { name: /clarity: 4 stars/i }));
+  const submit = screen.getByRole("button", { name: /submit rating/i });
+  fireEvent.click(submit);
+  // Immediate feedback: the button is busy + disabled and the spinner is present BEFORE the
+  // (still-unresolved) server action returns.
+  await waitFor(() => expect(submit).toHaveAttribute("aria-busy", "true"));
+  expect(submit).toBeDisabled();
+  expect(container.querySelector("svg.animate-spin")).toBeInTheDocument();
+  // Resolve → spinner clears and hands off to the success message.
+  resolveSubmit({ ok: true });
+  await waitFor(() => expect(container.querySelector("svg.animate-spin")).toBeNull());
+  expect(screen.getByRole("status")).toHaveTextContent(/rating was saved/i);
+});
+
 it("shows success message on ok", async () => {
   submitRating.mockResolvedValue({ ok: true });
   renderForm(dims);

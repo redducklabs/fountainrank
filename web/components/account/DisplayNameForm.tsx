@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 
 import { setDisplayName, type SetNameError } from "../../app/actions/profile";
 import { DISPLAY_NAME_MAX } from "../../lib/display-name";
+import { SpinnerButton } from "../ui/SpinnerButton";
 
 const ERROR_TEXT: Record<SetNameError, string> = {
   unauthenticated: "Your session expired — please sign in again.",
@@ -67,13 +68,15 @@ export function DisplayNameForm({
           className="rounded-md border border-white/30 bg-white/10 px-3 py-2 text-base font-normal text-white placeholder:text-white/50"
         />
       </label>
-      <button
+      <SpinnerButton
+        pending={pending}
+        pendingLabel="Saving…"
+        disabled={value.trim().length === 0}
         type="submit"
-        disabled={pending || value.trim().length === 0}
         className="rounded-full bg-accent-gold px-5 py-2 text-sm font-bold text-brand disabled:opacity-50"
       >
-        {pending ? "Saving…" : required ? "Continue" : "Save"}
-      </button>
+        {required ? "Continue" : "Save"}
+      </SpinnerButton>
       {msg && (
         <p
           role="status"

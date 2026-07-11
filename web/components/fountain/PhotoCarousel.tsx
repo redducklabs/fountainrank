@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import type { PhotoOut } from "../../lib/fountains";
 import { resolveApiBaseUrl } from "../../lib/api";
+import { SpinnerButton } from "../ui/SpinnerButton";
 
 // `PhotoOut.url`/`thumbnail_url` are API-relative gated read paths (`/api/v1/photos/{id}`,
 // `.../thumb`) — never a durable object URL (docs/style-guide.md "Fountain photos (PR 2)").
@@ -15,10 +16,14 @@ export function PhotoCarousel({
   photos,
   onDelete,
   onReport,
+  deletePending = false,
+  deletingPhotoId = null,
 }: {
   photos: PhotoOut[];
   onDelete?: (photo: PhotoOut) => void;
   onReport?: (photo: PhotoOut) => void;
+  deletePending?: boolean;
+  deletingPhotoId?: string | null;
 }) {
   const [index, setIndex] = useState(0);
 
@@ -128,16 +133,17 @@ export function PhotoCarousel({
       )}
 
       {current.is_own && onDelete && (
-        <button
-          type="button"
+        <SpinnerButton
+          pending={deletePending && current.id === deletingPhotoId}
           aria-label="Delete this photo"
           onClick={() => onDelete(current)}
+          spinnerClassName="h-3 w-3"
           className={`absolute bottom-2 rounded-full bg-black/40 px-2.5 py-1 text-xs font-semibold text-white hover:bg-black/60 focus-visible:ring-2 focus-visible:ring-white ${
             onReport ? "right-20" : "right-2"
           }`}
         >
           Delete
-        </button>
+        </SpinnerButton>
       )}
     </div>
   );

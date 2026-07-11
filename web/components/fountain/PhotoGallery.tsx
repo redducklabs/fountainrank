@@ -22,7 +22,8 @@ export function PhotoGallery({
   const router = useRouter();
   const [reportPhotoId, setReportPhotoId] = useState<string | null>(null);
   const [reportedIds, setReportedIds] = useState<ReadonlySet<string>>(new Set());
-  const [, startDelete] = useTransition();
+  const [pending, startDelete] = useTransition();
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteMsg, setDeleteMsg] = useState<string | null>(null);
 
   if (photos.length === 0) return null;
@@ -35,6 +36,7 @@ export function PhotoGallery({
       return;
     }
     setDeleteMsg(null);
+    setDeletingId(photo.id);
     startDelete(async () => {
       const res = await deleteOwnPhoto(fountainId, photo.id);
       if (res.ok) {
@@ -42,6 +44,7 @@ export function PhotoGallery({
       } else {
         setDeleteMsg("Couldn't delete this photo — please try again.");
       }
+      setDeletingId(null);
     });
   }
 
@@ -51,6 +54,8 @@ export function PhotoGallery({
         photos={photos}
         onDelete={isAuthenticated ? handleDelete : undefined}
         onReport={isAuthenticated ? (photo) => setReportPhotoId(photo.id) : undefined}
+        deletePending={pending}
+        deletingPhotoId={deletingId}
       />
       {deleteMsg && (
         <p role="status" aria-live="polite" className="mt-1 text-sm text-danger">
