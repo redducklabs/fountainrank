@@ -47,12 +47,12 @@ In the Logto admin console → **Applications → Create**:
   - **Redirect URI:** the app's custom scheme, e.g.
     `com.redducklabs.fountainrank://callback` (must match the Expo config).
   - **Post sign-out redirect URI:** `com.redducklabs.fountainrank://callback`
-    (the same custom-scheme callback). **🔴 Release gate for #6:** the mobile app now
-    performs a real RP-initiated logout (`endSessionUrl` +
-    `WebBrowser.openAuthSessionAsync`); Logto **rejects** the end-session request if this
-    post-logout URI is not registered, so sign-out then degrades to the local-only path
-    (the `end-session failed` log). Registering it is what lets sign-out actually end the
-    Logto session.
+    (the same custom-scheme callback). The mobile app performs a real RP-initiated logout
+    (`endSessionUrl` + `WebBrowser.openAuthSessionAsync`); Logto **rejects** the end-session
+    request if this URI is not registered, in which case sign-out degrades to the local-only
+    path (`end-session failed` log). This makes logout *clean* (ends the Logto session
+    server-side), but it is **not** what fixes the #6 silent re-login — `prompt=login` (below)
+    is. Register it so logout is complete, but the bug is fixed with or without it.
   - Record the **App ID** (native apps are public clients — no secret).
   - Mobile build variable: `EXPO_PUBLIC_LOGTO_APP_ID`.
   - Enable mobile sign-in config only after the Native app type and exact
@@ -82,10 +82,12 @@ In the Logto admin console → **Applications → Create**:
   - Logto shows this connector's **callback URI**
     (`https://auth.fountainrank.com/callback/<connector-id>`). **Copy it back
     into the Google web client's Authorized redirect URIs** (`03` Step 2).
-  - **Prompts:** set to **`select_account`**. **🔴 Release gate for #6:** without it,
-    even after the Logto session is cleared, Google auto-returns the **last** account with
-    no chooser — so a signed-out user who taps "sign in" is silently re-logged-in as the
-    previous Google user (the reported bug). `select_account` forces the account chooser.
+  - **Prompts:** `select_account` (already configured). This forces Google's account chooser
+    **once the flow reaches Google**. It is NOT the cause of the #6 silent-re-login bug and toggling
+    it does nothing for that bug: when Logto still holds a live session it returns a token without
+    re-running the Google connector at all, so `select_account` is never consulted. The #6 fix is at
+    the Logto-session layer (`prompt=login` + RP-initiated logout, both in the mobile code) — see the
+    close-criteria note below.
 
 - **Apple (social):**
   - Enter **Services ID** (client id), **Team ID**, **Key ID**, and upload the
@@ -169,9 +171,23 @@ Do **not** paste the actual secret values here or into any file tracked by git.
 
 ### Close criteria for the mobile sign-out fix (#6)
 
-The mobile code (prompt=login + RP-initiated logout) ships in the PR, but **issue #6 is not
-closed by merging it.** It is closed only after BOTH console changes above are applied in the
-**production** Logto — (1) the Native app's **post sign-out redirect URI**, and (2) the Google
-connector **Prompts = `select_account`** — and a device test confirms: sign out, tap sign in →
-the Logto login screen appears **and** Google shows an account chooser (no silent re-login as the
-previous user).
+**Root cause:** the silent re-login was at the **Logto session layer**, not the Google connector.
+Before the fix, mobile sign-out never ended the Logto session (the `@logto/rn` sign-out browser
+navigation is a no-op) and sign-in used `prompt=consent`, so Logto silently reused its live session
+and returned a token **without ever re-running the Google connector** — which is why the Google
+`select_account` prompt (already enabled) had no effect on the bug.
+
+**The fix is code, and it is `prompt=login`** (`mobile/lib/auth/config.ts`): it forces Logto to
+re-authenticate on every sign-in, so a surviving session can no longer be reused. The RP-initiated
+logout is a clean-up that also ends the session server-side (and needs the post-logout redirect URI
+registered to succeed), but `prompt=login` alone stops the silent re-login.
+
+**No new console change is required for the bug itself:** `select_account` is already enabled, and
+once `prompt=login` forces the flow back through the sign-in experience, Google's chooser appears
+normally. Registering the Native post-logout redirect URI is optional polish (a fully clean logout),
+not a prerequisite.
+
+**#6 is closed when** the mobile app carrying this code is released and a device test confirms:
+sign out, tap sign in → the Logto sign-in screen appears (not a silent re-login), and choosing Google
+shows the account chooser. Because the fix is in the mobile bundle, it ships via a **mobile store
+release**, not the backend/web `deploy.yml`.
