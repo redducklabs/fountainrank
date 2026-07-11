@@ -828,6 +828,63 @@ earn points. It **replaces** the Possible-points preview for that flow while the
   awarded count comes from `condition_points_awarded` on the POST response, which drives the
   post-submit success copy (0 → "already counted recently"; N → "you earned N points").
 
+### Loading & spinners (`web/components/ui/Spinner.tsx`, `SpinnerButton.tsx`, `FormSubmitButton.tsx`; mobile shared `SubmitButton`)
+
+The reusable **immediate-feedback** pattern (#212): any tap/click that hits the server, requests
+geolocation, or otherwise delays the UI must show a spinner **the instant it is pressed** (< ~100 ms
+perceived), keep the control **disabled while pending** (double-submit guard), and hand off to the
+existing success (celebration/message) or error state when it resolves. A spinner is **never the only
+signal** — it complements, never replaces, the `role="status"` / live-region result text.
+
+**Web primitives:**
+
+- **`Spinner`** — a small decorative `<svg>` with Tailwind `animate-spin` + `motion-reduce:animate-none`
+  and `text-current` (inherits the button's text color). It is `aria-hidden` with **no accessible
+  name** (no `<title>`), so screen readers announce the host control's busy state, not the spinner.
+  Size via `className` (default `h-4 w-4`; use `h-3 w-3` on compact pills).
+- **`SpinnerButton`** — the standard `<button>` for `useTransition`/async-driven controls. Takes
+  `pending: boolean` (+ optional `pendingLabel`); it renders the `Spinner` when pending, sets
+  `aria-busy`, and **forces `disabled` while pending** (so the guard can't be forgotten). Callers keep
+  their own brand/gold/emerald/admin/destructive classes — the wrapper only adds
+  `inline-flex items-center justify-center gap-2` + the spinner + a11y. Pass the caller's *other*
+  disabled conditions without `|| pending` (it ORs pending in).
+- **`FormSubmitButton`** — the same affordance for server-action `<form action={…}>` submits (sign
+  in / sign out / anonymous CTAs) that have no `useTransition`. It reads `useFormStatus()`, so it MUST
+  be rendered **inside** the `<form>`.
+- Where the acting control **unmounts** on submit (the add-fountain panel swaps to an "Adding…"
+  status line), put the `Spinner` on that `role="status"` line instead — the button's spinner would
+  never paint.
+
+Because a web `useTransition`'s `pending` flips true **synchronously** on the click (before the
+best-effort geolocation and the network call), a `SpinnerButton pending={pending}` shows feedback
+instantly with no restructuring.
+
+**Mobile pattern:**
+
+- The shared **`SubmitButton`** (`mobile/components/fountain/RatingContributionForm.tsx`, imported by
+  the rating/photo/attribute/condition/note forms) takes `pending?: boolean`: when pending it renders
+  an inline **`ActivityIndicator`** (`size="small"`, colored to match the label — `onBrand` on a
+  filled button, `brandBlue`/`danger` on outline/destructive) beside the label and sets
+  `accessibilityState={{ disabled, busy }}`. Hand-rolled buttons on the account / add-fountain /
+  report / admin surfaces follow the same shape (spinner + `busy` + disabled-while-pending).
+- **Instant feedback vs. geolocation:** a mobile form's `pending` prop (the owner's
+  `mutation.isPending`) only flips true **after** `await requestCurrentCoords()`, so the
+  geolocation-first forms (rating, condition) drive the spinner from a **local `submitting` state**
+  set synchronously on tap via `createGuardedSubmit` (`mobile/lib/contributions/submit-flow.ts`) —
+  a single-flight guard (ignores a second tap before the disabled render commits) that also clears
+  the busy state only while still mounted. Created inside a `useEffect` (never during render) to
+  satisfy the React-Compiler `react-hooks/refs` rule.
+- **Background refetch:** a map filter tap flips its chip instantly, but the pins **refetch** it
+  triggers doesn't flip `isLoading` — so `MapOverlay` shows a quiet corner `ActivityIndicator` while
+  `pinsQuery.isFetching && !isLoading` (a `progressbar` with an "Updating fountains" label), never the
+  full-screen loading state.
+
+**Accessibility contract (both platforms):** the control carries `aria-busy` (web) /
+`accessibilityState.busy` (mobile) while pending, stays `disabled` (double-submit guard), and the
+spinner itself is decorative. Reduced-motion is honored (web `motion-reduce`; RN `ActivityIndicator`
+respects the OS setting). The spinner **precedes** the *Contribution celebration* below and is never
+the sole success/error signal.
+
 ### Contribution celebration
 
 A short reward animation shown after successful, point-awarding contribution writes on web and
