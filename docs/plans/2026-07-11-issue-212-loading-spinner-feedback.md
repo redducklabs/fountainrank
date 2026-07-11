@@ -28,9 +28,13 @@ disabled while pending; the state is accessible.
 - **Web pending is already immediate.** Every web contribution form runs its async work
   inside `useTransition`'s `start(async () => …)`; `pending` flips `true` **synchronously**
   when `start()` is called, *before* `await getCurrentPositionSafe()` (bounded 8 s). So a
-  spinner rendered from the existing `pending` appears the instant the user clicks — no
-  restructuring of the geolocation step is required. The issue's own note ("the `pending`
-  flag … is available but unused for a spinner") is exactly the fix.
+  spinner rendered from the existing `pending` appears the instant the user clicks. The issue's
+  own note ("the `pending` flag … is available but unused for a spinner") is exactly the fix.
+  Scope of the claim: this is **only** about spinner timing — we drive the spinner from
+  `pending` and change nothing else about the transition. (React 19 caveat, noted so no one
+  over-relies on it: state updates issued *after* an `await` inside the async action are not
+  automatically marked as transition updates; that is irrelevant here because the spinner keys
+  off `pending`, not off any post-await state.)
 - **Mobile pending is NOT immediate.** Forms are controlled: the owning screen
   (`mobile/app/fountains/[id].tsx`) passes `pending = <mutation>.isPending`. That flips
   `true` only **after** `await requestCurrentCoords()` inside `submit()`. So the
@@ -57,12 +61,21 @@ disabled while pending; the state is accessible.
 - **OS-handoff actions are out of scope:** `ShareButton` (web/mobile) and mobile
   Directions open the native share sheet / maps app — no server round-trip and they already
   give feedback (web Share flashes "Link copied!"). No spinner.
-- **Pure client-state toggles are out of scope:** map filter chips (`MapFilters`) and search
-  result rows recenter the map synchronously; the underlying bbox fetch already surfaces a
-  loading indicator (web `LoadingBar`, mobile `MapOverlay` `ActivityIndicator` / full-screen
-  `LoadingState`).
-- **Plain navigation `<Link>`s** (leaderboard toggles, list rows) are server-rendered soft
-  navigations without a per-control pending mechanism — deferred (see Follow-ups).
+- **Search result rows** (web `HeaderSearch` result rows, mobile `SearchOverlay` `ResultRow`)
+  recenter the map synchronously — no server wait on the row tap itself. The search **fetch**
+  that populates them already shows loading feedback (web `HeaderSearch` `role="status"`
+  "Searching…"; mobile `SearchOverlay` full-screen `LoadingState`), so the fetch surface named
+  in the issue is already covered.
+- **Deferred with a filed follow-up (see Follow-ups — filing them is a blocking task):**
+  soft-navigation pending for the exact surfaces `web/components/HeaderSearch.tsx`
+  `select()` → `router.push("/…")`, the leaderboard scope/category `<Link>`s in
+  `web/components/leaderboard/LeaderboardControls.tsx`, and the `<Link>` list rows in
+  `web/components/fountain/FountainListRow.tsx` / detail-open in
+  `web/components/map/FountainsInViewList.tsx`. These are server-rendered soft navigations
+  (`/leaderboard` is `force-dynamic`; detail pages fetch) with **no** per-control pending
+  mechanism today; a correct affordance needs a route-pending pattern
+  (`next/navigation` `useLinkStatus` / a `router` transition) that is its own task. Deferring
+  them is allowed by AC #5 **only** because a concrete GitHub issue is filed before merge.
 - The dead/unused `mobile/components/add-fountain/AddFountainForm.tsx` (not imported anywhere;
   the live flow is `MapAddPanel` in `mobile/app/(tabs)/index.tsx`) is **left untouched** — no
   point spinner-ing dead code. Its removal is a separate cleanup.
@@ -77,9 +90,10 @@ disabled while pending; the state is accessible.
    - Inline `<svg>` with Tailwind `animate-spin` (Tailwind v4 ships this utility;
      `animate-spin` currently has **zero** uses in `web/` — this introduces it), `text-current`
      so it inherits the button's text color, size via a `className` prop (default `h-4 w-4`).
-   - `aria-hidden="true"` and `role="img"`-free — it is **decorative**; the accessible
-     "busy" signal comes from the button's `aria-busy` (below), matching the existing
-     "animation must not be the only signal" house rule.
+   - `aria-hidden="true"`, and **no `<title>`/accessible name of any kind** — it is
+     **decorative**; the accessible "busy" signal comes from the button's `aria-busy` (below),
+     matching the existing "animation must not be the only signal" house rule. (Adding a title
+     would make SRs announce the decorative spinner on top of the button busy state.)
    - `motion-reduce:animate-none` (respect reduced motion; the SVG still renders statically).
 
 2. **`web/components/ui/SpinnerButton.tsx`** — a `<button>` wrapper standardizing the pending
@@ -110,8 +124,8 @@ Apply the spinner to every `useTransition`/phase/form-action server-touching con
 | `fountain/ConditionForm.tsx` | both buttons ("it's working" + "Submit") → `SpinnerButton pending={pending}`. |
 | `fountain/ReportContentDialog.tsx` | submit → `SpinnerButton pending={pending} pendingLabel="Submitting…"` (keep existing label swap semantics). |
 | `fountain/PhotoUpload.tsx` | the trigger is a file `<input>` (no button); add a `<Spinner />` to the existing `role="status"` "Uploading…" line so the wait shows an icon; input stays `disabled={pending}`. |
-| `fountain/PhotoGallery.tsx` | **bug fix:** it currently discards the transition pending (`const [, startDelete]`), so the delete button has no disabled/guard. Capture `pending`, disable the delete control while deleting, and show a `<Spinner />`. |
-| `map/AddFountainPanel.tsx` + `map/useAddFountainMode.tsx` | derive `pending = phase === "submitting"`; the "Add fountain" gold button → `SpinnerButton pending` (also fixes its missing `disabled`). |
+| `fountain/PhotoGallery.tsx` **+ `fountain/PhotoCarousel.tsx`** | **bug fix + spinner:** `PhotoGallery` currently discards the transition pending (`const [, startDelete]`), so the delete button (which lives in the child `PhotoCarousel.tsx`) has no disabled/guard. Capture `pending` and the **deleting photo id** in `PhotoGallery`, extend the `PhotoCarousel` prop API to receive `deletingPhotoId` (or a `pending` + `deletingId`), and render the `<Spinner />` + `disabled` **only on the tapped photo's delete control** so unrelated photo actions aren't disabled/spinning. |
+| `map/AddFountainPanel.tsx` | derive `pending = phase === "submitting"` **inside the panel** (the controller `map/useAddFountainMode.tsx` already passes `phase` in — no controller edit needed); the "Add fountain" gold button → `SpinnerButton pending` (also fixes its missing `disabled`). |
 | `account/DisplayNameForm.tsx` | `SpinnerButton pending={pending} pendingLabel="Saving…"`. |
 | `account/DeleteAccountButton.tsx` | `SpinnerButton pending={pending} pendingLabel="Deleting account…"`. |
 | `admin/FountainAdminControls.tsx` | each action button → `SpinnerButton pending={pending}` (keep `disabled:opacity-60` class). |
@@ -131,9 +145,18 @@ Apply the spinner to every `useTransition`/phase/form-action server-touching con
    and `ConditionContributionForm.submit(status)`, add a local `submitting` state set `true`
    **before** `await requestCurrentCoords()` and cleared in a `finally`; pass
    `pending={pending || submitting}` to the button(s). (Setting state in an event handler is
-   fine — the `react-hooks/set-state-in-effect` lint rule only forbids it in effects.)
-   ConditionContributionForm has two submit buttons sharing one pending — track which status
-   is in flight so only the tapped button spins.
+   fine — the `react-hooks/set-state-in-effect` lint rule only forbids it in effects.) Two
+   robustness requirements, mirroring the app's existing add-photo single-flight pattern
+   (`singleFlight` in `mobile/lib/contributions/*` used from `mobile/app/fountains/[id].tsx`):
+   - **Ref-backed single-flight guard:** an `inFlightRef` checked/set at the very top of
+     `submit()` so a second tap *before the disabled render commits* is ignored (state alone
+     re-disables only on the next render).
+   - **Mounted guard:** guard the `finally` `setSubmitting(false)` with a mounted ref so a
+     screen navigation away during the location/mutation path can't `setState` on an unmounted
+     component. Prefer extracting the guard/mounted logic into a small pure helper in
+     `mobile/lib/` so it is unit-testable (see Tests).
+   - ConditionContributionForm has two submit buttons sharing one pending — track **which
+     status** is in flight (`submittingStatus`) so only the tapped button spins.
 
 ### D. Mobile application (edit existing)
 
@@ -149,6 +172,7 @@ Apply the spinner to every `useTransition`/phase/form-action server-touching con
 | `app/(tabs)/index.tsx` → `MapAddPanel` `PrimaryAction` ("Add fountain") | `ActivityIndicator` + `busy` (pending already available). |
 | `account/DisplayNameForm.tsx` | inline save button → `ActivityIndicator` + `busy` (keep "Saving…"). |
 | `app/fountains/[id].tsx` → `AdminControls`, `app/admin/reports.tsx` | inline action buttons → `ActivityIndicator` + `busy` while their combined `pending`. |
+| `components/map/MapFilters.tsx` + `app/(tabs)/index.tsx` / `MapOverlay` (**named in the issue**) | A filter chip tap already flips its selected fill instantly, but the pins **refetch** it triggers has no feedback: `index.tsx` derives `viewState`'s `isLoading` from `pinsQuery.isLoading`, which (per its own comment) is `true` only on the *first* load — a filter-change **background refetch** (`pinsQuery.isFetching`) does not flash `MapOverlay`'s spinner. Add a **subtle, non-blocking "updating pins" indicator** (a small `ActivityIndicator` in a corner / near the filter bar) shown while `pinsQuery.isFetching && !isLoading`, so a filter tap that refetches shows the map is updating. It must **not** replace the initial full-screen `LoadingState`, and (because a map pan also refetches) it is intentionally a quiet corner indicator, not a modal overlay. Accessible via `accessibilityRole="progressbar"` / an `accessibilityLabel`. |
 
 All mobile controls keep `disabled` while pending (double-submit guard) and gain
 `accessibilityState={{ disabled, busy }}`.
@@ -173,10 +197,21 @@ All mobile controls keep `disabled` while pending (double-submit guard) and gain
     duplicates React → `Invalid hook call`); these run green in CI `workspace-js`. Verify there,
     not locally, and say so.
 - **Mobile:** the vitest config collects **`.test.ts` only** (pure logic; zero render tests,
-  no RTL) — spinner rendering can't be unit-tested. Verify via `tsc --noEmit` + mobile ESLint
-  (React-Compiler rules) + `expo-doctor` in CI, plus optional emulator spot-check of the
-  rating submit. If any non-trivial pure helper is extracted (e.g. "which status is in flight"),
-  add a `lib/**.test.ts` for it. State honestly what was and wasn't rendered.
+  no RTL) — spinner *rendering* can't be unit-tested. Two required mitigations for the primary
+  mobile AC, since it is timing/state behavior, not visuals:
+  1. **Extract the pending/single-flight/mounted-guard logic into a pure helper** in
+     `mobile/lib/` (e.g. a small `submitGuard`/`useInFlight` reducer or the existing
+     `singleFlight` composed with the mounted check) and cover it with a `lib/**.test.ts`:
+     a second call while in-flight is ignored; `submitting` is `true` synchronously before the
+     awaited coords resolve; it clears after resolve; a "cleared after unmount" call is a no-op.
+  2. **Required (not optional) emulator verification** with concrete steps + expected
+     observations, recorded in the PR description: (a) open a fountain, set stars, tap Submit →
+     the `ActivityIndicator` appears **immediately** (before any location prompt/permission),
+     button disabled, then the celebration plays and the spinner is gone; (b) repeat with
+     location permission denied → spinner still shows during the (bounded) location attempt,
+     then the rating still saves; (c) double-tap Submit fast → exactly one submission.
+  Also verify `tsc --noEmit` + mobile ESLint (React-Compiler rules) + `expo-doctor` in CI.
+  State honestly what was and wasn't rendered/observed.
 
 ### G. Style guide (`docs/style-guide.md`)
 
@@ -198,20 +233,31 @@ existing "Contribution celebration" section (spinner precedes it; never the only
    delete-account, admin ×2).
 4. `feat(web): spinner on server-action sign-in/out buttons` (FormSubmitButton wiring).
 5. `feat(mobile): ActivityIndicator + busy in shared SubmitButton` + rating/condition instant
-   `submitting` state (primary AC).
+   `submitting` state (primary AC) + the extracted pure guard helper & its `lib/**.test.ts`.
 6. `feat(mobile): apply spinner to remaining surfaces` (photo/attribute/note/report/account/
    add-fountain/display-name/admin ×2).
-7. `docs(style-guide): document the loading/spinner pattern (web + mobile)`.
+7. `feat(mobile): non-blocking "updating pins" indicator for filter-change refetch`
+   (`MapFilters`/`MapOverlay`, `isFetching && !isLoading`).
+8. `docs(style-guide): document the loading/spinner pattern (web + mobile)`.
+9. **File the deferred-surface follow-up issue(s)** (blocking — must exist before merge; see
+   Follow-ups) and reference them in the PR body so AC #5 is satisfied by a durable artifact.
 
 Each task: run the relevant local check (`./run.ps1 check -Web` / `-Mobile` — knowing the
 CI-only caveats), commit. Run the **full** `./run.ps1 check` before opening the PR.
 
-## Follow-ups (file as issues, do not block this PR)
+## Follow-ups
 
-- Soft-navigation pending affordance for `<Link>`-based navigations (leaderboard toggles,
-  list rows, HeaderSearch select→navigate) — needs a nav-pending mechanism
-  (`next/navigation` `useLinkStatus` / `router` events).
-- Remove the dead `mobile/components/add-fountain/AddFountainForm.tsx`.
+**Blocking for this PR (must be filed as GitHub issues before merge, referenced in the PR body):**
+
+- Route-pending / soft-navigation affordance for the **named** deferred surfaces:
+  `HeaderSearch.select()` → `router.push`, `LeaderboardControls` scope/category `<Link>`s, and
+  `FountainListRow` / `FountainsInViewList` detail-open navigations. Needs a route-pending
+  mechanism (`next/navigation` `useLinkStatus` or a `router` transition wrapper). This exists so
+  the two named-but-deferred issue surfaces have a durable tracking artifact, per AC #5.
+
+**Non-blocking cleanup (optional, separate PR):**
+
+- Remove the dead `mobile/components/add-fountain/AddFountainForm.tsx` (not imported anywhere).
 
 ## Verification / definition of done
 
