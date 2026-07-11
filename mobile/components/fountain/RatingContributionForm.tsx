@@ -4,12 +4,21 @@ import {
   totalPreviewPoints,
   type PointsLine,
 } from "@fountainrank/contributions";
-import { useEffect, useState } from "react";
-import { AccessibilityInfo, Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import {
+  AccessibilityInfo,
+  ActivityIndicator,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 
 import type { ContributionError } from "../../lib/contributions/state";
 import { buildRatingPayload } from "../../lib/contributions/payloads";
 import { contributionErrorText } from "../../lib/contributions/state";
+import { createGuardedSubmit, type GuardedSubmit } from "../../lib/contributions/submit-flow";
 import { requestCurrentCoords } from "../../lib/location-request";
 import { colors, spacing, typography } from "../../theme";
 
@@ -51,28 +60,52 @@ export function RatingContributionForm({
   onStarPress: (ratingTypeId: number, value: number) => void;
 }) {
   const [message, setMessage] = useState<Message>(null);
+  // Local, synchronous busy state so the spinner shows the instant the user taps — before the
+  // awaited geolocation and before the owner's mutation flips `pending` (#212). Combined with
+  // `pending` below to drive the spinner and disabled state.
+  const [submitting, setSubmitting] = useState(false);
+  const mountedRef = useRef(true);
+  // Created in the effect (not during render) so we never read/pass a ref during render — the
+  // React-Compiler lint (react-hooks/refs) forbids that. Read only in the submit handler.
+  const guardRef = useRef<GuardedSubmit<boolean> | null>(null);
+  useEffect(() => {
+    mountedRef.current = true;
+    guardRef.current = createGuardedSubmit<boolean>({
+      setBusy: setSubmitting,
+      idle: false,
+      isMounted: () => mountedRef.current,
+    });
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
   const hasExistingRating = dimensions.some((dimension) => dimension.your_rating != null);
   const stars = effectiveStars(dimensions, edits);
   // Coord-less build drives the points preview + the submit-disabled state; submit() rebuilds
   // with coords (fetched on the tap) so a location prompt never fires just from rendering.
   const previewPayload = buildRatingPayload(fountainId, stars);
   const preview = ratingPointsPreview(previewPayload.ok ? previewPayload.value.ratings.length : 0);
+  const busy = pending || submitting;
 
-  async function submit() {
-    setMessage(null);
-    // Best-effort location for the proximity guard (#3); never blocks (null ok -> unverified).
-    const coords = await requestCurrentCoords();
-    const payload = buildRatingPayload(fountainId, stars, coords);
-    if (!payload.ok) {
-      setMessage({ tone: "err", text: "Choose at least one rating." });
-      return;
-    }
-    const result = await onSubmit(payload.value);
-    setMessage(
-      result.ok
-        ? { tone: "ok", text: "Thanks. Your rating was saved." }
-        : { tone: "err", text: contributionErrorText(result.error) },
-    );
+  function submit() {
+    const guard = guardRef.current;
+    if (!guard) return;
+    void guard(true, async () => {
+      setMessage(null);
+      // Best-effort location for the proximity guard (#3); never blocks (null ok -> unverified).
+      const coords = await requestCurrentCoords();
+      const payload = buildRatingPayload(fountainId, stars, coords);
+      if (!payload.ok) {
+        setMessage({ tone: "err", text: "Choose at least one rating." });
+        return;
+      }
+      const result = await onSubmit(payload.value);
+      setMessage(
+        result.ok
+          ? { tone: "ok", text: "Thanks. Your rating was saved." }
+          : { tone: "err", text: contributionErrorText(result.error) },
+      );
+    });
   }
 
   if (dimensions.length === 0) return null;
@@ -95,8 +128,8 @@ export function RatingContributionForm({
                   key={value}
                   accessibilityRole="button"
                   accessibilityLabel={`${dimension.name} ${value} stars`}
-                  accessibilityState={{ selected }}
-                  disabled={pending}
+                  accessibilityState={{ selected, disabled: busy }}
+                  disabled={busy}
                   onPress={() => onStarPress(dimension.rating_type_id, value)}
                   style={styles.starButton}
                 >
@@ -110,7 +143,8 @@ export function RatingContributionForm({
       <PointsPreview lines={preview} />
       <SubmitButton
         label={hasExistingRating ? "Update rating" : "Submit rating"}
-        disabled={pending || !previewPayload.ok}
+        disabled={busy || !previewPayload.ok}
+        pending={busy}
         onPress={submit}
       />
       <ContributionMessage message={message} />
@@ -156,16 +190,21 @@ export function PointsPreview({ lines }: { lines: PointsLine[] }) {
 export function SubmitButton({
   label,
   disabled,
+  pending = false,
   onPress,
 }: {
   label: string;
   disabled: boolean;
+  // When true, shows an inline ActivityIndicator alongside the label and marks the control busy for
+  // assistive tech (#212). Distinct from `disabled` so the caller controls each independently.
+  pending?: boolean;
   onPress: () => void | Promise<void>;
 }) {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityState={{ disabled }}
+      accessibilityLabel={label}
+      accessibilityState={{ disabled, busy: pending }}
       disabled={disabled}
       onPress={() => {
         void onPress();
@@ -176,6 +215,7 @@ export function SubmitButton({
         pressed && !disabled ? styles.pressed : null,
       ]}
     >
+      {pending ? <ActivityIndicator size="small" color={colors.onBrand} /> : null}
       <Text style={styles.submitText}>{label}</Text>
     </Pressable>
   );
@@ -194,7 +234,10 @@ const styles = StyleSheet.create({
   submitButton: {
     alignSelf: "flex-start",
     minHeight: 44,
+    flexDirection: "row",
+    alignItems: "center",
     justifyContent: "center",
+    gap: spacing.xs,
     backgroundColor: colors.brandBlue,
     borderRadius: 8,
     paddingHorizontal: spacing.md,

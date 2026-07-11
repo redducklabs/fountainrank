@@ -3,7 +3,15 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Image } from "expo-image";
 import { Stack, router } from "expo-router";
 import { useEffect } from "react";
-import { Alert, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 
 import { ScreenContainer } from "../../components/ScreenContainer";
 import { QueryStateView } from "../../components/states/QueryStateView";
@@ -143,6 +151,17 @@ export default function AdminReportsScreen() {
   };
 
   const pending = hideMutation.isPending || dismissMutation.isPending || deleteMutation.isPending;
+  // The mutations are screen-level (they disable every row's buttons while any one runs), so drive
+  // the spinner off the acted item + action — otherwise every button in the list would spin (#212).
+  const itemKey = (i: ReportedContentOut) => `${i.content_type}:${i.content_id}`;
+  const hidingKey =
+    hideMutation.isPending && hideMutation.variables ? itemKey(hideMutation.variables) : null;
+  const rejectingKey =
+    dismissMutation.isPending && dismissMutation.variables
+      ? itemKey(dismissMutation.variables)
+      : null;
+  const deletingKey =
+    deleteMutation.isPending && deleteMutation.variables ? itemKey(deleteMutation.variables) : null;
 
   if (viewerResolved && !isAdmin) {
     return (
@@ -177,6 +196,9 @@ export default function AdminReportsScreen() {
               item={item}
               apiBaseUrl={config.apiBaseUrl}
               pending={pending}
+              hidePending={hidingKey === itemKey(item)}
+              rejectPending={rejectingKey === itemKey(item)}
+              deletePending={deletingKey === itemKey(item)}
               onHideToggle={() => hideMutation.mutate(item)}
               onReject={() => dismissMutation.mutate(item)}
               onDelete={() => confirmDelete(item)}
@@ -192,6 +214,9 @@ function ReportRow({
   item,
   apiBaseUrl,
   pending,
+  hidePending,
+  rejectPending,
+  deletePending,
   onHideToggle,
   onReject,
   onDelete,
@@ -199,6 +224,9 @@ function ReportRow({
   item: ReportedContentOut;
   apiBaseUrl: string;
   pending: boolean;
+  hidePending: boolean;
+  rejectPending: boolean;
+  deletePending: boolean;
   onHideToggle: () => void;
   onReject: () => void;
   onDelete: () => void;
@@ -251,27 +279,33 @@ function ReportRow({
         <View style={styles.actions}>
           <Pressable
             accessibilityRole="button"
+            accessibilityState={{ disabled: pending, busy: hidePending }}
             disabled={pending}
             onPress={onHideToggle}
             style={[styles.outlineButton, pending ? styles.disabled : null]}
           >
+            {hidePending ? <ActivityIndicator size="small" color={colors.brandBlue} /> : null}
             <Text style={styles.outlineText}>{hideToggleLabel(item)}</Text>
           </Pressable>
           <Pressable
             accessibilityRole="button"
+            accessibilityState={{ disabled: pending, busy: rejectPending }}
             disabled={pending}
             onPress={onReject}
             style={[styles.outlineButton, pending ? styles.disabled : null]}
           >
+            {rejectPending ? <ActivityIndicator size="small" color={colors.brandBlue} /> : null}
             <Text style={styles.outlineText}>Reject</Text>
           </Pressable>
           {showDelete ? (
             <Pressable
               accessibilityRole="button"
+              accessibilityState={{ disabled: pending, busy: deletePending }}
               disabled={pending}
               onPress={onDelete}
               style={[styles.dangerButton, pending ? styles.disabled : null]}
             >
+              {deletePending ? <ActivityIndicator size="small" color={colors.danger} /> : null}
               <Text style={styles.dangerText}>Delete</Text>
             </Pressable>
           ) : null}
@@ -313,7 +347,10 @@ const styles = StyleSheet.create({
   actions: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginTop: spacing.xs },
   outlineButton: {
     minHeight: 40,
+    flexDirection: "row",
+    alignItems: "center",
     justifyContent: "center",
+    gap: spacing.xs,
     borderColor: colors.brandBlue,
     borderWidth: 1,
     borderRadius: 8,
@@ -322,7 +359,10 @@ const styles = StyleSheet.create({
   outlineText: { ...typography.body, color: colors.brandBlue, fontWeight: "700" },
   dangerButton: {
     minHeight: 40,
+    flexDirection: "row",
+    alignItems: "center",
     justifyContent: "center",
+    gap: spacing.xs,
     borderColor: colors.danger,
     borderWidth: 1,
     borderRadius: 8,

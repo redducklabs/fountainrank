@@ -56,7 +56,7 @@ export function NoteContributionForm({
       />
       <View style={styles.actions}>
         <Text style={styles.count}>{`${body.length}/1000`}</Text>
-        <SubmitButton label="Save note" disabled={pending} onPress={submit} />
+        <SubmitButton label="Save note" disabled={pending} pending={pending} onPress={submit} />
       </View>
       <PointsPreview lines={notePointsPreview(body.trim().length > 0)} />
       <ContributionMessage message={message} />

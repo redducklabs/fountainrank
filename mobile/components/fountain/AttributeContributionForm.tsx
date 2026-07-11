@@ -109,7 +109,12 @@ export function AttributeContributionForm({
       <PointsPreview
         lines={attributePointsPreview(payload.ok ? payload.value.observations.length : 0)}
       />
-      <SubmitButton label="Save observations" disabled={pending || !payload.ok} onPress={submit} />
+      <SubmitButton
+        label="Save observations"
+        disabled={pending || !payload.ok}
+        pending={pending}
+        onPress={submit}
+      />
       <ContributionMessage message={message} />
     </View>
   );

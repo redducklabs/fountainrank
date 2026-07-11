@@ -46,6 +46,7 @@ export function PhotoUploadButton({
       <SubmitButton
         label={pending ? "Uploading…" : "Add photo"}
         disabled={pending}
+        pending={pending}
         onPress={pickPhoto}
       />
       <ContributionMessage message={message ?? null} />

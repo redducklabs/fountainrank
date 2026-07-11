@@ -26,6 +26,7 @@ export default function AccountScreen() {
   const queryClient = useQueryClient();
   const [message, setMessage] = useState<string | null>(null);
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
   const profileQuery = useQuery({
     queryKey: PROFILE_QUERY_KEY,
     enabled: shouldEnableProfileQuery(auth.status),
@@ -74,9 +75,14 @@ export default function AccountScreen() {
 
   const onSignOut = async () => {
     setMessage(null);
-    clearProfile();
-    await auth.signOut();
-    clearProfile();
+    setIsSigningOut(true);
+    try {
+      clearProfile();
+      await auth.signOut();
+      clearProfile();
+    } finally {
+      setIsSigningOut(false);
+    }
   };
 
   const onDeleteAccount = async () => {
@@ -145,6 +151,7 @@ export default function AccountScreen() {
             onSignOut={onSignOut}
             onDeleteAccount={onDeleteAccount}
             isDeletingAccount={isDeletingAccount}
+            isSigningOut={isSigningOut}
             message={message}
           />
         ) : (
@@ -153,6 +160,7 @@ export default function AccountScreen() {
             message={message}
             onSignIn={onSignIn}
             onSignOut={auth.status === "reauthRequired" ? onSignOut : undefined}
+            isSigningOut={isSigningOut}
           />
         )}
         <Link href="/diagnostics" style={styles.link}>
@@ -168,11 +176,13 @@ function SignedOut({
   message,
   onSignIn,
   onSignOut,
+  isSigningOut,
 }: {
   status: string;
   message: string | null;
   onSignIn: () => Promise<void>;
   onSignOut?: () => Promise<void>;
+  isSigningOut: boolean;
 }) {
   const pending = status === "signingIn";
   return (
@@ -186,9 +196,17 @@ function SignedOut({
       <PrimaryButton
         label={pending ? "Opening sign-in..." : "Sign in"}
         disabled={pending}
+        pending={pending}
         onPress={onSignIn}
       />
-      {onSignOut ? <SecondaryButton label="Clear session" onPress={onSignOut} /> : null}
+      {onSignOut ? (
+        <SecondaryButton
+          label="Clear session"
+          disabled={isSigningOut}
+          pending={isSigningOut}
+          onPress={onSignOut}
+        />
+      ) : null}
     </View>
   );
 }
@@ -202,6 +220,7 @@ function SignedInProfile({
   onSignOut,
   onDeleteAccount,
   isDeletingAccount,
+  isSigningOut,
   message,
 }: {
   profile: MeProfile | null;
@@ -212,6 +231,7 @@ function SignedInProfile({
   onSignOut: () => Promise<void>;
   onDeleteAccount: () => Promise<void>;
   isDeletingAccount: boolean;
+  isSigningOut: boolean;
   message: string | null;
 }) {
   if (isLoading) {
@@ -222,7 +242,12 @@ function SignedInProfile({
       <View style={styles.section}>
         <Text style={styles.note}>Could not load your profile.</Text>
         <SecondaryButton label="Retry" onPress={async () => onRetry()} />
-        <SecondaryButton label="Sign out" onPress={onSignOut} />
+        <SecondaryButton
+          label="Sign out"
+          disabled={isSigningOut}
+          pending={isSigningOut}
+          onPress={onSignOut}
+        />
       </View>
     );
   }
@@ -233,10 +258,16 @@ function SignedInProfile({
       <View style={styles.section}>
         <DisplayNameForm initialValue="" required />
         {message ? <Text style={styles.warning}>{message}</Text> : null}
-        <SecondaryButton label="Sign out" onPress={onSignOut} />
+        <SecondaryButton
+          label="Sign out"
+          disabled={isSigningOut}
+          pending={isSigningOut}
+          onPress={onSignOut}
+        />
         <DestructiveButton
           label={isDeletingAccount ? "Deleting account..." : "Delete account"}
           disabled={isDeletingAccount}
+          pending={isDeletingAccount}
           onPress={onDeleteAccount}
         />
       </View>
@@ -304,16 +335,19 @@ function InlineLoading({ label }: { label: string }) {
 function PrimaryButton({
   label,
   disabled,
+  pending = false,
   onPress,
 }: {
   label: string;
   disabled?: boolean;
+  pending?: boolean;
   onPress: () => Promise<void>;
 }) {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityState={{ disabled: Boolean(disabled) }}
+      accessibilityLabel={label}
+      accessibilityState={{ disabled: Boolean(disabled), busy: pending }}
       disabled={disabled}
       onPress={() => {
         void onPress();
@@ -324,23 +358,39 @@ function PrimaryButton({
         pressed && !disabled ? styles.pressedButton : null,
       ]}
     >
+      {pending ? <ActivityIndicator size="small" color={colors.brandBlue} /> : null}
       <Text style={styles.primaryButtonText}>{label}</Text>
     </Pressable>
   );
 }
 
-function SecondaryButton({ label, onPress }: { label: string; onPress: () => Promise<void> }) {
+function SecondaryButton({
+  label,
+  disabled,
+  pending = false,
+  onPress,
+}: {
+  label: string;
+  disabled?: boolean;
+  pending?: boolean;
+  onPress: () => Promise<void>;
+}) {
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ disabled: Boolean(disabled), busy: pending }}
+      disabled={disabled}
       onPress={() => {
         void onPress();
       }}
       style={({ pressed }) => [
         styles.secondaryButton,
-        pressed ? styles.pressedSecondaryButton : null,
+        disabled ? styles.disabledButton : null,
+        pressed && !disabled ? styles.pressedSecondaryButton : null,
       ]}
     >
+      {pending ? <ActivityIndicator size="small" color={colors.brandBlue} /> : null}
       <Text style={styles.secondaryButtonText}>{label}</Text>
     </Pressable>
   );
@@ -349,16 +399,19 @@ function SecondaryButton({ label, onPress }: { label: string; onPress: () => Pro
 function DestructiveButton({
   label,
   disabled,
+  pending = false,
   onPress,
 }: {
   label: string;
   disabled?: boolean;
+  pending?: boolean;
   onPress: () => Promise<void>;
 }) {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityState={{ disabled: Boolean(disabled) }}
+      accessibilityLabel={label}
+      accessibilityState={{ disabled: Boolean(disabled), busy: pending }}
       disabled={disabled}
       onPress={() => {
         void onPress();
@@ -369,6 +422,7 @@ function DestructiveButton({
         pressed && !disabled ? styles.pressedDestructiveButton : null,
       ]}
     >
+      {pending ? <ActivityIndicator size="small" color={colors.danger} /> : null}
       <Text style={styles.destructiveButtonText}>{label}</Text>
     </Pressable>
   );
@@ -384,8 +438,10 @@ const styles = StyleSheet.create({
   inline: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
   primaryButton: {
     minHeight: 48,
+    flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
+    gap: spacing.xs,
     borderRadius: 8,
     backgroundColor: colors.brandYellow,
     paddingHorizontal: spacing.lg,
@@ -393,8 +449,10 @@ const styles = StyleSheet.create({
   primaryButtonText: { ...typography.body, color: colors.brandBlue, fontWeight: "700" },
   secondaryButton: {
     minHeight: 44,
+    flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
+    gap: spacing.xs,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: 8,
@@ -403,8 +461,10 @@ const styles = StyleSheet.create({
   secondaryButtonText: { ...typography.body, color: colors.brandBlue, fontWeight: "600" },
   destructiveButton: {
     minHeight: 44,
+    flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
+    gap: spacing.xs,
     borderWidth: 1,
     borderColor: colors.danger,
     borderRadius: 8,
