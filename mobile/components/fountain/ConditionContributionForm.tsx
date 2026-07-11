@@ -46,11 +46,6 @@ export function ConditionContributionForm({
   const guardRef = useRef<GuardedSubmit<ConditionStatus | null> | null>(null);
   useEffect(() => {
     mountedRef.current = true;
-    guardRef.current = createGuardedSubmit<ConditionStatus | null>({
-      setBusy: setSubmittingStatus,
-      idle: null,
-      isMounted: () => mountedRef.current,
-    });
     return () => {
       mountedRef.current = false;
     };
@@ -61,8 +56,13 @@ export function ConditionContributionForm({
   const busy = pending || submittingStatus !== null;
 
   function submit(status: ConditionStatus) {
-    const guard = guardRef.current;
-    if (!guard) return;
+    // Lazily create the single-flight guard on the first tap (in the handler, never during render —
+    // the react-hooks/refs lint forbids ref access there) so the very first tap works immediately.
+    const guard = (guardRef.current ??= createGuardedSubmit<ConditionStatus | null>({
+      setBusy: setSubmittingStatus,
+      idle: null,
+      isMounted: () => mountedRef.current,
+    }));
     void guard(status, async () => {
       setMessage(null);
       // Best-effort location so the server can derive is_proximate (#3); never blocks (null ok).

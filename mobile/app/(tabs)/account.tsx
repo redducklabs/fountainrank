@@ -313,10 +313,16 @@ function SignedInProfile({
       ) : null}
       <DisplayNameForm initialValue={profile.display_name} required={false} />
       {message ? <Text style={styles.warning}>{message}</Text> : null}
-      <SecondaryButton label="Sign out" onPress={onSignOut} />
+      <SecondaryButton
+        label="Sign out"
+        disabled={isSigningOut}
+        pending={isSigningOut}
+        onPress={onSignOut}
+      />
       <DestructiveButton
         label={isDeletingAccount ? "Deleting account..." : "Delete account"}
         disabled={isDeletingAccount}
+        pending={isDeletingAccount}
         onPress={onDeleteAccount}
       />
     </View>

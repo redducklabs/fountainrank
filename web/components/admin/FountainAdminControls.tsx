@@ -40,10 +40,14 @@ export function FountainAdminControls({ detail }: { detail: AdminFountainDetail 
   const [pending, startTransition] = useTransition();
   const [result, setResult] = useState<AdminActionResult | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // Which action is in flight, so only the tapped button spins while `pending` disables the whole
+  // group (single-flight). Local toggles (Cancel / the initial Delete affordance) never spin.
+  const [activeKey, setActiveKey] = useState<string | null>(null);
   const message = errorText(result);
 
-  const run = (action: () => Promise<AdminActionResult>, after?: () => void) => {
+  const run = (key: string, action: () => Promise<AdminActionResult>, after?: () => void) => {
     setResult(null);
+    setActiveKey(key);
     startTransition(async () => {
       const next = await action();
       setResult(next);
@@ -71,7 +75,7 @@ export function FountainAdminControls({ detail }: { detail: AdminFountainDetail 
         onSubmit={(event) => {
           event.preventDefault();
           const formData = new FormData(event.currentTarget);
-          run(() => adminUpdateFountainFromForm(detail.id, formData));
+          run("save", () => adminUpdateFountainFromForm(detail.id, formData));
         }}
       >
         <div className="grid gap-3 sm:grid-cols-2">
@@ -132,7 +136,8 @@ export function FountainAdminControls({ detail }: { detail: AdminFountainDetail 
           />
         </label>
         <SpinnerButton
-          pending={pending}
+          pending={pending && activeKey === "save"}
+          disabled={pending}
           type="submit"
           className="rounded-full bg-brand px-4 py-2 text-sm font-bold text-white disabled:opacity-60"
         >
@@ -142,8 +147,9 @@ export function FountainAdminControls({ detail }: { detail: AdminFountainDetail 
 
       <div className="flex flex-wrap gap-2">
         <SpinnerButton
-          pending={pending}
-          onClick={() => run(() => adminSetFountainHidden(detail.id, !detail.is_hidden))}
+          pending={pending && activeKey === "hide"}
+          disabled={pending}
+          onClick={() => run("hide", () => adminSetFountainHidden(detail.id, !detail.is_hidden))}
           className="rounded-full border border-brand px-4 py-2 text-sm font-bold text-brand-ink disabled:opacity-60"
         >
           {detail.is_hidden ? "Unhide fountain" : "Hide fountain"}
@@ -151,9 +157,11 @@ export function FountainAdminControls({ detail }: { detail: AdminFountainDetail 
         {confirmDelete ? (
           <>
             <SpinnerButton
-              pending={pending}
+              pending={pending && activeKey === "delete"}
+              disabled={pending}
               onClick={() =>
                 run(
+                  "delete",
                   () => adminDeleteFountain(detail.id),
                   () => router.push("/"),
                 )
@@ -163,7 +171,8 @@ export function FountainAdminControls({ detail }: { detail: AdminFountainDetail 
               Confirm delete
             </SpinnerButton>
             <SpinnerButton
-              pending={pending}
+              pending={false}
+              disabled={pending}
               onClick={() => setConfirmDelete(false)}
               className="rounded-full border border-border px-4 py-2 text-sm font-bold text-foreground disabled:opacity-60"
             >
@@ -172,7 +181,8 @@ export function FountainAdminControls({ detail }: { detail: AdminFountainDetail 
           </>
         ) : (
           <SpinnerButton
-            pending={pending}
+            pending={false}
+            disabled={pending}
             onClick={() => setConfirmDelete(true)}
             className="rounded-full border border-danger px-4 py-2 text-sm font-bold text-danger disabled:opacity-60"
           >
@@ -200,9 +210,14 @@ export function FountainAdminControls({ detail }: { detail: AdminFountainDetail 
                   </p>
                 </div>
                 <SpinnerButton
-                  pending={pending}
+                  pending={pending && activeKey === `note:${note.id}`}
+                  disabled={pending}
                   aria-label={`${note.is_hidden ? "Unhide" : "Hide"} note ${noteLabel(note)}`}
-                  onClick={() => run(() => adminSetNoteHidden(note.id, !note.is_hidden, detail.id))}
+                  onClick={() =>
+                    run(`note:${note.id}`, () =>
+                      adminSetNoteHidden(note.id, !note.is_hidden, detail.id),
+                    )
+                  }
                   className="shrink-0 rounded-full border border-brand px-3 py-1.5 text-xs font-bold text-brand-ink disabled:opacity-60"
                 >
                   {note.is_hidden ? "Unhide" : "Hide"}

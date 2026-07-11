@@ -70,11 +70,6 @@ export function RatingContributionForm({
   const guardRef = useRef<GuardedSubmit<boolean> | null>(null);
   useEffect(() => {
     mountedRef.current = true;
-    guardRef.current = createGuardedSubmit<boolean>({
-      setBusy: setSubmitting,
-      idle: false,
-      isMounted: () => mountedRef.current,
-    });
     return () => {
       mountedRef.current = false;
     };
@@ -88,8 +83,14 @@ export function RatingContributionForm({
   const busy = pending || submitting;
 
   function submit() {
-    const guard = guardRef.current;
-    if (!guard) return;
+    // Lazily create the single-flight guard on the first tap (in the handler, never during render —
+    // the react-hooks/refs lint forbids ref access there) so the very first tap works immediately
+    // without depending on an effect having run.
+    const guard = (guardRef.current ??= createGuardedSubmit<boolean>({
+      setBusy: setSubmitting,
+      idle: false,
+      isMounted: () => mountedRef.current,
+    }));
     void guard(true, async () => {
       setMessage(null);
       // Best-effort location for the proximity guard (#3); never blocks (null ok -> unverified).
