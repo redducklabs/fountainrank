@@ -3,7 +3,15 @@ import { CONTRIBUTION_POINTS, isRatingDraftDirty } from "@fountainrank/contribut
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Stack, router, useLocalSearchParams } from "expo-router";
 import { useRef, useState, type ReactNode } from "react";
-import { Alert, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import {
+  ActivityIndicator,
+  Alert,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 
 import { AttributeContributionForm } from "../../components/fountain/AttributeContributionForm";
 import { WaterCelebration } from "../../components/feedback/WaterCelebration";
@@ -682,8 +690,12 @@ function AdminControls({
   const [placementNote, setPlacementNote] = useState(detail.placement_note ?? "");
   const [comments, setComments] = useState(detail.comments ?? "");
   const [message, setMessage] = useState<string | null>(null);
+  // Which button is in flight, so only the tapped one spins while `pending` disables them all
+  // (Save and Hide share one mutation, so isPending alone can't tell them apart) (#212).
+  const [activeAction, setActiveAction] = useState<string | null>(null);
 
-  const run = async (action: () => Promise<void>) => {
+  const run = async (key: string, action: () => Promise<void>) => {
+    setActiveAction(key);
     setMessage(null);
     try {
       await action();
@@ -699,6 +711,8 @@ function AdminControls({
       } else {
         setMessage("Admin action failed.");
       }
+    } finally {
+      setActiveAction(null);
     }
   };
 
@@ -709,7 +723,7 @@ function AdminControls({
       setMessage("Latitude and longitude must be numbers.");
       return;
     }
-    void run(() =>
+    void run("save", () =>
       onUpdate({
         location: { latitude: lat, longitude: lng },
         is_working: isWorking,
@@ -729,7 +743,7 @@ function AdminControls({
           text: "Delete",
           style: "destructive",
           onPress: () => {
-            void run(onDelete);
+            void run("delete", onDelete);
           },
         },
       ],
@@ -800,32 +814,44 @@ function AdminControls({
         />
         <Pressable
           accessibilityRole="button"
+          accessibilityState={{ disabled: pending, busy: activeAction === "save" }}
           disabled={pending}
           onPress={save}
           style={[styles.adminPrimaryButton, pending ? styles.disabled : null]}
         >
+          {activeAction === "save" ? (
+            <ActivityIndicator size="small" color={colors.onBrand} />
+          ) : null}
           <Text style={styles.adminPrimaryText}>Save edits</Text>
         </Pressable>
       </View>
       <View style={styles.adminButtonRow}>
         <Pressable
           accessibilityRole="button"
+          accessibilityState={{ disabled: pending, busy: activeAction === "hide" }}
           disabled={pending}
           onPress={() => {
-            void run(() => onUpdate({ is_hidden: !detail.is_hidden }));
+            void run("hide", () => onUpdate({ is_hidden: !detail.is_hidden }));
           }}
           style={[styles.adminOutlineButton, pending ? styles.disabled : null]}
         >
+          {activeAction === "hide" ? (
+            <ActivityIndicator size="small" color={colors.brandBlue} />
+          ) : null}
           <Text style={styles.adminOutlineText}>
             {detail.is_hidden ? "Unhide fountain" : "Hide fountain"}
           </Text>
         </Pressable>
         <Pressable
           accessibilityRole="button"
+          accessibilityState={{ disabled: pending, busy: activeAction === "delete" }}
           disabled={pending}
           onPress={confirmDelete}
           style={[styles.adminDangerButton, pending ? styles.disabled : null]}
         >
+          {activeAction === "delete" ? (
+            <ActivityIndicator size="small" color={colors.danger} />
+          ) : null}
           <Text style={styles.adminDangerText}>Delete fountain</Text>
         </Pressable>
       </View>
@@ -843,12 +869,16 @@ function AdminControls({
               </View>
               <Pressable
                 accessibilityRole="button"
+                accessibilityState={{ disabled: pending, busy: activeAction === `note:${note.id}` }}
                 disabled={pending}
                 onPress={() => {
-                  void run(() => onSetNoteHidden(note.id, !note.is_hidden));
+                  void run(`note:${note.id}`, () => onSetNoteHidden(note.id, !note.is_hidden));
                 }}
                 style={[styles.adminSmallButton, pending ? styles.disabled : null]}
               >
+                {activeAction === `note:${note.id}` ? (
+                  <ActivityIndicator size="small" color={colors.brandBlue} />
+                ) : null}
                 <Text style={styles.adminOutlineText}>{note.is_hidden ? "Unhide" : "Hide"}</Text>
               </Pressable>
             </View>
@@ -908,7 +938,10 @@ const styles = StyleSheet.create({
   adminPrimaryButton: {
     alignSelf: "flex-start",
     minHeight: 44,
+    flexDirection: "row",
+    alignItems: "center",
     justifyContent: "center",
+    gap: spacing.xs,
     backgroundColor: colors.brandBlue,
     borderRadius: 8,
     paddingHorizontal: spacing.md,
@@ -917,7 +950,10 @@ const styles = StyleSheet.create({
   adminPrimaryText: { ...typography.body, color: colors.onBrand, fontWeight: "700" },
   adminOutlineButton: {
     minHeight: 44,
+    flexDirection: "row",
+    alignItems: "center",
     justifyContent: "center",
+    gap: spacing.xs,
     borderColor: colors.brandBlue,
     borderWidth: 1,
     borderRadius: 8,
@@ -927,7 +963,10 @@ const styles = StyleSheet.create({
   adminOutlineText: { ...typography.body, color: colors.brandBlue, fontWeight: "700" },
   adminDangerButton: {
     minHeight: 44,
+    flexDirection: "row",
+    alignItems: "center",
     justifyContent: "center",
+    gap: spacing.xs,
     borderColor: colors.danger,
     borderWidth: 1,
     borderRadius: 8,
@@ -951,7 +990,10 @@ const styles = StyleSheet.create({
   adminNoteBody: { ...typography.body, color: colors.text },
   adminSmallButton: {
     minHeight: 40,
+    flexDirection: "row",
+    alignItems: "center",
     justifyContent: "center",
+    gap: spacing.xs,
     borderColor: colors.brandBlue,
     borderWidth: 1,
     borderRadius: 8,

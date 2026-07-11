@@ -1,5 +1,6 @@
 "use client";
 import { signInWithReturn } from "../../app/actions/auth";
+import { FormSubmitButton } from "../ui/FormSubmitButton";
 
 const FAB_CLASS =
   "absolute bottom-24 right-4 z-40 inline-flex items-center gap-2 rounded-full bg-accent-gold px-4 py-3 text-sm font-bold text-brand shadow-lg transition hover:bg-accent-gold-hover";
@@ -17,9 +18,9 @@ export function AddFountainFab({
   if (!isAuthenticated) {
     return (
       <form action={signInWithReturn.bind(null, "/?add=1")} className="contents">
-        <button type="submit" className={FAB_CLASS} aria-label="Add a fountain">
+        <FormSubmitButton className={FAB_CLASS} aria-label="Add a fountain">
           <span aria-hidden="true">+</span> Add a fountain
-        </button>
+        </FormSubmitButton>
       </form>
     );
   }

@@ -5,6 +5,7 @@ import { isRatingDraftDirty } from "@fountainrank/contributions";
 import { submitRating, uploadPhoto, type ContributeError } from "../../app/actions/contribute";
 import { dispatchContribution } from "../../lib/contribution-event";
 import { getCurrentPositionSafe } from "../../lib/geo/current-position";
+import { Spinner } from "../ui/Spinner";
 import { errorText } from "./contributeError";
 import { useRatingDraft } from "./RatingDraftContext";
 
@@ -80,7 +81,12 @@ export function PhotoUpload({ fountainId }: { fountainId: string }) {
       />
       <p className="mt-1 text-xs text-muted">JPEG, PNG, or WebP, up to 10 MB.</p>
       {pending && (
-        <p role="status" aria-live="polite" className="mt-1 text-xs text-muted">
+        <p
+          role="status"
+          aria-live="polite"
+          className="mt-1 inline-flex items-center gap-2 text-xs text-muted"
+        >
+          <Spinner className="h-4 w-4" />
           Uploading…
         </p>
       )}

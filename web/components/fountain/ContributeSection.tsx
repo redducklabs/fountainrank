@@ -1,6 +1,7 @@
 "use client";
 import type { components } from "@fountainrank/api-client";
 import { signInWithReturn } from "../../app/actions/auth";
+import { FormSubmitButton } from "../ui/FormSubmitButton";
 import { AttributeForm } from "./AttributeForm";
 import { RatingForm } from "./RatingForm";
 import { ConditionForm } from "./ConditionForm";
@@ -32,12 +33,9 @@ export function ContributeSection({
       {!isAuthenticated ? (
         <form action={signInWithReturn.bind(null, `/fountains/${fountainId}`)} className="mt-2">
           <p className="text-sm text-muted">{signInMessage}</p>
-          <button
-            type="submit"
-            className="mt-2 rounded-full bg-accent-gold px-4 py-2 text-sm font-bold text-brand"
-          >
+          <FormSubmitButton className="mt-2 rounded-full bg-accent-gold px-4 py-2 text-sm font-bold text-brand">
             Sign in to contribute
-          </button>
+          </FormSubmitButton>
         </form>
       ) : (
         <div className="mt-2 space-y-4">

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import {
+  ActivityIndicator,
   Keyboard,
   KeyboardAvoidingView,
   Modal,
@@ -143,12 +144,14 @@ export function ReportContentButton({
                 {!submitted ? (
                   <Pressable
                     accessibilityRole="button"
+                    accessibilityState={{ disabled: pending, busy: pending }}
                     disabled={pending}
                     onPress={() => {
                       void submit();
                     }}
                     style={[styles.primaryButton, pending ? styles.disabled : null]}
                   >
+                    {pending ? <ActivityIndicator size="small" color={colors.onBrand} /> : null}
                     <Text style={styles.primaryText}>
                       {pending ? "Submitting…" : "Submit report"}
                     </Text>
@@ -225,7 +228,10 @@ const styles = StyleSheet.create({
   secondaryText: { ...typography.body, color: colors.textMuted, fontWeight: "700" },
   primaryButton: {
     minHeight: 44,
+    flexDirection: "row",
+    alignItems: "center",
     justifyContent: "center",
+    gap: spacing.xs,
     backgroundColor: colors.brandBlue,
     borderRadius: 8,
     paddingHorizontal: spacing.md,

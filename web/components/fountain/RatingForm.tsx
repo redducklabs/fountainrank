@@ -9,6 +9,7 @@ import { getCurrentPositionSafe } from "../../lib/geo/current-position";
 import { errorText } from "./contributeError";
 import { useRatingDraft } from "./RatingDraftContext";
 import { PointsPreview } from "../contributions/PointsPreview";
+import { SpinnerButton } from "../ui/SpinnerButton";
 import { StarGroup } from "./StarGroup";
 
 type Dimension = components["schemas"]["DimensionSummary"];
@@ -74,14 +75,14 @@ export function RatingForm({
       <div className="mt-3">
         <PointsPreview lines={ratingPointsPreview(chosen.length)} />
       </div>
-      <button
-        type="button"
-        disabled={pending || chosen.length === 0}
+      <SpinnerButton
+        pending={pending}
+        disabled={chosen.length === 0}
         onClick={submit}
         className="mt-2 rounded-full bg-brand px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
       >
         {hasExistingRating ? "Update rating" : "Submit rating"}
-      </button>
+      </SpinnerButton>
       {msg && (
         <p
           role="status"

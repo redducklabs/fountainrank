@@ -12,6 +12,7 @@ import { dispatchContribution } from "../../lib/contribution-event";
 import { getCurrentPositionSafe } from "../../lib/geo/current-position";
 import { conditionStatusLabel } from "../../lib/map/format";
 import { PointsPreview } from "../contributions/PointsPreview";
+import { SpinnerButton } from "../ui/SpinnerButton";
 import { errorText } from "./contributeError";
 
 type ConditionStatus = components["schemas"]["ConditionReportRequest"]["status"];
@@ -36,12 +37,15 @@ export function ConditionForm({
   const [showProblems, setShowProblems] = useState(false);
   const [problem, setProblem] = useState<ConditionStatus>(PROBLEMS[0]);
   const [pending, start] = useTransition();
+  // Which status is in flight, so only the tapped button spins while `pending` disables both.
+  const [activeStatus, setActiveStatus] = useState<ConditionStatus | null>(null);
   const [msg, setMsg] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
   const now = new Date();
   const blocked = conditionPointsBlocked(conditionPointsEligibleAt, now);
   const eligibleIn = conditionPointsEligibleInText(conditionPointsEligibleAt, now);
 
   function report(status: ConditionStatus) {
+    setActiveStatus(status);
     start(async () => {
       // Best-effort location so the server can derive is_proximate (#3); never blocks (null ok).
       const coords = await getCurrentPositionSafe();
@@ -67,14 +71,14 @@ export function ConditionForm({
     <div>
       <h3 className="text-sm font-semibold text-foreground">Is it working?</h3>
       <div className="mt-1 flex flex-wrap items-center gap-2">
-        <button
-          type="button"
+        <SpinnerButton
+          pending={pending && activeStatus === "working"}
           disabled={pending}
           onClick={() => report("working")}
           className="rounded-full bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
         >
           I checked — it&rsquo;s working
-        </button>
+        </SpinnerButton>
         <button
           type="button"
           aria-expanded={showProblems}
@@ -101,14 +105,14 @@ export function ConditionForm({
               </option>
             ))}
           </select>
-          <button
-            type="button"
+          <SpinnerButton
+            pending={pending && activeStatus !== null && activeStatus !== "working"}
             disabled={pending}
             onClick={() => report(problem)}
             className="rounded-full bg-brand px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
           >
             Submit
-          </button>
+          </SpinnerButton>
         </div>
       )}
       <div className="mt-3">

@@ -711,6 +711,7 @@ export default function MapScreen() {
         <MapOverlay
           belowZoom={belowZoom}
           viewState={viewState}
+          refetching={enabled && pinsQuery.isFetching && !pinsQuery.isLoading}
           capped={capped}
           onRetry={() => void pinsQuery.refetch()}
         />
@@ -1014,7 +1015,12 @@ function MapAddPanel({
           ) : null}
           <View style={styles.actions}>
             <SecondaryAction label="Back" disabled={pending} onPress={onBack} />
-            <PrimaryAction label="Add fountain" disabled={pending} onPress={onSubmit} />
+            <PrimaryAction
+              label="Add fountain"
+              disabled={pending}
+              pending={pending}
+              onPress={onSubmit}
+            />
           </View>
         </ScrollView>
       )}
@@ -1066,16 +1072,19 @@ function LiveMessage({ message }: { message: { tone: "ok" | "err"; text: string 
 function PrimaryAction({
   label,
   disabled,
+  pending = false,
   onPress,
 }: {
   label: string;
   disabled: boolean;
+  pending?: boolean;
   onPress: () => void | Promise<void>;
 }) {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityState={{ disabled }}
+      accessibilityLabel={label}
+      accessibilityState={{ disabled, busy: pending }}
       disabled={disabled}
       onPress={() => {
         void onPress();
@@ -1086,6 +1095,7 @@ function PrimaryAction({
         pressed && !disabled ? styles.pressed : null,
       ]}
     >
+      {pending ? <ActivityIndicator size="small" color={colors.onBrand} /> : null}
       <Text style={styles.primaryActionText}>{label}</Text>
     </Pressable>
   );
@@ -1153,10 +1163,15 @@ function placementInstruction(placeable: boolean, zoom: number | undefined, pin:
 function MapOverlay(props: {
   belowZoom: boolean;
   viewState: ViewState;
+  refetching: boolean;
   capped: boolean;
   onRetry: () => void;
 }) {
   const loading = props.viewState === "loading";
+  // A background refetch (a filter change or a pan after the first load) doesn't flip `isLoading`,
+  // so without this a filter tap that refetches pins gives no feedback (#212). Show the same quiet
+  // banner spinner — never the full-screen state — so the map keeps showing the current pins.
+  const refetching = props.refetching && !loading;
   const retryable = props.viewState === "offline" || props.viewState === "error";
 
   let message: string | null = null;
@@ -1167,11 +1182,17 @@ function MapOverlay(props: {
   else if (props.viewState === "ready" && props.capped)
     message = "Showing the first 500 — zoom in for more";
 
-  if (!loading && message == null) return null;
+  if (!loading && !refetching && message == null) return null;
 
   return (
     <View style={styles.banner} pointerEvents="box-none">
-      {loading ? <ActivityIndicator color={colors.brandBlue} /> : null}
+      {loading || refetching ? (
+        <ActivityIndicator
+          color={colors.brandBlue}
+          accessibilityRole="progressbar"
+          accessibilityLabel={refetching ? "Updating fountains" : "Loading fountains"}
+        />
+      ) : null}
       {message ? (
         <Text style={styles.bannerText} onPress={retryable ? props.onRetry : undefined}>
           {message}
@@ -1262,7 +1283,10 @@ const styles = StyleSheet.create({
   primaryAction: {
     alignSelf: "flex-start",
     minHeight: 44,
+    flexDirection: "row",
+    alignItems: "center",
     justifyContent: "center",
+    gap: spacing.xs,
     backgroundColor: colors.brandBlue,
     borderRadius: 8,
     paddingHorizontal: spacing.md,

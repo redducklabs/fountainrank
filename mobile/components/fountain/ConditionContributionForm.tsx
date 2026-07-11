@@ -4,7 +4,7 @@ import {
   conditionPointsEligibleInText,
   conditionPointsPreview,
 } from "@fountainrank/contributions";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { buildConditionPayload } from "../../lib/contributions/payloads";
@@ -14,6 +14,7 @@ import {
   contributionErrorText,
   PROBLEM_CONDITION_STATUSES,
 } from "../../lib/contributions/state";
+import { createGuardedSubmit, type GuardedSubmit } from "../../lib/contributions/submit-flow";
 import { requestCurrentCoords } from "../../lib/location-request";
 import { colors, spacing, typography } from "../../theme";
 import { ContributionMessage, PointsPreview, SubmitButton } from "./RatingContributionForm";
@@ -36,25 +37,48 @@ export function ConditionContributionForm({
 }) {
   const [problem, setProblem] = useState<ConditionStatus>(PROBLEM_CONDITION_STATUSES[0]);
   const [message, setMessage] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
+  // Which status is currently submitting, so only the tapped button spins while both stay disabled
+  // (the two buttons share one in-flight guard). Set synchronously on tap for an instant spinner (#212).
+  const [submittingStatus, setSubmittingStatus] = useState<ConditionStatus | null>(null);
+  const mountedRef = useRef(true);
+  // Created in the effect (not during render) so we never read/pass a ref during render — the
+  // React-Compiler lint (react-hooks/refs) forbids that. Read only in the submit handler.
+  const guardRef = useRef<GuardedSubmit<ConditionStatus | null> | null>(null);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
   const now = new Date();
   const blocked = conditionPointsBlocked(conditionPointsEligibleAt, now);
   const eligibleIn = conditionPointsEligibleInText(conditionPointsEligibleAt, now);
+  const busy = pending || submittingStatus !== null;
 
-  async function submit(status: ConditionStatus) {
-    setMessage(null);
-    // Best-effort location so the server can derive is_proximate (#3); never blocks (null ok).
-    const coords = await requestCurrentCoords();
-    const payload = buildConditionPayload(fountainId, status, coords);
-    if (!payload.ok) {
-      setMessage({ tone: "err", text: "Choose a valid status." });
-      return;
-    }
-    const result = await onSubmit(payload.value);
-    setMessage(
-      result.ok
-        ? { tone: "ok", text: "Thanks. Your status report was saved." }
-        : { tone: "err", text: contributionErrorText(result.error) },
-    );
+  function submit(status: ConditionStatus) {
+    // Lazily create the single-flight guard on the first tap (in the handler, never during render —
+    // the react-hooks/refs lint forbids ref access there) so the very first tap works immediately.
+    const guard = (guardRef.current ??= createGuardedSubmit<ConditionStatus | null>({
+      setBusy: setSubmittingStatus,
+      idle: null,
+      isMounted: () => mountedRef.current,
+    }));
+    void guard(status, async () => {
+      setMessage(null);
+      // Best-effort location so the server can derive is_proximate (#3); never blocks (null ok).
+      const coords = await requestCurrentCoords();
+      const payload = buildConditionPayload(fountainId, status, coords);
+      if (!payload.ok) {
+        setMessage({ tone: "err", text: "Choose a valid status." });
+        return;
+      }
+      const result = await onSubmit(payload.value);
+      setMessage(
+        result.ok
+          ? { tone: "ok", text: "Thanks. Your status report was saved." }
+          : { tone: "err", text: contributionErrorText(result.error) },
+      );
+    });
   }
 
   return (
@@ -62,7 +86,8 @@ export function ConditionContributionForm({
       <Text style={styles.title}>Is it working?</Text>
       <SubmitButton
         label="I checked - it's working"
-        disabled={pending}
+        disabled={busy}
+        pending={submittingStatus === "working"}
         onPress={() => submit("working")}
       />
       {blocked ? (
@@ -81,8 +106,8 @@ export function ConditionContributionForm({
             <Pressable
               key={status}
               accessibilityRole="button"
-              accessibilityState={{ selected, disabled: pending }}
-              disabled={pending}
+              accessibilityState={{ selected, disabled: busy }}
+              disabled={busy}
               onPress={() => setProblem(status)}
               style={[styles.option, selected ? styles.optionSelected : null]}
             >
@@ -94,7 +119,12 @@ export function ConditionContributionForm({
         })}
       </View>
       {blocked ? null : <PointsPreview lines={conditionPointsPreview("problem")} />}
-      <SubmitButton label="Submit problem" disabled={pending} onPress={() => submit(problem)} />
+      <SubmitButton
+        label="Submit problem"
+        disabled={busy}
+        pending={submittingStatus !== null && submittingStatus !== "working"}
+        onPress={() => submit(problem)}
+      />
       <ContributionMessage message={message} />
     </View>
   );

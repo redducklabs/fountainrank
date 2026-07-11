@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { reportContent } from "../../app/actions/contribute";
+import { SpinnerButton } from "../ui/SpinnerButton";
 import { errorText } from "./contributeError";
 import { REPORT_CATEGORY_LABELS, type ReportContentType } from "./reportCategories";
 
@@ -150,14 +151,15 @@ export function ReportContentDialog({
               >
                 Cancel
               </button>
-              <button
-                type="button"
+              <SpinnerButton
+                pending={pending}
+                pendingLabel="Submitting…"
                 onClick={submit}
-                disabled={pending || submitted}
+                disabled={submitted}
                 className="rounded-full bg-brand-mid px-4 py-2 text-sm font-bold text-white hover:bg-brand disabled:opacity-50"
               >
-                {pending ? "Submitting…" : "Submit report"}
-              </button>
+                Submit report
+              </SpinnerButton>
             </div>
           </>
         )}

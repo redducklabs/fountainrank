@@ -11,6 +11,9 @@ import type { LngLat } from "../../lib/map/placement";
 import type { components } from "@fountainrank/api-client";
 import { AttributeObservationFields } from "./AttributeObservationFields";
 import { PointsPreview } from "../contributions/PointsPreview";
+import { FormSubmitButton } from "../ui/FormSubmitButton";
+import { Spinner } from "../ui/Spinner";
+import { SpinnerButton } from "../ui/SpinnerButton";
 import { RatingFields } from "./RatingFields";
 
 export type AddFountainPanelProps = {
@@ -89,7 +92,8 @@ export function AddFountainPanel(props: AddFountainPanelProps) {
         {phase === "placing" && <PlacingStep {...props} />}
         {phase === "details" && <DetailsStep {...props} />}
         {(phase === "submitting" || phase === "done") && (
-          <p role="status" className="mt-3 text-sm text-muted">
+          <p role="status" className="mt-3 flex items-center gap-2 text-sm text-muted">
+            {phase === "submitting" && <Spinner className="h-4 w-4" />}
             {phase === "submitting" ? "Adding…" : "Fountain added."}
           </p>
         )}
@@ -118,12 +122,9 @@ export function AddFountainPanel(props: AddFountainPanelProps) {
               // An expired session can't be retried — send the user back through sign-in (spec §8),
               // returning to the add flow. A "use server" action must run from a form action, not onClick.
               <form action={signInWithReturn.bind(null, "/?add=1")}>
-                <button
-                  type="submit"
-                  className="rounded-full bg-accent-gold px-4 py-2 text-sm font-bold text-brand"
-                >
+                <FormSubmitButton className="rounded-full bg-accent-gold px-4 py-2 text-sm font-bold text-brand">
                   Sign in
-                </button>
+                </FormSubmitButton>
               </form>
             ) : props.errorKind === "needs_name" ? (
               // Retrying won't help until a name is set — send the user to the account name gate.
@@ -216,6 +217,7 @@ function PlacingStep(props: AddFountainPanelProps) {
 
 function DetailsStep(props: AddFountainPanelProps) {
   const [showMoreDetails, setShowMoreDetails] = useState(false);
+  const pending = props.phase === "submitting";
   const commentsLen = (props.comments ?? "").length;
   const ratingsCount = Object.values(props.ratingValue ?? {}).filter((stars) => stars >= 1).length;
   const observationsCount = Object.values(props.obsValue ?? {}).filter(
@@ -303,13 +305,13 @@ function DetailsStep(props: AddFountainPanelProps) {
         <button type="button" onClick={props.onBack} className="text-sm text-muted underline">
           Back
         </button>
-        <button
-          type="button"
+        <SpinnerButton
+          pending={pending}
           onClick={props.onSubmit}
           className="rounded-full bg-accent-gold px-4 py-2 text-sm font-bold text-brand"
         >
           Add fountain
-        </button>
+        </SpinnerButton>
       </div>
     </div>
   );

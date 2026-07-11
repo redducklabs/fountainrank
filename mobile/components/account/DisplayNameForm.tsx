@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { apiErrorStatus, unwrap } from "../../lib/api";
 import { DISPLAY_NAME_MAX, validateDisplayName } from "../../lib/auth/display-name";
@@ -73,7 +73,7 @@ export function DisplayNameForm({
       />
       <Pressable
         accessibilityRole="button"
-        accessibilityState={{ disabled }}
+        accessibilityState={{ disabled, busy: saving }}
         disabled={disabled}
         onPress={() => {
           void onSave();
@@ -84,6 +84,7 @@ export function DisplayNameForm({
           pressed && !disabled ? styles.buttonPressed : null,
         ]}
       >
+        {saving ? <ActivityIndicator size="small" color={colors.brandBlue} /> : null}
         <Text style={styles.buttonText}>{saving ? "Saving…" : required ? "Continue" : "Save"}</Text>
       </Pressable>
       {message ? <Text style={styles.warning}>{message}</Text> : null}
@@ -109,8 +110,10 @@ const styles = StyleSheet.create({
   },
   button: {
     minHeight: 48,
+    flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
+    gap: spacing.xs,
     borderRadius: 8,
     backgroundColor: colors.brandYellow,
     paddingHorizontal: spacing.lg,

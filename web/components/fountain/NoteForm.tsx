@@ -5,6 +5,7 @@ import { CONTRIBUTION_POINTS, notePointsPreview } from "@fountainrank/contributi
 import { submitNote } from "../../app/actions/contribute";
 import { dispatchContribution } from "../../lib/contribution-event";
 import { PointsPreview } from "../contributions/PointsPreview";
+import { SpinnerButton } from "../ui/SpinnerButton";
 import { errorText } from "./contributeError";
 
 export function NoteForm({ fountainId }: { fountainId: string }) {
@@ -45,14 +46,13 @@ export function NoteForm({ fountainId }: { fountainId: string }) {
       />
       <div className="flex items-center justify-between">
         <span className="text-xs text-muted">{body.length}/1000</span>
-        <button
-          type="button"
-          disabled={pending}
+        <SpinnerButton
+          pending={pending}
           onClick={submit}
           className="rounded-full bg-brand px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
         >
           Save note
-        </button>
+        </SpinnerButton>
       </div>
       <p className="text-xs text-muted">Submitting replaces any note you left here before.</p>
       <div className="mt-3">
