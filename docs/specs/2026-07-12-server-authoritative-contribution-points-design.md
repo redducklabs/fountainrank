@@ -64,8 +64,9 @@ Two things, and the second is why the bug class exists at all:
 2. **The celebration's contract makes lying easy.** `dispatchContribution(points?: number)`
    (`web/lib/contribution-event.ts:9`) takes points as **optional**, and documents
    `undefined` as "celebrate without a number" — which is exactly how a 0-point 2nd photo
-   upload celebrates today (`PhotoUpload.tsx:42`). Any call site can fire the animation
-   without knowing the truth, and five of them do.
+   upload celebrates today (`PhotoUpload.tsx:42`). Any call site can fire the animation with a
+   number it invented, and five of them do. Nothing in the type system distinguishes "the
+   server awarded this" from "the client multiplied a constant."
 
 Fixing ratings alone leaves the escape hatch open and the other four bugs live.
 
@@ -74,8 +75,13 @@ Fixing ratings alone leaves the escape hatch open and the other four bugs live.
 - The celebration fires **if and only if** the server actually awarded points, everywhere.
 - When a contribution saves but earns nothing, the user gets a clear, neutral confirmation
   that says **why** — no animation, no number.
-- The user knows **before** submitting that a contribution won't earn points.
-- It is not *possible* to add a future contribution path that celebrates nothing.
+- The user knows **before** submitting that a contribution won't earn points, and the
+  pre-submit answer and the post-submit award are computed from **the same source** (§4.3), so
+  they cannot disagree.
+- A future contribution path cannot celebrate a client-invented number without an explicit,
+  reviewable type cast (§4.4).
+- The fountain-detail endpoint stops being shared-cacheable, closing a pre-existing
+  viewer-data leak (§4.3.1).
 
 ## 3. Non-goals
 
@@ -91,22 +97,42 @@ Fixing ratings alone leaves the escape hatch open and the other four bugs live.
 ### 4.1 Make the award observable at the chokepoint
 
 `record_contributions` is the single writer for every point-worthy event. It gains a return
-type that carries the number:
+type that carries the number **per user**:
 
 ```python
 @dataclass(frozen=True)
 class ContributionResult:
     event_ids: list[uuid.UUID]
-    points_awarded: int  # sum of points over rows ACTUALLY inserted (deduped rows contribute 0)
+    points_by_user: dict[uuid.UUID, int]  # summed from rows ACTUALLY inserted
+
+    def points_for(self, user_id: uuid.UUID) -> int:
+        return self.points_by_user.get(user_id, 0)
+
+    def __bool__(self) -> bool:
+        # Mirrors the old list-return truthiness so any missed `if inserted:` call site
+        # keeps its original meaning instead of silently becoming always-true.
+        return bool(self.event_ids)
 ```
 
-`points_awarded` is summed from the `RETURNING` rows of the `ON CONFLICT DO NOTHING` insert
-— the same rows that already drive the `user_contribution_stats` increment — so **the number
-reported to the user and the number added to their total come from one source and cannot
-diverge.** That property is the whole point of the change.
+**Per-user, not a scalar total.** `record_contributions` explicitly supports batches spanning
+multiple users (`contributions.py:224-239` aggregates increments per user). A scalar total
+would be the sum across *all* users in the batch — correct for the ledger, but wrong the
+moment a bulk/import/moderation path reuses the chokepoint and a route hands that number to
+one viewer. Routes always call `result.points_for(user.id)`, so a request can only ever
+report the points credited to *that* request's actor.
 
-All six call sites update. Callers that only used truthiness (e.g. the note handler's
-`"inserted" if inserted else "deduped"` log at `fountains.py:1185`) read `.event_ids`.
+`points_by_user` is summed from the `RETURNING` rows of the `ON CONFLICT DO NOTHING` insert —
+**the same rows that already drive the `user_contribution_stats` increment**. So the number
+reported to the user and the number added to their total are computed from one set of rows in
+one transaction and cannot diverge. That property is the whole point of the change.
+
+**Truthiness trap.** A dataclass is truthy by default, so a missed `if inserted:` conversion
+would silently become always-true — e.g. the condition path's
+`points_awarded = points_for(event_type) if inserted else 0` (`fountains.py:1106-1107`) and
+the note handler's `"inserted" if inserted else "deduped"` log (`fountains.py:1185`). Defining
+`__bool__` as `bool(event_ids)` makes any missed site behave exactly as before. Every caller
+**and every test** that treats the return value as a list must still be converted explicitly
+to `.event_ids` / `.points_for(...)`; `__bool__` is a safety net, not a licence to skip them.
 
 ### 4.2 API: one additive, nullable field per write response
 
@@ -126,76 +152,167 @@ Add-fountain gets this for free and closes an existing gap:
 *"add-fountain awarded points aren't returned to the client (#2)"*. It can now show the real
 number (which includes the conditional `first_fountain_bonus` / `first_in_area_bonus`).
 
-**`condition_points_awarded` stays populated and is marked deprecated.** Mobile clients
-already released to the App Store / Play read it; removing it would break them. Same
-reasoning as the legacy photo-report routes kept in #197. Both fields are set on the
-condition POST. It is removed in a later change, after a store release cycle has landed.
+**`points_awarded` is canonical; `condition_points_awarded` stays populated and is marked
+deprecated.** Mobile clients already released to the App Store / Play read the legacy field;
+removing it would break them. Same reasoning as the legacy photo-report routes kept in #197.
+Both fields are set on the condition POST. New client code and new tests must treat
+`points_awarded` as the primary path and use `condition_points_awarded` only as an absent-field
+fallback (§4.5) — otherwise condition stays a special case forever. It is removed in a later
+change, after a store release cycle has landed.
 
-### 4.3 API: pre-submit truth
+### 4.3 API: pre-submit truth — derived from the dedup ledger, never from content
 
-The forms currently show "+4 possible points" right up until you tap, even when the award
-will be 0. Three of the five paths already have what they need on the client:
+The forms currently show "+4 possible points" right up until you tap, even when the award will
+be 0. The fix is to tell the client what is earnable — but **earnability must be derived from
+`contribution_events.dedup_key`, not from the content rows**, because the dedup ledger *is* the
+award rule and content rows drift away from it:
 
-| Path | Pre-submit source | New field? |
-|---|---|---|
-| Rating | `DimensionSummary.your_rating` — already returned (#65) | no |
-| Photo | the photos list the detail view already fetches (`photo_first` is per-fountain) | no |
-| Condition | `condition_points_eligible_at` — already returned (#124) | no |
-| Attribute | **`AttributeConsensusOut.your_observation: str \| None`** | yes |
-| Note | **`FountainDetail.viewer_has_note: bool`** | yes |
+- **Hidden content still holds its award.** `dk_note(user, fountain)` and
+  `dk_observe_attr(user, fountain, attr)` are permanent. Moderation sets `is_hidden` on the
+  note/observation row but never removes the dedup event (the note upsert deliberately leaves
+  moderation fields untouched, `fountains.py:1149-1151`). A viewer whose note was hidden would
+  be told "earn +2" and then awarded 0.
+- **Deleted photos still hold the fountain's `photo_first`.** `dk_photo_first(fountain_id)` is
+  per-fountain and permanent; self-delete reverses the contribution but leaves the dedup row.
+  Once the first photo is hidden or deleted, the visible photo list reads `0` and would promise
+  `photo_first` — but the insert dedups and awards 0.
+- **Content-derived rating state has the same hazard.** `Rating` carries `is_hidden`
+  (`models.py`), so `your_rating` is not a reliable proxy for "already awarded" either.
 
-**No database migration is required.** Both new fields are derived from existing indexed
-lookups: `uq_attribute_observations_fountain_id` on
-`(fountain_id, user_id, attribute_type_id)` (`models.py:393-398`) and
-`uq_fountain_notes_fountain_id` on `(fountain_id, user_id)` (`models.py:612`).
-`serialize_fountain_detail` already runs an analogous viewer-scoped query for `your_stars`
-(`fountains.py:287-291`); these follow the same shape and are only issued when
-authenticated (anonymous → `None` / `false`).
+Deriving from the ledger removes the entire class: the client is told exactly what the insert
+will do, because it is asked the same question the insert asks. It also removes the *split*
+strategy (some paths client-derived, some server-derived) — a split that could let client and
+server disagree.
 
-### 4.4 Close the escape hatch at the type level
+`FountainDetail` gains one viewer-scoped object, `null` for anonymous callers:
+
+```python
+class ViewerAwardState(BaseModel):
+    """What this viewer can still EARN on this fountain, per the contribution dedup ledger.
+    Null for anonymous callers. Not the content state — the award state."""
+    unrated_rating_type_ids: list[int]        # dims with no `rate:{u}:{f}:{rid}` event
+    unobserved_attribute_type_ids: list[int]  # attrs with no `attr:{u}:{f}:{aid}` event
+    note_earnable: bool                       # no `note:{u}:{f}` event
+    photo_first_earnable: bool                # no `photo_first:{f}` event (fountain-wide)
+    condition_points_eligible_at: datetime | None  # existing #124 field, unchanged
+```
+
+**One indexed query.** Build the candidate dedup keys for the viewer × this fountain (one per
+rating type, one per attribute type, plus `note:` and `photo_first:`) and select which of them
+already exist:
+
+```sql
+SELECT dedup_key FROM contribution_events WHERE dedup_key = ANY(:candidate_keys)
+```
+
+`uq_contribution_events_dedup_key` (`models.py:478`) makes this a single index scan. Anything
+returned is already awarded; anything absent is earnable. There is no second source of truth to
+drift from.
+
+**No database migration is required** — `ViewerAwardState` is a Pydantic response model built
+from existing tables and the existing unique index. But **the OpenAPI schema and the generated
+TypeScript client MUST be regenerated** (`packages/api-client/openapi.json` +
+`src/schema.d.ts` are git-tracked, not generated-and-ignored) so web and mobile can type
+`points_awarded` and `viewer_award_state`.
+
+### 4.3.1 The detail endpoint must stop being shared-cacheable
+
+`GET /api/v1/fountains/{id}` (`fountains.py:661`) sets **no cache headers at all**, yet it
+already returns viewer-scoped data — `your_rating` (#65) and `condition_points_eligible_at`
+(#124). A shared CDN/proxy/API cache that stores one authenticated viewer's response can serve
+it to a different viewer or to an anonymous caller. **This is a pre-existing data leak, not one
+introduced here** — but this change widens it (`ViewerAwardState`), so it is fixed as part of
+this work rather than deferred.
+
+The endpoint adopts the precedent already set by `list_photos`
+(`photos.py:75-80`, `Cache-Control: private, no-store`, with a comment explaining exactly this
+hazard). Tests assert the header on both the authenticated and anonymous paths.
+
+### 4.4 Close the escape hatch: a branded type only the server layer can mint
+
+Making `points` a required param is **not** on its own a guarantee — a call site could still
+pass `chosen.length * CONTRIBUTION_POINTS.rate` and satisfy the compiler. The type system has
+to encode *provenance*, not just presence. So the celebration takes a branded value that only
+the response-reading layer can produce:
 
 ```ts
 // web/lib/contribution-event.ts
-export function dispatchContribution(points: number): void   // was: points?: number
+declare const AWARDED: unique symbol;
+/** Points the SERVER said it awarded. Constructible only via `awardedPoints()`. */
+export type AwardedPoints = number & { readonly [AWARDED]: true };
+
+/** The ONLY way to mint AwardedPoints: read them off a write response. `null`/absent -> 0. */
+export function awardedPoints(res: { points_awarded?: number | null }): AwardedPoints {
+  return Math.max(0, res.points_awarded ?? 0) as AwardedPoints;
+}
+
+export function dispatchContribution(points: AwardedPoints): void   // was: points?: number
 ```
 
-`points` becomes **required**, and `ContributionStatusOverlay` only bumps `celebrationKey`
-when `points > 0`. TypeScript then forces all seven web call sites to supply the server's
-number — **there is no longer any way to fire the celebration without a real award.** Mobile
-mirrors it: `refreshDetailAfterWrite(detail, points)` stops multiplying
-`CONTRIBUTION_POINTS.*` and reads the server's `points_awarded`, with the same `> 0` gate on
-`celebrationKey`.
+Now `dispatchContribution(chosen.length * CONTRIBUTION_POINTS.rate)` is a **type error** — a
+plain `number` is not an `AwardedPoints`. The only way to get one is to hand `awardedPoints()`
+an actual server response. A future contribution path cannot celebrate a client-invented number
+without an explicit, reviewable cast, which is exactly the kind of thing a reviewer greps for.
 
-This is what makes the fix durable instead of whack-a-mole: a future contribution type
-*cannot* celebrate nothing, because the compiler will not let it omit the number.
+`ContributionStatusOverlay` then gates on `points > 0`, so a verified award of 0 renders no
+celebration. Mobile mirrors both halves: the same branded type in the shared package, and the
+same `> 0` gate on `celebrationKey`.
 
-### 4.5 Null is treated as zero
+This is what makes the fix durable rather than whack-a-mole — the escape hatch is closed by
+construction, not by discipline.
 
-If `points_awarded` comes back `null` or absent (a new client against an older server), the
-client suppresses the celebration and shows a plain "Saved." The safe default is **never
-celebrate what you cannot verify.** This also means the mobile rollout is safe in either
-order: an old app against the new server keeps its current (wrong) behavior, and a new app
-against the old server is merely conservative.
+### 4.4.1 The web server-action layer is part of the contract
+
+The web forms never see the backend response directly; they go through
+`web/app/actions/contribute.ts`. Today `readPointsAwarded` there reads **only**
+`condition_points_awarded`, `uploadPhoto` does not parse the success body at all, and
+add-fountain returns just `{ ok, fountainId }`. So the backend could be perfectly correct and
+web would still fabricate or suppress awards.
+
+Every action result type therefore carries the award: `submitRating`, `submitAttributes`,
+`submitNote`, `uploadPhoto`, `submitCondition`, and `addFountain` all return
+`{ ok: true; pointsAwarded: AwardedPoints }` (minted via `awardedPoints()` at the single point
+where the response is parsed), and are tested for it.
+
+### 4.5 Null is treated as zero — and condition falls back during transition
+
+If `points_awarded` is `null` or absent, `awardedPoints()` yields 0, so the client suppresses
+the celebration and shows a plain "Saved." **Never celebrate what you cannot verify.**
+
+Rollout orderings, all safe:
+- *Old app → new server:* keeps reading `condition_points_awarded` (still populated) and its
+  current behavior; no break.
+- *New app → old server:* `points_awarded` is absent → 0 → no celebration. Conservative, and
+  strictly better than today's false celebration.
+- *Condition, during transition:* new clients read the canonical `points_awarded` **first** and
+  fall back to the legacy `condition_points_awarded` only when it is absent. `points_awarded` is
+  the canonical field from here on; `condition_points_awarded` is deprecated compatibility only
+  and must not be the primary path in new code or new tests.
 
 ### 4.6 Shared point math
 
 The earnable-points helpers live in `packages/contributions` — already the home of
-`ratingPointsPreview`, `conditionPointsBlocked`, `notePointsPreview` — so web and mobile
-cannot drift:
+`ratingPointsPreview`, `conditionPointsBlocked`, `notePointsPreview` — so web and mobile cannot
+drift. Each takes `ViewerAwardState` (the ledger truth) rather than content rows:
 
-- `ratingEarnablePoints(dimensions, chosenStars)` — counts only dimensions with
-  `your_rating == null`
-- `attributeEarnablePoints(attributes, chosenObservations)` — counts only attributes with
-  `your_observation == null`
-- `notePointsPreview(viewerHasNote)` — 0 when the viewer already has a note
-- `photoEarnablePoints(existingPhotoCount)` — `photo_first` only when the count is 0
+- `ratingEarnablePoints(viewerAwardState, chosenRatingTypeIds)` — counts only ids in
+  `unrated_rating_type_ids`
+- `attributeEarnablePoints(viewerAwardState, chosenAttributeTypeIds)` — counts only ids in
+  `unobserved_attribute_type_ids`
+- `notePointsPreview(viewerAwardState)` — 0 unless `note_earnable`
+- `photoEarnablePoints(viewerAwardState)` — `photo_first` only when `photo_first_earnable`
+- `conditionPointsBlocked(...)` — unchanged (#124)
 
-Each form renders `PointsPreview` when earnable > 0, and the amber "won't earn points"
-warning — the pattern `ConditionForm.tsx:119-124` already uses — when it is 0.
+When the viewer is anonymous (`viewer_award_state === null`) the previews show the full
+possible award, as they do today — an anonymous user has earned nothing yet, and the sign-in
+gate is a separate concern.
 
-Note the previews deliberately stay conservative about conditional bonuses
-(`first_rating_bonus`, `first_fountain_bonus`, `first_in_area_bonus`): under-promising and
-then awarding more is a pleasant surprise, whereas over-promising is the bug we are fixing.
+Each form renders `PointsPreview` when earnable > 0, and the amber "won't earn points" warning
+— the pattern `ConditionForm.tsx:119-124` already uses — when it is 0.
+
+The previews deliberately stay conservative about the conditional bonuses
+(`first_rating_bonus`, `first_fountain_bonus`, `first_in_area_bonus`): under-promising and then
+awarding more is a pleasant surprise, whereas over-promising is the bug being fixed.
 
 ### 4.7 Copy at 0 points
 
@@ -223,30 +340,46 @@ the same line. No PII, no tokens, no raw note bodies.
 ## 6. Testing
 
 **Backend**
-- `record_contributions` returns `points_awarded` correctly on insert, on full dedup (0), and
-  on a **mixed batch** (some inserted, some deduped) — the case where summing by id count
-  would silently be wrong.
-- Per-route: `points_awarded` is 4 on a first rating of two dimensions and **0** on the
-  re-rate; 0 on re-observed attributes; 0 on a 2nd note; 0 on a 2nd photo; 0 on a condition
-  inside the 24h window; and the partial case (one new dimension among already-rated ones →
-  exactly the new dimension's points).
-- The new viewer fields (`your_observation`, `viewer_has_note`) are `None`/`false` for
-  anonymous callers and correct for the owner.
-- Existing `test_contribution_emission.py` assertions must keep passing unchanged — the
-  award rules are not moving.
+- `record_contributions` reports the award correctly on insert, on full dedup (0), and on a
+  **mixed batch** (some inserted, some deduped) — the case where summing by id count would
+  silently be wrong.
+- **Multi-user batch:** `points_for(user_id)` returns only that user's points, never the batch
+  total. This is the invariant that stops a future bulk path leaking another user's award.
+- **Truthiness:** a `ContributionResult` with no inserted events is falsy (guards the
+  `if inserted:` sites).
+- Per-route `points_awarded`: 4 on a first rating of two dimensions and **0** on the re-rate;
+  0 on re-observed attributes; 0 on a 2nd note; 0 on a 2nd photo; 0 on a condition inside the
+  24h window; and the partial case (one new dimension among already-rated ones → exactly the
+  new dimension's points).
+- **`ViewerAwardState` reflects the ledger, not the content** — the regression tests for the
+  bugs §4.3 identifies:
+  - a **hidden** own note → `note_earnable == false` (the dedup key survives moderation)
+  - a **hidden** own attribute observation → its id is NOT in `unobserved_attribute_type_ids`
+  - a **deleted/hidden** first photo → `photo_first_earnable == false` (the fountain's
+    `photo_first` key is spent, even with zero visible photos)
+  - each of the above then actually awards 0 on submit — i.e. the preview and the insert agree
+- `viewer_award_state` is `None` for anonymous callers and correct for the owner.
+- **Cache headers:** `GET /fountains/{id}` returns `Cache-Control: private, no-store` on both
+  the authenticated and anonymous paths (§4.3.1).
+- Existing `test_contribution_emission.py` assertions must keep passing unchanged — the award
+  rules are not moving.
 
 **packages/contributions**
-- Unit tests for each earnable helper, including the all-already-earned → 0 case.
+- Unit tests for each earnable helper against a `ViewerAwardState`, including the
+  all-already-earned → 0 case and the anonymous (`null`) case.
 
 **Web**
-- Extend `ContributionStatusOverlay.test.tsx` (it already covers `dispatchContribution(6)`
-  and the bare `dispatchContribution()`) to assert **no celebration is rendered at 0**.
+- Extend `ContributionStatusOverlay.test.tsx` (it already covers `dispatchContribution(6)` and
+  the bare `dispatchContribution()`) to assert **no celebration is rendered at 0**.
+- Each server action in `contribute.ts` returns `pointsAwarded` parsed from the response
+  (including `uploadPhoto` and `addFountain`, which parse no award today), and treats an absent
+  field as 0.
 - `RatingForm` renders the "won't earn points" warning instead of `PointsPreview` when every
-  chosen dimension is already rated, and renders the 0-point confirmation copy after a
+  chosen dimension is already awarded, and renders the 0-point confirmation copy after a
   0-point submit.
 
 **Mobile**
-- The same two assertions against `WaterCelebration` / the detail screen's celebration gate.
+- The same assertions against `WaterCelebration` / the detail screen's celebration gate.
 
 ## 7. Rollout
 
