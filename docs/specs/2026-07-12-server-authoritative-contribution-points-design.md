@@ -79,7 +79,8 @@ Fixing ratings alone leaves the escape hatch open and the other four bugs live.
   hint is computed from **the same source** as the award (§4.3) — but it is a hint, and the
   post-submit number is authoritative and always wins (§4.3.1).
 - A future contribution path cannot celebrate a client-invented number: the brand blocks a raw
-  `number`, and the single lint-enforced minting site blocks a forged branded one (§4.4).
+  `number`; on web `server-only` keeps the minting function out of the client bundle, and on mobile
+  the minter accepts only a generated API response type, so a forged award will not typecheck (§4.4).
 - The fountain-detail endpoint stops being shared-cacheable, closing a pre-existing
   viewer-data leak (§4.3.2).
 
@@ -309,22 +310,35 @@ different enforcement, because their parsing boundaries differ:
    `dispatchContribution`, and have no constructor to forge with. `AwardedPoints` (the *type*)
    is exported from `web/lib/contribution-event.ts`; the *constructor* is not.
 
-2. **Mobile — one named parsing module + a lint rule.** Mobile has no server-action layer, so
-   the boundary must be made explicit: `awardedPoints()` lives in **`mobile/lib/api.ts`** (the
-   module that already parses every write response) and is exported only so the mobile mutation
-   `onSuccess` handlers in `mobile/app/fountains/[id].tsx` can use it. Because it *is* exported
-   there, an ESLint `no-restricted-imports` rule restricts importing `awardedPoints` from
-   `mobile/lib/api` to that parsing/mutation layer, so a future component cannot reach for it.
-   A test asserts the rule fires on a violating import.
+2. **Mobile — a nominal argument type, NOT a lint rule.** Mobile has no server-action layer: its
+   mutation layer *is* `app/fountains/[id].tsx` and `app/(tabs)/index.tsx`, the two large route
+   components that contain the current bug. Any `no-restricted-imports` rule would have to exempt
+   exactly those files, so a future `awardedPoints({ points_awarded: totalPreviewPoints(...) })`
+   inside one of them would lint clean. A rule with those exemptions is **worse than none** — it
+   looks like a guard and guards nothing.
+
+   The barrier is the **argument type** instead. `awardedPoints()` (in `mobile/lib/awarded-points.ts`)
+   accepts only the *generated API response union* — `FountainDetail | NoteOut | PhotoOut` from
+   `@fountainrank/api-client` — never a structural `{ points_awarded?: number }`. An ad-hoc literal
+   carrying a client-computed number does not typecheck against it; forging an award would mean
+   constructing a complete API response object, which will not happen by accident and is glaring in
+   review.
 
 The asymmetry is deliberate: use the strongest mechanism each platform actually supports
-(non-export where possible, lint where not) rather than a uniform-but-weaker one.
+(`server-only` non-export on web; a nominal argument type on mobile) rather than a
+uniform-but-weaker one — and do not ship an enforcement mechanism that cannot enforce.
 
-**The honest claim:** TypeScript makes it impossible to pass a bare number to the celebration;
-the single-minting-site rule (lint-enforced) makes it impossible to manufacture a branded one
-outside the parsing layer. Neither alone is sufficient — the type system cannot prove where a
-number came from, and a lint rule alone would not stop a raw `number` being passed. Together
-they close the hatch by construction rather than by discipline.
+**The honest claim:** the brand makes it impossible to pass a bare `number` to the celebration.
+The *minter's* input type then makes it impractical to manufacture a branded one — on web the
+minter is unreachable from client code at all (`server-only`), and on mobile it accepts only a
+generated API response, so a client-computed number cannot be handed to it without constructing an
+entire `FountainDetail`. Neither half is sufficient alone: the brand cannot prove provenance, and a
+restricted minter would not stop a raw `number` being passed. Together they close the hatch by
+construction rather than by discipline.
+
+What this is **not**: a security boundary. A determined author can always add a cast. The goal is
+to make the *accidental* re-introduction of client-guessed points — the thing that actually
+happened here, five times — impossible to do without writing something obviously wrong.
 
 `ContributionStatusOverlay` then gates on `points > 0`, so a verified award of 0 renders no
 celebration. Mobile mirrors both halves: the same branded type from the shared package, and the
@@ -451,8 +465,8 @@ the same line. No PII, no tokens, no raw note bodies.
 - Each server action in `contribute.ts` returns `pointsAwarded` parsed from the response
   (including `uploadPhoto` and `addFountain`, which parse no award today), and treats an absent
   field as 0.
-- **The minting site is locked down:** the ESLint `no-restricted-imports` rule (§4.4) fires when
-  any module outside the response-parsing layer imports `awardedPoints`.
+- **The minting site is locked down:** `awardedPoints` lives behind `import "server-only"` and is
+  unreachable from a client component (a client-side import is a build error).
 - `RatingForm` renders the "won't earn points" warning instead of `PointsPreview` when every
   chosen dimension is already awarded, and renders the 0-point confirmation copy after a
   0-point submit.

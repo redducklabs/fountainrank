@@ -78,8 +78,9 @@ fully verifiable locally. State exactly which suites you ran and which you are d
 - `web/components/fountain/{FountainDetail,ContributeSection,RatingForm,AttributeForm,NoteForm,ConditionForm,PhotoUpload}.tsx`, `web/components/map/useAddFountainMode.tsx`.
 
 **Mobile**
-- `mobile/lib/awarded-points.ts` — create: the single minting site (its own module so the lint rule has one unambiguous specifier to restrict).
-- `mobile/eslint.config.js`, `mobile/app/fountains/[id].tsx`, `mobile/app/(tabs)/index.tsx` (add-fountain!), `mobile/components/fountain/*ContributionForm.tsx`.
+- `mobile/lib/awarded-points.ts` — create: the single minting site. Its argument type is the generated API response union, so a forged award will not typecheck.
+- `mobile/lib/api.ts` (+ `api.test.ts`) — `uploadMultipart` must stop discarding the 2xx body.
+- `mobile/app/fountains/[id].tsx`, `mobile/app/(tabs)/index.tsx` (**add-fountain!**), `mobile/components/fountain/*ContributionForm.tsx`, `mobile/components/fountain/PhotoUploadButton.tsx` (**no preview surface today**).
 
 **Docs**
 - `docs/style-guide.md`.
@@ -114,7 +115,9 @@ async def test_points_for_returns_only_that_users_points(clean_db, session):
 
 
 async def test_mixed_batch_sums_only_inserted_rows(clean_db, session):
-    """rate@2 + first_rating_bonus@5 -> 9. Summing by len(event_ids) would be wrong here."""
+    """ONE rate@2 + first_rating_bonus@5 -> 7. Summing by len(event_ids) would be wrong here,
+    because the batch mixes point values. (The route-level test in Task 2 rates TWO dimensions:
+    2 + 2 + 5 = 9. Different setup, different total — don't conflate them.)"""
     ...
     first = await record_contributions(session, specs)
     assert first.points_for(user.id) == 7  # 2 + 5
@@ -494,6 +497,32 @@ async def test_deleted_first_photo_leaves_photo_first_spent(client, test_user):
     assert state["photo_first_earnable"] is False  # zero VISIBLE photos, but the key is spent
 
 
+async def test_hidden_own_attribute_observation_is_still_not_earnable(client, test_user, session):
+    """The attribute-specific content-row drift the ledger design exists to prevent.
+
+    NOT redundant with the no-consensus test: there the user has never observed; here they HAVE,
+    the award is spent, and moderation hid the row.
+    """
+    fid = await _new_fountain(client)
+    await client.post(f"/api/v1/fountains/{fid}/attributes",
+                      json={"observations": [{"attribute_type_id": 1, "value": "yes"}]})
+
+    from sqlalchemy import update
+    from app.models import AttributeObservation
+    await session.execute(update(AttributeObservation)
+                          .where(AttributeObservation.fountain_id == fid)
+                          .values(is_hidden=True))
+    await session.commit()
+
+    state = (await _detail_as_viewer(client, test_user, fid))["viewer_award_state"]
+    assert 1 not in state["unobserved_attribute_type_ids"]
+
+    # ...and the insert agrees: still 0.
+    again = await client.post(f"/api/v1/fountains/{fid}/attributes",
+                              json={"observations": [{"attribute_type_id": 1, "value": "no"}]})
+    assert again.json()["points_awarded"] == 0
+
+
 async def test_attribute_with_no_consensus_row_is_still_earnable(client, test_user):
     """Candidates come from the attribute-type REGISTRY, not the response's `attributes` list."""
     fid = await _new_fountain(client)
@@ -708,9 +737,12 @@ Find and fix every call site before you finish this task:
 ```bash
 grep -rn "notePointsPreview" web mobile packages --include=*.ts --include=*.tsx | grep -v node_modules
 ```
-(Known: `packages/contributions/src/index.test.ts` asserts `notePointsPreview(false)`, and the
-add-fountain forms on both platforms use it. `addFountainPointsPreview` is **unchanged** — a brand
-new fountain has no prior awards by definition.)
+Known call sites (verified): `packages/contributions/src/index.test.ts` (asserts
+`notePointsPreview(false)`), `web/components/fountain/NoteForm.tsx`, and
+`mobile/components/fountain/NoteContributionForm.tsx`. **Add-fountain does NOT use it** — it uses
+`addFountainPointsPreview` (`web/components/map/AddFountainPanel.tsx`,
+`mobile/app/(tabs)/index.tsx`), which is **unchanged**: a brand-new fountain has no prior awards by
+definition.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -883,15 +915,21 @@ import type { AwardedPoints } from "@fountainrank/contributions";
  * no constructor to forge one with.
  */
 export function awardedPoints(data: unknown): AwardedPoints {
-  if (!data || typeof data !== "object") return 0 as AwardedPoints;
+  const zero = 0 as AwardedPoints;
+  if (!data || typeof data !== "object") return zero;
   const d = data as { points_awarded?: unknown; condition_points_awarded?: unknown };
-  // Canonical field first; fall back to the deprecated condition-only field only when the canonical
-  // one is ABSENT (an older server mid-deploy). Null/absent -> 0: never celebrate an unverified award.
-  const value =
-    typeof d.points_awarded === "number" ? d.points_awarded : d.condition_points_awarded;
-  return (typeof value === "number" && value > 0 ? value : 0) as AwardedPoints;
+  // PRESENCE, not nullishness. The canonical key wins whenever it EXISTS — including when it is
+  // null, which means "this server reported no award" and must resolve to 0. Consult the deprecated
+  // condition-only field ONLY when the canonical key is ABSENT (an older server mid-deploy).
+  const value = "points_awarded" in d ? d.points_awarded : d.condition_points_awarded;
+  return (typeof value === "number" && value > 0 ? value : zero) as AwardedPoints;
 }
 ```
+
+⚠️ **Do not write `d.points_awarded ?? d.condition_points_awarded`.** For
+`{ points_awarded: null, condition_points_awarded: 3 }` that celebrates 3, while the spec says a
+null canonical field means **0**. Add a test for exactly that combined-field case — a `??`
+implementation passes every other test.
 
 In `contribute.ts`: delete `readPointsAwarded`, import `awardedPoints`, make
 `ActionResult` carry `pointsAwarded: AwardedPoints` (non-optional on the ok branch), and return
@@ -1083,8 +1121,9 @@ git commit -m "feat(web): pre-submit previews show only what is actually earnabl
 ## Task 8: Mobile — same contract, and the add-fountain path too
 
 **Files:**
-- Create: `mobile/lib/awarded-points.ts` (its own module, so the lint rule has one unambiguous specifier)
-- Modify: `mobile/eslint.config.js`, `mobile/app/fountains/[id].tsx`, **`mobile/app/(tabs)/index.tsx`**, `mobile/components/fountain/*ContributionForm.tsx`
+- Create: `mobile/lib/awarded-points.ts` (the single minting site)
+- Modify: `mobile/lib/api.ts` (+ `mobile/lib/api.test.ts`) — the upload facade discards the success body
+- Modify: `mobile/app/fountains/[id].tsx`, **`mobile/app/(tabs)/index.tsx`**, `mobile/components/fountain/*ContributionForm.tsx`, **`mobile/components/fountain/PhotoUploadButton.tsx`**
 - Test: `mobile/lib/awarded-points.test.ts`
 
 🚨 **Mobile has a SECOND celebration path the detail screen doesn't cover.**
@@ -1111,6 +1150,10 @@ describe("awardedPoints", () => {
     expect(awardedPoints({ condition_points_awarded: 3 })).toBe(3);
     expect(awardedPoints({ points_awarded: 0, condition_points_awarded: 3 })).toBe(0);
   });
+  it("a NULL canonical field means 0 — it does NOT fall through to the legacy field", () => {
+    // The case that a `??` implementation gets wrong. It must stay in the suite.
+    expect(awardedPoints({ points_awarded: null, condition_points_awarded: 3 })).toBe(0);
+  });
   it("treats null/absent as zero — never celebrate what we cannot verify", () => {
     expect(awardedPoints({ points_awarded: null })).toBe(0);
     expect(awardedPoints({})).toBe(0);
@@ -1125,58 +1168,86 @@ describe("awardedPoints", () => {
 pnpm --filter mobile test -- awarded-points
 ```
 
-- [ ] **Step 3: The single mobile minting site**
+- [ ] **Step 3: The single mobile minting site — with a barrier that actually holds**
+
+**Why not a lint rule.** The obvious move is a `no-restricted-imports` rule confining
+`awardedPoints` to "the mutation layer." It does not work here: the mutation layer on mobile **is**
+`app/fountains/[id].tsx` and `app/(tabs)/index.tsx` — the two large route components that contain
+the current bug. Any rule must exempt them, so a future
+`awardedPoints({ points_awarded: totalPreviewPoints(...) })` inside either file would pass lint
+cleanly. That is exactly the hole the brand exists to close, so a rule with those exemptions is
+worse than none: it looks like a guard and guards nothing.
+
+**The barrier is the argument type instead.** Accept only the *generated API response types* — not
+a structural `{ points_awarded?: number }`. Forging an award then requires constructing a complete
+`FountainDetail` / `NoteOut` / `PhotoOut` (dozens of required fields), which will not happen by
+accident and is glaring in review.
 
 `mobile/lib/awarded-points.ts`:
 
 ```ts
+import type { components } from "@fountainrank/api-client";
 import type { AwardedPoints } from "@fountainrank/contributions";
 
-type WriteResponse = {
-  points_awarded?: number | null;
-  condition_points_awarded?: number | null;
-};
+/** The only responses that can carry an award. NOT a structural shape — that is the point: an
+ *  ad-hoc `{ points_awarded: myGuess }` literal will not typecheck against these. */
+type WriteResponse =
+  | components["schemas"]["FountainDetail"]
+  | components["schemas"]["NoteOut"]
+  | components["schemas"]["PhotoOut"];
 
 /**
- * Mobile's ONLY place that mints AwardedPoints (#204). Canonical `points_awarded` first; the
- * deprecated `condition_points_awarded` only as a fallback for an older server. Null/absent -> 0:
- * never celebrate an unverified award. Lint-restricted to the mutation layer (eslint.config.js).
+ * Mobile's ONLY place that mints AwardedPoints (#204).
+ *
+ * Canonical `points_awarded` wins whenever the KEY IS PRESENT — including when it is `null`, which
+ * means "this server reported no award" and must resolve to 0. The deprecated
+ * `condition_points_awarded` is consulted ONLY when the canonical key is ABSENT (an older server
+ * mid-deploy). Never celebrate an unverified award.
  */
 export function awardedPoints(data: WriteResponse | undefined): AwardedPoints {
-  const value = data?.points_awarded ?? data?.condition_points_awarded;
-  return (typeof value === "number" && value > 0 ? value : 0) as AwardedPoints;
+  const zero = 0 as AwardedPoints;
+  if (!data) return zero;
+  const value =
+    "points_awarded" in data
+      ? data.points_awarded
+      : (data as { condition_points_awarded?: number | null }).condition_points_awarded;
+  return (typeof value === "number" && value > 0 ? value : zero) as AwardedPoints;
 }
 ```
 
-- [ ] **Step 4: Lock the minting site — and PROVE the rule fires**
+⚠️ **Presence, not nullishness.** `data?.points_awarded ?? data?.condition_points_awarded` is
+**wrong**: for `{ points_awarded: null, condition_points_awarded: 3 }` it celebrates 3, when the
+spec says a null canonical field means 0. Use the `in` check above.
 
-Mobile has **no tsconfig `paths` alias**; code imports relatively (`../../lib/api`), so a rule
-keyed on `"@/lib/api"` would silently never match. Use `patterns.group` globs against the relative
-specifier, and allow only the mutation layer:
+- [ ] **Step 4: Teach the upload facade to return the body (it currently throws it away)**
 
-```js
-{
-  files: ["**/*.{ts,tsx}"],
-  ignores: ["lib/awarded-points.ts", "app/fountains/[id].tsx", "app/(tabs)/index.tsx", "**/*.test.ts"],
-  rules: {
-    "no-restricted-imports": ["error", {
-      patterns: [{
-        group: ["**/awarded-points", "**/lib/awarded-points"],
-        importNames: ["awardedPoints"],
-        message:
-          "awardedPoints() may only be called in the mutation/parsing layer (#204). UI code must " +
-          "receive an already-minted AwardedPoints, never mint one.",
-      }],
-    }],
-  },
+`photoUploadMutation` cannot read `PhotoOut.points_awarded` today: `MobileApiClient.uploadMultipart`
+is typed `Promise<{ status: number; detail?: unknown }>` (`mobile/lib/api.ts:79-82`) and returns
+**only `{ status: res.status }`** on 2xx (`mobile/lib/api.ts:271-272`) — the success body is
+discarded. Change it:
+
+```ts
+// mobile/lib/api.ts — type
+uploadMultipart(
+  path: string,
+  file: { uri: string; type: string },
+): Promise<{ status: number; data?: unknown; detail?: unknown }>;
+
+// ...and the 2xx branch: parse the success body so the caller can read points_awarded (#204).
+if (res.status >= 200 && res.status < 300) {
+  let data: unknown;
+  try {
+    data = res.body ? JSON.parse(res.body) : undefined;
+  } catch {
+    data = undefined; // non-JSON success body -> no award -> no celebration
+  }
+  return { status: res.status, data };
 }
 ```
 
-**Do not trust the glob — verify it.** Temporarily add `import { awardedPoints } from "../../lib/awarded-points";`
-to a component (e.g. `mobile/components/fountain/NoteContributionForm.tsx`), run
-`pnpm --filter mobile lint`, and confirm it ERRORS. Then remove the import. If the glob does not
-match the relative specifier, widen it (`["../**/awarded-points", "./**/awarded-points", ...]`) until
-it does. A lint rule that never fires is worse than no rule — it is a false sense of safety.
+**`mobile/lib/api.test.ts:494` asserts `expect(result).toEqual({ status: 201 })` exactly** — update
+it to expect the parsed `data` too (the mock at line 482 already returns
+`body: JSON.stringify({ id: "photo-1" })`).
 
 - [ ] **Step 5: Gate the detail-screen celebration**
 
@@ -1218,10 +1289,20 @@ if (awarded > 0) {
 }
 ```
 
-- [ ] **Step 7: Pre-submit previews**
+- [ ] **Step 7: Pre-submit previews — including the photo button, which has none today**
 
 Thread `detail.viewer_award_state` into the contribution forms and swap the preview helpers for the
 earnable ones, exactly as Task 7 does on web.
+
+**`mobile/components/fountain/PhotoUploadButton.tsx` needs this most and is easiest to miss** — it
+is the mobile photo contribution UI (rendered from `mobile/app/fountains/[id].tsx:538-544` and
+`:592-599`) and it has **no preview or warning surface at all** today. Without this, a mobile user
+taps "Add photo" with no indication that the fountain's first-photo award is already spent — which
+is precisely the pre-submit failure this design exists to fix. Pass `viewerAwardState` into **both**
+render sites, use `photoEarnablePoints(viewerAwardState)`, and render the same amber warning when
+`photo_first_earnable` is false:
+
+> Points are only awarded for a fountain's first photo — this one won't earn points.
 
 - [ ] **Step 8: Run what CAN run locally, then rely on CI**
 
