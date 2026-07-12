@@ -77,11 +77,11 @@ Fixing ratings alone leaves the escape hatch open and the other four bugs live.
   that says **why** — no animation, no number.
 - The user knows **before** submitting that a contribution won't earn points. The pre-submit
   hint is computed from **the same source** as the award (§4.3) — but it is a hint, and the
-  post-submit number is authoritative and always wins (§4.3.2).
+  post-submit number is authoritative and always wins (§4.3.1).
 - A future contribution path cannot celebrate a client-invented number: the brand blocks a raw
   `number`, and the single lint-enforced minting site blocks a forged branded one (§4.4).
 - The fountain-detail endpoint stops being shared-cacheable, closing a pre-existing
-  viewer-data leak (§4.3.1).
+  viewer-data leak (§4.3.2).
 
 ## 3. Non-goals
 
@@ -193,7 +193,7 @@ class ViewerAwardState(BaseModel):
     """What this viewer can still EARN on this fountain, per the contribution dedup ledger.
     Null for anonymous callers. The AWARD state, not the content state.
 
-    An as-of-read HINT (§4.3.2) — the insert stays authoritative."""
+    An as-of-read HINT (§4.3.1) — the insert stays authoritative."""
     unrated_rating_type_ids: list[int]        # dims with no `rate:{u}:{f}:{rid}` event
     unobserved_attribute_type_ids: list[int]  # attrs with no `attr:{u}:{f}:{aid}` event
     note_earnable: bool                       # no `note:{u}:{f}` event
@@ -207,12 +207,19 @@ sources of the same truth. Condition keeps its existing #124 mechanism untouched
 covers the four paths that have none.
 
 **The candidate keys come from the type registries, not from the response's content lists.**
-Build them from **all active rating types and all active attribute types** — *not* from the
-`dimensions` / `attributes` arrays in the detail response. A user can observe an attribute that
-has no consensus row yet, so an attribute type absent from `attributes` is still earnable and
-must appear in `unobserved_attribute_type_ids`. Computing the candidates from the response's
-own lists would silently drop exactly the attributes the user has never touched — the ones most
-likely to be earnable.
+Build them from:
+
+- **all fountain-scoped rating types** — `RatingType` where `place_type == 'fountain'`. (Note
+  `RatingType` has **no** `is_active` flag — only `place_type` and `sort_order`, `models.py:83-94`
+  — so do not try to filter on one.)
+- **all active fountain-scoped attribute types** — `AttributeType` where `is_active` and
+  `place_type == 'fountain'`.
+
+*Not* from the `dimensions` / `attributes` arrays in the detail response. A user can observe an
+attribute that has no consensus row yet, so an attribute type absent from `attributes` is still
+earnable and must appear in `unobserved_attribute_type_ids`. Computing the candidates from the
+response's own lists would silently drop exactly the attributes the user has never touched — the
+ones most likely to be earnable.
 
 **One indexed query** for the existence check — candidates are
 `rate:{u}:{f}:{rid}` per rating type, `attr:{u}:{f}:{aid}` per attribute type, plus
@@ -231,7 +238,7 @@ previews today, and keeping them out means the preview can only ever *under*-pro
 over-promise. Under-promising resolves as a pleasant surprise in the (authoritative) post-submit
 number; over-promising is the bug being fixed.
 
-### 4.3.2 `ViewerAwardState` is an as-of-read hint; the insert is authoritative
+### 4.3.1 `ViewerAwardState` is an as-of-read hint; the insert is authoritative
 
 It is a hint computed from the same source as the award — **not** a guarantee that it will agree
 with the later insert. Between the `GET` and the submit, the key can be spent:
@@ -251,7 +258,7 @@ TypeScript client MUST be regenerated** (`packages/api-client/openapi.json` +
 `src/schema.d.ts` are git-tracked, not generated-and-ignored) so web and mobile can type
 `points_awarded` and `viewer_award_state`.
 
-### 4.3.1 The detail endpoint must stop being shared-cacheable
+### 4.3.2 The detail endpoint must stop being shared-cacheable
 
 `GET /api/v1/fountains/{id}` (`fountains.py:661`) sets **no cache headers at all**, yet it
 already returns viewer-scoped data — `your_rating` (#65) and `condition_points_eligible_at`
@@ -291,16 +298,27 @@ cast at all:
 dispatchContribution(awardedPoints({ points_awarded: chosen.length * CONTRIBUTION_POINTS.rate }));
 ```
 
-So the brand is paired with a **locality** rule that closes that hole:
+So the brand is paired with a **locality** rule that closes that hole. The two platforms need
+different enforcement, because their parsing boundaries differ:
 
-1. The minting function `awardedPoints(res)` is **not exported to UI code.** It is module-private
-   to the response-parsing layer — `web/app/actions/contribute.ts` on web, the API client on
-   mobile — which is the only code that ever holds a raw write response.
-2. Those actions **return** `AwardedPoints` in their result types (§4.4.1). UI components
-   receive an already-minted value and pass it straight to `dispatchContribution`; they never
-   import a constructor and have nothing to forge with.
-3. An ESLint `no-restricted-imports` rule enforces (1), so a future component cannot reach for
-   the minting function even deliberately. A test asserts the rule fires.
+1. **Web — module-private, no lint rule needed.** `awardedPoints()` is defined and **not
+   exported** in `web/app/actions/contribute.ts`, the only web module that holds a raw write
+   response. A non-exported helper is already unreachable from UI code; a lint rule on top of
+   that would be redundant. The actions **return** `AwardedPoints` in their result types
+   (§4.4.1), so components receive an already-minted value, pass it straight to
+   `dispatchContribution`, and have no constructor to forge with. `AwardedPoints` (the *type*)
+   is exported from `web/lib/contribution-event.ts`; the *constructor* is not.
+
+2. **Mobile — one named parsing module + a lint rule.** Mobile has no server-action layer, so
+   the boundary must be made explicit: `awardedPoints()` lives in **`mobile/lib/api.ts`** (the
+   module that already parses every write response) and is exported only so the mobile mutation
+   `onSuccess` handlers in `mobile/app/fountains/[id].tsx` can use it. Because it *is* exported
+   there, an ESLint `no-restricted-imports` rule restricts importing `awardedPoints` from
+   `mobile/lib/api` to that parsing/mutation layer, so a future component cannot reach for it.
+   A test asserts the rule fires on a violating import.
+
+The asymmetry is deliberate: use the strongest mechanism each platform actually supports
+(non-export where possible, lint where not) rather than a uniform-but-weaker one.
 
 **The honest claim:** TypeScript makes it impossible to pass a bare number to the celebration;
 the single-minting-site rule (lint-enforced) makes it impossible to manufacture a branded one
@@ -413,13 +431,13 @@ the same line. No PII, no tokens, no raw note bodies.
 - **`unobserved_attribute_type_ids` includes attribute types with no consensus row yet** — the
   regression test for computing candidates from the response's `attributes` list instead of the
   attribute-type registry (§4.3).
-- **Stale hint loses to the insert (§4.3.2):** a submit whose `ViewerAwardState` promised points
+- **Stale hint loses to the insert (§4.3.1):** a submit whose `ViewerAwardState` promised points
   but whose insert dedups awards 0 → response says 0 → no celebration, 0-point copy. This is the
   TOCTOU case (another tab/device, or another user spending `photo_first`).
 - **`condition_points_eligible_at` remains top-level** on `FountainDetail` and is NOT moved into
   `viewer_award_state` (released clients read it there).
 - **Cache headers:** `GET /fountains/{id}` returns `Cache-Control: private, no-store` on both
-  the authenticated and anonymous paths (§4.3.1).
+  the authenticated and anonymous paths (§4.3.2).
 - Existing `test_contribution_emission.py` assertions must keep passing unchanged — the award
   rules are not moving.
 
