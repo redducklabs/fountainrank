@@ -1,6 +1,8 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import type { components } from "@fountainrank/api-client";
+import type { AwardedPoints } from "@fountainrank/contributions";
+import { awardedPoints, NO_AWARD } from "./awarded";
 import { getAuthedApiClientForAction, getActionAccessToken } from "../../lib/server/api";
 import { log } from "../../lib/server/log";
 import { resolveApiBaseUrl } from "../../lib/api";
@@ -26,7 +28,7 @@ export type ContributeError =
   // distinct from `validation` (422) so the UI can show file-specific guidance.
   | "file_invalid";
 export type ActionResult =
-  { ok: true; pointsAwarded?: number } | { ok: false; error: ContributeError };
+  { ok: true; pointsAwarded: AwardedPoints } | { ok: false; error: ContributeError };
 
 const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 const CONDITION_STATUSES: ReadonlySet<string> = new Set([
@@ -43,15 +45,9 @@ const CONDITION_STATUSES: ReadonlySet<string> = new Set([
 function fail(error: ContributeError): ActionResult {
   return { ok: false, error };
 }
-function readPointsAwarded(data: unknown): number | undefined {
-  if (data && typeof data === "object" && "condition_points_awarded" in data) {
-    const value = (data as { condition_points_awarded?: unknown }).condition_points_awarded;
-    return typeof value === "number" ? value : undefined;
-  }
-  return undefined;
-}
 function mapStatus(status: number): ActionResult {
-  if (status >= 200 && status < 300) return { ok: true };
+  // Reached only for non-award responses (reports, deletes): a verified zero, never a guess.
+  if (status >= 200 && status < 300) return { ok: true, pointsAwarded: NO_AWARD };
   if (status === 401) return fail("unauthenticated");
   if (status === 403) return fail("too_far"); // rating outside the 50 mi radius (#3)
   if (status === 404) return fail("not_found");
@@ -94,7 +90,7 @@ async function run(
       revalidatePath(`/fountains/${fountainId}`);
       revalidatePath("/");
       log("info", "contribute action", { requestId, action, fountainId, status });
-      return { ok: true, pointsAwarded: readPointsAwarded(data) };
+      return { ok: true, pointsAwarded: awardedPoints(data) };
     }
     const result = mapStatus(status);
     log("warn", "contribute action", { requestId, action, fountainId, status });
@@ -235,7 +231,15 @@ export async function uploadPhoto(fountainId: string, formData: FormData): Promi
   const status = response.status;
   let result: ActionResult;
   if (status >= 200 && status < 300) {
-    result = { ok: true };
+    // Parse the PhotoOut body for its award (#204). A 2nd photo on the same fountain awards 0 —
+    // previously this celebrated regardless, because the body was never read.
+    let data: unknown;
+    try {
+      data = await response.json();
+    } catch {
+      data = undefined; // absent/non-JSON body -> 0 -> no celebration
+    }
+    result = { ok: true, pointsAwarded: awardedPoints(data) };
   } else if (status === 401) {
     result = fail("unauthenticated");
   } else if (status === 404) {

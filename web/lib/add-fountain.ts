@@ -1,4 +1,5 @@
 import type { components } from "@fountainrank/api-client";
+import type { AwardedPoints } from "@fountainrank/contributions";
 
 export type AddFountainInput = {
   location: { latitude: number; longitude: number };
@@ -10,7 +11,10 @@ export type AddFountainInput = {
 
 export type AddFountainError = "unauthenticated" | "validation" | "needs_name" | "server";
 export type AddFountainResult =
-  | { ok: true; fountainId: string }
+  // pointsAwarded (#204): the server's actual award, which INCLUDES the conditional
+  // first_fountain / first_in_area bonuses the client cannot predict. Previously the add-fountain
+  // award was never returned to the client at all, so it celebrated with no number.
+  | { ok: true; fountainId: string; pointsAwarded: AwardedPoints }
   | { ok: false; error: "duplicate"; fountainId: string }
   | { ok: false; error: AddFountainError };
 

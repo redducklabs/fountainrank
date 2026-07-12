@@ -58,7 +58,9 @@ describe("submitRating", () => {
   it("posts and revalidates on success", async () => {
     POST.mockResolvedValue({ response: { status: 200 } });
     const res = await submitRating(FID, [{ rating_type_id: 1, stars: 4 }]);
-    expect(res).toEqual({ ok: true });
+    // pointsAwarded is now always present and server-derived (#204). This mock returns no body,
+    // so the award is an unverifiable 0 — which is exactly what suppresses the celebration.
+    expect(res).toEqual({ ok: true, pointsAwarded: 0 });
     expect(POST).toHaveBeenCalledWith(
       "/api/v1/fountains/{fountain_id}/ratings",
       expect.objectContaining({
@@ -210,7 +212,7 @@ describe("uploadPhoto", () => {
   it("posts multipart with a bearer token and no explicit Content-Type, and revalidates on 201", async () => {
     fetchMock.mockResolvedValue({ status: 201, json: async () => ({}) });
     const res = await uploadPhoto(FID, FORM);
-    expect(res).toEqual({ ok: true });
+    expect(res).toEqual({ ok: true, pointsAwarded: 0 });
     expect(fetchMock).toHaveBeenCalledWith(
       `https://api.test/api/v1/fountains/${FID}/photos`,
       expect.objectContaining({
@@ -347,11 +349,41 @@ describe("deleteOwnPhoto", () => {
   it("deletes and revalidates on success", async () => {
     DELETE.mockResolvedValue({ response: { status: 204 } });
     const res = await deleteOwnPhoto(FID, PID);
-    expect(res).toEqual({ ok: true });
+    expect(res).toEqual({ ok: true, pointsAwarded: 0 }); // a delete never awards
     expect(DELETE).toHaveBeenCalledWith(
       "/api/v1/fountains/{fountain_id}/photos/{photo_id}",
       expect.objectContaining({ params: { path: { fountain_id: FID, photo_id: PID } } }),
     );
     expect(revalidatePath).toHaveBeenCalledWith(`/fountains/${FID}`);
+  });
+});
+
+describe("pointsAwarded (server-authoritative, #204)", () => {
+  it("reads the canonical points_awarded off the response body", async () => {
+    POST.mockResolvedValue({ response: { status: 200 }, data: { points_awarded: 9 } });
+    const res = await submitRating(FID, [{ rating_type_id: 1, stars: 4 }]);
+    expect(res).toEqual({ ok: true, pointsAwarded: 9 });
+  });
+
+  it("reports 0 when the write deduped — the case that used to fake a full award", async () => {
+    POST.mockResolvedValue({ response: { status: 200 }, data: { points_awarded: 0 } });
+    const res = await submitRating(FID, [{ rating_type_id: 1, stars: 4 }]);
+    expect(res).toEqual({ ok: true, pointsAwarded: 0 });
+  });
+
+  it("falls back to the deprecated condition field only when the canonical key is ABSENT", async () => {
+    POST.mockResolvedValue({ response: { status: 200 }, data: { condition_points_awarded: 3 } });
+    const res = await submitCondition(FID, "working");
+    expect(res).toEqual({ ok: true, pointsAwarded: 3 });
+  });
+
+  it("treats a NULL canonical field as 0 — it does NOT fall through to the legacy field", async () => {
+    // The case a `??` implementation gets wrong: it would celebrate 3. Presence, not nullishness.
+    POST.mockResolvedValue({
+      response: { status: 200 },
+      data: { points_awarded: null, condition_points_awarded: 3 },
+    });
+    const res = await submitCondition(FID, "working");
+    expect(res).toEqual({ ok: true, pointsAwarded: 0 });
   });
 });

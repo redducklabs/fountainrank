@@ -110,6 +110,7 @@ export function FountainDetail({
         fountainId={detail.id}
         dimensions={detail.dimensions}
         isAuthenticated={isAuthenticated}
+        viewerAwardState={detail.viewer_award_state}
         variant="primary"
       />
       <div className="flex gap-2">
@@ -150,6 +151,7 @@ export function FountainDetail({
         fountainId={detail.id}
         dimensions={detail.dimensions}
         isAuthenticated={isAuthenticated}
+        viewerAwardState={detail.viewer_award_state}
         conditionPointsEligibleAt={detail.condition_points_eligible_at}
         variant="details"
       />
@@ -180,6 +182,7 @@ export function FountainDetail({
         fountainId={detail.id}
         dimensions={detail.dimensions}
         isAuthenticated={isAuthenticated}
+        viewerAwardState={detail.viewer_award_state}
         variant="photos"
       />
     </div>

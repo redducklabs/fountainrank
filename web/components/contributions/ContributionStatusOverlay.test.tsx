@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
+import type { AwardedPoints } from "@fountainrank/contributions";
 
 vi.mock("../map/MapStates", () => ({
   WaterCelebration: ({ triggerKey, points }: { triggerKey: number; points?: number }) =>
@@ -19,31 +20,40 @@ afterEach(() => {
   cleanup();
 });
 
+/** Only the action layer can mint AwardedPoints; a test stands in for it. */
+const awarded = (n: number) => n as AwardedPoints;
+
 describe("ContributionStatusOverlay", () => {
-  it("shows celebration after contribution events", () => {
+  it("celebrates a real award and shows the server's number", () => {
     render(<ContributionStatusOverlay />);
-
     expect(screen.queryByTestId("celebration")).not.toBeInTheDocument();
+
     act(() => {
-      window.dispatchEvent(new Event("fountainrank:contribution"));
+      dispatchContribution(awarded(6));
     });
 
-    expect(screen.getByTestId("celebration")).toHaveTextContent("1");
-  });
-
-  it("forwards the awarded points from the CustomEvent detail (#2)", () => {
-    render(<ContributionStatusOverlay />);
-    act(() => {
-      dispatchContribution(6);
-    });
     expect(screen.getByTestId("celebration")).toHaveTextContent("1:6");
   });
 
-  it("renders no number when points are omitted", () => {
+  it("does NOT celebrate when the server awarded 0 points (#204)", () => {
     render(<ContributionStatusOverlay />);
     act(() => {
-      dispatchContribution();
+      dispatchContribution(awarded(0));
     });
-    expect(screen.getByTestId("celebration")).toHaveTextContent(/^1$/);
+
+    // The contribution SAVED — the form says so — but it earned nothing, so there is no reward
+    // animation. Before #204 this fired a full celebration on every re-rate.
+    expect(screen.queryByTestId("celebration")).not.toBeInTheDocument();
+  });
+
+  it("does NOT celebrate an event with no verifiable award", () => {
+    render(<ContributionStatusOverlay />);
+    act(() => {
+      // A bare Event carries no detail, so the award is unknown. Never celebrate what we cannot
+      // verify — this used to render a numberless celebration.
+      window.dispatchEvent(new Event("fountainrank:contribution"));
+    });
+
+    expect(screen.queryByTestId("celebration")).not.toBeInTheDocument();
   });
 });

@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { attributePointsPreview, CONTRIBUTION_POINTS } from "@fountainrank/contributions";
+import { attributeEarnablePoints, type ViewerAwardStateT } from "@fountainrank/contributions";
 import { submitAttributes } from "../../app/actions/contribute";
 import { dispatchContribution } from "../../lib/contribution-event";
 import { buildAttributeGroups, fetchAttributeTypes } from "../../lib/catalog";
@@ -10,7 +10,13 @@ import { PointsPreview } from "../contributions/PointsPreview";
 import { SpinnerButton } from "../ui/SpinnerButton";
 import { errorText } from "./contributeError";
 
-export function AttributeForm({ fountainId }: { fountainId: string }) {
+export function AttributeForm({
+  fountainId,
+  viewerAwardState,
+}: {
+  fountainId: string;
+  viewerAwardState?: ViewerAwardStateT | null;
+}) {
   const router = useRouter();
   const [values, setValues] = useState<Record<number, string>>({});
   const [loading, setLoading] = useState(true);
@@ -45,6 +51,11 @@ export function AttributeForm({ fountainId }: { fountainId: string }) {
     [values],
   );
 
+  const earnable = attributeEarnablePoints(
+    viewerAwardState,
+    observations.map((o) => o.attribute_type_id),
+  );
+
   function submit() {
     if (observations.length === 0) {
       setMsg({ tone: "err", text: "Choose at least one detail." });
@@ -53,8 +64,15 @@ export function AttributeForm({ fountainId }: { fountainId: string }) {
     start(async () => {
       const res = await submitAttributes(fountainId, observations);
       if (res.ok) {
-        setMsg({ tone: "ok", text: "Thanks — your observations were saved." });
-        dispatchContribution(observations.length * CONTRIBUTION_POINTS.observe_attribute);
+        const earned = res.pointsAwarded; // the server's award, not a guess (#204)
+        setMsg({
+          tone: "ok",
+          text:
+            earned > 0
+              ? `Thanks — you earned ${earned} points.`
+              : "Details saved. You already earned points for these, so no points this time.",
+        });
+        dispatchContribution(earned);
         router.refresh();
       } else {
         setMsg({ tone: "err", text: errorText(res.error) });
@@ -74,7 +92,14 @@ export function AttributeForm({ fountainId }: { fountainId: string }) {
         onChange={(id, value) => setValues((current) => ({ ...current, [id]: value }))}
       />
       <div className="mt-3">
-        <PointsPreview lines={attributePointsPreview(observations.length)} />
+        {observations.length > 0 && earnable.length === 0 ? (
+          <p className="rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs font-semibold text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+            You&rsquo;ve already earned points for these details — you can still update them, but
+            they won&rsquo;t earn points again.
+          </p>
+        ) : (
+          <PointsPreview lines={earnable} />
+        )}
       </div>
       <SpinnerButton
         pending={pending}

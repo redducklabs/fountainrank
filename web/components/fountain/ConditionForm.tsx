@@ -51,7 +51,9 @@ export function ConditionForm({
       const coords = await getCurrentPositionSafe();
       const res = await submitCondition(fountainId, status, coords ?? undefined);
       if (res.ok) {
-        const earned = res.pointsAwarded ?? 0;
+        // Canonical `points_awarded` now (the action reads it, falling back to the deprecated
+        // condition-only field only for an older server). Always a verified number (#204).
+        const earned = res.pointsAwarded;
         setMsg({
           tone: "ok",
           text:

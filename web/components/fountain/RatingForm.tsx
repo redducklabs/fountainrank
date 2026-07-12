@@ -2,7 +2,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { components } from "@fountainrank/api-client";
-import { CONTRIBUTION_POINTS, ratingPointsPreview } from "@fountainrank/contributions";
+import { ratingEarnablePoints, type ViewerAwardStateT } from "@fountainrank/contributions";
 import { submitRating } from "../../app/actions/contribute";
 import { dispatchContribution } from "../../lib/contribution-event";
 import { getCurrentPositionSafe } from "../../lib/geo/current-position";
@@ -17,9 +17,11 @@ type Dimension = components["schemas"]["DimensionSummary"];
 export function RatingForm({
   fountainId,
   dimensions,
+  viewerAwardState,
 }: {
   fountainId: string;
   dimensions: Dimension[];
+  viewerAwardState?: ViewerAwardStateT | null;
 }) {
   const router = useRouter();
   // The draft is lifted to a context above the tabs so "Add photo" (in another tab) can flush it (#1).
@@ -37,6 +39,12 @@ export function RatingForm({
     .map((d) => [d.rating_type_id, effectiveStars[d.rating_type_id]] as const)
     .filter(([, s]) => s > 0);
 
+  // Only what the viewer can ACTUALLY still earn, per the ledger (#204).
+  const earnable = ratingEarnablePoints(
+    viewerAwardState,
+    chosen.map(([id]) => id),
+  );
+
   function submit() {
     const ratings = chosen.map(([id, s]) => ({ rating_type_id: id, stars: s }));
     start(async () => {
@@ -46,8 +54,17 @@ export function RatingForm({
       const res = await submitRating(fountainId, ratings, coords ?? undefined);
       if (res.ok) {
         clear();
-        setMsg({ tone: "ok", text: "Thanks — your rating was saved." });
-        dispatchContribution(chosen.length * CONTRIBUTION_POINTS.rate);
+        // The SERVER's award — not `chosen.length * CONTRIBUTION_POINTS.rate`, which fired a fake
+        // "+4 points" on every re-rate (#204). 0 means it deduped: say so, and do not celebrate.
+        const earned = res.pointsAwarded;
+        setMsg({
+          tone: "ok",
+          text:
+            earned > 0
+              ? `Thanks — you earned ${earned} points.`
+              : "Rating updated. You already earned points for these dimensions, so no points this time.",
+        });
+        dispatchContribution(earned);
         router.refresh();
       } else {
         setMsg({ tone: "err", text: errorText(res.error) });
@@ -73,7 +90,14 @@ export function RatingForm({
         />
       ))}
       <div className="mt-3">
-        <PointsPreview lines={ratingPointsPreview(chosen.length)} />
+        {chosen.length > 0 && earnable.length === 0 ? (
+          <p className="rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs font-semibold text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+            You&rsquo;ve already earned points for these dimensions — you can still update your
+            rating, but it won&rsquo;t earn points again.
+          </p>
+        ) : (
+          <PointsPreview lines={earnable} />
+        )}
       </div>
       <SpinnerButton
         pending={pending}
