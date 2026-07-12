@@ -2,12 +2,16 @@ import { ApiError } from "../api";
 import { isAuthSessionError, type AuthStatus } from "../auth/state";
 import { normalizeFountainId } from "../detail/id";
 import { clampToBound, nudgePoint, type Bound, type LngLat } from "./placement";
+import type { AwardedPoints } from "@fountainrank/contributions";
 
 export type AddFountainError =
   "unauthenticated" | "validation" | "needs_name" | "network" | "server";
 export type DuplicateConflict = { fountain_id?: unknown };
 export type AddFountainResult =
-  | { ok: true; fountainId: string }
+  // pointsAwarded (#204): the SERVER's award, which includes the conditional first_fountain /
+  // first_in_area bonuses the client cannot predict. The add flow used to celebrate its own
+  // client-side preview total instead.
+  | { ok: true; fountainId: string; pointsAwarded: AwardedPoints }
   | { ok: false; error: "duplicate"; fountainId: string }
   | { ok: false; error: AddFountainError };
 

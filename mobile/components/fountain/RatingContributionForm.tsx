@@ -1,6 +1,7 @@
 import type { components } from "@fountainrank/api-client";
 import {
-  ratingPointsPreview,
+  ratingEarnablePoints,
+  type ViewerAwardStateT,
   totalPreviewPoints,
   type PointsLine,
 } from "@fountainrank/contributions";
@@ -50,6 +51,7 @@ export function RatingContributionForm({
   onSubmit,
   edits,
   onStarPress,
+  viewerAwardState,
 }: {
   fountainId: string;
   dimensions: Dimension[];
@@ -58,6 +60,8 @@ export function RatingContributionForm({
   // The draft lives in the screen (lifted from local state) so "Add photo" can flush it (#1).
   edits: Record<number, number>;
   onStarPress: (ratingTypeId: number, value: number) => void;
+  // What this viewer can still EARN here, from the contribution ledger (#204).
+  viewerAwardState?: ViewerAwardStateT | null;
 }) {
   const [message, setMessage] = useState<Message>(null);
   // Local, synchronous busy state so the spinner shows the instant the user taps — before the
@@ -79,7 +83,12 @@ export function RatingContributionForm({
   // Coord-less build drives the points preview + the submit-disabled state; submit() rebuilds
   // with coords (fetched on the tap) so a location prompt never fires just from rendering.
   const previewPayload = buildRatingPayload(fountainId, stars);
-  const preview = ratingPointsPreview(previewPayload.ok ? previewPayload.value.ratings.length : 0);
+  // Only what the viewer can ACTUALLY still earn, per the ledger (#204).
+  const preview = ratingEarnablePoints(
+    viewerAwardState,
+    previewPayload.ok ? previewPayload.value.ratings.map((r) => r.rating_type_id) : [],
+  );
+  const chosenCount = previewPayload.ok ? previewPayload.value.ratings.length : 0;
   const busy = pending || submitting;
 
   function submit() {
@@ -141,7 +150,11 @@ export function RatingContributionForm({
           </View>
         </View>
       ))}
-      <PointsPreview lines={preview} />
+      {chosenCount > 0 && preview.length === 0 ? (
+        <NoPointsNotice text="You've already earned points for these dimensions — you can still update your rating, but it won't earn points again." />
+      ) : (
+        <PointsPreview lines={preview} />
+      )}
       <SubmitButton
         label={hasExistingRating ? "Update rating" : "Submit rating"}
         disabled={busy || !previewPayload.ok}
@@ -170,6 +183,15 @@ export function ContributionMessage({ message }: { message: Message }) {
       {message.text}
     </Text>
   );
+}
+
+/**
+ * "This won't earn points" notice (#204). Same amber treatment as the #124 condition limit note —
+ * a neutral heads-up, deliberately NOT a reward. Shown pre-submit when the ledger says the award is
+ * already spent, so the user is never surprised by a 0-point save.
+ */
+export function NoPointsNotice({ text }: { text: string }) {
+  return <Text style={styles.noPointsNotice}>{text}</Text>;
 }
 
 export function PointsPreview({ lines }: { lines: PointsLine[] }) {
@@ -247,6 +269,14 @@ const styles = StyleSheet.create({
   disabled: { opacity: 0.5 },
   pressed: { opacity: 0.8 },
   submitText: { ...typography.body, color: colors.onBrand, fontWeight: "700" },
+  noPointsNotice: {
+    ...typography.meta,
+    color: "#92400E",
+    backgroundColor: "#FEF3C7",
+    borderRadius: 8,
+    padding: spacing.sm,
+    fontWeight: "600",
+  },
   pointsPreview: {
     backgroundColor: colors.surface,
     borderColor: colors.border,

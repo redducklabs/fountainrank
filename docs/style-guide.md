@@ -54,26 +54,26 @@ and that every WCAG AA contrast pairing below holds in both themes — tune valu
 
 ### Semantic token table
 
-| Token               | Light     | Dark      | Usage                                                                              |
-| ------------------- | --------- | --------- | ----------------------------------------------------------------------------------- |
-| `background`        | `#FFFFFF` | `#0B1220` | Page background (`bg-background`).                                                 |
-| `surface`           | `#F8FAFC` | `#111A2E` | Card/panel background one step off `background` (`bg-surface`).                    |
-| `surface-raised`    | `#FFFFFF` | `#16213A` | Elevated surface — dropdowns, modals (`bg-surface-raised`).                        |
-| `foreground`        | `#0F172A` | `#E6EDF7` | Primary body text (`text-foreground`).                                             |
-| `muted`             | `#475569` | `#9FB0C7` | Secondary/de-emphasized text (`text-muted`).                                       |
-| `border`            | `#E2E8F0` | `#26324A` | Hairline borders and dividers (`border-border`).                                   |
-| `brand`             | `#0A357E` | `#0A357E` | Brand **background** band — hero gradient top, solid brand fills (`bg-brand`).     |
-| `brand-mid`         | `#0C44A0` | `#2A5CC0` | Brand gradient middle stop (`via-brand-mid`).                                      |
-| `brand-royal`       | `#0E4DA4` | `#2A5CC0` | Brand gradient bottom stop / primary brand-blue fills (`to-brand-royal`).          |
-| `brand-ink`         | `#0A357E` | `#8AB4F8` | Brand-colored **text** on a content surface (`text-brand-ink`) — see below.        |
-| `accent-gold`       | `#F2C200` | `#F2C200` | Crown-gold accent / CTA fill (`bg-accent-gold`) — unchanged across themes.         |
-| `accent-gold-hover` | `#FFCE1F` | `#FFCE1F` | Gold hover state (`hover:bg-accent-gold-hover`).                                   |
-| `accent-subtle`     | `#E7F0FF` | `#1E2E4A` | Subtle brand-tinted fill — possible-points preview, positive attribute chips.      |
-| `water`             | `#5FC5F0` | `#5FC5F0` | Water-cyan decorative accent (glows, celebration droplets).                        |
-| `danger`            | `#B91C1C` | `#F87171` | Destructive/error text and borders (`text-danger`) — brightened in dark mode.      |
-| `on-brand`          | `#FFFFFF` | `#FFFFFF` | Text/icons placed on a `brand`/`brand-mid`/`brand-royal` background.               |
-| `map-canvas`        | `#E9EFE7` | `#0B1220` | MapLibre canvas / loading placeholder background behind the map.                  |
-| `star-empty`        | `#CBD5E1` | `#3A4A66` | Empty (unfilled) star fill in the read-only `Stars` rating component.             |
+| Token               | Light     | Dark      | Usage                                                                          |
+| ------------------- | --------- | --------- | ------------------------------------------------------------------------------ |
+| `background`        | `#FFFFFF` | `#0B1220` | Page background (`bg-background`).                                             |
+| `surface`           | `#F8FAFC` | `#111A2E` | Card/panel background one step off `background` (`bg-surface`).                |
+| `surface-raised`    | `#FFFFFF` | `#16213A` | Elevated surface — dropdowns, modals (`bg-surface-raised`).                    |
+| `foreground`        | `#0F172A` | `#E6EDF7` | Primary body text (`text-foreground`).                                         |
+| `muted`             | `#475569` | `#9FB0C7` | Secondary/de-emphasized text (`text-muted`).                                   |
+| `border`            | `#E2E8F0` | `#26324A` | Hairline borders and dividers (`border-border`).                               |
+| `brand`             | `#0A357E` | `#0A357E` | Brand **background** band — hero gradient top, solid brand fills (`bg-brand`). |
+| `brand-mid`         | `#0C44A0` | `#2A5CC0` | Brand gradient middle stop (`via-brand-mid`).                                  |
+| `brand-royal`       | `#0E4DA4` | `#2A5CC0` | Brand gradient bottom stop / primary brand-blue fills (`to-brand-royal`).      |
+| `brand-ink`         | `#0A357E` | `#8AB4F8` | Brand-colored **text** on a content surface (`text-brand-ink`) — see below.    |
+| `accent-gold`       | `#F2C200` | `#F2C200` | Crown-gold accent / CTA fill (`bg-accent-gold`) — unchanged across themes.     |
+| `accent-gold-hover` | `#FFCE1F` | `#FFCE1F` | Gold hover state (`hover:bg-accent-gold-hover`).                               |
+| `accent-subtle`     | `#E7F0FF` | `#1E2E4A` | Subtle brand-tinted fill — possible-points preview, positive attribute chips.  |
+| `water`             | `#5FC5F0` | `#5FC5F0` | Water-cyan decorative accent (glows, celebration droplets).                    |
+| `danger`            | `#B91C1C` | `#F87171` | Destructive/error text and borders (`text-danger`) — brightened in dark mode.  |
+| `on-brand`          | `#FFFFFF` | `#FFFFFF` | Text/icons placed on a `brand`/`brand-mid`/`brand-royal` background.           |
+| `map-canvas`        | `#E9EFE7` | `#0B1220` | MapLibre canvas / loading placeholder background behind the map.               |
+| `star-empty`        | `#CBD5E1` | `#3A4A66` | Empty (unfilled) star fill in the read-only `Stars` rating component.          |
 
 ### `brand` vs `brand-ink`
 
@@ -94,17 +94,17 @@ collapse the ratio to roughly 1.2:1 on the light-blue dark value.
 MapLibre paint is applied in JS (not CSS custom properties), so the map's colors are a
 separate `MAP_COLORS` constant keyed by resolved theme (`mapColorsFor("light" | "dark")`):
 
-| Field          | Light       | Dark             | Paint target                                    |
-| -------------- | ----------- | ---------------- | ------------------------------------------------ |
-| `cluster`      | `#0C44A0`   | `#4C82F0`        | `clusters` circle-color                         |
-| `clusterStroke`| `#FFFFFF`   | `#0B1220`        | `clusters` circle-stroke-color                  |
-| `clusterCount` | `#FFFFFF`   | `#FFFFFF`        | `cluster-count` text-color                      |
-| `pillText`     | `#0A357E`   | `#E7F0FF`        | `pins-pill` text-color                          |
-| `pillBg`       | `pill-bg`   | `pill-bg-dark`   | `pins-pill` icon-image name (themed sprite)     |
-| `halo`         | `#0C44A0`   | `#5FC5F0`        | `selected-halo` circle-color                    |
-| `selectedPin`  | `pin-selected` | `pin-selected-dark` | `selected-pin` icon-image name           |
-| `ring`         | `#0A357E`   | `#4C82F0`        | Placement-map add-bound ring line-color         |
-| `marker`       | `#0A357E`   | `#4C82F0`        | Placement-map draggable marker color            |
+| Field           | Light          | Dark                | Paint target                                |
+| --------------- | -------------- | ------------------- | ------------------------------------------- |
+| `cluster`       | `#0C44A0`      | `#4C82F0`           | `clusters` circle-color                     |
+| `clusterStroke` | `#FFFFFF`      | `#0B1220`           | `clusters` circle-stroke-color              |
+| `clusterCount`  | `#FFFFFF`      | `#FFFFFF`           | `cluster-count` text-color                  |
+| `pillText`      | `#0A357E`      | `#E7F0FF`           | `pins-pill` text-color                      |
+| `pillBg`        | `pill-bg`      | `pill-bg-dark`      | `pins-pill` icon-image name (themed sprite) |
+| `halo`          | `#0C44A0`      | `#5FC5F0`           | `selected-halo` circle-color                |
+| `selectedPin`   | `pin-selected` | `pin-selected-dark` | `selected-pin` icon-image name              |
+| `ring`          | `#0A357E`      | `#4C82F0`           | Placement-map add-bound ring line-color     |
+| `marker`        | `#0A357E`      | `#4C82F0`           | Placement-map draggable marker color        |
 
 Dark values are brightened relative to their light counterparts so pins, labels, and the
 selection halo hold contrast against the dark basemap land.
@@ -284,7 +284,7 @@ attributes, placement context, notes, admin controls, and secondary contribution
 for the gallery plus another add-photo control. Tab panels own their scrolling so the tabs and close
 button stay available throughout long content. When at least one photo exists, the **Info** tab leads
 with a full-width tappable **photo hero** (the newest photo) that switches to the **Photos** tab — see
-*Photo hero* under *Fountain photos*. The tabs component exposes its `setActive` via a small React
+_Photo hero_ under _Fountain photos_. The tabs component exposes its `setActive` via a small React
 context (`useFountainDetailTabs`) so content inside a panel (the hero) can switch tabs.
 
 **Mobile parity (`mobile/components/fountain/FountainDetailTabs.tsx`).** The native detail screen
@@ -344,11 +344,11 @@ on the header's blue background without competing with gold primary actions.
 
 **States:**
 
-| State                    | Styling                                                          |
-| ------------------------ | ----------------------------------------------------------------- |
-| Default                  | `hover:bg-white/10`                                              |
-| Checked (active option)  | `has-[:checked]:bg-white/25 has-[:checked]:font-semibold`         |
-| Keyboard focus           | `has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-white/70`  |
+| State                   | Styling                                                          |
+| ----------------------- | ---------------------------------------------------------------- |
+| Default                 | `hover:bg-white/10`                                              |
+| Checked (active option) | `has-[:checked]:bg-white/25 has-[:checked]:font-semibold`        |
+| Keyboard focus          | `has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-white/70` |
 
 **Accessibility:** native `<input type="radio">`s in a `<fieldset>`/`<legend>` give the
 browser's built-in radiogroup semantics and keyboard behavior (arrow keys move the selection,
@@ -803,21 +803,47 @@ Used in add/rate/condition/note/detail contribution flows.
   `(conditional)`.
 - The preview is informational only; form validity still comes from the contribution fields.
 
-### Points-ineligible inline warning (`web/components/fountain/ConditionForm.tsx`, `mobile/components/fountain/ConditionContributionForm.tsx`)
+### Points-ineligible inline warning (all contribution flows)
 
-Shown in the condition-report ("Is it working?") flow when the signed-in viewer already earned
-points for updating this fountain within the last 24h (#124), so a new condition report will not
-earn points. It **replaces** the Possible-points preview for that flow while the limit is active.
+Shown when the signed-in viewer's award for a contribution is **already spent**, so submitting will
+earn nothing. It **replaces** the Possible-points preview for that flow.
+
+Two sources drive it:
+
+1. **Conditions (#124)** — `FountainDetail.condition_points_eligible_at` is a future timestamp
+   (the rolling 24h window). Original flow; details below.
+2. **Ratings, details, comments and photos (#204)** — `FountainDetail.viewer_award_state`, computed
+   from the contribution **dedup ledger** (`contribution_events.dedup_key`), i.e. the award rule
+   itself. The clients read it via `ratingEarnablePoints()` / `attributeEarnablePoints()` /
+   `notePointsPreview()` / `photoEarnablePoints()` in `@fountainrank/contributions`; when the
+   returned line list is empty but the user has selected something, show the warning instead of the
+   preview.
+
+Copy per flow (state the **reason**, not just the fact):
+
+| Flow      | Copy                                                                                                                    |
+| --------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Rating    | "You've already earned points for these dimensions — you can still update your rating, but it won't earn points again." |
+| Details   | "You've already earned points for these details — you can still update them, but they won't earn points again."         |
+| Comment   | "You've already earned points for a comment here — you can still update it, but it won't earn points again."            |
+| Photo     | "Points are only awarded for a fountain's first photo — this one won't earn points."                                    |
+| Condition | see the #124 copy below                                                                                                 |
+
+Mobile renders all of these through the shared `NoPointsNotice` in
+`mobile/components/fountain/RatingContributionForm.tsx` (same amber treatment as the condition
+`limitNote`). Web uses the amber inline-note classes below.
+
+**Condition-specific detail (#124):**
 
 - Trigger: `FountainDetail.condition_points_eligible_at` is a future timestamp (per-viewer;
   `null` = eligible now / anonymous). The clients compute this via `conditionPointsBlocked()` in
   `@fountainrank/contributions`.
 - Web: an amber inline note — `rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs
-  font-semibold text-amber-800` — reading "You've earned points for updating this fountain
+font-semibold text-amber-800` — reading "You've earned points for updating this fountain
   recently — you can still update its status, but it won't earn points again for <duration>."
 - The `<duration>` ("about 5 hours" / "about 20 minutes") comes from `conditionPointsEligibleInText()`
   in `@fountainrank/contributions`, computed from `condition_points_eligible_at` — so the warning
-  tells the user *when* points return, not just that they're paused.
+  tells the user _when_ points return, not just that they're paused.
 - Mobile: the same copy in an amber `Text` (`limitNote`: background `#FEF3C7`, text `#92400E`,
   rounded padded), swapped in where the `PointsPreview` would render.
 - **Warn, don't block:** this is advisory only — the submit control stays **enabled**; the user can
@@ -846,7 +872,7 @@ signal** — it complements, never replaces, the `role="status"` / live-region r
   `pending: boolean` (+ optional `pendingLabel`); it renders the `Spinner` when pending, sets
   `aria-busy`, and **forces `disabled` while pending** (so the guard can't be forgotten). Callers keep
   their own brand/gold/emerald/admin/destructive classes — the wrapper only adds
-  `inline-flex items-center justify-center gap-2` + the spinner + a11y. Pass the caller's *other*
+  `inline-flex items-center justify-center gap-2` + the spinner + a11y. Pass the caller's _other_
   disabled conditions without `|| pending` (it ORs pending in).
 - **`FormSubmitButton`** — the same affordance for server-action `<form action={…}>` submits (sign
   in / sign out / anonymous CTAs) that have no `useTransition`. It reads `useFormStatus()`, so it MUST
@@ -882,13 +908,25 @@ instantly with no restructuring.
 **Accessibility contract (both platforms):** the control carries `aria-busy` (web) /
 `accessibilityState.busy` (mobile) while pending, stays `disabled` (double-submit guard), and the
 spinner itself is decorative. Reduced-motion is honored (web `motion-reduce`; RN `ActivityIndicator`
-respects the OS setting). The spinner **precedes** the *Contribution celebration* below and is never
+respects the OS setting). The spinner **precedes** the _Contribution celebration_ below and is never
 the sole success/error signal.
 
 ### Contribution celebration
 
-A short reward animation shown after successful, point-awarding contribution writes on web and
-mobile.
+A short reward animation shown after successful contribution writes **that actually awarded points**.
+
+> **🔴 The rule (#204): the celebration fires if and only if the SERVER awarded points — i.e. the
+> write response's `points_awarded > 0`. A contribution that saves but earns nothing (a re-rate, a
+> re-observed detail, a 2nd comment, a non-first photo, a condition inside the 24h window) gets a
+> neutral inline confirmation stating _why_ it earned nothing — and NO animation, NO number.**
+>
+> This is enforced in code, not by convention: `dispatchContribution()` takes a branded
+> `AwardedPoints` that only the response-parsing layer can mint (`web/app/actions/awarded.ts` behind
+> `server-only`; `mobile/lib/awarded-points.ts`, whose parameter is the generated API response
+> union). A client-computed number is a **type error**. Both web listeners — the status overlay and
+> `MapBrowser` — gate on `> 0`, as does mobile's `refreshDetailAfterWrite`.
+>
+> Never celebrate an award you cannot verify: an unknown/`null` `points_awarded` is treated as 0.
 
 - Centered on the **FountainRank pin logo** — mobile uses the `assets/logo-pin.png` raster asset;
   web uses `/icon.png`. **Never redraw the logo in code** (see _Logo assets_). The pin sits on a
@@ -2302,7 +2340,7 @@ The action buttons for every type are rendered by one client component,
   truncated **excerpt** (`text-sm text-slate-700`, ≤200 chars, server-side) with the author's
   display name beneath (`text-xs text-slate-500`). Chips + reporter-notes list as the photo row.
   Actions: **Hide / Unhide** (navy outline) · **Reject** (slate outline). **No Delete** — hiding
-  a note *is* its removal (the row stays with a `Hidden` chip; the note is retained + auditable).
+  a note _is_ its removal (the row stays with a `Hidden` chip; the note is retained + auditable).
 - **Fountain row** — no thumbnail. The leading block is the fountain's **label**
   (`placement_note`, or "Fountain" when it has none; `text-sm font-semibold`) plus a
   `View fountain` link. Chips + reporter-notes list as the photo row. Actions: **Hide / Unhide** ·

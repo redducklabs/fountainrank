@@ -1,5 +1,7 @@
 import type { components } from "@fountainrank/api-client";
-import { CONTRIBUTION_POINTS, isRatingDraftDirty } from "@fountainrank/contributions";
+import { isRatingDraftDirty, type AwardedPoints } from "@fountainrank/contributions";
+
+import { awardedPoints } from "../../lib/awarded-points";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Stack, router, useLocalSearchParams } from "expo-router";
 import { useRef, useState, type ReactNode } from "react";
@@ -171,7 +173,7 @@ export default function FountainDetailScreen() {
       unwrap(await client.GET("/api/v1/attribute-types")),
   });
 
-  const refreshDetailAfterWrite = (detail?: FountainDetailT, points?: number) => {
+  const refreshDetailAfterWrite = (detail: FountainDetailT | undefined, points: AwardedPoints) => {
     if (fountainId == null) return;
     if (detail) {
       queryClient.setQueryData(
@@ -183,7 +185,10 @@ export default function FountainDetailScreen() {
     }
     void queryClient.invalidateQueries({ queryKey: ["fountains", "bbox"] });
     void queryClient.invalidateQueries({ queryKey: ["me", "contributions"] });
-    setCelebrationPoints(points ?? null);
+    // Saved, but earned nothing -> refresh the data and stay quiet (#204). The form still shows a
+    // neutral confirmation saying why; the celebration is a reward and must not fire for 0.
+    if (points <= 0) return;
+    setCelebrationPoints(points);
     setCelebrationKey((key) => key + 1);
   };
 
@@ -327,8 +332,9 @@ export default function FountainDetailScreen() {
         }),
       );
     },
-    onSuccess: (detail, body) =>
-      refreshDetailAfterWrite(detail, body.ratings.length * CONTRIBUTION_POINTS.rate),
+    // The SERVER's award, not `body.ratings.length * CONTRIBUTION_POINTS.rate` — that guess fired a
+    // fake "+4 points" on every re-rate (#204).
+    onSuccess: (detail) => refreshDetailAfterWrite(detail, awardedPoints(detail)),
   });
 
   const conditionMutation = useMutation({
@@ -341,7 +347,7 @@ export default function FountainDetailScreen() {
         }),
       );
     },
-    onSuccess: (detail) => refreshDetailAfterWrite(detail, detail.condition_points_awarded ?? 0),
+    onSuccess: (detail) => refreshDetailAfterWrite(detail, awardedPoints(detail)),
   });
 
   const attributeMutation = useMutation({
@@ -354,11 +360,7 @@ export default function FountainDetailScreen() {
         }),
       );
     },
-    onSuccess: (detail, body) =>
-      refreshDetailAfterWrite(
-        detail,
-        body.observations.length * CONTRIBUTION_POINTS.observe_attribute,
-      ),
+    onSuccess: (detail) => refreshDetailAfterWrite(detail, awardedPoints(detail)),
   });
 
   const noteMutation = useMutation({
@@ -371,11 +373,14 @@ export default function FountainDetailScreen() {
         }),
       );
     },
-    onSuccess: () => {
+    onSuccess: (note) => {
       void notesQuery.refetch();
       void detailQuery.refetch();
       void queryClient.invalidateQueries({ queryKey: ["me", "contributions"] });
-      setCelebrationPoints(CONTRIBUTION_POINTS.add_note);
+      // `dk_note` is once-ever per (user, fountain): a 2nd note awards 0 and must not celebrate.
+      const earned = awardedPoints(note);
+      if (earned <= 0) return;
+      setCelebrationPoints(earned);
       setCelebrationKey((key) => key + 1);
     },
   });
@@ -385,18 +390,32 @@ export default function FountainDetailScreen() {
       uri: string;
       fileName?: string | null;
       mimeType?: string | null;
-    }): Promise<void> => {
+    }): Promise<PhotoOut> => {
       if (fountainId == null) throw new Error("missing fountain id");
       const upload = buildPhotoUpload(asset);
       const result = await client.uploadMultipart(`/api/v1/fountains/${fountainId}/photos`, upload);
       if (result.status < 200 || result.status >= 300) {
         throw new PhotoUploadError(result.status, result.detail);
       }
+      // The facade now parses the success body (#204) so we can read the real award.
+      return result.data as PhotoOut;
     },
-    onSuccess: () => {
-      setPhotoUploadMessage({ tone: "ok", text: "Photo added. Thanks for contributing!" });
+    onSuccess: (photo) => {
+      // `photo_first` is per-FOUNTAIN: only a fountain's first photo earns, so say so when it
+      // doesn't (#204).
+      const earned = awardedPoints(photo);
+      setPhotoUploadMessage({
+        tone: "ok",
+        text:
+          earned > 0
+            ? `Photo added — you earned ${earned} points.`
+            : "Photo added. Points are only awarded for a fountain's first photo.",
+      });
       void photosQuery.refetch();
       void queryClient.invalidateQueries({ queryKey: ["me", "contributions"] });
+      if (earned <= 0) return;
+      setCelebrationPoints(earned);
+      setCelebrationKey((key) => key + 1);
     },
   });
 
@@ -520,6 +539,7 @@ export default function FountainDetailScreen() {
                   <RatingContributionForm
                     fountainId={fountainId}
                     dimensions={detail.dimensions}
+                    viewerAwardState={detail.viewer_award_state}
                     pending={ratingMutation.isPending}
                     edits={ratingEdits}
                     onStarPress={(ratingTypeId, value) =>
@@ -536,6 +556,7 @@ export default function FountainDetailScreen() {
                     }}
                   />
                   <PhotoUploadButton
+                    viewerAwardState={detail.viewer_award_state}
                     pending={photoUploadMutation.isPending || addingPhoto}
                     message={photoUploadMessage}
                     onPick={(asset) => {
@@ -549,6 +570,7 @@ export default function FountainDetailScreen() {
                   <AttributeContributionForm
                     fountainId={fountainId}
                     attributeTypes={attributeTypesQuery.data ?? []}
+                    viewerAwardState={detail.viewer_award_state}
                     pending={attributeMutation.isPending}
                     isLoading={attributeTypesQuery.isLoading}
                     isError={attributeTypesQuery.isError}
@@ -577,6 +599,7 @@ export default function FountainDetailScreen() {
                   />
                   <NoteContributionForm
                     fountainId={fountainId}
+                    viewerAwardState={detail.viewer_award_state}
                     pending={noteMutation.isPending}
                     onSubmit={async (body) => {
                       try {
@@ -591,6 +614,7 @@ export default function FountainDetailScreen() {
               );
               const photosContribution = wrapContribution(
                 <PhotoUploadButton
+                  viewerAwardState={detail.viewer_award_state}
                   pending={photoUploadMutation.isPending || addingPhoto}
                   message={photoUploadMessage}
                   onPick={(asset) => {
