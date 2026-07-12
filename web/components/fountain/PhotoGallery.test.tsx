@@ -60,7 +60,7 @@ describe("PhotoGallery", () => {
 
   it("signed-in owner (is_own) sees Delete and it calls deleteOwnPhoto", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
-    deleteOwnPhoto.mockResolvedValue({ ok: true });
+    deleteOwnPhoto.mockResolvedValue({ ok: true, pointsAwarded: 0 });
     render(
       <PhotoGallery
         fountainId="fid"

@@ -1,6 +1,7 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import type { components } from "@fountainrank/api-client";
+import { awardedPoints } from "./awarded";
 import { getAuthedApiClientForAction } from "../../lib/server/api";
 import { log } from "../../lib/server/log";
 import {
@@ -32,9 +33,10 @@ export async function addFountain(input: AddFountainInput): Promise<AddFountainR
     const status = response?.status ?? 0;
     if (status === 201 && data) {
       const fountainId = (data as components["schemas"]["FountainDetail"]).id;
+      const pointsAwarded = awardedPoints(data);
       revalidatePath("/");
-      log("info", "add-fountain", { requestId, outcome: "created", status });
-      return { ok: true, fountainId };
+      log("info", "add-fountain", { requestId, outcome: "created", status, pointsAwarded });
+      return { ok: true, fountainId, pointsAwarded };
     }
     if (status === 409) {
       // add_fountain has TWO 409 shapes: the duplicate-proximity conflict (carries a fountain_id)

@@ -19,6 +19,8 @@ import {
 import type { components } from "@fountainrank/api-client";
 import { addFountainPointsPreview, totalPreviewPoints } from "@fountainrank/contributions";
 
+import { awardedPoints } from "../../lib/awarded-points";
+
 import { AttributeFields } from "../../components/add-fountain/AttributeFields";
 import { WaterCelebration } from "../../components/feedback/WaterCelebration";
 import { FountainMap, type MapFlyTo } from "../../components/map/FountainMap";
@@ -208,7 +210,11 @@ export default function MapScreen() {
     mutationFn: async (body: AddFountainInput): Promise<AddFountainResult> => {
       const result = await client.POST("/api/v1/fountains", { body });
       if (result.response.status === 201 && result.data) {
-        return { ok: true, fountainId: result.data.id };
+        return {
+          ok: true,
+          fountainId: result.data.id,
+          pointsAwarded: awardedPoints(result.data),
+        };
       }
       if (result.response.status === 409) {
         const conflict = classifyAddConflict(result.error);
@@ -658,23 +664,17 @@ export default function MapScreen() {
               setAddMessage({ tone: "err", text: "Please check the fountain details." });
               return;
             }
-            const awardedPoints = totalPreviewPoints(
-              addFountainPointsPreview({
-                ratingsCount: buildRatingsFromStars(ratingTypesQuery.data ?? [], ratings).length,
-                observationsCount: buildObservationsFromValues(
-                  attributeTypesQuery.data ?? [],
-                  attributes,
-                ).length,
-                hasComment: comments.trim().length > 0,
-              }),
-            );
             addDispatch({ type: "submitStart" });
             try {
               const result = await addMutation.mutateAsync(payload.value);
               if (result.ok) {
                 addDispatch({ type: "created", fountainId: result.fountainId });
-                setCelebrationPoints(awardedPoints);
-                setCelebrationKey((key) => key + 1);
+                // The server's award (bonuses included) — not the client-side preview total this
+                // used to celebrate (#204). Gate on a real award, like every other path.
+                if (result.pointsAwarded > 0) {
+                  setCelebrationPoints(result.pointsAwarded);
+                  setCelebrationKey((key) => key + 1);
+                }
                 setAddMode(false);
                 router.push(`/fountains/${result.fountainId}`);
                 return;

@@ -1,5 +1,9 @@
 import type { components } from "@fountainrank/api-client";
-import { notePointsPreview } from "@fountainrank/contributions";
+import {
+  notePointsPreview,
+  type AwardedPoints,
+  type ViewerAwardStateT,
+} from "@fountainrank/contributions";
 import { useState } from "react";
 import { StyleSheet, Text, TextInput, View } from "react-native";
 
@@ -7,7 +11,12 @@ import { buildNotePayload } from "../../lib/contributions/payloads";
 import type { ContributionError } from "../../lib/contributions/state";
 import { contributionErrorText } from "../../lib/contributions/state";
 import { colors, spacing, typography } from "../../theme";
-import { ContributionMessage, PointsPreview, SubmitButton } from "./RatingContributionForm";
+import {
+  ContributionMessage,
+  NoPointsNotice,
+  PointsPreview,
+  SubmitButton,
+} from "./RatingContributionForm";
 
 type AddNoteRequest = components["schemas"]["AddNoteRequest"];
 
@@ -16,13 +25,18 @@ export function NoteContributionForm({
   initialBody = "",
   pending,
   onSubmit,
+  viewerAwardState,
 }: {
   fountainId: string;
   initialBody?: string;
   pending: boolean;
+  // What this viewer can still EARN here, from the contribution ledger (#204).
+  viewerAwardState?: ViewerAwardStateT | null;
   onSubmit: (
     body: AddNoteRequest,
-  ) => Promise<{ ok: true } | { ok: false; error: ContributionError }>;
+  ) => Promise<
+    { ok: true; pointsAwarded: AwardedPoints } | { ok: false; error: ContributionError }
+  >;
 }) {
   const [body, setBody] = useState(initialBody);
   const [message, setMessage] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
@@ -36,7 +50,14 @@ export function NoteContributionForm({
     }
     const result = await onSubmit(payload.value);
     if (result.ok) {
-      setMessage({ tone: "ok", text: "Your note was saved." });
+      // `dk_note` is once-ever per (user, fountain): a 2nd comment earns nothing, and must say so.
+      setMessage({
+        tone: "ok",
+        text:
+          result.pointsAwarded > 0
+            ? `Your note was saved — you earned ${result.pointsAwarded} points.`
+            : "Comment saved. You already earned points for a comment on this fountain.",
+      });
     } else {
       setMessage({ tone: "err", text: contributionErrorText(result.error) });
     }
@@ -58,7 +79,11 @@ export function NoteContributionForm({
         <Text style={styles.count}>{`${body.length}/1000`}</Text>
         <SubmitButton label="Save note" disabled={pending} pending={pending} onPress={submit} />
       </View>
-      <PointsPreview lines={notePointsPreview(body.trim().length > 0)} />
+      {body.trim().length > 0 && viewerAwardState && !viewerAwardState.note_earnable ? (
+        <NoPointsNotice text="You've already earned points for a comment here — you can still update it, but it won't earn points again." />
+      ) : (
+        <PointsPreview lines={notePointsPreview(viewerAwardState, body.trim().length > 0)} />
+      )}
       <ContributionMessage message={message} />
     </View>
   );

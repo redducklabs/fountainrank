@@ -180,7 +180,7 @@ export function useAddFountainMode(
       // intercepted detail modal, so leaving it active would strand it (suppressed browse, hidden
       // FAB, lingering pin) once the modal closes.
       router.push(`/fountains/${res.fountainId}`);
-      dispatchContribution(); // add-fountain awarded points aren't returned to the client (#2)
+      dispatchContribution(res.pointsAwarded); // the server's award, bonuses included (#204)
       dispatch({ type: "CANCEL" });
       resetOptional();
     } else if (res.error === "duplicate") {

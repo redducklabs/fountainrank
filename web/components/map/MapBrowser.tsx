@@ -459,7 +459,9 @@ export default function MapBrowser({
   useEffect(() => {
     if (!isAuthenticated) return;
     function showCelebration(e: Event) {
-      setCelebrationPoints(contributionPoints(e));
+      const awarded = contributionPoints(e);
+      if (awarded <= 0) return; // (#204) a verified 0 must not animate on the map either
+      setCelebrationPoints(awarded);
       setCelebrationKey((key) => key + 1);
     }
     window.addEventListener(CONTRIBUTION_EVENT, showCelebration);

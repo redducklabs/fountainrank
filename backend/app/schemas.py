@@ -44,6 +44,27 @@ class RatingTypeOut(BaseModel):
     sort_order: int
 
 
+class ViewerAwardState(BaseModel):
+    """What this viewer can still EARN on this fountain, per the contribution dedup ledger (#204).
+
+    The AWARD state, not the content state. Hidden notes/observations and deleted photos keep their
+    dedup key, so a content-derived preview would over-promise points the insert will not award.
+    Derived from `contribution_events.dedup_key` — the same question the insert asks.
+
+    An as-of-read HINT: the key can be spent between this GET and the submit (another tab/device, or
+    another user taking the fountain's first photo), so the POST's `points_awarded` is authoritative
+    and always wins. Null for anonymous callers.
+
+    `condition_points_eligible_at` is deliberately NOT here — it stays top-level on FountainDetail,
+    where already-released clients read it.
+    """
+
+    unrated_rating_type_ids: list[int]
+    unobserved_attribute_type_ids: list[int]
+    note_earnable: bool
+    photo_first_earnable: bool
+
+
 class DimensionSummary(BaseModel):
     rating_type_id: int
     name: str
@@ -124,6 +145,13 @@ class FountainDetail(BaseModel):
     # awarded is set only on the condition POST (3/2/0), null on GET and other responses.
     condition_points_eligible_at: datetime | None = None
     condition_points_awarded: int | None = None
+    # #204 server-authoritative awards. Additive + nullable (no response-shape break).
+    # `points_awarded` = what this WRITE actually awarded the caller (0 when everything deduped);
+    # null on GET and every other response. CANONICAL — `condition_points_awarded` above is
+    # deprecated compatibility for already-released mobile clients and must not be the primary
+    # path in new code. `viewer_award_state` is the pre-submit hint; null for anonymous callers.
+    points_awarded: int | None = None
+    viewer_award_state: ViewerAwardState | None = None
 
 
 class ConditionReportRequest(BaseModel):
@@ -292,6 +320,9 @@ class NoteOut(BaseModel):
     author_display_name: str
     created_at: datetime
     updated_at: datetime
+    # #204: set only on the note CREATE (0 when the once-per-fountain note award is spent);
+    # null on the list endpoint — a read awards nothing.
+    points_awarded: int | None = None
 
 
 class AdminNoteOut(NoteOut):
@@ -383,6 +414,9 @@ class PhotoOut(BaseModel):
     # the optional-auth seam). Unauthenticated callers, and any code path that doesn't know the
     # viewer, get the safe default False — never a false "you own this".
     is_own: bool = False
+    # #204: set only on UPLOAD (0 when the fountain's photo_first award is already spent); null on
+    # the list endpoint — a read awards nothing.
+    points_awarded: int | None = None
 
 
 class ReportContentRequest(BaseModel):

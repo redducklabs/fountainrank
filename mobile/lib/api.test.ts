@@ -491,7 +491,8 @@ describe("createApiClient.uploadMultipart", () => {
       { uri: "file:///cache/photo.jpg", type: "image/jpeg" },
     );
 
-    expect(result).toEqual({ status: 201 });
+    // The success body is now parsed so the caller can read the award (#204).
+    expect(result).toEqual({ status: 201, data: { id: "photo-1" } });
     expect(received.url).toBe(
       "https://api.fountainrank.com/api/v1/fountains/123e4567-e89b-12d3-a456-426614174000/photos",
     );

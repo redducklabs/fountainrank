@@ -1,7 +1,7 @@
 import logging
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
@@ -42,6 +42,7 @@ _CATEGORY: dict[str, tuple[InstrumentedAttribute, str]] = {
 
 @router.get("/leaderboard/contributors", response_model=LeaderboardOut)
 async def contributors(
+    response: Response,
     limit: int = Query(default=20, ge=1, le=100),
     near_lat: float | None = Query(default=None, ge=-90.0, le=90.0),
     near_lng: float | None = Query(default=None, ge=-180.0, le=180.0),
@@ -55,6 +56,11 @@ async def contributors(
     near_lat+near_lng are given. Public; author names go through public_display_name (never the raw
     subject). When the caller is signed in (get_optional_user), `you` carries their own standing —
     an invalid bearer is still a hard 401, never silently downgraded to anonymous (#117)."""
+    # Viewer-dependent (`rows[].is_you` and `you` both vary per caller) even though the endpoint
+    # stays PUBLIC — so it must never be shared-cached. A CDN/proxy storing one signed-in viewer's
+    # board and serving it to another would leak their standing and mis-mark their row as "you".
+    # Same hazard, same fix as GET /fountains/{id} and list_photos.
+    response.headers["Cache-Control"] = "private, no-store"
     if (near_lat is None) != (near_lng is None):
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,

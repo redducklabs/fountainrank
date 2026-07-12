@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 it("clicking 'I checked' calls submitCondition with working", async () => {
-  submitCondition.mockResolvedValue({ ok: true });
+  submitCondition.mockResolvedValue({ ok: true, pointsAwarded: 3 });
   render(<ConditionForm fountainId="fid" />);
   fireEvent.click(screen.getByRole("button", { name: /i checked/i }));
   await waitFor(() => expect(submitCondition).toHaveBeenCalledWith("fid", "working", undefined));
@@ -40,7 +40,7 @@ it("'Report a problem' disclosure reveals 7 option labels", async () => {
 });
 
 it("changing select + submit calls with that status", async () => {
-  submitCondition.mockResolvedValue({ ok: true });
+  submitCondition.mockResolvedValue({ ok: true, pointsAwarded: 3 });
   render(<ConditionForm fountainId="fid" />);
   fireEvent.click(screen.getByRole("button", { name: /report a problem/i }));
   const select = screen.getByRole("combobox");

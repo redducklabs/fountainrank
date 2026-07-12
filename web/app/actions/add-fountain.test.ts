@@ -46,7 +46,7 @@ describe("addFountain", () => {
 
   it("returns the new id on 201 and posts the expected body", async () => {
     POST.mockResolvedValue({ data: { id: NEW_ID }, error: undefined, response: { status: 201 } });
-    expect(await addFountain(input)).toEqual({ ok: true, fountainId: NEW_ID });
+    expect(await addFountain(input)).toEqual({ ok: true, fountainId: NEW_ID, pointsAwarded: 0 });
     expect(POST).toHaveBeenCalledWith(
       "/api/v1/fountains",
       expect.objectContaining({ body: { location: input.location, is_working: true } }),
@@ -112,7 +112,11 @@ describe("addFountain", () => {
       ratings: [{ rating_type_id: 1, stars: 4 }],
       observations: [{ attribute_type_id: 2, value: "yes" }],
     };
-    expect(await addFountain(fullInput)).toEqual({ ok: true, fountainId: NEW_ID });
+    expect(await addFountain(fullInput)).toEqual({
+      ok: true,
+      fountainId: NEW_ID,
+      pointsAwarded: 0,
+    });
     expect(POST).toHaveBeenCalledWith(
       "/api/v1/fountains",
       expect.objectContaining({

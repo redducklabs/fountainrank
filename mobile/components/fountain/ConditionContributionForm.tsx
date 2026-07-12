@@ -3,6 +3,7 @@ import {
   conditionPointsBlocked,
   conditionPointsEligibleInText,
   conditionPointsPreview,
+  type AwardedPoints,
 } from "@fountainrank/contributions";
 import { useEffect, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
@@ -32,7 +33,9 @@ export function ConditionContributionForm({
   pending: boolean;
   onSubmit: (
     body: ConditionReportRequest,
-  ) => Promise<{ ok: true } | { ok: false; error: ContributionError }>;
+  ) => Promise<
+    { ok: true; pointsAwarded: AwardedPoints } | { ok: false; error: ContributionError }
+  >;
   conditionPointsEligibleAt?: string | null;
 }) {
   const [problem, setProblem] = useState<ConditionStatus>(PROBLEM_CONDITION_STATUSES[0]);
@@ -75,7 +78,13 @@ export function ConditionContributionForm({
       const result = await onSubmit(payload.value);
       setMessage(
         result.ok
-          ? { tone: "ok", text: "Thanks. Your status report was saved." }
+          ? {
+              tone: "ok" as const,
+              text:
+                result.pointsAwarded > 0
+                  ? `Thanks — you earned ${result.pointsAwarded} points.`
+                  : "Status saved. (Already counted recently, so no points this time.)",
+            }
           : { tone: "err", text: contributionErrorText(result.error) },
       );
     });

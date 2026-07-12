@@ -1,5 +1,9 @@
 import type { components } from "@fountainrank/api-client";
-import { attributePointsPreview } from "@fountainrank/contributions";
+import {
+  attributeEarnablePoints,
+  type AwardedPoints,
+  type ViewerAwardStateT,
+} from "@fountainrank/contributions";
 import { useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
@@ -8,7 +12,12 @@ import type { ContributionError } from "../../lib/contributions/state";
 import { contributionErrorText } from "../../lib/contributions/state";
 import { formatCategory, attributeValueLabel } from "../../lib/map/format";
 import { colors, spacing, typography } from "../../theme";
-import { ContributionMessage, PointsPreview, SubmitButton } from "./RatingContributionForm";
+import {
+  ContributionMessage,
+  NoPointsNotice,
+  PointsPreview,
+  SubmitButton,
+} from "./RatingContributionForm";
 
 type AttributeTypeOut = components["schemas"]["AttributeTypeOut"];
 type ObserveAttributesRequest = components["schemas"]["ObserveAttributesRequest"];
@@ -21,6 +30,7 @@ export function AttributeContributionForm({
   isError,
   onRetry,
   onSubmit,
+  viewerAwardState,
 }: {
   fountainId: string;
   attributeTypes: AttributeTypeOut[];
@@ -28,14 +38,23 @@ export function AttributeContributionForm({
   isLoading: boolean;
   isError: boolean;
   onRetry: () => void;
+  // What this viewer can still EARN here, from the contribution ledger (#204).
+  viewerAwardState?: ViewerAwardStateT | null;
   onSubmit: (
     body: ObserveAttributesRequest,
-  ) => Promise<{ ok: true } | { ok: false; error: ContributionError }>;
+  ) => Promise<
+    { ok: true; pointsAwarded: AwardedPoints } | { ok: false; error: ContributionError }
+  >;
 }) {
   const [values, setValues] = useState<Record<number, string | undefined>>({});
   const [message, setMessage] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
   const groups = useMemo(() => groupAttributeTypes(attributeTypes), [attributeTypes]);
   const payload = buildAttributePayload(fountainId, attributeTypes, values);
+  // Only what the viewer can ACTUALLY still earn, per the ledger (#204).
+  const chosenAttributeIds = payload.ok
+    ? payload.value.observations.map((o) => o.attribute_type_id)
+    : [];
+  const earnable = attributeEarnablePoints(viewerAwardState, chosenAttributeIds);
 
   async function submit() {
     setMessage(null);
@@ -46,7 +65,13 @@ export function AttributeContributionForm({
     const result = await onSubmit(payload.value);
     setMessage(
       result.ok
-        ? { tone: "ok", text: "Thanks. Your observations were saved." }
+        ? {
+            tone: "ok" as const,
+            text:
+              result.pointsAwarded > 0
+                ? `Thanks — you earned ${result.pointsAwarded} points.`
+                : "Details saved. You already earned points for these, so no points this time.",
+          }
         : { tone: "err", text: contributionErrorText(result.error) },
     );
   }
@@ -106,9 +131,11 @@ export function AttributeContributionForm({
           ))}
         </View>
       ))}
-      <PointsPreview
-        lines={attributePointsPreview(payload.ok ? payload.value.observations.length : 0)}
-      />
+      {chosenAttributeIds.length > 0 && earnable.length === 0 ? (
+        <NoPointsNotice text="You've already earned points for these details — you can still update them, but they won't earn points again." />
+      ) : (
+        <PointsPreview lines={earnable} />
+      )}
       <SubmitButton
         label="Save observations"
         disabled={pending || !payload.ok}

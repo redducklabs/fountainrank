@@ -1,14 +1,20 @@
 "use client";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { CONTRIBUTION_POINTS, notePointsPreview } from "@fountainrank/contributions";
+import { notePointsPreview, type ViewerAwardStateT } from "@fountainrank/contributions";
 import { submitNote } from "../../app/actions/contribute";
 import { dispatchContribution } from "../../lib/contribution-event";
 import { PointsPreview } from "../contributions/PointsPreview";
 import { SpinnerButton } from "../ui/SpinnerButton";
 import { errorText } from "./contributeError";
 
-export function NoteForm({ fountainId }: { fountainId: string }) {
+export function NoteForm({
+  fountainId,
+  viewerAwardState,
+}: {
+  fountainId: string;
+  viewerAwardState?: ViewerAwardStateT | null;
+}) {
   const router = useRouter();
   const [body, setBody] = useState("");
   const [pending, start] = useTransition();
@@ -23,9 +29,16 @@ export function NoteForm({ fountainId }: { fountainId: string }) {
     start(async () => {
       const res = await submitNote(fountainId, trimmed);
       if (res.ok) {
-        setMsg({ tone: "ok", text: "Your note was saved." });
+        const earned = res.pointsAwarded; // `dk_note` is once-ever per fountain (#204)
+        setMsg({
+          tone: "ok",
+          text:
+            earned > 0
+              ? `Your note was saved — you earned ${earned} points.`
+              : "Comment saved. You already earned points for a comment on this fountain.",
+        });
         setBody("");
-        dispatchContribution(CONTRIBUTION_POINTS.add_note);
+        dispatchContribution(earned);
         router.refresh();
       } else {
         setMsg({ tone: "err", text: errorText(res.error) });
@@ -56,7 +69,14 @@ export function NoteForm({ fountainId }: { fountainId: string }) {
       </div>
       <p className="text-xs text-muted">Submitting replaces any note you left here before.</p>
       <div className="mt-3">
-        <PointsPreview lines={notePointsPreview(trimmed.length > 0)} />
+        {trimmed.length > 0 && viewerAwardState && !viewerAwardState.note_earnable ? (
+          <p className="rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs font-semibold text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+            You&rsquo;ve already earned points for a comment here — you can still update it, but it
+            won&rsquo;t earn points again.
+          </p>
+        ) : (
+          <PointsPreview lines={notePointsPreview(viewerAwardState, trimmed.length > 0)} />
+        )}
       </div>
       {msg && (
         <p

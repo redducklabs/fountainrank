@@ -9,7 +9,11 @@ export function ContributionStatusOverlay() {
 
   useEffect(() => {
     const onContribution = (e: Event) => {
-      setPoints(contributionPoints(e));
+      const awarded = contributionPoints(e);
+      // Saved, but earned nothing -> no celebration (#204). The form still shows a neutral
+      // confirmation saying why; this animation is a reward and must not fire for a 0 award.
+      if (awarded <= 0) return;
+      setPoints(awarded);
       setCelebrationKey((key) => key + 1);
     };
     window.addEventListener(CONTRIBUTION_EVENT, onContribution);

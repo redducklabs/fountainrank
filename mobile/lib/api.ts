@@ -79,7 +79,7 @@ export type MobileApiClient = Pick<ApiClient, "GET" | "POST" | "PUT" | "PATCH" |
   uploadMultipart(
     path: string,
     file: { uri: string; type: string },
-  ): Promise<{ status: number; detail?: unknown }>;
+  ): Promise<{ status: number; data?: unknown; detail?: unknown }>;
 };
 
 type MakeClientOptions = Parameters<typeof makeClient>[1];
@@ -236,7 +236,7 @@ export function createApiClient(
   const uploadMultipart = async (
     path: string,
     file: { uri: string; type: string },
-  ): Promise<{ status: number; detail?: unknown }> => {
+  ): Promise<{ status: number; data?: unknown; detail?: unknown }> => {
     if (!uploadFile) {
       // The provider always injects `uploadFile`; a missing one is a wiring bug, not a runtime
       // condition, so fail loudly rather than silently no-op an upload.
@@ -269,7 +269,15 @@ export function createApiClient(
       headers,
     });
     if (res.status >= 200 && res.status < 300) {
-      return { status: res.status };
+      // Parse the success body so the caller can read PhotoOut.points_awarded (#204). Previously
+      // it was discarded, so a 2nd photo (which awards 0) still fired a celebration.
+      let data: unknown;
+      try {
+        data = res.body ? JSON.parse(res.body) : undefined;
+      } catch {
+        data = undefined; // a non-JSON success body -> no verifiable award -> no celebration
+      }
+      return { status: res.status, data };
     }
     // On failure, best-effort read the JSON body's `detail` field (e.g. the upload endpoint's two
     // distinct 409 shapes - `display_name_required` vs `photo_limit_fountain`/`photo_limit_user` -

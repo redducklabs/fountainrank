@@ -1,5 +1,6 @@
 "use client";
 import type { components } from "@fountainrank/api-client";
+import type { ViewerAwardStateT } from "@fountainrank/contributions";
 import { signInWithReturn } from "../../app/actions/auth";
 import { FormSubmitButton } from "../ui/FormSubmitButton";
 import { AttributeForm } from "./AttributeForm";
@@ -15,12 +16,16 @@ export function ContributeSection({
   dimensions,
   isAuthenticated,
   conditionPointsEligibleAt,
+  viewerAwardState,
   variant = "primary",
 }: {
   fountainId: string;
   dimensions: Dimension[];
   isAuthenticated: boolean;
   conditionPointsEligibleAt?: string | null;
+  // What this viewer can still EARN here, from the contribution ledger (#204). Null for anonymous
+  // viewers. Drives the pre-submit previews so we never promise points a re-submit won't award.
+  viewerAwardState?: ViewerAwardStateT | null;
   variant?: "primary" | "details" | "photos";
 }) {
   const signInMessage =
@@ -41,19 +46,23 @@ export function ContributeSection({
         <div className="mt-2 space-y-4">
           {variant === "primary" ? (
             <>
-              <RatingForm fountainId={fountainId} dimensions={dimensions} />
-              <PhotoUpload fountainId={fountainId} />
+              <RatingForm
+                fountainId={fountainId}
+                dimensions={dimensions}
+                viewerAwardState={viewerAwardState}
+              />
+              <PhotoUpload fountainId={fountainId} viewerAwardState={viewerAwardState} />
             </>
           ) : variant === "photos" ? (
-            <PhotoUpload fountainId={fountainId} />
+            <PhotoUpload fountainId={fountainId} viewerAwardState={viewerAwardState} />
           ) : (
             <>
-              <AttributeForm fountainId={fountainId} />
+              <AttributeForm fountainId={fountainId} viewerAwardState={viewerAwardState} />
               <ConditionForm
                 fountainId={fountainId}
                 conditionPointsEligibleAt={conditionPointsEligibleAt}
               />
-              <NoteForm fountainId={fountainId} />
+              <NoteForm fountainId={fountainId} viewerAwardState={viewerAwardState} />
             </>
           )}
         </div>

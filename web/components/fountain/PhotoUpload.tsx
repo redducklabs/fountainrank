@@ -1,17 +1,28 @@
 "use client";
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { isRatingDraftDirty } from "@fountainrank/contributions";
+import {
+  isRatingDraftDirty,
+  photoEarnablePoints,
+  type ViewerAwardStateT,
+} from "@fountainrank/contributions";
 import { submitRating, uploadPhoto, type ContributeError } from "../../app/actions/contribute";
 import { dispatchContribution } from "../../lib/contribution-event";
 import { getCurrentPositionSafe } from "../../lib/geo/current-position";
+import { PointsPreview } from "../contributions/PointsPreview";
 import { Spinner } from "../ui/Spinner";
 import { errorText } from "./contributeError";
 import { useRatingDraft } from "./RatingDraftContext";
 
 const ACCEPTED_TYPES = "image/jpeg,image/png,image/webp";
 
-export function PhotoUpload({ fountainId }: { fountainId: string }) {
+export function PhotoUpload({
+  fountainId,
+  viewerAwardState,
+}: {
+  fountainId: string;
+  viewerAwardState?: ViewerAwardStateT | null;
+}) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const [pending, start] = useTransition();
@@ -39,14 +50,15 @@ export function PhotoUpload({ fountainId }: { fountainId: string }) {
         const rres = await submitRating(fountainId, ratings, coords ?? undefined);
         if (rres.ok) {
           clear();
-          dispatchContribution();
+          dispatchContribution(rres.pointsAwarded); // the server's award, gated on > 0 (#204)
         } else {
           ratingError = rres.error;
         }
       }
       const res = await uploadPhoto(fountainId, formData);
       if (res.ok) {
-        dispatchContribution();
+        // `photo_first` is per-FOUNTAIN: a 2nd photo awards 0, and used to celebrate anyway (#204).
+        dispatchContribution(res.pointsAwarded);
         router.refresh();
         setMsg(
           ratingError
@@ -80,6 +92,16 @@ export function PhotoUpload({ fountainId }: { fountainId: string }) {
         className="mt-1 block w-full text-sm text-muted file:mr-3 file:rounded-full file:border-0 file:bg-brand file:px-4 file:py-1.5 file:text-sm file:font-semibold file:text-white file:disabled:opacity-50 disabled:opacity-50"
       />
       <p className="mt-1 text-xs text-muted">JPEG, PNG, or WebP, up to 10 MB.</p>
+      <div className="mt-3">
+        {viewerAwardState && !viewerAwardState.photo_first_earnable ? (
+          <p className="rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs font-semibold text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+            Points are only awarded for a fountain&rsquo;s first photo — this one won&rsquo;t earn
+            points.
+          </p>
+        ) : (
+          <PointsPreview lines={photoEarnablePoints(viewerAwardState)} />
+        )}
+      </div>
       {pending && (
         <p
           role="status"
