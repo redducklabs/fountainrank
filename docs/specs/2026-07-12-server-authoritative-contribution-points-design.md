@@ -75,11 +75,11 @@ Fixing ratings alone leaves the escape hatch open and the other four bugs live.
 - The celebration fires **if and only if** the server actually awarded points, everywhere.
 - When a contribution saves but earns nothing, the user gets a clear, neutral confirmation
   that says **why** — no animation, no number.
-- The user knows **before** submitting that a contribution won't earn points, and the
-  pre-submit answer and the post-submit award are computed from **the same source** (§4.3), so
-  they cannot disagree.
-- A future contribution path cannot celebrate a client-invented number without an explicit,
-  reviewable type cast (§4.4).
+- The user knows **before** submitting that a contribution won't earn points. The pre-submit
+  hint is computed from **the same source** as the award (§4.3) — but it is a hint, and the
+  post-submit number is authoritative and always wins (§4.3.2).
+- A future contribution path cannot celebrate a client-invented number: the brand blocks a raw
+  `number`, and the single lint-enforced minting site blocks a forged branded one (§4.4).
 - The fountain-detail endpoint stops being shared-cacheable, closing a pre-existing
   viewer-data leak (§4.3.1).
 
@@ -176,38 +176,74 @@ award rule and content rows drift away from it:
   per-fountain and permanent; self-delete reverses the contribution but leaves the dedup row.
   Once the first photo is hidden or deleted, the visible photo list reads `0` and would promise
   `photo_first` — but the insert dedups and awards 0.
-- **Content-derived rating state has the same hazard.** `Rating` carries `is_hidden`
-  (`models.py`), so `your_rating` is not a reliable proxy for "already awarded" either.
+- **`your_rating` is a proxy, not the rule.** (`Rating` itself has no `is_hidden` — only
+  `Fountain`, `AttributeObservation`, `ConditionReport`, `FountainNote` and `FountainPhoto` do.
+  But it remains a *derived* signal: it answers "did you rate?", not "were you awarded?", and
+  any future moderation/reversal semantics would separate the two.) Reading the ledger keeps
+  all five paths on one rule instead of four rules and an exception.
 
-Deriving from the ledger removes the entire class: the client is told exactly what the insert
-will do, because it is asked the same question the insert asks. It also removes the *split*
-strategy (some paths client-derived, some server-derived) — a split that could let client and
-server disagree.
+Deriving from the ledger removes the entire class: the client is asked the same question the
+insert asks. It also removes the *split* strategy (some paths client-derived, some
+server-derived) that could let client and server disagree.
 
 `FountainDetail` gains one viewer-scoped object, `null` for anonymous callers:
 
 ```python
 class ViewerAwardState(BaseModel):
     """What this viewer can still EARN on this fountain, per the contribution dedup ledger.
-    Null for anonymous callers. Not the content state — the award state."""
+    Null for anonymous callers. The AWARD state, not the content state.
+
+    An as-of-read HINT (§4.3.2) — the insert stays authoritative."""
     unrated_rating_type_ids: list[int]        # dims with no `rate:{u}:{f}:{rid}` event
     unobserved_attribute_type_ids: list[int]  # attrs with no `attr:{u}:{f}:{aid}` event
     note_earnable: bool                       # no `note:{u}:{f}` event
     photo_first_earnable: bool                # no `photo_first:{f}` event (fountain-wide)
-    condition_points_eligible_at: datetime | None  # existing #124 field, unchanged
 ```
 
-**One indexed query.** Build the candidate dedup keys for the viewer × this fountain (one per
-rating type, one per attribute type, plus `note:` and `photo_first:`) and select which of them
-already exist:
+**`condition_points_eligible_at` stays exactly where it is** — top-level on `FountainDetail`,
+unchanged. Released web and mobile clients read the top-level field, so moving it into
+`ViewerAwardState` would be a breaking change, and duplicating it into both would create two
+sources of the same truth. Condition keeps its existing #124 mechanism untouched; this object
+covers the four paths that have none.
+
+**The candidate keys come from the type registries, not from the response's content lists.**
+Build them from **all active rating types and all active attribute types** — *not* from the
+`dimensions` / `attributes` arrays in the detail response. A user can observe an attribute that
+has no consensus row yet, so an attribute type absent from `attributes` is still earnable and
+must appear in `unobserved_attribute_type_ids`. Computing the candidates from the response's
+own lists would silently drop exactly the attributes the user has never touched — the ones most
+likely to be earnable.
+
+**One indexed query** for the existence check — candidates are
+`rate:{u}:{f}:{rid}` per rating type, `attr:{u}:{f}:{aid}` per attribute type, plus
+`note:{u}:{f}` and `photo_first:{f}`:
 
 ```sql
 SELECT dedup_key FROM contribution_events WHERE dedup_key = ANY(:candidate_keys)
 ```
 
 `uq_contribution_events_dedup_key` (`models.py:478`) makes this a single index scan. Anything
-returned is already awarded; anything absent is earnable. There is no second source of truth to
-drift from.
+returned is already awarded; anything absent is earnable.
+
+**The conditional bonuses are deliberately excluded** from `ViewerAwardState`
+(`first_rating_bonus`, `first_fountain_bonus`, `first_in_area_bonus`). They are omitted from the
+previews today, and keeping them out means the preview can only ever *under*-promise, never
+over-promise. Under-promising resolves as a pleasant surprise in the (authoritative) post-submit
+number; over-promising is the bug being fixed.
+
+### 4.3.2 `ViewerAwardState` is an as-of-read hint; the insert is authoritative
+
+It is a hint computed from the same source as the award — **not** a guarantee that it will agree
+with the later insert. Between the `GET` and the submit, the key can be spent:
+
+- another user uploads the fountain's first photo, spending `photo_first:{f}`;
+- the same user submits from another tab/device, spending `rate:` / `attr:` / `note:`;
+- (condition eligibility can likewise cross its 24h boundary).
+
+That is fine and by design: **the post-submit `points_awarded` always wins.** A stale hint that
+promised points and an insert that awards 0 resolves to *no celebration* and the 0-point copy —
+which is strictly the behavior we want, and is exactly the case the current code gets wrong.
+Tested explicitly (§6).
 
 **No database migration is required** — `ViewerAwardState` is a Pydantic response model built
 from existing tables and the existing unique index. But **the OpenAPI schema and the generated
@@ -228,38 +264,53 @@ The endpoint adopts the precedent already set by `list_photos`
 (`photos.py:75-80`, `Cache-Control: private, no-store`, with a comment explaining exactly this
 hazard). Tests assert the header on both the authenticated and anonymous paths.
 
-### 4.4 Close the escape hatch: a branded type only the server layer can mint
+### 4.4 Close the escape hatch: a branded type minted in exactly one place
 
-Making `points` a required param is **not** on its own a guarantee — a call site could still
-pass `chosen.length * CONTRIBUTION_POINTS.rate` and satisfy the compiler. The type system has
-to encode *provenance*, not just presence. So the celebration takes a branded value that only
-the response-reading layer can produce:
+Making `points` a required param is **not** a guarantee — a call site could still pass
+`chosen.length * CONTRIBUTION_POINTS.rate` and satisfy the compiler. So the celebration takes a
+branded value:
 
 ```ts
 // web/lib/contribution-event.ts
 declare const AWARDED: unique symbol;
-/** Points the SERVER said it awarded. Constructible only via `awardedPoints()`. */
+/** Points the SERVER said it awarded. Only the response-parsing layer can mint one. */
 export type AwardedPoints = number & { readonly [AWARDED]: true };
-
-/** The ONLY way to mint AwardedPoints: read them off a write response. `null`/absent -> 0. */
-export function awardedPoints(res: { points_awarded?: number | null }): AwardedPoints {
-  return Math.max(0, res.points_awarded ?? 0) as AwardedPoints;
-}
 
 export function dispatchContribution(points: AwardedPoints): void   // was: points?: number
 ```
 
-Now `dispatchContribution(chosen.length * CONTRIBUTION_POINTS.rate)` is a **type error** — a
-plain `number` is not an `AwardedPoints`. The only way to get one is to hand `awardedPoints()`
-an actual server response. A future contribution path cannot celebrate a client-invented number
-without an explicit, reviewable cast, which is exactly the kind of thing a reviewer greps for.
+`dispatchContribution(chosen.length * CONTRIBUTION_POINTS.rate)` is now a **type error** — a
+plain `number` is not an `AwardedPoints`.
+
+**Be precise about what the brand does and does not buy.** A TypeScript brand gates
+*assignment*, not *provenance*. A structural minting function would still be forgeable with no
+cast at all:
+
+```ts
+// Would compile. Must not be possible.
+dispatchContribution(awardedPoints({ points_awarded: chosen.length * CONTRIBUTION_POINTS.rate }));
+```
+
+So the brand is paired with a **locality** rule that closes that hole:
+
+1. The minting function `awardedPoints(res)` is **not exported to UI code.** It is module-private
+   to the response-parsing layer — `web/app/actions/contribute.ts` on web, the API client on
+   mobile — which is the only code that ever holds a raw write response.
+2. Those actions **return** `AwardedPoints` in their result types (§4.4.1). UI components
+   receive an already-minted value and pass it straight to `dispatchContribution`; they never
+   import a constructor and have nothing to forge with.
+3. An ESLint `no-restricted-imports` rule enforces (1), so a future component cannot reach for
+   the minting function even deliberately. A test asserts the rule fires.
+
+**The honest claim:** TypeScript makes it impossible to pass a bare number to the celebration;
+the single-minting-site rule (lint-enforced) makes it impossible to manufacture a branded one
+outside the parsing layer. Neither alone is sufficient — the type system cannot prove where a
+number came from, and a lint rule alone would not stop a raw `number` being passed. Together
+they close the hatch by construction rather than by discipline.
 
 `ContributionStatusOverlay` then gates on `points > 0`, so a verified award of 0 renders no
-celebration. Mobile mirrors both halves: the same branded type in the shared package, and the
+celebration. Mobile mirrors both halves: the same branded type from the shared package, and the
 same `> 0` gate on `celebrationKey`.
-
-This is what makes the fix durable rather than whack-a-mole — the escape hatch is closed by
-construction, not by discipline.
 
 ### 4.4.1 The web server-action layer is part of the contract
 
@@ -359,6 +410,14 @@ the same line. No PII, no tokens, no raw note bodies.
     `photo_first` key is spent, even with zero visible photos)
   - each of the above then actually awards 0 on submit — i.e. the preview and the insert agree
 - `viewer_award_state` is `None` for anonymous callers and correct for the owner.
+- **`unobserved_attribute_type_ids` includes attribute types with no consensus row yet** — the
+  regression test for computing candidates from the response's `attributes` list instead of the
+  attribute-type registry (§4.3).
+- **Stale hint loses to the insert (§4.3.2):** a submit whose `ViewerAwardState` promised points
+  but whose insert dedups awards 0 → response says 0 → no celebration, 0-point copy. This is the
+  TOCTOU case (another tab/device, or another user spending `photo_first`).
+- **`condition_points_eligible_at` remains top-level** on `FountainDetail` and is NOT moved into
+  `viewer_award_state` (released clients read it there).
 - **Cache headers:** `GET /fountains/{id}` returns `Cache-Control: private, no-store` on both
   the authenticated and anonymous paths (§4.3.1).
 - Existing `test_contribution_emission.py` assertions must keep passing unchanged — the award
@@ -374,6 +433,8 @@ the same line. No PII, no tokens, no raw note bodies.
 - Each server action in `contribute.ts` returns `pointsAwarded` parsed from the response
   (including `uploadPhoto` and `addFountain`, which parse no award today), and treats an absent
   field as 0.
+- **The minting site is locked down:** the ESLint `no-restricted-imports` rule (§4.4) fires when
+  any module outside the response-parsing layer imports `awardedPoints`.
 - `RatingForm` renders the "won't earn points" warning instead of `PointsPreview` when every
   chosen dimension is already awarded, and renders the 0-point confirmation copy after a
   0-point submit.
