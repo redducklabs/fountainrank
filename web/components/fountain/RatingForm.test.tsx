@@ -75,7 +75,7 @@ it("shows a spinner and disables submit immediately on click, before the action 
   expect(submit).toBeDisabled();
   expect(container.querySelector("svg.animate-spin")).toBeInTheDocument();
   // Resolve → spinner clears and hands off to the success message.
-  resolveSubmit({ ok: true });
+  resolveSubmit({ ok: true, pointsAwarded: 4 });
   await waitFor(() => expect(container.querySelector("svg.animate-spin")).toBeNull());
   expect(screen.getByRole("status")).toHaveTextContent(/you earned 4 points/i);
 });
