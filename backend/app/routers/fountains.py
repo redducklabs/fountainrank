@@ -25,8 +25,8 @@ from app.contributions import (
     dk_observe_attr,
     dk_rate,
     latest_awarded_condition_at,
-    points_for,
     record_contributions,
+    viewer_award_state,
 )
 from app.db import get_session
 from app.display import public_display_name
@@ -281,6 +281,7 @@ async def serialize_fountain_detail(
     fountain: Fountain,
     user_id: uuid.UUID | None = None,
     condition_points_awarded: int | None = None,
+    points_awarded: int | None = None,
 ) -> FountainDetail:
     # The caller's own stars per dimension, so the rating UI can pre-fill and show
     # "already rated" (#65). Only fetched when authenticated; anonymous -> all None.
@@ -300,11 +301,16 @@ async def serialize_fountain_detail(
     # condition points on this fountain within the rolling window, tell them when they'll
     # be eligible again. Only computed when authenticated; anonymous -> always None.
     condition_points_eligible = None
+    # Pre-submit "what can I still earn here" (#204), read from the contribution dedup ledger —
+    # the award rule itself, so the hint and the insert cannot disagree about the rule (they can
+    # still disagree about TIMING; the insert is authoritative). Authenticated only.
+    award_state = None
     if user_id is not None:
         condition_points_eligible = condition_points_eligible_at(
             await latest_awarded_condition_at(session, user_id, fountain.id),
             datetime.now(tz=UTC),
         )
+        award_state = await viewer_award_state(session, user_id, fountain.id)
     lat, lng = (
         await session.execute(
             select(latitude_of(Fountain.location), longitude_of(Fountain.location)).where(
@@ -397,6 +403,8 @@ async def serialize_fountain_detail(
         attributes=attributes,
         condition_points_eligible_at=condition_points_eligible,
         condition_points_awarded=condition_points_awarded,
+        points_awarded=points_awarded,
+        viewer_award_state=award_state,
     )
 
 
@@ -661,9 +669,16 @@ async def fountains_sitemap(
 @router.get("/fountains/{fountain_id}", response_model=FountainDetail)
 async def fountain_detail(
     fountain_id: uuid.UUID,
+    response: Response,
     session: AsyncSession = Depends(get_session),
     user: User | None = Depends(get_optional_user),
 ) -> FountainDetail:
+    # The response is viewer-dependent — `your_rating` (#65), `condition_points_eligible_at` (#124)
+    # and `viewer_award_state` (#204) all vary per caller — even though the endpoint stays PUBLIC.
+    # So it must never be shared-cached: a CDN/proxy storing one viewer's response and serving it to
+    # another is a real data leak, not a cosmetic bug. (Mirrors `list_photos` in photos.py, which
+    # sets this for the same reason.)
+    response.headers["Cache-Control"] = "private, no-store"
     fountain = (
         await session.execute(
             select(Fountain).where(Fountain.id == fountain_id, Fountain.is_hidden.is_(False))
@@ -874,11 +889,20 @@ async def add_fountain(
             )
             for attribute_type_id, observation_id in obs_ids.items()
         ]
-    await record_contributions(session, specs)
+    result = await record_contributions(session, specs)
+    points_awarded = result.points_for(user.id)
 
     await session.commit()
     await session.refresh(fountain)
-    return await serialize_fountain_detail(session, fountain, user_id=user.id)
+    logger.info(
+        "fountain added fountain=%s user=%s points_awarded=%d",
+        fountain.id,
+        user.id,
+        points_awarded,
+    )
+    return await serialize_fountain_detail(
+        session, fountain, user_id=user.id, points_awarded=points_awarded
+    )
 
 
 @router.post(
@@ -947,7 +971,7 @@ async def submit_ratings(
             )
         )
     ).one()
-    await record_contributions(
+    result = await record_contributions(
         session,
         _rating_contribution_specs(
             user_id=user.id,
@@ -956,9 +980,19 @@ async def submit_ratings(
             rating_ids=rating_ids,
         ),
     )
+    points_awarded = result.points_for(user.id)
     await session.commit()
     await session.refresh(fountain)
-    return await serialize_fountain_detail(session, fountain, user_id=user.id)
+    logger.info(
+        "ratings submitted fountain=%s user=%s dimensions=%d points_awarded=%d",
+        fountain.id,
+        user.id,
+        len(payload.ratings),
+        points_awarded,
+    )
+    return await serialize_fountain_detail(
+        session, fountain, user_id=user.id, points_awarded=points_awarded
+    )
 
 
 @router.post(
@@ -1012,10 +1046,20 @@ async def submit_attributes(
         )
         for attribute_type_id, observation_id in obs_ids.items()
     ]
-    await record_contributions(session, specs)
+    result = await record_contributions(session, specs)
+    points_awarded = result.points_for(user.id)
     await session.commit()
     await session.refresh(fountain)
-    return await serialize_fountain_detail(session, fountain, user_id=user.id)
+    logger.info(
+        "attributes observed fountain=%s user=%s observations=%d points_awarded=%d",
+        fountain.id,
+        user.id,
+        len(payload.observations),
+        points_awarded,
+    )
+    return await serialize_fountain_detail(
+        session, fountain, user_id=user.id, points_awarded=points_awarded
+    )
 
 
 @router.post(
@@ -1103,8 +1147,9 @@ async def submit_condition(
             event_metadata={"status": payload.status},
             created_at=report_time,
         )
-        inserted = await record_contributions(session, [spec])
-        points_awarded = points_for(event_type) if inserted else 0
+        result = await record_contributions(session, [spec])
+        # The chokepoint now carries the number — no need to re-derive it from the event type.
+        points_awarded = result.points_for(user.id)
     await session.commit()
     await session.refresh(fountain)
     logger.info(
@@ -1119,7 +1164,13 @@ async def submit_condition(
         points_awarded,
     )
     return await serialize_fountain_detail(
-        session, fountain, user_id=user.id, condition_points_awarded=points_awarded
+        session,
+        fountain,
+        user_id=user.id,
+        points_awarded=points_awarded,
+        # Deprecated-compat: already-released mobile clients read this. Same value, never
+        # computed separately, so the two fields cannot drift.
+        condition_points_awarded=points_awarded,
     )
 
 
@@ -1165,7 +1216,7 @@ async def submit_note(
             )
         )
     ).one()
-    inserted = await record_contributions(
+    result = await record_contributions(
         session,
         [
             ContributionSpec(
@@ -1181,11 +1232,12 @@ async def submit_note(
     )
     await session.commit()
     logger.info(
-        "note saved fountain=%s user=%s note=%s event=%s",
+        "note saved fountain=%s user=%s note=%s event=%s points_awarded=%d",
         fountain.id,
         user.id,
         note.id,
-        "inserted" if inserted else "deduped",
+        "inserted" if result.event_ids else "deduped",
+        result.points_for(user.id),
     )
     return NoteOut(
         id=note.id,
@@ -1195,6 +1247,7 @@ async def submit_note(
         ),
         created_at=note.created_at,
         updated_at=note.updated_at,
+        points_awarded=result.points_for(user.id),
     )
 
 

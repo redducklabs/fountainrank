@@ -80,7 +80,7 @@ async def test_condition_event_target_pair_validation(session):
             )
         ],
     )
-    assert len(ids) == 1
+    assert len(ids.event_ids) == 1
     # Illegal pair: a condition event with the wrong target_type is rejected.
     with pytest.raises(ValueError):
         await record_contributions(
@@ -121,7 +121,7 @@ async def test_record_inserts_event_and_creates_stats(session):
             )
         ],
     )
-    assert len(ids) == 1
+    assert len(ids.event_ids) == 1
     stats = (
         await session.execute(
             select(UserContributionStats).where(UserContributionStats.user_id == u.id)
@@ -143,9 +143,9 @@ async def test_dedup_idempotent(session):
         target_id=uuid.uuid4(),
     )
     first = await record_contributions(session, [spec])
-    assert len(first) == 1
+    assert len(first.event_ids) == 1
     second = await record_contributions(session, [spec])
-    assert second == []
+    assert second.event_ids == []
     assert await _total_points(session, u.id) == 10  # not double-counted
     n_events = (
         await session.execute(
@@ -178,7 +178,7 @@ async def test_first_bonus_once_per_key_but_per_user(session):
             )
         ],
     )
-    assert again == []
+    assert again.event_ids == []
     # u2 gets its own.
     u2_ids = await record_contributions(
         session,
@@ -188,7 +188,7 @@ async def test_first_bonus_once_per_key_but_per_user(session):
             )
         ],
     )
-    assert len(u2_ids) == 1
+    assert len(u2_ids.event_ids) == 1
     assert await _total_points(session, u1.id) == 5
     assert await _total_points(session, u2.id) == 5
 
@@ -494,3 +494,89 @@ async def test_latest_awarded_condition_at_reads_legacy_keys(session, test_user)
         ],
     )
     assert await latest_awarded_condition_at(session, test_user.id, fountain.id) == t
+
+
+# --- #204: the chokepoint reports what it actually awarded -------------------------
+
+
+@pytest.mark.asyncio
+async def test_points_for_returns_only_that_users_points(session):
+    """A batch spanning two users must never report one user's points to the other."""
+    a, b = await _mk_user(session, 90), await _mk_user(session, 91)
+    f = await _mk_fountain(session, a)
+    result = await record_contributions(
+        session,
+        [
+            ContributionSpec(
+                user_id=a.id,
+                event_type="add_note",
+                dedup_key=f"note:{a.id}:{f.id}",
+                fountain_id=f.id,
+                target_type="note",
+                target_id=uuid.uuid4(),
+            ),
+            ContributionSpec(
+                user_id=b.id,
+                event_type="add_note",
+                dedup_key=f"note:{b.id}:{f.id}",
+                fountain_id=f.id,
+                target_type="note",
+                target_id=uuid.uuid4(),
+            ),
+        ],
+    )
+    assert result.points_for(a.id) == 2
+    assert result.points_for(b.id) == 2
+    # An unknown user gets 0 — never the batch total. This is the invariant that stops a future
+    # bulk/import path handing one actor another actor's award.
+    assert result.points_for(uuid.uuid4()) == 0
+
+
+@pytest.mark.asyncio
+async def test_mixed_batch_sums_only_inserted_rows(session):
+    """ONE rate@2 + first_rating_bonus@5 -> 7.
+
+    Summing by len(event_ids) would be wrong here, because the batch mixes point values.
+    """
+    u = await _mk_user(session, 92)
+    f = await _mk_fountain(session, u)
+    specs = [
+        ContributionSpec(
+            user_id=u.id,
+            event_type="rate",
+            dedup_key=f"rate:{u.id}:{f.id}:1",
+            fountain_id=f.id,
+            target_type="rating",
+            target_id=uuid.uuid4(),
+        ),
+        ContributionSpec(
+            user_id=u.id,
+            event_type="first_rating_bonus",
+            dedup_key=f"first_rating:{f.id}",
+            fountain_id=f.id,
+        ),
+    ]
+    first = await record_contributions(session, specs)
+    assert first.points_for(u.id) == 7  # 2 + 5
+
+    second = await record_contributions(session, specs)  # same dedup keys
+    assert second.points_for(u.id) == 0
+    assert second.event_ids == []
+
+
+@pytest.mark.asyncio
+async def test_truthiness_mirrors_the_old_list_return(session):
+    """`if inserted:` call sites must keep their meaning after the return-type change."""
+    u = await _mk_user(session, 93)
+    f = await _mk_fountain(session, u)
+    spec = ContributionSpec(
+        user_id=u.id,
+        event_type="add_note",
+        dedup_key=f"note:{u.id}:{f.id}",
+        fountain_id=f.id,
+        target_type="note",
+        target_id=uuid.uuid4(),
+    )
+    assert bool(await record_contributions(session, [spec])) is True  # inserted
+    assert bool(await record_contributions(session, [spec])) is False  # deduped
+    assert bool(await record_contributions(session, [])) is False  # empty

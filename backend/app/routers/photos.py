@@ -52,7 +52,11 @@ MAX_PHOTOS_PER_USER_PER_FOUNTAIN = 5
 
 
 def photo_out(
-    photo: FountainPhoto, *, uploaded_by: str | None, viewer_user_id: uuid.UUID | None = None
+    photo: FountainPhoto,
+    *,
+    uploaded_by: str | None,
+    viewer_user_id: uuid.UUID | None = None,
+    points_awarded: int | None = None,
 ) -> PhotoOut:
     return PhotoOut(
         id=photo.id,
@@ -63,6 +67,8 @@ def photo_out(
         uploaded_by=uploaded_by,
         created_at=photo.created_at,
         is_own=viewer_user_id is not None and photo.user_id == viewer_user_id,
+        # #204: only the UPLOAD sets this. Null on the list endpoint — a read awards nothing.
+        points_awarded=points_awarded,
     )
 
 
@@ -398,7 +404,7 @@ async def upload_photo(
                 )
             )
         ).one()
-        await record_contributions(
+        contribution = await record_contributions(
             session,
             [
                 ContributionSpec(
@@ -412,6 +418,7 @@ async def upload_photo(
                 )
             ],
         )
+        points_awarded = contribution.points_for(user.id)
         await finalize_upload(session, reservation_id, "completed")
         await session.commit()
     except Exception as exc:
@@ -442,12 +449,14 @@ async def upload_photo(
             "byte_size": photo.byte_size,
             "width": photo.width,
             "height": photo.height,
+            "points_awarded": points_awarded,
         },
     )
     return photo_out(
         photo,
         uploaded_by=public_display_name(user.display_name, user.logto_user_id, user.nickname),
         viewer_user_id=user.id,
+        points_awarded=points_awarded,
     )
 
 

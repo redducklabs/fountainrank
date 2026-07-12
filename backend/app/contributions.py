@@ -20,7 +20,8 @@ from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import ContributionEvent, UserContributionStats
+from app.models import AttributeType, ContributionEvent, RatingType, UserContributionStats
+from app.schemas import ViewerAwardState
 
 logger = logging.getLogger(__name__)
 
@@ -176,16 +177,99 @@ async def latest_awarded_condition_at(
     ).scalar_one_or_none()
 
 
+async def viewer_award_state(
+    session: AsyncSession, user_id: uuid.UUID, fountain_id: uuid.UUID
+) -> ViewerAwardState:
+    """What `user_id` can still earn on `fountain_id`, per the dedup ledger (#204).
+
+    Derived from `contribution_events.dedup_key`, NOT from content rows: the dedup key is
+    permanent but content is not. A hidden note, a hidden attribute observation, or a deleted
+    first photo all leave the key spent while the content disappears — so a content-derived
+    preview promises points the insert will not award.
+
+    Candidates come from the TYPE REGISTRIES, not from the fountain's existing content: a user can
+    observe an attribute that has no consensus row yet, so building candidates from the detail
+    response's `attributes` list would silently drop the attributes most likely to be earnable.
+    NOTE: RatingType has no `is_active` flag (only place_type/sort_order) — do not filter on one.
+    """
+    rating_type_ids = list(
+        (await session.execute(select(RatingType.id).where(RatingType.place_type == "fountain")))
+        .scalars()
+        .all()
+    )
+    attribute_type_ids = list(
+        (
+            await session.execute(
+                select(AttributeType.id).where(
+                    AttributeType.is_active.is_(True), AttributeType.place_type == "fountain"
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    rate_keys = {dk_rate(user_id, fountain_id, rid): rid for rid in rating_type_ids}
+    attr_keys = {dk_observe_attr(user_id, fountain_id, aid): aid for aid in attribute_type_ids}
+    note_key = dk_note(user_id, fountain_id)
+    photo_key = dk_photo_first(fountain_id)
+
+    # ONE index scan on uq_contribution_events_dedup_key. Anything returned is already awarded;
+    # anything absent is still earnable. (The two registry SELECTs above are separate and cheap —
+    # do not try to fold them in here.)
+    spent = set(
+        (
+            await session.execute(
+                select(ContributionEvent.dedup_key).where(
+                    ContributionEvent.dedup_key.in_([*rate_keys, *attr_keys, note_key, photo_key])
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    return ViewerAwardState(
+        unrated_rating_type_ids=[rid for key, rid in rate_keys.items() if key not in spent],
+        unobserved_attribute_type_ids=[aid for key, aid in attr_keys.items() if key not in spent],
+        note_earnable=note_key not in spent,
+        photo_first_earnable=photo_key not in spent,
+    )
+
+
+@dataclass(frozen=True)
+class ContributionResult:
+    """What `record_contributions` actually inserted (#204).
+
+    `points_by_user` is summed from the same RETURNING rows that drive the
+    `user_contribution_stats` increment, so the number reported back to a user and the number
+    added to their total are computed from one set of rows and cannot diverge.
+    """
+
+    event_ids: list[uuid.UUID]
+    points_by_user: dict[uuid.UUID, int]
+
+    def points_for(self, user_id: uuid.UUID) -> int:
+        """Points credited to THIS user. Never the batch total — a batch may span users, and
+        handing one actor another actor's points would be a real leak."""
+        return self.points_by_user.get(user_id, 0)
+
+    def __bool__(self) -> bool:
+        # Mirrors the old list-return truthiness so any missed `if inserted:` call site keeps its
+        # original meaning instead of silently becoming always-true.
+        return bool(self.event_ids)
+
+
 async def record_contributions(
     session: AsyncSession, specs: list[ContributionSpec]
-) -> list[uuid.UUID]:
+) -> ContributionResult:
     """Idempotently record contribution events and increment per-user stats.
 
-    Returns the ids of events that were actually inserted (deduped specs are dropped).
-    Caller owns the transaction.
+    Returns the ids of events actually inserted (deduped specs are dropped) and the points
+    credited per user. Caller owns the transaction.
     """
     if not specs:
-        return []
+        return ContributionResult(event_ids=[], points_by_user={})
     for spec in specs:
         _validate(spec)
 
@@ -239,11 +323,15 @@ async def record_contributions(
         await session.execute(ins.on_conflict_do_update(index_elements=["user_id"], set_=set_))
 
     logger.info(
-        "contribution_events recorded inserted=%d deduped=%d",
+        "contribution_events recorded inserted=%d deduped=%d points=%d",
         len(inserted),
         len(specs) - len(inserted),
+        sum(row.points for row in inserted),
     )
-    return [row.id for row in inserted]
+    return ContributionResult(
+        event_ids=[row.id for row in inserted],
+        points_by_user={user_id: agg["total_points"] for user_id, agg in per_user.items()},
+    )
 
 
 async def reverse_contributions(session: AsyncSession, fountain_id: uuid.UUID) -> int:

@@ -84,7 +84,7 @@ async def test_record_photo_first_awards_once(session):
             )
         ],
     )
-    assert len(ids) == 1
+    assert len(ids.event_ids) == 1
     stats = await _stats(session, u.id)
     assert stats.total_points == 5
 
@@ -103,7 +103,7 @@ async def test_record_photo_first_awards_once(session):
             )
         ],
     )
-    assert again == []
+    assert again.event_ids == []
     stats_after = await _stats(session, u.id)
     assert stats_after.total_points == 5
 
