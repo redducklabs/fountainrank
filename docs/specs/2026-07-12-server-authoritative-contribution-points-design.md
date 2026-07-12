@@ -432,7 +432,8 @@ the same line. No PII, no tokens, no raw note bodies.
   total. This is the invariant that stops a future bulk path leaking another user's award.
 - **Truthiness:** a `ContributionResult` with no inserted events is falsy (guards the
   `if inserted:` sites).
-- Per-route `points_awarded`: 4 on a first rating of two dimensions and **0** on the re-rate;
+- Per-route `points_awarded`: **9** on a first rating of two dimensions (2 dims x `rate`@2 plus
+  `first_rating_bonus`@5 — do not forget the bonus) and **0** on the re-rate;
   0 on re-observed attributes; 0 on a 2nd note; 0 on a 2nd photo; 0 on a condition inside the
   24h window; and the partial case (one new dimension among already-rated ones → exactly the
   new dimension's points).
