@@ -59,9 +59,9 @@ it("disables submit until a star is set, then posts only set dimensions", async 
 });
 
 it("shows a spinner and disables submit immediately on click, before the action resolves", async () => {
-  let resolveSubmit!: (v: { ok: true }) => void;
+  let resolveSubmit!: (v: { ok: true; pointsAwarded: number }) => void;
   submitRating.mockReturnValue(
-    new Promise<{ ok: true }>((r) => {
+    new Promise<{ ok: true; pointsAwarded: number }>((r) => {
       resolveSubmit = r;
     }),
   );
