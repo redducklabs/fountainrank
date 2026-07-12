@@ -1137,30 +1137,72 @@ push and watch CI's `workspace-js`.
 
 - [ ] **Step 1: Write the failing test**
 
+⚠️ **The tests cannot pass ad-hoc `{ points_awarded: 4 }` literals** — that is the very thing the
+barrier in Step 3 rejects, and `mobile/tsconfig.json` typechecks test files in `strict` mode, so
+those literals would fail `tsc`. Build **complete generated-response fixtures** instead, and use a
+`@ts-expect-error` negative test as the actual proof the barrier works.
+
 `mobile/lib/awarded-points.test.ts`:
 
 ```ts
+import type { components } from "@fountainrank/api-client";
 import { awardedPoints } from "./awarded-points";
+
+type FountainDetailT = components["schemas"]["FountainDetail"];
+
+/** A complete generated FountainDetail; override just the field under test. */
+function detail(over: Partial<FountainDetailT> = {}): FountainDetailT {
+  return {
+    id: "00000000-0000-0000-0000-000000000001",
+    location: { latitude: 0, longitude: 0 },
+    is_working: true,
+    comments: null,
+    average_rating: null,
+    rating_count: 0,
+    ranking_score: null,
+    created_at: "2026-07-12T00:00:00Z",
+    last_rated_at: null,
+    dimensions: [],
+    attributes: [],
+    ...over,
+  } as FountainDetailT; // fill in any further required fields tsc demands after Task 4's regen
+}
 
 describe("awardedPoints", () => {
   it("reads the canonical field", () => {
-    expect(awardedPoints({ points_awarded: 4 })).toBe(4);
+    expect(awardedPoints(detail({ points_awarded: 4 }))).toBe(4);
   });
-  it("falls back to the deprecated condition field only when canonical is ABSENT", () => {
-    expect(awardedPoints({ condition_points_awarded: 3 })).toBe(3);
-    expect(awardedPoints({ points_awarded: 0, condition_points_awarded: 3 })).toBe(0);
-  });
+
   it("a NULL canonical field means 0 — it does NOT fall through to the legacy field", () => {
-    // The case that a `??` implementation gets wrong. It must stay in the suite.
-    expect(awardedPoints({ points_awarded: null, condition_points_awarded: 3 })).toBe(0);
+    // The case a `??` implementation gets wrong; it passes every other test. Keep it.
+    expect(
+      awardedPoints(detail({ points_awarded: null, condition_points_awarded: 3 })),
+    ).toBe(0);
   });
-  it("treats null/absent as zero — never celebrate what we cannot verify", () => {
-    expect(awardedPoints({ points_awarded: null })).toBe(0);
-    expect(awardedPoints({})).toBe(0);
+
+  it("falls back to the deprecated condition field only when canonical is ABSENT", () => {
+    // Old-server shape: the canonical KEY is missing entirely, not null.
+    const oldServer = detail();
+    delete (oldServer as { points_awarded?: unknown }).points_awarded;
+    (oldServer as { condition_points_awarded?: number }).condition_points_awarded = 3;
+    expect(awardedPoints(oldServer)).toBe(3);
+  });
+
+  it("treats absent/undefined as zero — never celebrate what we cannot verify", () => {
+    expect(awardedPoints(detail())).toBe(0);
     expect(awardedPoints(undefined)).toBe(0);
+  });
+
+  it("REJECTS an ad-hoc award object at compile time (the actual barrier)", () => {
+    // @ts-expect-error a client-computed number must not be mintable as an award (#204)
+    awardedPoints({ points_awarded: 999 });
   });
 });
 ```
+
+The `@ts-expect-error` test is the load-bearing one: if someone loosens `awardedPoints`'s parameter
+back to a structural `{ points_awarded?: number }`, that line stops erroring and **the test suite
+fails**. That is the enforcement — not a lint rule.
 
 - [ ] **Step 2: Run to verify it fails**
 
@@ -1178,10 +1220,16 @@ the current bug. Any rule must exempt them, so a future
 cleanly. That is exactly the hole the brand exists to close, so a rule with those exemptions is
 worse than none: it looks like a guard and guards nothing.
 
-**The barrier is the argument type instead.** Accept only the *generated API response types* — not
-a structural `{ points_awarded?: number }`. Forging an award then requires constructing a complete
-`FountainDetail` / `NoteOut` / `PhotoOut` (dozens of required fields), which will not happen by
-accident and is glaring in review.
+**The barrier is the argument type instead.** Accept only the *generated API response types*. A
+cheap `{ points_awarded: myGuess }` literal then fails to typecheck, because those types have many
+required fields.
+
+Be precise about the strength of this: TypeScript is **structural**, so this is a *high-friction*
+barrier, **not a nominal one**. A determined author holding a real `detail` could still write
+`awardedPoints({ ...detail, points_awarded: totalPreviewPoints(...) })` with no cast. That is
+acceptable — the goal is to stop the *accidental* re-introduction of client-guessed points (the
+thing that actually happened here, five times), not to defeat a motivated adversary. The
+`@ts-expect-error` test in Step 1 is what locks the barrier in place.
 
 `mobile/lib/awarded-points.ts`:
 
@@ -1270,7 +1318,9 @@ Every mutation stops guessing:
   `NoteOut.points_awarded` the POST now returns.
 - `conditionMutation` — was `detail.condition_points_awarded ?? 0` → `awardedPoints(detail)`
   (canonical-first).
-- `photoUploadMutation` — read `PhotoOut.points_awarded`.
+- `photoUploadMutation` — `uploadMultipart` now returns `data?: unknown`, and `awardedPoints`
+  rejects `unknown`. Have the mutation return a typed `PhotoOut` on 2xx
+  (`const photo = result.data as PhotoOut`) and mint from that: `awardedPoints(photo)`.
 
 Add the same 0-point copy as web (spec §4.7) to each form's success message.
 
@@ -1320,7 +1370,8 @@ git commit -m "feat(mobile): celebrate only what the server awarded (#204)
 
 Mutations read points_awarded instead of multiplying CONTRIBUTION_POINTS; the add-fountain
 flow in (tabs)/index.tsx stops celebrating its own client-side preview total; both celebration
-bumps are gated on a verified award > 0; awardedPoints() is lint-restricted to the mutation layer."
+bumps are gated on a verified award > 0; awardedPoints() accepts only a generated API response, so
+a client-computed number cannot be minted as an award."
 ```
 
 ---

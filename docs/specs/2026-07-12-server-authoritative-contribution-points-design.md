@@ -302,15 +302,14 @@ dispatchContribution(awardedPoints({ points_awarded: chosen.length * CONTRIBUTIO
 So the brand is paired with a **locality** rule that closes that hole. The two platforms need
 different enforcement, because their parsing boundaries differ:
 
-1. **Web — module-private, no lint rule needed.** `awardedPoints()` is defined and **not
-   exported** in `web/app/actions/contribute.ts`, the only web module that holds a raw write
-   response. A non-exported helper is already unreachable from UI code; a lint rule on top of
-   that would be redundant. The actions **return** `AwardedPoints` in their result types
-   (§4.4.1), so components receive an already-minted value, pass it straight to
-   `dispatchContribution`, and have no constructor to forge with. `AwardedPoints` (the *type*)
-   is exported from `web/lib/contribution-event.ts`; the *constructor* is not.
+1. **Web — one server-only module.** `awardedPoints()` lives in **`web/app/actions/awarded.ts`**
+   behind `import "server-only"`, and is imported by both `contribute.ts` and `add-fountain.ts`
+   (both parse raw write responses, so a single implementation keeps the legacy-fallback logic from
+   drifting). `server-only` is a real build-time barrier: importing it from a client component
+   fails the build. The actions **return** `AwardedPoints` in their result types (§4.4.1), so
+   components receive an already-minted value and have no constructor to forge with.
 
-2. **Mobile — a nominal argument type, NOT a lint rule.** Mobile has no server-action layer: its
+2. **Mobile — a restricted argument type, NOT a lint rule.** Mobile has no server-action layer: its
    mutation layer *is* `app/fountains/[id].tsx` and `app/(tabs)/index.tsx`, the two large route
    components that contain the current bug. Any `no-restricted-imports` rule would have to exempt
    exactly those files, so a future `awardedPoints({ points_awarded: totalPreviewPoints(...) })`
@@ -319,13 +318,16 @@ different enforcement, because their parsing boundaries differ:
 
    The barrier is the **argument type** instead. `awardedPoints()` (in `mobile/lib/awarded-points.ts`)
    accepts only the *generated API response union* — `FountainDetail | NoteOut | PhotoOut` from
-   `@fountainrank/api-client` — never a structural `{ points_awarded?: number }`. An ad-hoc literal
-   carrying a client-computed number does not typecheck against it; forging an award would mean
-   constructing a complete API response object, which will not happen by accident and is glaring in
-   review.
+   `@fountainrank/api-client`. An ad-hoc `{ points_awarded: myGuess }` literal does not typecheck
+   against it, because those types carry many required fields.
+
+   TypeScript is **structural**, so this is a *high-friction* barrier, not a nominal one: someone
+   holding a real `detail` could still write `awardedPoints({ ...detail, points_awarded: guess })`.
+   A `@ts-expect-error` unit test pins the barrier in place — if the parameter is ever loosened back
+   to a structural shape, that test fails.
 
 The asymmetry is deliberate: use the strongest mechanism each platform actually supports
-(`server-only` non-export on web; a nominal argument type on mobile) rather than a
+(`server-only` on web; a restricted, generated-response argument type on mobile) rather than a
 uniform-but-weaker one — and do not ship an enforcement mechanism that cannot enforce.
 
 **The honest claim:** the brand makes it impossible to pass a bare `number` to the celebration.
