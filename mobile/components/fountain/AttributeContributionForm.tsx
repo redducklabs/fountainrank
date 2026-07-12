@@ -1,5 +1,9 @@
 import type { components } from "@fountainrank/api-client";
-import { attributeEarnablePoints, type ViewerAwardStateT } from "@fountainrank/contributions";
+import {
+  attributeEarnablePoints,
+  type AwardedPoints,
+  type ViewerAwardStateT,
+} from "@fountainrank/contributions";
 import { useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
@@ -38,7 +42,9 @@ export function AttributeContributionForm({
   viewerAwardState?: ViewerAwardStateT | null;
   onSubmit: (
     body: ObserveAttributesRequest,
-  ) => Promise<{ ok: true } | { ok: false; error: ContributionError }>;
+  ) => Promise<
+    { ok: true; pointsAwarded: AwardedPoints } | { ok: false; error: ContributionError }
+  >;
 }) {
   const [values, setValues] = useState<Record<number, string | undefined>>({});
   const [message, setMessage] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
@@ -59,7 +65,13 @@ export function AttributeContributionForm({
     const result = await onSubmit(payload.value);
     setMessage(
       result.ok
-        ? { tone: "ok", text: "Thanks. Your observations were saved." }
+        ? {
+            tone: "ok" as const,
+            text:
+              result.pointsAwarded > 0
+                ? `Thanks — you earned ${result.pointsAwarded} points.`
+                : "Details saved. You already earned points for these, so no points this time.",
+          }
         : { tone: "err", text: contributionErrorText(result.error) },
     );
   }

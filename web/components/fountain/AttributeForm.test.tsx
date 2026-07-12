@@ -38,7 +38,7 @@ afterEach(() => {
 describe("AttributeForm", () => {
   it("refreshes the route after saving observations", async () => {
     fetchAttributeTypes.mockResolvedValue([{ id: 7, place_type: "fountain" }]);
-    submitAttributes.mockResolvedValue({ ok: true });
+    submitAttributes.mockResolvedValue({ ok: true, pointsAwarded: 2 });
     render(<AttributeForm fountainId="fid" />);
 
     fireEvent.click(await screen.findByRole("radio", { name: /bottle filler: yes/i }));

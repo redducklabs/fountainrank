@@ -190,7 +190,7 @@ describe("useAddFountainMode", () => {
     geo.getCurrentPosition.mockImplementation((_ok: unknown, err: (e: { code: number }) => void) =>
       err({ code: 1 }),
     );
-    addFountain.mockResolvedValue({ ok: true, fountainId: "new-1" });
+    addFountain.mockResolvedValue({ ok: true, fountainId: "new-1", pointsAwarded: 30 });
     const ok = makeFakeMap(17);
     render(
       <Harness
@@ -292,7 +292,7 @@ describe("useAddFountainMode", () => {
     geo.getCurrentPosition.mockImplementation((_ok: unknown, err: (e: { code: number }) => void) =>
       err({ code: 1 }),
     );
-    addFountain.mockResolvedValue({ ok: true, fountainId: "new-2" });
+    addFountain.mockResolvedValue({ ok: true, fountainId: "new-2", pointsAwarded: 30 });
     fetchRatingTypes.mockResolvedValue([
       { id: 11, name: "Coldness", description: "", sort_order: 0 },
     ]);

@@ -52,7 +52,7 @@ afterEach(() => {
 
 describe("PhotoUpload", () => {
   it("calls uploadPhoto with a FormData carrying the selected file on change", async () => {
-    uploadPhoto.mockResolvedValue({ ok: true });
+    uploadPhoto.mockResolvedValue({ ok: true, pointsAwarded: 5 });
     renderUpload();
     const input = screen.getByLabelText(/add a photo/i) as HTMLInputElement;
     const file = new File(["bytes"], "photo.jpg", { type: "image/jpeg" });
@@ -64,7 +64,7 @@ describe("PhotoUpload", () => {
   });
 
   it("does NOT submit a rating when the draft is clean", async () => {
-    uploadPhoto.mockResolvedValue({ ok: true });
+    uploadPhoto.mockResolvedValue({ ok: true, pointsAwarded: 5 });
     renderUpload(DIMS); // no seeded edit -> clean
     selectFile(screen.getByLabelText(/add a photo/i) as HTMLInputElement, new File(["b"], "a.jpg"));
     await waitFor(() => expect(uploadPhoto).toHaveBeenCalledTimes(1));
@@ -90,7 +90,7 @@ describe("PhotoUpload", () => {
 
   it("still uploads the photo when the rating is rejected as too_far (#1)", async () => {
     submitRating.mockResolvedValue({ ok: false, error: "too_far" });
-    uploadPhoto.mockResolvedValue({ ok: true });
+    uploadPhoto.mockResolvedValue({ ok: true, pointsAwarded: 5 });
     renderUpload(DIMS, { ratingTypeId: 1, value: 5 });
     selectFile(screen.getByLabelText(/add a photo/i) as HTMLInputElement, new File(["b"], "a.jpg"));
     await waitFor(() => expect(uploadPhoto).toHaveBeenCalledTimes(1));
@@ -101,7 +101,7 @@ describe("PhotoUpload", () => {
   });
 
   it("success shows a confirmation and refreshes the route", async () => {
-    uploadPhoto.mockResolvedValue({ ok: true });
+    uploadPhoto.mockResolvedValue({ ok: true, pointsAwarded: 5 });
     renderUpload();
     selectFile(
       screen.getByLabelText(/add a photo/i) as HTMLInputElement,
@@ -129,7 +129,7 @@ describe("PhotoUpload", () => {
   });
 
   it("resets the input value after each attempt so re-selecting the same file re-fires", async () => {
-    uploadPhoto.mockResolvedValue({ ok: true });
+    uploadPhoto.mockResolvedValue({ ok: true, pointsAwarded: 5 });
     renderUpload();
     const input = screen.getByLabelText(/add a photo/i) as HTMLInputElement;
     selectFile(input, new File(["bytes"], "photo.jpg", { type: "image/jpeg" }));

@@ -1,5 +1,9 @@
 import type { components } from "@fountainrank/api-client";
-import { notePointsPreview, type ViewerAwardStateT } from "@fountainrank/contributions";
+import {
+  notePointsPreview,
+  type AwardedPoints,
+  type ViewerAwardStateT,
+} from "@fountainrank/contributions";
 import { useState } from "react";
 import { StyleSheet, Text, TextInput, View } from "react-native";
 
@@ -30,7 +34,9 @@ export function NoteContributionForm({
   viewerAwardState?: ViewerAwardStateT | null;
   onSubmit: (
     body: AddNoteRequest,
-  ) => Promise<{ ok: true } | { ok: false; error: ContributionError }>;
+  ) => Promise<
+    { ok: true; pointsAwarded: AwardedPoints } | { ok: false; error: ContributionError }
+  >;
 }) {
   const [body, setBody] = useState(initialBody);
   const [message, setMessage] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
@@ -44,7 +50,14 @@ export function NoteContributionForm({
     }
     const result = await onSubmit(payload.value);
     if (result.ok) {
-      setMessage({ tone: "ok", text: "Your note was saved." });
+      // `dk_note` is once-ever per (user, fountain): a 2nd comment earns nothing, and must say so.
+      setMessage({
+        tone: "ok",
+        text:
+          result.pointsAwarded > 0
+            ? `Your note was saved — you earned ${result.pointsAwarded} points.`
+            : "Comment saved. You already earned points for a comment on this fountain.",
+      });
     } else {
       setMessage({ tone: "err", text: contributionErrorText(result.error) });
     }

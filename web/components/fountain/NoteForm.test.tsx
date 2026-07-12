@@ -37,14 +37,14 @@ it("save button enabled even when empty (client-guards on submit)", () => {
 });
 
 it("successful save shows 'Your note was saved.', clears textarea, calls refresh", async () => {
-  submitNote.mockResolvedValue({ ok: true });
+  submitNote.mockResolvedValue({ ok: true, pointsAwarded: 2 });
   render(<NoteForm fountainId="fid" />);
   fireEvent.change(screen.getByRole("textbox", { name: /your note/i }), {
     target: { value: "hello" },
   });
   fireEvent.click(screen.getByRole("button", { name: /save note/i }));
   await waitFor(() => expect(submitNote).toHaveBeenCalledWith("fid", "hello"));
-  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Your note was saved."));
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/you earned 2 points/i));
   await waitFor(() => expect(refresh).toHaveBeenCalled());
   expect((screen.getByRole("textbox", { name: /your note/i }) as HTMLTextAreaElement).value).toBe(
     "",

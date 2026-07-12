@@ -2,6 +2,7 @@ import type { components } from "@fountainrank/api-client";
 import {
   ratingEarnablePoints,
   type ViewerAwardStateT,
+  type AwardedPoints,
   totalPreviewPoints,
   type PointsLine,
 } from "@fountainrank/contributions";
@@ -56,7 +57,12 @@ export function RatingContributionForm({
   fountainId: string;
   dimensions: Dimension[];
   pending: boolean;
-  onSubmit: (body: RateRequest) => Promise<{ ok: true } | { ok: false; error: ContributionError }>;
+  // Carries the SERVER's award so the success copy can say when a save earned nothing (#204).
+  onSubmit: (
+    body: RateRequest,
+  ) => Promise<
+    { ok: true; pointsAwarded: AwardedPoints } | { ok: false; error: ContributionError }
+  >;
   // The draft lives in the screen (lifted from local state) so "Add photo" can flush it (#1).
   edits: Record<number, number>;
   onStarPress: (ratingTypeId: number, value: number) => void;
@@ -112,7 +118,13 @@ export function RatingContributionForm({
       const result = await onSubmit(payload.value);
       setMessage(
         result.ok
-          ? { tone: "ok", text: "Thanks. Your rating was saved." }
+          ? {
+              tone: "ok" as const,
+              text:
+                result.pointsAwarded > 0
+                  ? `Thanks — you earned ${result.pointsAwarded} points.`
+                  : "Rating updated. You already earned points for these dimensions, so no points this time.",
+            }
           : { tone: "err", text: contributionErrorText(result.error) },
       );
     });

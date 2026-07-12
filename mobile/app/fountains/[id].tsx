@@ -199,7 +199,9 @@ export default function FountainDetailScreen() {
     void queryClient.invalidateQueries({ queryKey: ["fountains", "bbox"] });
   };
 
-  const handleMutationError = (error: unknown): SubmitResult => {
+  // Always an error result — typed as such (not the wider SubmitResult) so a form callback's
+  // success branch can carry `pointsAwarded` without the union widening back to a bare ok (#204).
+  const handleMutationError = (error: unknown): { ok: false; error: ContributionError } => {
     const mapped = mapContributionError(error);
     if (mapped === "unauthenticated") {
       auth.markReauthRequired();
@@ -547,9 +549,10 @@ export default function FountainDetailScreen() {
                     }
                     onSubmit={async (body) => {
                       try {
-                        await ratingMutation.mutateAsync(body);
+                        const saved = await ratingMutation.mutateAsync(body);
                         setRatingEdits({}); // draft saved
-                        return { ok: true };
+                        // Hand the SERVER's award to the form so a 0-point save says so (#204).
+                        return { ok: true as const, pointsAwarded: awardedPoints(saved) };
                       } catch (error) {
                         return handleMutationError(error);
                       }
@@ -577,8 +580,8 @@ export default function FountainDetailScreen() {
                     onRetry={() => void attributeTypesQuery.refetch()}
                     onSubmit={async (body) => {
                       try {
-                        await attributeMutation.mutateAsync(body);
-                        return { ok: true };
+                        const saved = await attributeMutation.mutateAsync(body);
+                        return { ok: true as const, pointsAwarded: awardedPoints(saved) };
                       } catch (error) {
                         return handleMutationError(error);
                       }
@@ -590,8 +593,8 @@ export default function FountainDetailScreen() {
                     conditionPointsEligibleAt={detail.condition_points_eligible_at}
                     onSubmit={async (body) => {
                       try {
-                        await conditionMutation.mutateAsync(body);
-                        return { ok: true };
+                        const saved = await conditionMutation.mutateAsync(body);
+                        return { ok: true as const, pointsAwarded: awardedPoints(saved) };
                       } catch (error) {
                         return handleMutationError(error);
                       }
@@ -603,8 +606,8 @@ export default function FountainDetailScreen() {
                     pending={noteMutation.isPending}
                     onSubmit={async (body) => {
                       try {
-                        await noteMutation.mutateAsync(body);
-                        return { ok: true };
+                        const saved = await noteMutation.mutateAsync(body);
+                        return { ok: true as const, pointsAwarded: awardedPoints(saved) };
                       } catch (error) {
                         return handleMutationError(error);
                       }

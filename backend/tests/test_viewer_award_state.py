@@ -189,3 +189,17 @@ async def test_detail_is_never_shared_cached(client, test_user):
         assert authed.headers["cache-control"] == "private, no-store"
     finally:
         app.dependency_overrides.pop(get_optional_user, None)
+
+
+async def test_leaderboard_is_never_shared_cached(client, test_user):
+    """`rows[].is_you` and `you` are viewer-scoped on a PUBLIC endpoint — same leak class as the
+    fountain detail (found in the #204 PR review; not introduced by it)."""
+    anon = await client.get("/api/v1/leaderboard/contributors")
+    assert anon.headers["cache-control"] == "private, no-store"
+
+    app.dependency_overrides[get_optional_user] = lambda: test_user
+    try:
+        authed = await client.get("/api/v1/leaderboard/contributors")
+        assert authed.headers["cache-control"] == "private, no-store"
+    finally:
+        app.dependency_overrides.pop(get_optional_user, None)
