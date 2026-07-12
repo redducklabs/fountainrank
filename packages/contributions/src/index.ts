@@ -7,9 +7,39 @@ export const CONTRIBUTION_POINTS = {
   verify_working: 3,
   report_condition: 2,
   add_note: 2,
+  // The backend has awarded this all along (POINTS["photo_first"]); it was simply missing here,
+  // which is why the photo path could only celebrate without a number (#204).
+  photo_first: 5,
 } as const;
 
 export type PointsLine = { label: string; points: number; conditional?: boolean };
+
+declare const AWARDED: unique symbol;
+/**
+ * Points the SERVER said it awarded (#204).
+ *
+ * Minted ONLY by the response-parsing layer — `web/app/actions/awarded.ts` (behind `server-only`)
+ * and `mobile/lib/awarded-points.ts` (whose parameter is the generated response union). A brand
+ * gates ASSIGNMENT, not provenance, so the LOCALITY of the constructor is what stops a
+ * client-invented number reaching the celebration.
+ *
+ * Do NOT add a constructor here: exporting one from the shared package would let any component
+ * mint a fake award and defeat the whole mechanism.
+ */
+export type AwardedPoints = number & { readonly [AWARDED]: true };
+
+/**
+ * Mirrors the backend `ViewerAwardState` — what the viewer can still EARN on a fountain, per the
+ * contribution dedup ledger. Null/undefined for anonymous viewers (they have earned nothing yet).
+ *
+ * An as-of-read hint: the server's `points_awarded` on the write response is authoritative.
+ */
+export type ViewerAwardStateT = {
+  unrated_rating_type_ids: number[];
+  unobserved_attribute_type_ids: number[];
+  note_earnable: boolean;
+  photo_first_earnable: boolean;
+};
 
 export function addFountainPointsPreview(input: {
   ratingsCount: number;
@@ -34,16 +64,54 @@ export function addFountainPointsPreview(input: {
   ];
 }
 
-export function ratingPointsPreview(selectedRatingCount: number): PointsLine[] {
-  return countedLine("Ratings", selectedRatingCount, CONTRIBUTION_POINTS.rate);
+/**
+ * Pre-submit previews (#204). Each counts only what the viewer can ACTUALLY still earn, per the
+ * ledger-derived `ViewerAwardState` — re-rating a dimension you've already been awarded for earns
+ * nothing, so promising "+2 possible points" for it is the lie this fixes.
+ *
+ * A null/undefined state means an anonymous viewer: they have earned nothing yet, so show the full
+ * possible award.
+ *
+ * The conditional bonuses (first_rating_bonus etc.) are deliberately excluded, so a preview can
+ * only ever UNDER-promise. Under-promising resolves as a pleasant surprise in the authoritative
+ * post-submit number; over-promising is the bug.
+ */
+export function ratingEarnablePoints(
+  state: ViewerAwardStateT | null | undefined,
+  chosenRatingTypeIds: number[],
+): PointsLine[] {
+  const earnable = state
+    ? chosenRatingTypeIds.filter((id) => state.unrated_rating_type_ids.includes(id))
+    : chosenRatingTypeIds;
+  return countedLine("Ratings", earnable.length, CONTRIBUTION_POINTS.rate);
 }
 
-export function attributePointsPreview(selectedObservationCount: number): PointsLine[] {
-  return countedLine("Details", selectedObservationCount, CONTRIBUTION_POINTS.observe_attribute);
+export function attributeEarnablePoints(
+  state: ViewerAwardStateT | null | undefined,
+  chosenAttributeTypeIds: number[],
+): PointsLine[] {
+  const earnable = state
+    ? chosenAttributeTypeIds.filter((id) => state.unobserved_attribute_type_ids.includes(id))
+    : chosenAttributeTypeIds;
+  return countedLine("Details", earnable.length, CONTRIBUTION_POINTS.observe_attribute);
 }
 
-export function notePointsPreview(hasComment: boolean): PointsLine[] {
-  return hasComment ? [{ label: "Comment", points: CONTRIBUTION_POINTS.add_note }] : [];
+/** `hasComment` still gates the line (an empty box previews nothing); the state gates the AWARD. */
+export function notePointsPreview(
+  state: ViewerAwardStateT | null | undefined,
+  hasComment: boolean,
+): PointsLine[] {
+  if (!hasComment) return [];
+  return !state || state.note_earnable
+    ? [{ label: "Comment", points: CONTRIBUTION_POINTS.add_note }]
+    : [];
+}
+
+/** `photo_first` is per-FOUNTAIN (anyone's first photo spends it), not per-user. */
+export function photoEarnablePoints(state: ViewerAwardStateT | null | undefined): PointsLine[] {
+  return !state || state.photo_first_earnable
+    ? [{ label: "First photo bonus", points: CONTRIBUTION_POINTS.photo_first }]
+    : [];
 }
 
 export function conditionPointsPreview(status: "working" | "problem"): PointsLine[] {
