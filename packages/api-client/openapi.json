@@ -4881,6 +4881,27 @@
             ],
             "title": "Condition Points Awarded"
           },
+          "points_awarded": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Points Awarded"
+          },
+          "viewer_award_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ViewerAwardState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "is_hidden": {
             "type": "boolean",
             "title": "Is Hidden"
@@ -4994,6 +5015,17 @@
             "type": "string",
             "format": "date-time",
             "title": "Updated At"
+          },
+          "points_awarded": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Points Awarded"
           },
           "is_hidden": {
             "type": "boolean",
@@ -5871,6 +5903,27 @@
               }
             ],
             "title": "Condition Points Awarded"
+          },
+          "points_awarded": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Points Awarded"
+          },
+          "viewer_award_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ViewerAwardState"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -6252,6 +6305,17 @@
             "type": "string",
             "format": "date-time",
             "title": "Updated At"
+          },
+          "points_awarded": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Points Awarded"
           }
         },
         "type": "object",
@@ -6324,6 +6388,17 @@
             "type": "boolean",
             "title": "Is Own",
             "default": false
+          },
+          "points_awarded": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Points Awarded"
           }
         },
         "type": "object",
@@ -6817,6 +6892,41 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "ViewerAwardState": {
+        "properties": {
+          "unrated_rating_type_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Unrated Rating Type Ids"
+          },
+          "unobserved_attribute_type_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Unobserved Attribute Type Ids"
+          },
+          "note_earnable": {
+            "type": "boolean",
+            "title": "Note Earnable"
+          },
+          "photo_first_earnable": {
+            "type": "boolean",
+            "title": "Photo First Earnable"
+          }
+        },
+        "type": "object",
+        "required": [
+          "unrated_rating_type_ids",
+          "unobserved_attribute_type_ids",
+          "note_earnable",
+          "photo_first_earnable"
+        ],
+        "title": "ViewerAwardState",
+        "description": "What this viewer can still EARN on this fountain, per the contribution dedup ledger (#204).\n\nThe AWARD state, not the content state. Hidden notes/observations and deleted photos keep their\ndedup key, so a content-derived preview would over-promise points the insert will not award.\nDerived from `contribution_events.dedup_key` \u2014 the same question the insert asks.\n\nAn as-of-read HINT: the key can be spent between this GET and the submit (another tab/device, or\nanother user taking the fountain's first photo), so the POST's `points_awarded` is authoritative\nand always wins. Null for anonymous callers.\n\n`condition_points_eligible_at` is deliberately NOT here \u2014 it stays top-level on FountainDetail,\nwhere already-released clients read it."
       },
       "YourStanding": {
         "properties": {

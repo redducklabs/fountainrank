@@ -888,6 +888,9 @@ export interface components {
             condition_points_eligible_at?: string | null;
             /** Condition Points Awarded */
             condition_points_awarded?: number | null;
+            /** Points Awarded */
+            points_awarded?: number | null;
+            viewer_award_state?: components["schemas"]["ViewerAwardState"] | null;
             /** Is Hidden */
             is_hidden: boolean;
             /** Notes */
@@ -926,6 +929,8 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+            /** Points Awarded */
+            points_awarded?: number | null;
             /** Is Hidden */
             is_hidden: boolean;
         };
@@ -1249,6 +1254,9 @@ export interface components {
             condition_points_eligible_at?: string | null;
             /** Condition Points Awarded */
             condition_points_awarded?: number | null;
+            /** Points Awarded */
+            points_awarded?: number | null;
+            viewer_award_state?: components["schemas"]["ViewerAwardState"] | null;
         };
         /** FountainPin */
         FountainPin: {
@@ -1407,6 +1415,8 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+            /** Points Awarded */
+            points_awarded?: number | null;
         };
         /** ObserveAttributesRequest */
         ObserveAttributesRequest: {
@@ -1440,6 +1450,8 @@ export interface components {
              * @default false
              */
             is_own: boolean;
+            /** Points Awarded */
+            points_awarded?: number | null;
         };
         /** PhotoReportsSummary */
         PhotoReportsSummary: {
@@ -1628,6 +1640,31 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /**
+         * ViewerAwardState
+         * @description What this viewer can still EARN on this fountain, per the contribution dedup ledger (#204).
+         *
+         *     The AWARD state, not the content state. Hidden notes/observations and deleted photos keep their
+         *     dedup key, so a content-derived preview would over-promise points the insert will not award.
+         *     Derived from `contribution_events.dedup_key` — the same question the insert asks.
+         *
+         *     An as-of-read HINT: the key can be spent between this GET and the submit (another tab/device, or
+         *     another user taking the fountain's first photo), so the POST's `points_awarded` is authoritative
+         *     and always wins. Null for anonymous callers.
+         *
+         *     `condition_points_eligible_at` is deliberately NOT here — it stays top-level on FountainDetail,
+         *     where already-released clients read it.
+         */
+        ViewerAwardState: {
+            /** Unrated Rating Type Ids */
+            unrated_rating_type_ids: number[];
+            /** Unobserved Attribute Type Ids */
+            unobserved_attribute_type_ids: number[];
+            /** Note Earnable */
+            note_earnable: boolean;
+            /** Photo First Earnable */
+            photo_first_earnable: boolean;
         };
         /**
          * YourStanding
