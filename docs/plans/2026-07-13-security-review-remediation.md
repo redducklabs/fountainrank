@@ -39,16 +39,16 @@ local gaps rather than describing an unrun local check as green.
 This workstream is deliberately not automated from the repository.
 
 - [ ] In Google Cloud, identify the exposed service-account key by key ID/fingerprint and confirm
-  it is disabled or deleted. Record only the retired identifier and rotation date.
+      it is disabled or deleted. Record only the retired identifier and rotation date.
 - [ ] Confirm the `production` GitHub Environment contains the replacement service-account JSON
-  and identify a successful deployment performed after the secret update.
+      and identify a successful deployment performed after the secret update.
 - [ ] Confirm whether `AuthKey_KDB8D3BHZ2.p8` was ever registered or used. Revoke it only if it
-  was live.
+      was live.
 - [ ] Inventory other development instances for in-checkout `.env` files without printing or
-  transmitting values. Move secrets to the approved platform store or a path outside the public
-  checkout, verify loading, then remove the old copies.
+      transmitting values. Move secrets to the approved platform store or a path outside the public
+      checkout, verify loading, then remove the old copies.
 - [ ] Add a secret-free handoff entry containing dates, retired credential identifiers, deployment
-  run ID, and the workstation migration disposition. Never include key material.
+      run ID, and the workstation migration disposition. Never include key material.
 
 **Acceptance:** an operator can verify rotation, replacement deployment, Apple-key disposition,
 and workstation cleanup from identifiers and dates alone, while repository and shell history
@@ -64,16 +64,16 @@ Deliver this before expanding rate gates so invalid oversized/duplicate payloads
 without acquiring locks or touching the database.
 
 - [ ] Add a documented normalized maximum for `AddFountainRequest.comments`. Strip surrounding
-  whitespace and convert an empty string to `None`, matching placement-note behavior.
+      whitespace and convert an empty string to `None`, matching placement-note behavior.
 - [ ] Add explicit fixed schema-ceiling constants to add-fountain ratings/observations, standalone
-  ratings, and standalone attribute observations. Pydantic enforces these static ceilings; any
-  validation against current active database cardinality is an additional handler-level check,
-  not a dynamic schema bound.
+      ratings, and standalone attribute observations. Pydantic enforces these static ceilings; any
+      validation against current active database cardinality is an additional handler-level check,
+      not a dynamic schema bound.
 - [ ] Reject duplicate rating-dimension IDs and duplicate attribute-type IDs in the Pydantic
-  request model before database work. Preserve partial submissions.
+      request model before database work. Preserve partial submissions.
 - [ ] Determine and record whether an admin edit path can write `comments` (the current
-  `AdminFountainUpdate`/admin router appear to do so). If confirmed, apply the same bound and
-  normalization there; do not leave the path unbounded or silently skip the determination.
+      `AdminFountainUpdate`/admin router appear to do so). If confirmed, apply the same bound and
+      normalization there; do not leave the path unbounded or silently skip the determination.
 - [ ] Add focused schema/API tests for boundaries, normalization, duplicate IDs, and 422 responses.
 - [ ] Regenerate the tracked OpenAPI document and TypeScript schema and verify the generated diff.
 
@@ -84,26 +84,28 @@ host-only gaps exactly as `claude_help/local-dev.md` requires.
 ## Workstream 2 — Durable contribution-write rate limiting
 
 - [ ] Write a focused design spec before implementation. Define which endpoints share budgets,
-  per-minute/per-day thresholds, retry semantics, cleanup/retention, and whether `/me/sync` has a
-  separate lower-cost budget. Include authenticated account-farm limits and clarify that ingress
-  per-IP defense is complementary, not authoritative.
+      per-minute/per-day thresholds, retry semantics, cleanup/retention, and whether `/me/sync` has a
+      separate lower-cost budget. Include authenticated account-farm limits and clarify that ingress
+      per-IP defense is complementary, not authoritative.
+      Resolved by `docs/specs/2026-07-13-durable-write-rate-limits-design.md`: contribution writes
+      share a 20/minute + 200/day budget; profile sync has a separate 10/minute + 100/day budget.
 - [ ] Use a durable attempt ledger with a migration and transaction-scoped per-user advisory lock;
-  do not infer attempts only from successful domain rows. Failed validated attempts must consume
-  burst budget where abuse would otherwise be cheap.
+      do not infer attempts only from successful domain rows. Failed validated attempts must consume
+      burst budget where abuse would otherwise be cheap.
 - [ ] Acquire the authoritative gate before expensive/database-mutating work and map rejection to
-  HTTP 429 with `Retry-After` and a stable non-sensitive reason code.
+      HTTP 429 with `Retry-After` and a stable non-sensitive reason code.
 - [ ] Apply gates to fountain creation, ratings, attribute observations, condition reports, notes,
-  and `/me/sync`. Keep existing photo and content-report budgets independent.
+      and `/me/sync`. Keep existing photo and content-report budgets independent.
 - [ ] Add structured rate-limit logs with user ID, endpoint/budget kind, count, and retry window;
-  never log request bodies or identity tokens.
+      never log request bodies or identity tokens.
 - [ ] Add boundary, retry-header, rollback, cross-pod/durable, and true-concurrency tests against
-  the real PostGIS test service, proving the Postgres advisory lock prevents parallel
-  over-admission. Do not use SQLite or an in-memory substitute for lock correctness.
+      the real PostGIS test service, proving the Postgres advisory lock prevents parallel
+      over-admission. Do not use SQLite or an in-memory substitute for lock correctness.
 - [ ] Add an ingress/controller-level per-IP policy only after establishing a trusted-proxy CIDR
-  for the DO LB/node network. The current NodePort topology uses `use-forwarded-headers=true`,
-  `compute-full-forwarded-for=true`, and no PROXY protocol; without a narrow
-  `proxy-real-ip-cidr`, client-supplied `X-Forwarded-For` is not a safe rate-limit identity. Test
-  both real client propagation and that direct client headers cannot spoof the gate key.
+      for the DO LB/node network. The current NodePort topology uses `use-forwarded-headers=true`,
+      `compute-full-forwarded-for=true`, and no PROXY protocol; without a narrow
+      `proxy-real-ip-cidr`, client-supplied `X-Forwarded-For` is not a safe rate-limit identity. Test
+      both real client propagation and that direct client headers cannot spoof the gate key.
 
 **Verification:** migration upgrade/downgrade/upgrade, named constraints/indexes, `alembic check`,
 full backend suite including concurrency tests, rendered ingress validation, and the full CI mirror.
@@ -111,25 +113,25 @@ full backend suite including concurrency tests, rendered ingress validation, and
 ## Workstream 3 — Kubernetes workload hardening
 
 - [ ] Apply the existing basemap/account-cleanup pod security pattern to backend, web, and healthz:
-  pod-level non-root UID/GID where image contracts permit, `RuntimeDefault` seccomp, container
-  `allowPrivilegeEscalation: false`, dropped capabilities, and read-only root filesystems with
-  explicit writable `emptyDir` mounts where required.
+      pod-level non-root UID/GID where image contracts permit, `RuntimeDefault` seccomp, container
+      `allowPrivilegeEscalation: false`, dropped capabilities, and read-only root filesystems with
+      explicit writable `emptyDir` mounts where required.
 - [ ] Set `automountServiceAccountToken: false` for backend, web, Logto, healthz, basemap, and jobs
-  that do not call the Kubernetes API.
+      that do not call the Kubernetes API.
 - [ ] Inspect the pinned Logto image's declared user and runtime write paths. Apply only controls
-  verified against that contract; add explicit writable mounts rather than making the root
-  filesystem writable wholesale.
+      verified against that contract; add explicit writable mounts rather than making the root
+      filesystem writable wholesale.
 - [ ] Add tests/static assertions covering all workload security contexts and token automounting.
 - [ ] Confirm DigitalOcean's current DOKS CNI supports NetworkPolicy enforcement before adding
-  policy resources.
+      policy resources.
 - [ ] Document the required flow matrix: ingress-controller to web/backend/Logto/healthz; workload
-  DNS; backend to managed Postgres, Logto/JWKS/userinfo/management, Gmail, geocoding, and Spaces;
-  web to backend/Logto as actually performed server-side; Logto to Postgres and configured
-  connectors; basemap traffic; and job-specific flows.
+      DNS; backend to managed Postgres, Logto/JWKS/userinfo/management, Gmail, geocoding, and Spaces;
+      web to backend/Logto as actually performed server-side; Logto to Postgres and configured
+      connectors; basemap traffic; and job-specific flows.
 - [ ] Add namespace default-deny ingress/egress and least-privilege allow policies from the verified
-  matrix. Use namespace/pod selectors for in-cluster traffic and the narrowest maintainable
-  external CIDR/port rules; document any hostname-destination limitation and its compensating
-  control.
+      matrix. Use namespace/pod selectors for in-cluster traffic and the narrowest maintainable
+      external CIDR/port rules; document any hostname-destination limitation and its compensating
+      control.
 
 **Verification:** render every manifest using non-secret placeholder values, validate with the
 project-pinned kubeconform schema set, run policy/static checks, and inspect the complete rendered
@@ -138,14 +140,14 @@ diff. Deployment and live connectivity smoke tests occur only through CI.
 ## Workstream 4 — DOKS security upgrades
 
 - [ ] Confirm from current DigitalOcean documentation whether the configured maintenance policy
-  covers automatic Kubernetes patch upgrades and what disruption behavior applies to the
-  single-node/small-cluster topology.
+      covers automatic Kubernetes patch upgrades and what disruption behavior applies to the
+      single-node/small-cluster topology.
 - [ ] Prefer `auto_upgrade = true` with a required explicit maintenance policy in Terraform if the
-  workload and capacity analysis is safe. If it is not safe, write an owner-visible manual patch runbook and
-  a scheduled CI check that fails or opens an issue when the configured/live version leaves the
-  supported patched set.
+      workload and capacity analysis is safe. If it is not safe, write an owner-visible manual patch runbook and
+      a scheduled CI check that fails or opens an issue when the configured/live version leaves the
+      supported patched set.
 - [ ] Add Terraform validation or tests that prevent silently returning to `auto_upgrade = false`
-  without the accepted-risk control.
+      without the accepted-risk control.
 
 **Verification:** `terraform fmt -check`, `terraform init -backend=false`, `terraform validate`,
 and a CI-generated Terraform plan whose entire blast radius is reviewed before any separately
@@ -156,26 +158,26 @@ the work for explicit maintenance planning. Never apply locally.
 ## Workstream 5 — Trivy enforcement and alert triage
 
 - [ ] Export the current open Trivy alerts through `gh` after verifying authentication. Classify
-  each as actionable, fixed upstream, unfixed, intentional architecture, duplicate, or stale.
+      each as actionable, fixed upstream, unfixed, intentional architecture, duplicate, or stale.
 - [ ] Fix actionable fixed-version alerts first, including vulnerable build/runtime packages and
-  base images, and rebuild scans to prove removal.
+      base images, and rebuild scans to prove removal.
 - [ ] Record precise GitHub dismissal reasons only for confirmed intentional/stale alerts, with a
-  revisit condition. Do not bulk-dismiss by rule or severity.
+      revisit condition. Do not bulk-dismiss by rule or severity.
 - [ ] Treat triage as a hard precondition to enabling the filesystem misconfiguration gate: every
-  currently detected high/critical misconfiguration must first be fixed or covered by a landed,
-  narrowly justified exception with a revisit condition.
+      currently detected high/critical misconfiguration must first be fixed or covered by a landed,
+      narrowly justified exception with a revisit condition.
 - [ ] In `security-audit.yml`, split `trivy-fs` into a PR-gating table pass and an `if: always()`
-  SARIF pass. Gate fixed high/critical filesystem vulnerabilities and, only after the precondition
-  above is satisfied, misconfigurations. This is the PR-time Trivy gate.
+      SARIF pass. Gate fixed high/critical filesystem vulnerabilities and, only after the precondition
+      above is satisfied, misconfigurations. This is the PR-time Trivy gate.
 - [ ] In `deploy.yml`, convert/add backend and web image table scans with `exit-code: "1"` inside
-  the existing `build-push` job, while retaining `if: always()` SARIF uploads. The `deploy` job
-  already has `needs: build-push`; a failed image table scan therefore blocks manifest application.
-  Build/push may occur before scanning because the registry image is the scan source.
+      the existing `build-push` job, while retaining `if: always()` SARIF uploads. The `deploy` job
+      already has `needs: build-push`; a failed image table scan therefore blocks manifest application.
+      Build/push may occur before scanning because the registry image is the scan source.
 - [ ] Keep the scheduled/push `security-audit.yml` image scans gating for ongoing detection, but
-  explicitly recognize that its `image-scan` job skips pull requests. Image-vulnerability
-  prevention is therefore a deploy-time gate; PR-time image scanning is not claimed.
+      explicitly recognize that its `image-scan` job skips pull requests. Image-vulnerability
+      prevention is therefore a deploy-time gate; PR-time image scanning is not claimed.
 - [ ] Add workflow tests/actionlint and assert that a synthetic fixed high/critical result produces
-  a non-zero gate while SARIF upload still runs.
+      a non-zero gate while SARIF upload still runs.
 
 **Verification:** YAML parse, actionlint, local Trivy with the workflow's pinned version when
 available, and hosted `security-audit.yml`. A successful run must mean the new fixed
@@ -184,17 +186,17 @@ high/critical gates passed, not merely that SARIF uploaded.
 ## Workstream 6 — Immutable supply-chain inputs
 
 - [ ] Inventory every `uses:` reference and prioritize deploy, Terraform, mobile release, imports,
-  and other secret-handling workflows.
+      and other secret-handling workflows.
 - [ ] Resolve each existing action release tag to its full commit SHA using the upstream repository
-  and retain the release tag in a comment. Verify Dependabot remains configured for GitHub Actions.
+      and retain the release tag in a comment. Verify Dependabot remains configured for GitHub Actions.
 - [ ] Pin remaining first-party and third-party actions, then pin Dockerfile and Kubernetes image
-  inputs by digest while retaining readable version tags/comments.
+      inputs by digest while retaining readable version tags/comments.
 - [ ] Ensure the image-update path remains automated and reviewable; validate architecture support
-  for every digest used by local/CI/runtime platforms.
+      for every digest used by local/CI/runtime platforms.
 - [ ] Add a repository check that rejects unpinned external action references and third-party
-  production image inputs. Exempt same-repository local actions/reusable workflows by `./` path,
-  and exempt first-party `${REGISTRY}/fountainrank-*:${IMAGE_TAG}` Kubernetes images because their
-  immutable digest is created during the deploy build. Do not exempt external reusable workflows.
+      production image inputs. Exempt same-repository local actions/reusable workflows by `./` path,
+      and exempt first-party `${REGISTRY}/fountainrank-*:${IMAGE_TAG}` Kubernetes images because their
+      immutable digest is created during the deploy build. Do not exempt external reusable workflows.
 
 **Verification:** actionlint, workflow YAML parse, pin-check test, container builds for supported
 architectures, and hosted CI/security workflows.
@@ -202,10 +204,10 @@ architectures, and hosted CI/security workflows.
 ## Workstream 7 — Deferred moderate dependency advisories
 
 - [ ] Keep the existing `postcss` and Expo-tooling `uuid` suppressions unchanged while their
-  documented runtime exposure remains accurate.
+      documented runtime exposure remains accurate.
 - [ ] On each compatible Next/Expo update, run the bounded audit and inspect dependency paths.
 - [ ] Remove each suppression in the same change that moves the lockfile to a patched transitive
-  version; run web build and the CI-only Expo/mobile gates before claiming resolution.
+      version; run web build and the CI-only Expo/mobile gates before claiming resolution.
 
 ## Ordered PR breakdown
 
@@ -216,7 +218,8 @@ evidence from an earlier unit; unrelated units are not bundled to reduce PR coun
 2. **PR B — Rate-limit design:** the focused Workstream 2 design spec and its approved detailed
    implementation plan; no runtime changes.
 3. **PR C — Durable write ledger:** migration/model, shared gate primitives, PostGIS concurrency
-   tests, and retention/cleanup behavior; no endpoint wiring.
+   tests, dedicated cleanup command plus hardened CronJob manifest, and retention behavior; no
+   endpoint wiring.
 4. **PR D — Contribution endpoint gates:** fountain/rating/attribute/condition/note wiring,
    structured logs, 429 contract tests, and generated clients.
 5. **PR E — Profile-sync gate:** `/me/sync` budget and tests, kept separate because its idempotent
@@ -247,12 +250,12 @@ only when a compatible upstream dependency update exists, in its own dependency-
 ## Completion and evidence
 
 - [ ] Update `temp/security-review-2026-06-20.md` only as a working artifact after evidence exists;
-  do not mark operational findings resolved from repository changes alone.
+      do not mark operational findings resolved from repository changes alone.
 - [ ] Maintain a secret-free handoff linking each finding to its PR, CI run, scanner disposition,
-  and any owner-only verification.
+      and any owner-only verification.
 - [ ] Re-query Dependabot, code-scanning, and secret-scanning state after the final repository PR.
 - [ ] Completion requires: the Google key rotation/deployment positively verified; other owner-only
-  items verified or explicitly accepted as open risk; all
-  repository workstreams merged through CI/review; fixed high/critical Trivy gates green; relevant
-  live deployment smoke tests green; and remaining moderate advisories documented with current
-  exposure and revisit conditions.
+      items verified or explicitly accepted as open risk; all
+      repository workstreams merged through CI/review; fixed high/critical Trivy gates green; relevant
+      live deployment smoke tests green; and remaining moderate advisories documented with current
+      exposure and revisit conditions.
