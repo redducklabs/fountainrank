@@ -136,6 +136,17 @@ def test_openapi_add_fountain_has_placement_and_observations():
     assert "placement_note" in schema["components"]["schemas"]["FountainDetail"]["properties"]
 
 
+def test_openapi_contribution_input_limits_are_explicit():
+    schemas = app.openapi()["components"]["schemas"]
+    add = schemas["AddFountainRequest"]["properties"]
+    assert add["comments"]["anyOf"][0]["maxLength"] == 1000
+    assert add["ratings"]["maxItems"] == 32
+    assert add["observations"]["maxItems"] == 128
+    assert schemas["RateRequest"]["properties"]["ratings"]["maxItems"] == 32
+    assert schemas["ObserveAttributesRequest"]["properties"]["observations"]["maxItems"] == 128
+    assert schemas["AdminFountainPatch"]["properties"]["comments"]["anyOf"][0]["maxLength"] == 1000
+
+
 def test_openapi_exposes_geocode_endpoint():
     schema = app.openapi()
     assert "/api/v1/geocode" in schema["paths"]

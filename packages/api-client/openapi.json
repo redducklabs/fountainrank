@@ -4685,7 +4685,8 @@
           "comments": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 1000
               },
               {
                 "type": "null"
@@ -4710,6 +4711,7 @@
               "$ref": "#/components/schemas/RatingInput"
             },
             "type": "array",
+            "maxItems": 32,
             "title": "Ratings"
           },
           "observations": {
@@ -4717,6 +4719,7 @@
               "$ref": "#/components/schemas/AttributeObservationInput"
             },
             "type": "array",
+            "maxItems": 128,
             "title": "Observations"
           }
         },
@@ -4968,7 +4971,8 @@
           "comments": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 1000
               },
               {
                 "type": "null"
@@ -6335,6 +6339,7 @@
               "$ref": "#/components/schemas/AttributeObservationInput"
             },
             "type": "array",
+            "maxItems": 128,
             "minItems": 1,
             "title": "Observations"
           }
@@ -6473,6 +6478,7 @@
               "$ref": "#/components/schemas/RatingInput"
             },
             "type": "array",
+            "maxItems": 32,
             "minItems": 1,
             "title": "Ratings"
           },

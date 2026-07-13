@@ -68,19 +68,28 @@ async def test_submit_ratings_unknown_type_422(client):
     assert resp.status_code == 422
 
 
-async def test_submit_ratings_dedupes_same_type_in_one_request(client):
-    # Two values for the same dimension in one payload must settle to a single row
-    # (last wins) — exercises the ON CONFLICT path's in-request dedupe, not a 500.
+async def test_submit_ratings_rejects_same_type_in_one_request(client, session):
     fid = await _add_fountain(client)
     resp = await client.post(
         f"/api/v1/fountains/{fid}/ratings",
         json={"ratings": [{"rating_type_id": 1, "stars": 2}, {"rating_type_id": 1, "stars": 5}]},
     )
-    assert resp.status_code == 200
-    body = resp.json()
-    clarity = next(d for d in body["dimensions"] if d["rating_type_id"] == 1)
-    assert clarity["vote_count"] == 1
-    assert clarity["average_rating"] == 5.0
+    assert resp.status_code == 422
+    count = (
+        await session.execute(
+            select(func.count()).select_from(Rating).where(Rating.fountain_id == uuid.UUID(fid))
+        )
+    ).scalar_one()
+    assert count == 0
+
+
+async def test_submit_ratings_rejects_more_than_schema_ceiling(client):
+    fid = await _add_fountain(client)
+    resp = await client.post(
+        f"/api/v1/fountains/{fid}/ratings",
+        json={"ratings": [{"rating_type_id": i, "stars": 3} for i in range(1, 34)]},
+    )
+    assert resp.status_code == 422
 
 
 async def test_concurrent_ratings_keep_aggregates_consistent():
