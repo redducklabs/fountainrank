@@ -135,6 +135,37 @@ async def test_illegal_value_422(client):
 
 
 @pytest.mark.asyncio
+async def test_duplicate_attribute_type_in_one_request_is_422(client, session):
+    fid = await _add_fountain(client)
+    r = await client.post(
+        f"/api/v1/fountains/{fid}/attributes",
+        json={
+            "observations": [
+                {"attribute_type_id": BOTTLE_FILLER, "value": "yes"},
+                {"attribute_type_id": BOTTLE_FILLER, "value": "no"},
+            ]
+        },
+    )
+    assert r.status_code == 422
+    rows = (
+        await session.execute(
+            select(AttributeObservation).where(AttributeObservation.fountain_id == uuid.UUID(fid))
+        )
+    ).scalars()
+    assert list(rows) == []
+
+
+@pytest.mark.asyncio
+async def test_observations_reject_more_than_schema_ceiling(client):
+    fid = await _add_fountain(client)
+    r = await client.post(
+        f"/api/v1/fountains/{fid}/attributes",
+        json={"observations": [{"attribute_type_id": i, "value": "yes"} for i in range(1, 130)]},
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_non_fountain_attribute_type_422(client, session):
     session.add(
         AttributeType(

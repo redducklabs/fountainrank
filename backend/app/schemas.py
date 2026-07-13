@@ -13,6 +13,27 @@ from pydantic import (
 
 NoteBody = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1000)]
 
+# Public contribution payload ceilings are deliberately higher than today's active catalog
+# cardinalities (4 rating dimensions and a small attribute set) so catalog growth does not require
+# a client release, while still bounding JSON validation and database work per request.
+COMMENTS_MAX_LENGTH = 1000
+RATINGS_MAX_ITEMS = 32
+OBSERVATIONS_MAX_ITEMS = 128
+CommentBody = Annotated[str, StringConstraints(max_length=COMMENTS_MAX_LENGTH)]
+
+
+def _normalize_optional_text(value: object) -> object:
+    """Trim optional user-authored text and store whitespace-only input as null."""
+    if isinstance(value, str):
+        return value.strip() or None
+    return value
+
+
+def _has_duplicate_ids(items: list[object], attribute: str) -> bool:
+    ids = [getattr(item, attribute) for item in items]
+    return len(ids) != len(set(ids))
+
+
 ConditionStatus = Literal[
     "working",
     "broken",
@@ -95,7 +116,15 @@ class AttributeObservationInput(BaseModel):
 
 
 class ObserveAttributesRequest(BaseModel):
-    observations: list[AttributeObservationInput] = Field(min_length=1)
+    observations: list[AttributeObservationInput] = Field(
+        min_length=1, max_length=OBSERVATIONS_MAX_ITEMS
+    )
+
+    @model_validator(mode="after")
+    def _reject_duplicate_attribute_types(self) -> "ObserveAttributesRequest":
+        if _has_duplicate_ids(self.observations, "attribute_type_id"):
+            raise ValueError("observations must contain unique attribute_type_id values")
+        return self
 
 
 class AttributeConsensusOut(BaseModel):
@@ -187,22 +216,30 @@ class DisplayNameRequiredConflict(BaseModel):
 class AddFountainRequest(BaseModel):
     location: Coordinates
     is_working: bool = True
-    comments: str | None = None
+    comments: CommentBody | None = None
     placement_note: str | None = Field(default=None, max_length=200)
-    ratings: list[RatingInput] = Field(default_factory=list)
-    observations: list[AttributeObservationInput] = Field(default_factory=list)
+    ratings: list[RatingInput] = Field(default_factory=list, max_length=RATINGS_MAX_ITEMS)
+    observations: list[AttributeObservationInput] = Field(
+        default_factory=list, max_length=OBSERVATIONS_MAX_ITEMS
+    )
 
-    @field_validator("placement_note", mode="before")
+    @field_validator("comments", "placement_note", mode="before")
     @classmethod
-    def _normalize_placement_note(cls, v: object) -> object:
-        if isinstance(v, str):
-            return v.strip() or None
-        # Non-str (and non-None) falls through to type validation -> 422 (never .strip() it).
-        return v
+    def _normalize_optional_text_fields(cls, v: object) -> object:
+        # Non-str (and non-None) falls through to type validation -> 422.
+        return _normalize_optional_text(v)
+
+    @model_validator(mode="after")
+    def _reject_duplicate_inline_ids(self) -> "AddFountainRequest":
+        if _has_duplicate_ids(self.ratings, "rating_type_id"):
+            raise ValueError("ratings must contain unique rating_type_id values")
+        if _has_duplicate_ids(self.observations, "attribute_type_id"):
+            raise ValueError("observations must contain unique attribute_type_id values")
+        return self
 
 
 class RateRequest(BaseModel):
-    ratings: list[RatingInput] = Field(min_length=1)
+    ratings: list[RatingInput] = Field(min_length=1, max_length=RATINGS_MAX_ITEMS)
     # Optional client-asserted location for the proximity guard (spec §4.5). Both-or-neither.
     latitude: float | None = Field(default=None, ge=-90.0, le=90.0)
     longitude: float | None = Field(default=None, ge=-180.0, le=180.0)
@@ -211,6 +248,8 @@ class RateRequest(BaseModel):
     def _coords_both_or_neither(self) -> "RateRequest":
         if (self.latitude is None) != (self.longitude is None):
             raise ValueError("latitude and longitude must be supplied together")
+        if _has_duplicate_ids(self.ratings, "rating_type_id"):
+            raise ValueError("ratings must contain unique rating_type_id values")
         return self
 
 
@@ -347,8 +386,13 @@ class AdminFountainPatch(BaseModel):
     location: Coordinates | None = None
     is_working: bool | None = None
     placement_note: str | None = None
-    comments: str | None = None
+    comments: CommentBody | None = None
     is_hidden: bool | None = None
+
+    @field_validator("comments", mode="before")
+    @classmethod
+    def _normalize_comments(cls, v: object) -> object:
+        return _normalize_optional_text(v)
 
     @model_validator(mode="after")
     def _reject_empty_patch(self) -> "AdminFountainPatch":

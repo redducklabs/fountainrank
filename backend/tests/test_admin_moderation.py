@@ -193,6 +193,26 @@ async def test_non_admin_forbidden_does_not_leak_existence(raw_client):
     assert resp.status_code == 403
 
 
+async def test_admin_fountain_patch_bounds_and_normalizes_comments(raw_client, session, author):
+    fountain = await _create_fountain(session, author)
+    headers = {"X-Dev-User": "admin-sub"}
+
+    normalized = await raw_client.patch(
+        f"/api/v1/admin/fountains/{fountain.id}",
+        headers=headers,
+        json={"comments": "  Updated by moderation.  "},
+    )
+    assert normalized.status_code == 200
+    assert normalized.json()["comments"] == "Updated by moderation."
+
+    oversized = await raw_client.patch(
+        f"/api/v1/admin/fountains/{fountain.id}",
+        headers=headers,
+        json={"comments": "x" * 1001},
+    )
+    assert oversized.status_code == 422
+
+
 async def test_soft_hide_fountain_disappears_from_public_reads_but_admin_can_read(
     raw_client, session, author
 ):
