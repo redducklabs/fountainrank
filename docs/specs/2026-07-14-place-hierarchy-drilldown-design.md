@@ -205,9 +205,9 @@ have no countries at all, which cannot happen in production.
 **The invariant that makes the city index sufficient.** The index enforces URL uniqueness only if
 every canonical city's `parent_id` is the country or a **canonical** region — otherwise two
 canonical cities could map to the same public path via a non-canonical region that shares a
-winning region's slug. **This holds by construction, not by hope:** §5 step 7 sets a city's
+winning region's slug. **This holds by construction, not by hope:** §5 **step 6** sets a city's
 `parent_id` *only* to a canonical region (or the country), and it runs *after* canonical regions
-are chosen in step 6. A city whose `parent_id` is NULL is never canonical (step 8). The scoped
+are chosen in **step 5**. A city whose `parent_id` is NULL is never canonical (step 8). The scoped
 update paths (§5.1) never re-parent cities and never re-select canonical regions, so they cannot
 break it either. This invariant is asserted by a test, not merely documented.
 
@@ -352,7 +352,9 @@ Route shapes use **literal prefixes** (`regions`, `cities`, `resolve`) so that F
 declaration-order sensitivity for dynamic segments cannot bite — `/places/us/cities` can never be
 captured as `{region}`. Tests assert this explicitly.
 
-- `GET /api/v1/places` — canonical **countries**. Unchanged.
+- `GET /api/v1/places` — the **countries**: `place_kind='country'` rows, unchanged behaviour.
+  **Do NOT filter countries on `is_canonical`** — that flag governs region/city URL ownership only,
+  and country rows never carry it (`backend/app/routers/places.py` already documents this trap).
 - `GET /api/v1/places/{country}/regions` — canonical regions, most fountains first. **Empty list
   for a country with no region tier.**
 - `GET /api/v1/places/{country}/cities` — a **2-level** country's canonical cities.
