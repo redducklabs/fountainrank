@@ -48,6 +48,7 @@ export async function generateMetadata({
     title,
     description,
     alternates: { canonical },
+    robots: place.indexable ? undefined : { index: false, follow: true },
     openGraph: { title, description, url: canonical, type: "website" },
   };
 }

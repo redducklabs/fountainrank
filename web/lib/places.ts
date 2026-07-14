@@ -51,7 +51,8 @@ async function getPlaces(
   }
 }
 
-// The canonical, indexable countries (fountain_count >= K), most-populous first.
+// Countries with fountains for the browse hub, most-populous first. Each row carries the backend's
+// `indexable` verdict for sitemap/page consumers.
 export function getCountriesServer(requestId?: string, limit = 200): Promise<PlacesResult> {
   return getPlaces({ limit }, requestId);
 }

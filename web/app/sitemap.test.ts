@@ -63,6 +63,7 @@ const country = (cc: string, name: string) => ({
   subtype: "country",
   place_kind: "country",
   fountain_count: 100,
+  indexable: true,
 });
 const region = (cc: string, slug: string, name: string) => ({
   id: `region-${slug}`,
@@ -73,6 +74,7 @@ const region = (cc: string, slug: string, name: string) => ({
   subtype: "administrative",
   place_kind: "region",
   fountain_count: 80,
+  indexable: true,
 });
 const city = (cc: string, parent: string, slug: string, name: string) => ({
   id: `city-${slug}`,
@@ -83,6 +85,7 @@ const city = (cc: string, parent: string, slug: string, name: string) => ({
   subtype: "locality",
   place_kind: "city",
   fountain_count: 40,
+  indexable: true,
 });
 const chunkParams = (chunk: string) => ({ params: Promise.resolve({ chunk }) });
 
@@ -258,7 +261,11 @@ describe("core chunk (/sitemaps/core.xml)", () => {
 describe("countries chunk (/sitemaps/countries.xml)", () => {
   it("lists /drinking-fountains/<cc> for each ready country", async () => {
     getCountriesServer.mockResolvedValue({
-      data: [country("us", "United States"), country("lu", "Luxembourg")],
+      data: [
+        country("us", "United States"),
+        country("lu", "Luxembourg"),
+        { ...country("de", "Germany"), indexable: false },
+      ],
       status: 200,
     });
 
@@ -267,6 +274,7 @@ describe("countries chunk (/sitemaps/countries.xml)", () => {
     expect(getCountriesServer).toHaveBeenCalledWith(expect.any(String), 1000);
     expect(xml).toContain(`<loc>${APEX}/drinking-fountains/us</loc>`);
     expect(xml).toContain(`<loc>${APEX}/drinking-fountains/lu</loc>`);
+    expect(xml).not.toContain(`<loc>${APEX}/drinking-fountains/de</loc>`);
   });
 
   it("is an empty urlset when no country is ready (>= K)", async () => {
@@ -282,7 +290,7 @@ describe("countries chunk (/sitemaps/countries.xml)", () => {
 describe("regions chunk (/sitemaps/regions.xml)", () => {
   it("lists /drinking-fountains/<cc>/<region> for every ready region", async () => {
     getCountriesServer.mockResolvedValue({
-      data: [country("us", "United States")],
+      data: [country("us", "United States"), { ...country("de", "Germany"), indexable: false }],
       status: 200,
     });
     getCountryRegionsServer.mockResolvedValue({
@@ -293,6 +301,7 @@ describe("regions chunk (/sitemaps/regions.xml)", () => {
     const xml = await (await regionsGET()).text();
 
     expect(getCountryRegionsServer).toHaveBeenCalledWith("us", expect.any(String), 1000);
+    expect(getCountryRegionsServer).not.toHaveBeenCalledWith("de", expect.any(String), 1000);
     expect(xml).toContain(`<loc>${APEX}/drinking-fountains/us/california</loc>`);
   });
 });
@@ -300,7 +309,7 @@ describe("regions chunk (/sitemaps/regions.xml)", () => {
 describe("cities chunk (/sitemaps/cities.xml)", () => {
   it("lists nested city URLs for countries with regions", async () => {
     getCountriesServer.mockResolvedValue({
-      data: [country("us", "United States")],
+      data: [country("us", "United States"), { ...country("de", "Germany"), indexable: false }],
       status: 200,
     });
     getCountryRegionsServer.mockResolvedValue({
@@ -325,6 +334,7 @@ describe("cities chunk (/sitemaps/cities.xml)", () => {
       1000,
     );
     expect(getCountryCitiesServer).not.toHaveBeenCalled();
+    expect(getCountryRegionsServer).not.toHaveBeenCalledWith("de", expect.any(String), 1000);
     expect(xml).toContain(`<loc>${APEX}/drinking-fountains/us/california/san-diego</loc>`);
     expect(xml).toContain(`<loc>${APEX}/drinking-fountains/us/california/los-angeles</loc>`);
   });

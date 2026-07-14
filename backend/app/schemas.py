@@ -446,6 +446,7 @@ class PlaceOut(BaseModel):
     subtype: str
     place_kind: str | None
     fountain_count: int
+    indexable: bool = False
 
 
 class PlaceResolveOut(BaseModel):

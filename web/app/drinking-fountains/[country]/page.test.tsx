@@ -39,6 +39,7 @@ const US = {
   subtype: "country",
   place_kind: "country",
   fountain_count: 1234,
+  indexable: true,
 };
 const CALIFORNIA = {
   id: "00000000-0000-0000-0000-00000000cali",
@@ -49,6 +50,7 @@ const CALIFORNIA = {
   subtype: "administrative",
   place_kind: "region",
   fountain_count: 100,
+  indexable: true,
 };
 const SAN_DIEGO = {
   id: "00000000-0000-0000-0000-00000000sdgo",
@@ -59,6 +61,7 @@ const SAN_DIEGO = {
   subtype: "locality",
   place_kind: "city",
   fountain_count: 42,
+  indexable: true,
 };
 
 afterEach(() => {
@@ -117,6 +120,16 @@ it("generateMetadata: title + canonical for a known country", async () => {
   expect(meta.title).toBe("Drinking fountains in United States");
   expect(meta.alternates?.canonical).toBe("/drinking-fountains/us");
   expect(meta.description).toContain("United States");
+  expect(meta.robots).toBeUndefined();
+});
+
+it("generateMetadata: noindex for a known but not-ready country", async () => {
+  getCountriesServer.mockResolvedValue({ data: [{ ...US, indexable: false }], status: 200 });
+
+  const meta = await generateMetadata({ params: Promise.resolve({ country: "us" }) });
+  expect(meta.title).toBe("Drinking fountains in United States");
+  expect(meta.alternates?.canonical).toBe("/drinking-fountains/us");
+  expect(meta.robots).toEqual({ index: false, follow: true });
 });
 
 it("generateMetadata: noindex for an unknown country", async () => {

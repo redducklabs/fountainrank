@@ -54,6 +54,7 @@ const REGION = {
   subtype: "administrative",
   place_kind: "region",
   fountain_count: 100,
+  indexable: true,
 };
 const PLACE = {
   id: "p1",
@@ -64,6 +65,7 @@ const PLACE = {
   subtype: "locality",
   place_kind: "city",
   fountain_count: 12,
+  indexable: true,
 };
 const FOUNTAIN = {
   id: "f1",

@@ -24,8 +24,9 @@ export async function GET(): Promise<Response> {
     });
   }
 
+  const readyCountries = countries.filter((country) => country.indexable);
   const perCountry = await Promise.all(
-    countries.map(async (country) => {
+    readyCountries.map(async (country) => {
       const { data: regions } = await getCountryRegionsServer(
         country.country_code,
         requestId,
@@ -41,7 +42,7 @@ export async function GET(): Promise<Response> {
     }),
   );
 
-  const regions = perCountry.flat();
+  const regions = perCountry.flat().filter((region) => region.indexable);
   if (regions.length > CHUNK_SOFT_LIMIT) {
     log("warn", "regions sitemap is approaching the 50k-URL limit; split into chunks", {
       urls: regions.length,

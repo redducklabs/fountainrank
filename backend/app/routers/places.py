@@ -54,6 +54,32 @@ def _place_indexable(place: PlaceBoundary, *, scope_ready: bool, settings: Setti
     return place.fountain_count >= settings.seo_place_min_fountains and scope_ready
 
 
+async def _place_out(session: AsyncSession, place: PlaceBoundary, settings: Settings) -> PlaceOut:
+    data = PlaceOut.model_validate(place)
+    data.indexable = _place_indexable(
+        place,
+        scope_ready=await _scope_city_routes_ready(session, place.country_code),
+        settings=settings,
+    )
+    return data
+
+
+async def _places_out(
+    session: AsyncSession, places: list[PlaceBoundary], settings: Settings
+) -> list[PlaceOut]:
+    readiness: dict[str, bool] = {}
+    out: list[PlaceOut] = []
+    for place in places:
+        ready = readiness.get(place.country_code)
+        if ready is None:
+            ready = await _scope_city_routes_ready(session, place.country_code)
+            readiness[place.country_code] = ready
+        data = PlaceOut.model_validate(place)
+        data.indexable = _place_indexable(place, scope_ready=ready, settings=settings)
+        out.append(data)
+    return out
+
+
 def _path_for_region(country_code: str, region_slug: str) -> str:
     return f"/drinking-fountains/{country_code}/{region_slug}"
 
@@ -218,7 +244,7 @@ async def list_places(
             select(PlaceBoundary)
             .where(
                 PlaceBoundary.place_kind == "country",
-                PlaceBoundary.fountain_count >= min_count,
+                PlaceBoundary.fountain_count > 0,
             )
             .order_by(*order_by)
             .limit(limit)
@@ -242,13 +268,6 @@ async def list_places(
                     "rows": 0,
                     "country_found": False,
                 },
-            )
-            return []
-        if not await _scope_city_routes_ready(session, country_code):
-            _set_cache(response, settings)
-            logger.info(
-                "places served",
-                extra={"scope": "cities", "country": country_code, "rows": 0, "scope_ready": False},
             )
             return []
         # Cities ARE is_canonical: canonicalization keeps exactly one row per (country_code, slug)
@@ -280,7 +299,7 @@ async def list_places(
             "offset": offset,
         },
     )
-    return [PlaceOut.model_validate(row) for row in rows]
+    return await _places_out(session, rows, settings)
 
 
 @router.get("/places/{country}/regions", response_model=list[PlaceOut])
@@ -322,7 +341,7 @@ async def list_regions(
             "offset": offset,
         },
     )
-    return [PlaceOut.model_validate(row) for row in rows]
+    return await _places_out(session, rows, settings)
 
 
 @router.get("/places/{country}/cities", response_model=list[PlaceOut])
@@ -336,7 +355,7 @@ async def list_country_cities(
 ) -> list[PlaceOut]:
     cc = country.lower()
     parent_id = await _country_place_id(session, cc)
-    if parent_id is None or not await _scope_city_routes_ready(session, cc):
+    if parent_id is None:
         _set_cache(response, settings)
         return []
     rows = (
@@ -369,7 +388,7 @@ async def list_country_cities(
             "offset": offset,
         },
     )
-    return [PlaceOut.model_validate(row) for row in rows]
+    return await _places_out(session, rows, settings)
 
 
 @router.get("/places/{country}/resolve/{slug}", response_model=PlaceResolveOut)
@@ -393,7 +412,7 @@ async def resolve_level2_place(
         return PlaceResolveOut(
             kind="region",
             canonical_path=_path_for_region(cc, region.slug),
-            place=PlaceOut.model_validate(region),
+            place=await _place_out(session, region, settings),
         )
 
     country_id = await _country_place_id(session, cc)
@@ -408,7 +427,7 @@ async def resolve_level2_place(
             return PlaceResolveOut(
                 kind="city",
                 canonical_path=_path_for_city(cc, city.slug),
-                place=PlaceOut.model_validate(city),
+                place=await _place_out(session, city, settings),
             )
 
     parent = PlaceBoundary.__table__.alias("parent")
@@ -448,7 +467,7 @@ async def resolve_level2_place(
         return PlaceResolveOut(
             kind="city",
             canonical_path=_path_for_city(cc, city.slug, region_slug=region_slug),
-            place=PlaceOut.model_validate(city),
+            place=await _place_out(session, city, settings),
         )
 
     _set_cache(response, settings)
@@ -468,7 +487,7 @@ async def list_region_cities(
 ) -> list[PlaceOut]:
     cc = country.lower()
     region_place = await _canonical_region(session, cc, region.lower())
-    if region_place is None or not await _scope_city_routes_ready(session, cc):
+    if region_place is None:
         _set_cache(response, settings)
         return []
     rows = (
@@ -502,7 +521,7 @@ async def list_region_cities(
             "offset": offset,
         },
     )
-    return [PlaceOut.model_validate(row) for row in rows]
+    return await _places_out(session, rows, settings)
 
 
 async def _place_fountains_response(
@@ -529,7 +548,9 @@ async def _place_fountains_response(
     )
     _set_cache(response, settings)
     return CityFountainsOut(
-        place=PlaceOut.model_validate(place), fountains=fountains, indexable=indexable
+        place=await _place_out(session, place, settings),
+        fountains=fountains,
+        indexable=indexable,
     )
 
 

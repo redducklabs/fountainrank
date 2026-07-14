@@ -1167,8 +1167,7 @@ async def _membership_snapshot(session):
         await session.execute(
             text(
                 """
-                SELECT overture_id, place_kind, parent_id IS NOT NULL AS has_parent,
-                       is_canonical, fountain_count
+                SELECT overture_id, place_kind, parent_id, is_canonical, fountain_count
                 FROM place_boundaries
                 ORDER BY overture_id
                 """
@@ -1179,9 +1178,7 @@ async def _membership_snapshot(session):
         await session.execute(
             text(
                 """
-                SELECT country_place_id IS NOT NULL AS has_country,
-                       region_place_id IS NOT NULL AS has_region,
-                       city_place_id IS NOT NULL AS has_city
+                SELECT id, country_place_id, region_place_id, city_place_id
                 FROM fountains
                 ORDER BY id
                 """

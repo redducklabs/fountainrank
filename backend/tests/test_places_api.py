@@ -133,9 +133,9 @@ async def _set_scope_ready(
 
 
 @pytest.mark.asyncio
-async def test_lists_countries_above_threshold_ordered(session, api):
-    """Countries (is_canonical=false, as the real refresh leaves them) with fountain_count >= K,
-    ordered by count desc then name."""
+async def test_lists_countries_with_fountains_ordered_and_indexable_verdict(session, api):
+    """The hub country list includes every country with fountains (> 0), ordered by count, and
+    carries the server-computed indexable verdict for sitemap/page consumers."""
     await _add_place(
         session,
         overture_id="us",
@@ -156,7 +156,7 @@ async def test_lists_countries_above_threshold_ordered(session, api):
         fountain_count=5,
         is_canonical=False,
     )
-    # Below the gate (K=3) -> excluded.
+    # Below the gate (K=3) but still listed on the always-indexable hub.
     await _add_place(
         session,
         overture_id="mc",
@@ -172,10 +172,12 @@ async def test_lists_countries_above_threshold_ordered(session, api):
     resp = await api.get("/api/v1/places")
     assert resp.status_code == 200
     body = resp.json()
-    assert [p["country_code"] for p in body] == ["us", "lu"]  # count desc; mc gated out
+    assert [p["country_code"] for p in body] == ["us", "lu", "mc"]  # count desc
     assert body[0]["name"] == "United States"
     assert body[0]["fountain_count"] == 10
     assert body[0]["subtype"] == "country"
+    assert body[0]["indexable"] is True
+    assert body[2]["indexable"] is False
 
 
 @pytest.mark.asyncio
@@ -864,9 +866,9 @@ async def test_city_fountains_only_this_city(session, api):
 
 
 @pytest.mark.asyncio
-async def test_cities_hidden_for_not_ready_scope(session, api):
-    """A scope with city_routes_ready=false returns NO cities from /places?country=cc even when a
-    city clears K — the per-scope gate (spec §4.2/§7)."""
+async def test_cities_served_but_not_indexable_for_not_ready_scope(session, api):
+    """A scope with city_routes_ready=false still serves real cities for noindex pages, but the
+    server-computed verdict stays false so sitemaps can exclude them."""
     zy = await _add_place(
         session,
         overture_id="zy",
@@ -892,7 +894,8 @@ async def test_cities_hidden_for_not_ready_scope(session, api):
     await session.commit()
 
     body = (await api.get("/api/v1/places", params={"country": "zy"})).json()
-    assert body == []
+    assert [c["slug"] for c in body] == ["zed-town"]
+    assert body[0]["indexable"] is False
 
 
 @pytest.mark.asyncio
@@ -924,6 +927,7 @@ async def test_cities_shown_for_ready_scope(session, api):
 
     body = (await api.get("/api/v1/places", params={"country": "zy"})).json()
     assert [c["slug"] for c in body] == ["zed-town"]
+    assert body[0]["indexable"] is True
 
 
 @pytest.mark.asyncio

@@ -3,10 +3,16 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 import { cleanup, render, screen } from "@testing-library/react";
 
-const { getCountriesServer, getCountryCitiesServer, getCountryRegionsServer } = vi.hoisted(() => ({
+const {
+  getCountriesServer,
+  getCountryCitiesServer,
+  getCountryRegionsServer,
+  getRegionCitiesServer,
+} = vi.hoisted(() => ({
   getCountriesServer: vi.fn(),
   getCountryCitiesServer: vi.fn(),
   getCountryRegionsServer: vi.fn(),
+  getRegionCitiesServer: vi.fn(),
 }));
 
 vi.mock("../../lib/places", async (importOriginal) => {
@@ -16,6 +22,7 @@ vi.mock("../../lib/places", async (importOriginal) => {
     getCountriesServer,
     getCountryCitiesServer,
     getCountryRegionsServer,
+    getRegionCitiesServer,
   };
 });
 vi.mock("next/link", () => ({
@@ -37,6 +44,7 @@ const US = {
   subtype: "country",
   place_kind: "country",
   fountain_count: 100,
+  indexable: true,
 };
 const CA = {
   id: "r1",
@@ -47,6 +55,7 @@ const CA = {
   subtype: "administrative",
   place_kind: "region",
   fountain_count: 90,
+  indexable: true,
 };
 const SD = {
   id: "c1",
@@ -57,6 +66,7 @@ const SD = {
   subtype: "locality",
   place_kind: "city",
   fountain_count: 40,
+  indexable: true,
 };
 
 afterEach(() => {
@@ -67,7 +77,8 @@ afterEach(() => {
 it("renders the heading, a map deep-link, and top cities of the busiest country", async () => {
   getCountriesServer.mockResolvedValue({ data: [US], status: 200 });
   getCountryRegionsServer.mockResolvedValue({ data: [CA], status: 200 });
-  getCountryCitiesServer.mockResolvedValue({ data: [SD], status: 200 });
+  getRegionCitiesServer.mockResolvedValue({ data: [SD], status: 200 });
+  getCountryCitiesServer.mockResolvedValue({ data: [], status: 200 });
 
   render(await NearMePage());
 
@@ -78,6 +89,23 @@ it("renders the heading, a map deep-link, and top cities of the busiest country"
   // Top cities of the most-populous country, linked to their city pages.
   const city = await screen.findByRole("link", { name: "San Diego" });
   expect(city.getAttribute("href")).toBe("/drinking-fountains/us/california/san-diego");
+  expect(getCountryCitiesServer).not.toHaveBeenCalled();
+  expect(getRegionCitiesServer).toHaveBeenCalledWith("us", "california", expect.any(String));
+});
+
+it("uses the two-level country city endpoint only when the country has no regions", async () => {
+  getCountriesServer.mockResolvedValue({ data: [US], status: 200 });
+  getCountryRegionsServer.mockResolvedValue({ data: [], status: 200 });
+  getCountryCitiesServer.mockResolvedValue({
+    data: [{ ...SD, parent_id: US.id }],
+    status: 200,
+  });
+
+  render(await NearMePage());
+
+  const city = await screen.findByRole("link", { name: "San Diego" });
+  expect(city.getAttribute("href")).toBe("/drinking-fountains/us/san-diego");
+  expect(getRegionCitiesServer).not.toHaveBeenCalled();
 });
 
 it("still renders (map link, no crash) when no places are loaded yet", async () => {
@@ -89,6 +117,7 @@ it("still renders (map link, no crash) when no places are loaded yet", async () 
   // No country loaded -> we never ask for its cities.
   expect(getCountryRegionsServer).not.toHaveBeenCalled();
   expect(getCountryCitiesServer).not.toHaveBeenCalled();
+  expect(getRegionCitiesServer).not.toHaveBeenCalled();
 });
 
 it("generateMetadata: title + canonical, always indexable (static hub page)", async () => {

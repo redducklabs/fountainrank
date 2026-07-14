@@ -1590,6 +1590,11 @@ export interface components {
             place_kind: string | null;
             /** Fountain Count */
             fountain_count: number;
+            /**
+             * Indexable
+             * @default false
+             */
+            indexable: boolean;
         };
         /** PlaceResolveOut */
         PlaceResolveOut: {

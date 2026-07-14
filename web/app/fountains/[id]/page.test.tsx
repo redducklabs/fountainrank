@@ -128,6 +128,7 @@ const placeIn = (
           subtype: "locality",
           place_kind: "city",
           fountain_count: 5,
+          indexable: true,
           ...city,
         }
       : null,
@@ -138,6 +139,7 @@ const placeIn = (
           subtype: "administrative",
           place_kind: "region",
           fountain_count: 50,
+          indexable: true,
           ...region,
         }
       : null,

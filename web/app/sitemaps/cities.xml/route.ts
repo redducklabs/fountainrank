@@ -32,8 +32,9 @@ export async function GET(): Promise<Response> {
     });
   }
 
+  const readyCountries = countries.filter((country) => country.indexable);
   const perCountryUrls = await Promise.all(
-    countries.map(async (country) => {
+    readyCountries.map(async (country) => {
       const { data: regions } = await getCountryRegionsServer(
         country.country_code,
         requestId,
@@ -61,11 +62,13 @@ export async function GET(): Promise<Response> {
                 cap: PER_COUNTRY_CAP,
               });
             }
-            return cities.map((c) => ({
-              loc: `${SITE_URL}${cityPath(c.country_code, c.slug, region.slug)}`,
-              changefreq: "weekly" as const,
-              priority: 0.6,
-            }));
+            return cities
+              .filter((c) => c.indexable)
+              .map((c) => ({
+                loc: `${SITE_URL}${cityPath(c.country_code, c.slug, region.slug)}`,
+                changefreq: "weekly" as const,
+                priority: 0.6,
+              }));
           }),
         );
         return perRegion.flat();
@@ -82,11 +85,13 @@ export async function GET(): Promise<Response> {
           cap: PER_COUNTRY_CAP,
         });
       }
-      return cities.map((c) => ({
-        loc: `${SITE_URL}${cityPath(c.country_code, c.slug)}`,
-        changefreq: "weekly" as const,
-        priority: 0.6,
-      }));
+      return cities
+        .filter((c) => c.indexable)
+        .map((c) => ({
+          loc: `${SITE_URL}${cityPath(c.country_code, c.slug)}`,
+          changefreq: "weekly" as const,
+          priority: 0.6,
+        }));
     }),
   );
 

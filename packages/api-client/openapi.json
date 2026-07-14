@@ -6981,6 +6981,11 @@
           "fountain_count": {
             "type": "integer",
             "title": "Fountain Count"
+          },
+          "indexable": {
+            "type": "boolean",
+            "title": "Indexable",
+            "default": false
           }
         },
         "type": "object",
