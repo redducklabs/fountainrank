@@ -1859,6 +1859,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description Contribution write limit reached. */
+            429: {
+                headers: {
+                    /** @description Seconds until the rolling-window budget admits another attempt. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     fountains_in_bbox_api_v1_fountains_bbox_get: {
@@ -2085,6 +2094,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description Contribution write limit reached. */
+            429: {
+                headers: {
+                    /** @description Seconds until the rolling-window budget admits another attempt. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     submit_attributes_api_v1_fountains__fountain_id__attributes_post: {
@@ -2134,6 +2152,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description Contribution write limit reached. */
+            429: {
+                headers: {
+                    /** @description Seconds until the rolling-window budget admits another attempt. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     submit_condition_api_v1_fountains__fountain_id__conditions_post: {
@@ -2182,6 +2209,15 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+            /** @description Contribution write limit reached. */
+            429: {
+                headers: {
+                    /** @description Seconds until the rolling-window budget admits another attempt. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -2262,6 +2298,15 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+            /** @description Contribution write limit reached. */
+            429: {
+                headers: {
+                    /** @description Seconds until the rolling-window budget admits another attempt. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
