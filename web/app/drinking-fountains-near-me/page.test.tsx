@@ -3,14 +3,20 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 import { cleanup, render, screen } from "@testing-library/react";
 
-const { getCountriesServer, getCountryCitiesServer } = vi.hoisted(() => ({
+const { getCountriesServer, getCountryCitiesServer, getCountryRegionsServer } = vi.hoisted(() => ({
   getCountriesServer: vi.fn(),
   getCountryCitiesServer: vi.fn(),
+  getCountryRegionsServer: vi.fn(),
 }));
 
 vi.mock("../../lib/places", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../lib/places")>();
-  return { ...actual, getCountriesServer, getCountryCitiesServer };
+  return {
+    ...actual,
+    getCountriesServer,
+    getCountryCitiesServer,
+    getCountryRegionsServer,
+  };
 });
 vi.mock("next/link", () => ({
   default: ({ children, href }: { children: ReactNode; href: string }) => (
@@ -24,18 +30,32 @@ import NearMePage, { generateMetadata } from "./page";
 
 const US = {
   id: "1",
+  parent_id: null,
   country_code: "us",
   slug: "united-states",
   name: "United States",
   subtype: "country",
+  place_kind: "country",
   fountain_count: 100,
+};
+const CA = {
+  id: "r1",
+  parent_id: "1",
+  country_code: "us",
+  slug: "california",
+  name: "California",
+  subtype: "administrative",
+  place_kind: "region",
+  fountain_count: 90,
 };
 const SD = {
   id: "c1",
+  parent_id: "r1",
   country_code: "us",
   slug: "san-diego",
   name: "San Diego",
   subtype: "locality",
+  place_kind: "city",
   fountain_count: 40,
 };
 
@@ -46,6 +66,7 @@ afterEach(() => {
 
 it("renders the heading, a map deep-link, and top cities of the busiest country", async () => {
   getCountriesServer.mockResolvedValue({ data: [US], status: 200 });
+  getCountryRegionsServer.mockResolvedValue({ data: [CA], status: 200 });
   getCountryCitiesServer.mockResolvedValue({ data: [SD], status: 200 });
 
   render(await NearMePage());
@@ -56,7 +77,7 @@ it("renders the heading, a map deep-link, and top cities of the busiest country"
   expect(mapLink.getAttribute("href")).toBe("/");
   // Top cities of the most-populous country, linked to their city pages.
   const city = await screen.findByRole("link", { name: "San Diego" });
-  expect(city.getAttribute("href")).toBe("/drinking-fountains/us/san-diego");
+  expect(city.getAttribute("href")).toBe("/drinking-fountains/us/california/san-diego");
 });
 
 it("still renders (map link, no crash) when no places are loaded yet", async () => {
@@ -66,6 +87,7 @@ it("still renders (map link, no crash) when no places are loaded yet", async () 
   expect((await screen.findByRole("heading", { level: 1 })).textContent).toMatch(/near me/i);
   expect((await screen.findByRole("link", { name: /map/i })).getAttribute("href")).toBe("/");
   // No country loaded -> we never ask for its cities.
+  expect(getCountryRegionsServer).not.toHaveBeenCalled();
   expect(getCountryCitiesServer).not.toHaveBeenCalled();
 });
 

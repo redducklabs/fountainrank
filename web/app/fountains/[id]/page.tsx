@@ -163,6 +163,7 @@ export function buildFountainBreadcrumbStructuredData({
   place: PublicFountainPlace;
 }) {
   const city = place.city;
+  const region = place.region;
   const itemListElement = [
     {
       "@type": "ListItem",
@@ -176,7 +177,7 @@ export function buildFountainBreadcrumbStructuredData({
       "@type": "ListItem",
       position: 2,
       name: `Drinking fountains in ${city.name}`,
-      item: `${SITE_URL}${cityPath(city.country_code, city.slug)}`,
+      item: `${SITE_URL}${cityPath(city.country_code, city.slug, region?.slug)}`,
     });
   }
   itemListElement.push({
@@ -275,7 +276,7 @@ export default async function FountainPage({ params }: { params: Promise<{ id: s
   const { data: placeData } = await loadFountainPlace(id);
   const locationLabel = cityLabel(placeData?.city?.name);
   const cityHref = placeData?.city
-    ? cityPath(placeData.city.country_code, placeData.city.slug)
+    ? cityPath(placeData.city.country_code, placeData.city.slug, placeData.region?.slug)
     : undefined;
   const structuredJson =
     placeData?.indexable && !adminRes

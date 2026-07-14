@@ -439,6 +439,7 @@ class PlaceOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
+    parent_id: uuid.UUID | None = None
     country_code: str
     slug: str
     name: str

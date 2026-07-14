@@ -3,13 +3,19 @@ import Link from "next/link";
 import { notFound, permanentRedirect } from "next/navigation";
 import { cache } from "react";
 
-import { FountainList } from "../../../../components/fountain/FountainList";
-import { SiteHeader } from "../../../../components/SiteHeader";
-import { cityPath, countryPath, getCityFountainsServer } from "../../../../lib/places";
-import type { CityFountainsOut } from "../../../../lib/places";
-import { log } from "../../../../lib/server/log";
-import { jsonLdScript } from "../../../../lib/seo/jsonld";
-import { SITE_URL } from "../../../../lib/seo/site";
+import { FountainList } from "../../../../../components/fountain/FountainList";
+import { SiteHeader } from "../../../../../components/SiteHeader";
+import {
+  cityPath,
+  countryPath,
+  getNestedCityFountainsServer,
+  regionPath,
+  resolvePlaceServer,
+} from "../../../../../lib/places";
+import type { CityFountainsOut, PlaceOut } from "../../../../../lib/places";
+import { log } from "../../../../../lib/server/log";
+import { jsonLdScript } from "../../../../../lib/seo/jsonld";
+import { SITE_URL } from "../../../../../lib/seo/site";
 
 export const dynamic = "force-dynamic";
 const shell = "mx-auto min-h-dvh max-w-2xl bg-surface-raised px-6 py-10";
@@ -20,10 +26,27 @@ const shell = "mx-auto min-h-dvh max-w-2xl bg-surface-raised px-6 py-10";
 const loadCity = cache(
   (
     country: string,
+    region: string,
     city: string,
-  ): Promise<{ data: CityFountainsOut | undefined; status: number }> => {
+  ): Promise<{
+    data: CityFountainsOut | undefined;
+    region: PlaceOut | undefined;
+    status: number;
+  }> => {
     const requestId = crypto.randomUUID();
-    return getCityFountainsServer(country.toLowerCase(), city.toLowerCase(), requestId);
+    return Promise.all([
+      getNestedCityFountainsServer(
+        country.toLowerCase(),
+        region.toLowerCase(),
+        city.toLowerCase(),
+        requestId,
+      ),
+      resolvePlaceServer(country.toLowerCase(), region.toLowerCase(), requestId),
+    ]).then(([cityRes, regionRes]) => ({
+      data: cityRes.data,
+      region: regionRes.data?.kind === "region" ? regionRes.data.place : undefined,
+      status: cityRes.status,
+    }));
   },
 );
 
@@ -31,7 +54,10 @@ function cityDescription(place: CityFountainsOut["place"]): string {
   return `Find ${place.fountain_count.toLocaleString()} public drinking fountains and water bottle refill stations in ${place.name}. Compare community ratings, working status, and locations before opening directions on FountainRank.`;
 }
 
-export function buildCityBreadcrumbStructuredData(place: CityFountainsOut["place"]) {
+export function buildCityBreadcrumbStructuredData(
+  place: CityFountainsOut["place"],
+  region: PlaceOut,
+) {
   return {
     "@context": "https://schema.org",
     "@type": "BreadcrumbList",
@@ -51,8 +77,14 @@ export function buildCityBreadcrumbStructuredData(place: CityFountainsOut["place
       {
         "@type": "ListItem",
         position: 3,
+        name: `Drinking fountains in ${region.name}`,
+        item: `${SITE_URL}${regionPath(region.country_code, region.slug)}`,
+      },
+      {
+        "@type": "ListItem",
+        position: 4,
         name: `Drinking fountains in ${place.name}`,
-        item: `${SITE_URL}${cityPath(place.country_code, place.slug)}`,
+        item: `${SITE_URL}${cityPath(place.country_code, place.slug, region.slug)}`,
       },
     ],
   };
@@ -61,15 +93,15 @@ export function buildCityBreadcrumbStructuredData(place: CityFountainsOut["place
 export async function generateMetadata({
   params,
 }: {
-  params: Promise<{ country: string; city: string }>;
+  params: Promise<{ country: string; place: string; city: string }>;
 }): Promise<Metadata> {
-  const { country, city } = await params;
-  const { data } = await loadCity(country, city);
-  if (!data) return { robots: { index: false, follow: false } };
+  const { country, place: region, city } = await params;
+  const { data, region: regionPlace } = await loadCity(country, region, city);
+  if (!data || !regionPlace) return { robots: { index: false, follow: false } };
   const { place, indexable } = data;
   const title = `Drinking fountains in ${place.name}`;
   const description = cityDescription(place);
-  const canonical = cityPath(place.country_code, place.slug);
+  const canonical = cityPath(place.country_code, place.slug, regionPlace.slug);
   return {
     title,
     description,
@@ -84,13 +116,14 @@ export async function generateMetadata({
 export default async function CityPage({
   params,
 }: {
-  params: Promise<{ country: string; city: string }>;
+  params: Promise<{ country: string; place: string; city: string }>;
 }) {
-  const { country, city } = await params;
-  const { data, status } = await loadCity(country, city);
+  const { country, place: region, city } = await params;
+  const { data, region: regionPlace, status } = await loadCity(country, region, city);
   if (status === 404) {
     log("info", "city page not found", {
       country: country.toLowerCase(),
+      region: region.toLowerCase(),
       city: city.toLowerCase(),
     });
     notFound();
@@ -98,6 +131,7 @@ export default async function CityPage({
   if (!data) {
     log("error", "failed to load city", {
       country: country.toLowerCase(),
+      region: region.toLowerCase(),
       city: city.toLowerCase(),
       status,
     });
@@ -116,12 +150,22 @@ export default async function CityPage({
   }
 
   const { place, fountains } = data;
+  if (!regionPlace) {
+    log("error", "nested city missing parent region", {
+      country: country.toLowerCase(),
+      region: region.toLowerCase(),
+      city: city.toLowerCase(),
+    });
+    notFound();
+  }
   // Canonical URL: 301 any non-canonical form (e.g. uppercase segments) to the lowercase country +
   // the sticky canonical slug, so search engines see one URL per city.
-  const canonical = cityPath(place.country_code, place.slug);
-  if (`/drinking-fountains/${country}/${city}` !== canonical) permanentRedirect(canonical);
+  const canonical = cityPath(place.country_code, place.slug, regionPlace.slug);
+  if (`/drinking-fountains/${country}/${region}/${city}` !== canonical) {
+    permanentRedirect(canonical);
+  }
   const structuredJson = data.indexable
-    ? jsonLdScript(buildCityBreadcrumbStructuredData(place))
+    ? jsonLdScript(buildCityBreadcrumbStructuredData(place, regionPlace))
     : null;
 
   return (
@@ -136,8 +180,11 @@ export default async function CityPage({
         />
       ) : null}
       <main className={shell}>
-        <Link href={countryPath(place.country_code)} className="text-sm text-brand-ink underline">
-          ← All of {place.country_code.toUpperCase()}
+        <Link
+          href={regionPath(regionPlace.country_code, regionPlace.slug)}
+          className="text-sm text-brand-ink underline"
+        >
+          ← All of {regionPlace.name}
         </Link>
         <h1 className="mt-6 text-2xl font-black text-brand-ink">
           Drinking fountains in {place.name}

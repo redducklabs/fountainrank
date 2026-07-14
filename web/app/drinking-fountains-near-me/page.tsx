@@ -7,6 +7,7 @@ import {
   countryPath,
   getCountriesServer,
   getCountryCitiesServer,
+  getCountryRegionsServer,
   NEAR_ME_PATH,
 } from "../../lib/places";
 
@@ -33,9 +34,20 @@ export function generateMetadata(): Metadata {
 export default async function NearMePage() {
   const { data: countries } = await getCountriesServer(crypto.randomUUID());
   const topCountry = countries[0];
-  const { data: cities } = topCountry
-    ? await getCountryCitiesServer(topCountry.country_code, crypto.randomUUID())
-    : { data: [] };
+  const [{ data: regions }, { data: cities }] = topCountry
+    ? await Promise.all([
+        getCountryRegionsServer(topCountry.country_code, crypto.randomUUID(), 1000),
+        getCountryCitiesServer(topCountry.country_code, crypto.randomUUID()),
+      ])
+    : [{ data: [] }, { data: [] }];
+  const regionById = new Map(regions.map((region) => [region.id, region.slug]));
+
+  const cityHref = (city: (typeof cities)[number]) =>
+    cityPath(
+      city.country_code,
+      city.slug,
+      city.parent_id ? (regionById.get(city.parent_id) ?? null) : null,
+    );
 
   return (
     <>
@@ -59,10 +71,7 @@ export default async function NearMePage() {
             <ul className="mt-3 divide-y divide-border">
               {cities.map((city) => (
                 <li key={city.id} className="flex items-center justify-between py-2">
-                  <Link
-                    href={cityPath(city.country_code, city.slug)}
-                    className="text-brand-ink underline"
-                  >
+                  <Link href={cityHref(city)} className="text-brand-ink underline">
                     {city.name}
                   </Link>
                   <span className="text-sm text-muted">

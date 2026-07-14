@@ -3857,6 +3857,430 @@
         }
       }
     },
+    "/api/v1/places/{country}/regions": {
+      "get": {
+        "tags": [
+          "places"
+        ],
+        "summary": "List Regions",
+        "operationId": "list_regions_api_v1_places__country__regions_get",
+        "parameters": [
+          {
+            "name": "country",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Country"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 200,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PlaceOut"
+                  },
+                  "title": "Response List Regions Api V1 Places  Country  Regions Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/places/{country}/cities": {
+      "get": {
+        "tags": [
+          "places"
+        ],
+        "summary": "List Country Cities",
+        "operationId": "list_country_cities_api_v1_places__country__cities_get",
+        "parameters": [
+          {
+            "name": "country",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Country"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 200,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PlaceOut"
+                  },
+                  "title": "Response List Country Cities Api V1 Places  Country  Cities Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/places/{country}/resolve/{slug}": {
+      "get": {
+        "tags": [
+          "places"
+        ],
+        "summary": "Resolve Level2 Place",
+        "operationId": "resolve_level2_place_api_v1_places__country__resolve__slug__get",
+        "parameters": [
+          {
+            "name": "country",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Country"
+            }
+          },
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Slug"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaceResolveOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/places/{country}/regions/{region}/cities": {
+      "get": {
+        "tags": [
+          "places"
+        ],
+        "summary": "List Region Cities",
+        "operationId": "list_region_cities_api_v1_places__country__regions__region__cities_get",
+        "parameters": [
+          {
+            "name": "country",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Country"
+            }
+          },
+          {
+            "name": "region",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Region"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 200,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PlaceOut"
+                  },
+                  "title": "Response List Region Cities Api V1 Places  Country  Regions  Region  Cities Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/places/{country}/regions/{region}/fountains": {
+      "get": {
+        "tags": [
+          "places"
+        ],
+        "summary": "Region Fountains",
+        "operationId": "region_fountains_api_v1_places__country__regions__region__fountains_get",
+        "parameters": [
+          {
+            "name": "country",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Country"
+            }
+          },
+          {
+            "name": "region",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Region"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CityFountainsOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/places/{country}/regions/{region}/cities/{city}/fountains": {
+      "get": {
+        "tags": [
+          "places"
+        ],
+        "summary": "Nested City Fountains",
+        "operationId": "nested_city_fountains_api_v1_places__country__regions__region__cities__city__fountains_get",
+        "parameters": [
+          {
+            "name": "country",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Country"
+            }
+          },
+          {
+            "name": "region",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Region"
+            }
+          },
+          {
+            "name": "city",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "City"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CityFountainsOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/places/{country}/{city}/fountains": {
       "get": {
         "tags": [
@@ -6113,6 +6537,16 @@
               }
             ]
           },
+          "region": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlaceOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "country": {
             "anyOf": [
               {
@@ -6132,6 +6566,7 @@
         "required": [
           "fountain_id",
           "city",
+          "region",
           "country",
           "indexable"
         ],
@@ -6504,6 +6939,18 @@
             "format": "uuid",
             "title": "Id"
           },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
           "country_code": {
             "type": "string",
             "title": "Country Code"
@@ -6520,6 +6967,17 @@
             "type": "string",
             "title": "Subtype"
           },
+          "place_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Place Kind"
+          },
           "fountain_count": {
             "type": "integer",
             "title": "Fountain Count"
@@ -6532,10 +6990,37 @@
           "slug",
           "name",
           "subtype",
+          "place_kind",
           "fountain_count"
         ],
         "title": "PlaceOut",
         "description": "A crawlable place (country or city) for the public SEO endpoints (#127, spec \u00a75).\n\nSerialized from ``PlaceBoundary`` (precomputed membership; never a live ST_Covers). The\npublic URL segment is ``country_code`` for a country (ISO-3166-1 alpha-2, lowercased) and\n``slug`` for a city \u2014 both are carried so the client can build either route. ``fountain_count``\nis the denormalized NON-HIDDEN count that drives the \"N fountains\" copy and the >= K gate."
+      },
+      "PlaceResolveOut": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "region",
+              "city"
+            ],
+            "title": "Kind"
+          },
+          "canonical_path": {
+            "type": "string",
+            "title": "Canonical Path"
+          },
+          "place": {
+            "$ref": "#/components/schemas/PlaceOut"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "canonical_path",
+          "place"
+        ],
+        "title": "PlaceResolveOut"
       },
       "RateRequest": {
         "properties": {
@@ -6642,13 +7127,18 @@
           "sf_to_nyc_m": {
             "type": "number",
             "title": "Sf To Nyc M"
+          },
+          "schema_revision": {
+            "type": "string",
+            "title": "Schema Revision"
           }
         },
         "type": "object",
         "required": [
           "status",
           "postgis_version",
-          "sf_to_nyc_m"
+          "sf_to_nyc_m",
+          "schema_revision"
         ],
         "title": "ReadyzResponse"
       },
