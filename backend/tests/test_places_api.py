@@ -422,10 +422,14 @@ async def test_limit_bounds_are_enforced(api):
 
 @pytest.mark.asyncio
 async def test_real_refresh_makes_country_and_city_listable(session, api):
-    """End-to-end against the REAL Slice 1 contract: seed a country + city + fountains, run the
-    actual refresh_all_memberships (which leaves the country is_canonical=false and marks the city
-    canonical), and prove /api/v1/places returns BOTH. This is the guard for the class of bug where
-    the endpoint filtered countries on is_canonical and returned [] for a normally-loaded scope."""
+    """End-to-end against the two-level Slice 1 contract: seed a country + city + fountains, run
+    the actual refresh_all_memberships (which leaves the country is_canonical=false and marks the
+    city canonical), and prove /api/v1/places returns BOTH. This is the guard for the class of bug
+    where the endpoint filtered countries on is_canonical and returned [] for a normally-loaded
+    scope."""
+    await session.execute(
+        text("UPDATE place_scope_config SET eligible_region_subtypes = ARRAY[]::text[]")
+    )
     await _add_place(
         session,
         overture_id="us",

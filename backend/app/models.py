@@ -145,6 +145,7 @@ class Fountain(Base):
         # Precomputed-membership read path (#127 Slice 1d): the public city page is
         # `WHERE city_place_id = <canonical place>`, so both membership FKs are btree-indexed.
         Index("ix_fountains_country_place_id", "country_place_id"),
+        Index("ix_fountains_region_place_id", "region_place_id"),
         Index("ix_fountains_city_place_id", "city_place_id"),
     )
 
@@ -189,6 +190,11 @@ class Fountain(Base):
     country_place_id: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True),
         ForeignKey("place_boundaries.id", ondelete="SET NULL", name="fk_fountains_country_place"),
+        nullable=True,
+    )
+    region_place_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("place_boundaries.id", ondelete="SET NULL", name="fk_fountains_region_place"),
         nullable=True,
     )
     city_place_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -867,16 +873,24 @@ class PlaceBoundary(Base):
 
     __tablename__ = "place_boundaries"
     __table_args__ = (
-        # Public-namespace uniqueness: the public URL /drinking-fountains/[country]/[city]
-        # omits admin_level/subtype, so exactly ONE canonical place may own a
-        # (country_code, slug). Non-canonical candidates are retained (spec §11.5), so this is
-        # a PARTIAL unique index (WHERE is_canonical), not a plain unique constraint.
+        # Public-namespace uniqueness v2: regions own /[country]/[region] by country slug, while
+        # cities own /[country]/[city] in 2-level countries or /[country]/[region]/[city] in
+        # region-tier countries. Countries are never canonical; is_canonical governs only region
+        # and city URL ownership.
         Index(
-            "uq_place_boundaries_country_slug_canonical",
+            "uq_place_boundaries_region_canonical",
             "country_code",
             "slug",
             unique=True,
-            postgresql_where=text("is_canonical"),
+            postgresql_where=text("is_canonical AND place_kind = 'region'"),
+        ),
+        Index(
+            "uq_place_boundaries_city_canonical",
+            "country_code",
+            "parent_id",
+            "slug",
+            unique=True,
+            postgresql_where=text("is_canonical AND place_kind = 'city'"),
         ),
     )
 
@@ -891,6 +905,9 @@ class PlaceBoundary(Base):
     # Overture `class`; the loader keeps only `class='land'` (the maritime twin is excluded).
     # `class` is a Python keyword, so the ORM attribute is `place_class`; the DB column is `class`.
     place_class: Mapped[str] = mapped_column("class", String, nullable=False)
+    # Derived URL tier: country | region | city | NULL. Computed by app.membership from subtype +
+    # per-country scope config, and stored so routing/indexes do not re-derive the ladder.
+    place_kind: Mapped[str | None] = mapped_column(String, nullable=True)
     # Overture-normalized level (country=0, region=1, county=2, NULL at the locality tier) —
     # informational, NOT the city selector (spec §11.5). Hence nullable.
     admin_level: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
@@ -977,11 +994,21 @@ class PlaceScopeConfig(Base):
     """
 
     __tablename__ = "place_scope_config"
+    __table_args__ = (
+        CheckConstraint(
+            "NOT (eligible_city_subtypes && eligible_region_subtypes)",
+            name="tiers_disjoint",
+        ),
+    )
 
     # ISO 3166-1 alpha-2, lowercased to match place_boundaries.country_code / the URL segment.
     country_code: Mapped[str] = mapped_column(String, primary_key=True)
     # Overture subtypes that count as a city here, e.g. {locality, localadmin} (+county for LU).
     eligible_city_subtypes: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False)
+    # Overture subtypes that count as a URL region tier. Empty array => no region tier.
+    eligible_region_subtypes: Mapped[list[str]] = mapped_column(
+        ARRAY(String), nullable=False, server_default=text("'{region}'")
+    )
     # Slice 1e per-scope readiness gate (spec docs/specs/2026-07-04-seo-coverage-gate-design.md):
     # a scope's CITY routes (cities sitemap chunk + each city page's indexability) are live only
     # when this is true. Owner signoff after reading the coverage report; set via a reviewed

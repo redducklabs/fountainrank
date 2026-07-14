@@ -216,7 +216,7 @@ async def admin_delete_fountain(
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="fountain not found")
     # Capture the deleted fountain's places so their fountain_count (and canonical winner) can be
     # corrected after the row is gone (#127 Slice 1d).
-    old_place_ids = [fountain.country_place_id, fountain.city_place_id]
+    old_place_ids = [fountain.country_place_id, fountain.region_place_id, fountain.city_place_id]
     # Enqueue durable storage_cleanup rows for every photo's Spaces objects BEFORE the delete
     # cascades the fountain_photos ROWS away (fk_fountain_photos_fountain is ON DELETE CASCADE) —
     # otherwise the objects are orphaned in the private bucket with no ledger row for the sweep

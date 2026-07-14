@@ -12,6 +12,7 @@ the eligible sets, and a fake country ``zz`` exercises the code default.
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -27,6 +28,8 @@ from app.membership import (
     recompute_fountain_membership,
     refresh_all_memberships,
 )
+
+BACKEND = Path(__file__).resolve().parents[1]
 
 _ADMIN_HEADERS = {"X-Dev-User": "admin-sub"}
 
@@ -45,6 +48,15 @@ async def admin_client(_admin_settings):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
+
+
+@pytest.fixture(autouse=True)
+async def _two_level_scope_default(session):
+    """Most legacy membership tests target the pre-existing two-level city ladder. Region-tier
+    behavior is enabled explicitly in the new hierarchy tests below."""
+    await session.execute(
+        text("UPDATE place_scope_config SET eligible_region_subtypes = ARRAY[]::text[]")
+    )
 
 
 def _sq(x0: float, y0: float, x1: float, y1: float) -> str:
@@ -110,10 +122,23 @@ async def _add_fountain(session, lat: float, lng: float, *, hidden: bool = False
 async def _membership(session, fid):
     return (
         await session.execute(
-            text("SELECT country_place_id, city_place_id FROM fountains WHERE id = :fid"),
+            text(
+                "SELECT country_place_id, region_place_id, city_place_id "
+                "FROM fountains WHERE id = :fid"
+            ),
             {"fid": fid},
         )
     ).one()
+
+
+async def _enable_region_tier(session, country_code: str = "us"):
+    await session.execute(
+        text(
+            "UPDATE place_scope_config SET eligible_region_subtypes = ARRAY['region']::text[] "
+            "WHERE country_code = :cc"
+        ),
+        {"cc": country_code},
+    )
 
 
 async def _count(session, place_id) -> int:
@@ -338,8 +363,17 @@ async def test_unmatched_country_only_and_no_country(session):
 
 @pytest.mark.asyncio
 async def test_default_eligible_for_unconfigured_country(session):
-    """A country with NO place_scope_config row falls back to the code default {locality,
-    localadmin} — a county in such a country is NOT a city."""
+    """An explicit two-level scope still uses the default city ladder: locality/localadmin are
+    cities and counties are not."""
+    await session.execute(
+        text(
+            """
+            INSERT INTO place_scope_config
+                (country_code, eligible_city_subtypes, eligible_region_subtypes, city_routes_ready)
+            VALUES ('zz', ARRAY['locality', 'localadmin']::text[], ARRAY[]::text[], false)
+            """
+        )
+    )
     await _add_boundary(
         session,
         overture_id="zz",
@@ -471,7 +505,7 @@ async def test_parent_id_containment(session):
     await refresh_all_memberships(session)
 
     assert await _parent(session, us) is None
-    assert await _parent(session, county) == us
+    assert await _parent(session, county) is None
     assert await _parent(session, city) == us
 
 
@@ -526,7 +560,7 @@ async def test_single_fountain_recompute_matches_and_increments(session):
         slug="san-diego",
         wkt=_sq(1, 1, 2, 2),
     )
-    await rebuild_place_boundary_cells(session)  # boundary-load equivalent: cells exist before adds
+    await refresh_all_memberships(session)  # boundary-load equivalent before adds
     f1 = await _add_fountain(session, lat=1.5, lng=1.5)
     await recompute_fountain_membership(session, f1)
     m1 = await _membership(session, f1)
@@ -614,6 +648,7 @@ async def test_cells_subdivide_large_polygon_and_assign(session):
     assert total_cells == per_place  # this is the only boundary, so its cells are all of them
 
     fid = await _add_fountain(session, lat=0.0, lng=0.0)  # centre of the circle
+    await refresh_all_memberships(session, rebuild_cells=False)
     await recompute_fountain_membership(session, fid)
     m = await _membership(session, fid)
     assert m.country_place_id == place_id  # PIP via the subdivided cells still finds the country
@@ -644,7 +679,7 @@ async def test_add_fountain_via_api_assigns_membership(session, client):
         slug="san-diego",
         wkt=_sq(1, 1, 2, 2),
     )
-    await rebuild_place_boundary_cells(session)  # boundary-load equivalent: cells exist before adds
+    await refresh_all_memberships(session)  # boundary-load equivalent before adds
     await session.commit()  # the API request runs in its own session — commit so it sees these
 
     resp = await client.post(
@@ -934,7 +969,7 @@ async def test_canonical_reselects_on_count_change(session):
         slug="springfield",
         wkt=_sq(10, 10, 11, 11),
     )
-    await rebuild_place_boundary_cells(session)  # boundary-load equivalent: cells exist before adds
+    await refresh_all_memberships(session)  # boundary-load equivalent before adds
     fa = await _add_fountain(session, lat=1.5, lng=1.5)  # Springfield A
     await recompute_fountain_membership(session, fa)
     assert await _is_canonical(session, spring_a) is True  # A: 1, B: 0
@@ -948,3 +983,274 @@ async def test_canonical_reselects_on_count_change(session):
     await recompute_fountain_membership(session, fb2)  # B: 2 > A: 1 -> B canonical
     assert await _is_canonical(session, spring_b) is True
     assert await _is_canonical(session, spring_a) is False
+
+
+@pytest.mark.asyncio
+async def test_region_tier_allows_same_city_slug_under_different_parents(session):
+    await _enable_region_tier(session)
+    us = await _add_boundary(
+        session,
+        overture_id="us",
+        subtype="country",
+        country_code="us",
+        name="United States",
+        slug="united-states",
+        wkt=_sq(0, 0, 20, 20),
+    )
+    oregon = await _add_boundary(
+        session,
+        overture_id="region-or",
+        subtype="region",
+        country_code="us",
+        name="Oregon",
+        slug="oregon",
+        wkt=_sq(0, 0, 8, 8),
+    )
+    maine = await _add_boundary(
+        session,
+        overture_id="region-me",
+        subtype="region",
+        country_code="us",
+        name="Maine",
+        slug="maine",
+        wkt=_sq(10, 10, 18, 18),
+    )
+    portland_or = await _add_boundary(
+        session,
+        overture_id="portland-or",
+        subtype="locality",
+        country_code="us",
+        name="Portland",
+        slug="portland",
+        wkt=_sq(1, 1, 2, 2),
+    )
+    portland_me = await _add_boundary(
+        session,
+        overture_id="portland-me",
+        subtype="locality",
+        country_code="us",
+        name="Portland",
+        slug="portland",
+        wkt=_sq(11, 11, 12, 12),
+    )
+    for lat, lng in ((1.5, 1.5), (11.5, 11.5)):
+        await _add_fountain(session, lat=lat, lng=lng)
+
+    await refresh_all_memberships(session)
+
+    assert await _parent(session, oregon) == us
+    assert await _parent(session, maine) == us
+    assert await _parent(session, portland_or) == oregon
+    assert await _parent(session, portland_me) == maine
+    assert await _is_canonical(session, portland_or) is True
+    assert await _is_canonical(session, portland_me) is True
+    assert await _count(session, us) == 2
+    assert await _count(session, oregon) == 1
+    assert await _count(session, maine) == 1
+
+
+@pytest.mark.asyncio
+async def test_region_tier_city_without_region_parent_is_not_canonical_or_assigned(session):
+    await _enable_region_tier(session)
+    await _add_boundary(
+        session,
+        overture_id="us",
+        subtype="country",
+        country_code="us",
+        name="United States",
+        slug="united-states",
+        wkt=_sq(0, 0, 10, 10),
+    )
+    city = await _add_boundary(
+        session,
+        overture_id="orphan-city",
+        subtype="locality",
+        country_code="us",
+        name="Orphan City",
+        slug="orphan-city",
+        wkt=_sq(1, 1, 2, 2),
+    )
+    fid = await _add_fountain(session, lat=1.5, lng=1.5)
+
+    await refresh_all_memberships(session)
+
+    assert await _parent(session, city) is None
+    assert await _is_canonical(session, city) is False
+    assert (await _membership(session, fid)).city_place_id is None
+    assert await _count(session, city) == 0
+
+
+@pytest.mark.asyncio
+async def test_region_canonicality_ignores_fountain_counts(session):
+    await _enable_region_tier(session)
+    await _add_boundary(
+        session,
+        overture_id="us",
+        subtype="country",
+        country_code="us",
+        name="United States",
+        slug="united-states",
+        wkt=_sq(0, 0, 10, 10),
+    )
+    large = await _add_boundary(
+        session,
+        overture_id="large-region",
+        subtype="region",
+        country_code="us",
+        name="Duplicate",
+        slug="duplicate",
+        wkt=_sq(0, 0, 10, 10),
+    )
+    small = await _add_boundary(
+        session,
+        overture_id="small-region",
+        subtype="region",
+        country_code="us",
+        name="Duplicate",
+        slug="duplicate",
+        wkt=_sq(1, 1, 2, 2),
+    )
+    await _add_fountain(session, lat=1.5, lng=1.5)
+
+    await refresh_all_memberships(session)
+
+    assert await _count(session, small) == 1
+    assert await _is_canonical(session, large) is True
+    assert await _is_canonical(session, small) is False
+
+
+@pytest.mark.asyncio
+async def test_admin_delete_updates_region_count(session, admin_client):
+    await _enable_region_tier(session)
+    await _add_boundary(
+        session,
+        overture_id="us",
+        subtype="country",
+        country_code="us",
+        name="United States",
+        slug="united-states",
+        wkt=_sq(0, 0, 10, 10),
+    )
+    region = await _add_boundary(
+        session,
+        overture_id="region",
+        subtype="region",
+        country_code="us",
+        name="Region",
+        slug="region",
+        wkt=_sq(0, 0, 10, 10),
+    )
+    city = await _add_boundary(
+        session,
+        overture_id="city",
+        subtype="locality",
+        country_code="us",
+        name="City",
+        slug="city",
+        wkt=_sq(1, 1, 2, 2),
+    )
+    fid = await _add_fountain(session, lat=1.5, lng=1.5)
+    await refresh_all_memberships(session)
+    await session.commit()
+    assert await _count(session, region) == 1
+    assert await _count(session, city) == 1
+
+    deleted = await admin_client.delete(f"/api/v1/admin/fountains/{fid}", headers=_ADMIN_HEADERS)
+
+    assert deleted.status_code == 204
+    assert await _count(session, region) == 0
+    assert await _count(session, city) == 0
+
+
+async def _membership_snapshot(session):
+    rows = (
+        await session.execute(
+            text(
+                """
+                SELECT overture_id, place_kind, parent_id IS NOT NULL AS has_parent,
+                       is_canonical, fountain_count
+                FROM place_boundaries
+                ORDER BY overture_id
+                """
+            )
+        )
+    ).all()
+    fountains = (
+        await session.execute(
+            text(
+                """
+                SELECT country_place_id IS NOT NULL AS has_country,
+                       region_place_id IS NOT NULL AS has_region,
+                       city_place_id IS NOT NULL AS has_city
+                FROM fountains
+                ORDER BY id
+                """
+            )
+        )
+    ).all()
+    return rows, fountains
+
+
+@pytest.mark.asyncio
+async def test_migration_backfill_matches_refresh_all_memberships(session):
+    await _enable_region_tier(session)
+    await _add_boundary(
+        session,
+        overture_id="us",
+        subtype="country",
+        country_code="us",
+        name="United States",
+        slug="united-states",
+        wkt=_sq(0, 0, 20, 20),
+    )
+    await _add_boundary(
+        session,
+        overture_id="region",
+        subtype="region",
+        country_code="us",
+        name="Region",
+        slug="region",
+        wkt=_sq(0, 0, 20, 20),
+    )
+    await _add_boundary(
+        session,
+        overture_id="city-a",
+        subtype="locality",
+        country_code="us",
+        name="City",
+        slug="city",
+        wkt=_sq(1, 1, 2, 2),
+    )
+    await _add_boundary(
+        session,
+        overture_id="city-b",
+        subtype="localadmin",
+        country_code="us",
+        name="City",
+        slug="city",
+        wkt=_sq(1, 1, 3, 3),
+    )
+    await _add_fountain(session, lat=1.5, lng=1.5)
+    await rebuild_place_boundary_cells(session)
+
+    sql = (BACKEND / "migrations/sql/0025_backfill.sql").read_text(encoding="utf-8")
+    for statement in sql.split(";"):
+        if statement.strip():
+            await session.execute(text(statement))
+    frozen_snapshot = await _membership_snapshot(session)
+
+    await session.execute(
+        text(
+            "UPDATE fountains "
+            "SET country_place_id = NULL, region_place_id = NULL, city_place_id = NULL"
+        )
+    )
+    await session.execute(
+        text(
+            "UPDATE place_boundaries "
+            "SET place_kind = NULL, parent_id = NULL, is_canonical = false, fountain_count = 0"
+        )
+    )
+    await refresh_all_memberships(session, rebuild_cells=False)
+
+    assert await _membership_snapshot(session) == frozen_snapshot
