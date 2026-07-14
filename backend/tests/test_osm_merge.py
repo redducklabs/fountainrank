@@ -1,14 +1,23 @@
 import asyncio
+from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.geo import latitude_of, point_geography
-from app.imports.merge import RunScope, merge_candidates, rollback_run
+from app.imports.merge import RunScope, _mark_scope_removals, merge_candidates, rollback_run
 from app.imports.osm import OsmCandidate
 from app.locks import ADD_FOUNTAIN_LOCK_KEY
-from app.models import Fountain, FountainImportEvent, FountainProvenance, OsmImportCandidate, Rating
+from app.models import (
+    Fountain,
+    FountainImportEvent,
+    FountainProvenance,
+    OsmImportCandidate,
+    OsmImportRun,
+    Rating,
+)
 
 SCOPE = RunScope(
     source_system="osm",
@@ -253,6 +262,37 @@ async def test_scope_limited_removal_does_not_touch_other_scope(session):
     ).scalar_one()
     assert p1.removed_at is not None
     assert p2.removed_at is None  # other scope NOT touched
+
+
+@pytest.mark.asyncio
+async def test_scope_removal_handles_more_than_asyncpg_bind_limit(session):
+    summary = await merge_candidates(
+        session,
+        scope=SCOPE,
+        candidates=[_cand("osm:node:1", 37.77, -122.41)],
+        skipped=[],
+        dry_run=False,
+    )
+    await session.commit()
+    run = (
+        await session.execute(
+            select(OsmImportRun).where(OsmImportRun.id == summary.run_id)
+        )
+    ).scalar_one()
+
+    removal_summary = SimpleNamespace(removed_count=0)
+    await _mark_scope_removals(
+        session,
+        run=run,
+        scope=SCOPE,
+        seen_ext_ids={f"osm:node:{i}" for i in range(40_000)},
+        now=datetime.now(tz=UTC),
+        summary=removal_summary,
+    )
+
+    provenance = (await session.execute(select(FountainProvenance))).scalar_one()
+    assert provenance.removed_at is None
+    assert removal_summary.removed_count == 0
 
 
 @pytest.mark.asyncio

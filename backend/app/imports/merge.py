@@ -319,10 +319,13 @@ async def _mark_scope_removals(session, *, run, scope, seen_ext_ids, now, summar
         FountainProvenance.scope_id == scope.scope_id,
         FountainProvenance.removed_at.is_(None),
     )
-    if seen_ext_ids:
-        stmt = stmt.where(FountainProvenance.source_external_id.not_in(seen_ext_ids))
     rows = (await session.execute(stmt)).scalars().all()
     for prov in rows:
+        # Filter in Python instead of expanding a potentially continent-sized NOT IN list.
+        # asyncpg rejects statements with more than 32,767 bind arguments; large extracts such
+        # as Spain can exceed that limit even though the scope query itself is bounded.
+        if prov.source_external_id in seen_ext_ids:
+            continue
         # Scope-bounds guard: a sub-region refresh can't remove what it didn't cover.
         if scope.scope_bounds_wkt is not None:
             inside = (
