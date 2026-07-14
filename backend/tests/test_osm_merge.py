@@ -1,13 +1,18 @@
 import asyncio
 from datetime import UTC, datetime
-from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.geo import latitude_of, point_geography
-from app.imports.merge import RunScope, _mark_scope_removals, merge_candidates, rollback_run
+from app.imports.merge import (
+    RunScope,
+    RunSummary,
+    _mark_scope_removals,
+    merge_candidates,
+    rollback_run,
+)
 from app.imports.osm import OsmCandidate
 from app.locks import ADD_FOUNTAIN_LOCK_KEY
 from app.models import (
@@ -269,18 +274,19 @@ async def test_scope_removal_handles_more_than_asyncpg_bind_limit(session):
     summary = await merge_candidates(
         session,
         scope=SCOPE,
-        candidates=[_cand("osm:node:1", 37.77, -122.41)],
+        candidates=[
+            _cand("osm:node:1", 37.77, -122.41),
+            _cand("osm:node:40001", 37.78, -122.41),
+        ],
         skipped=[],
         dry_run=False,
     )
     await session.commit()
     run = (
-        await session.execute(
-            select(OsmImportRun).where(OsmImportRun.id == summary.run_id)
-        )
+        await session.execute(select(OsmImportRun).where(OsmImportRun.id == summary.run_id))
     ).scalar_one()
 
-    removal_summary = SimpleNamespace(removed_count=0)
+    removal_summary = RunSummary(run_id=run.id)
     await _mark_scope_removals(
         session,
         run=run,
@@ -290,9 +296,13 @@ async def test_scope_removal_handles_more_than_asyncpg_bind_limit(session):
         summary=removal_summary,
     )
 
-    provenance = (await session.execute(select(FountainProvenance))).scalar_one()
-    assert provenance.removed_at is None
-    assert removal_summary.removed_count == 0
+    provenances = {
+        provenance.source_external_id: provenance
+        for provenance in (await session.execute(select(FountainProvenance))).scalars()
+    }
+    assert provenances["osm:node:1"].removed_at is None
+    assert provenances["osm:node:40001"].removed_at is not None
+    assert removal_summary.removed_count == 1
 
 
 @pytest.mark.asyncio
