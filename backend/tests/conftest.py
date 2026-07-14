@@ -31,7 +31,7 @@ async def clean_db(engine):
             _sa_text(
                 # Reference tables (rating_types, attribute_types) are migration-seeded
                 # and intentionally NOT truncated.
-                "TRUNCATE contribution_events, user_contribution_stats, "
+                "TRUNCATE write_attempts, contribution_events, user_contribution_stats, "
                 "fountain_attribute_consensus, attribute_observations, condition_reports, "
                 "fountain_notes, "
                 "content_reports, upload_attempts, storage_cleanup, fountain_photos, "

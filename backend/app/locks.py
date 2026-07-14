@@ -16,3 +16,4 @@ ADD_FOUNTAIN_LOCK_KEY = 0x464E5452
 # these locks can never collide.
 PHOTO_UPLOAD_LOCK_NS = 0x50554C44  # "PULD" — upload-reservation rate gate.
 CONTENT_REPORT_LOCK_NS = 0x50525054  # "PRPT" — content report rate gate.
+WRITE_RATE_LIMIT_LOCK_NS = 0x57524154  # "WRAT" — authenticated JSON write gate.
