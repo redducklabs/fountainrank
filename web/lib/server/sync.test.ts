@@ -74,6 +74,25 @@ describe("sync helper", () => {
     expect(out).not.toContain("opaque-tok");
   });
 
+  it.each([429, 502])(
+    "keeps account sync best-effort on %i without retrying or clearing the session",
+    async (status) => {
+      stubEnv();
+      getAccessTokenRSC.mockImplementation(async (_c: unknown, resource?: string) =>
+        resource ? "resource-tok" : "opaque-tok",
+      );
+      const fetchMock = vi.fn().mockResolvedValue({ ok: false, status });
+      vi.stubGlobal("fetch", fetchMock);
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      await expect(syncProfile(`rid-${status}`)).resolves.toBeUndefined();
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(getAccessTokenRSC).toHaveBeenCalledTimes(2);
+      expect(spy).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it("swallows errors (best-effort, never throws; no token logged)", async () => {
     stubEnv();
     getAccessTokenRSC.mockRejectedValue(new Error("boom"));
@@ -153,4 +172,23 @@ describe("syncProfileForRoute", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 503 }));
     await expect(syncProfileForRoute("rid-r4")).resolves.toBeUndefined();
   });
+
+  it.each([429, 502])(
+    "keeps callback sync best-effort on %i without retrying or clearing the session",
+    async (status) => {
+      stubEnv();
+      getAccessToken.mockImplementation(async (_c: unknown, resource?: string) =>
+        resource ? "route-resource-tok" : "route-opaque-tok",
+      );
+      const fetchMock = vi.fn().mockResolvedValue({ ok: false, status });
+      vi.stubGlobal("fetch", fetchMock);
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      await expect(syncProfileForRoute(`rid-route-${status}`)).resolves.toBeUndefined();
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(getAccessToken).toHaveBeenCalledTimes(2);
+      expect(spy).toHaveBeenCalledTimes(1);
+    },
+  );
 });

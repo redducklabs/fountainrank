@@ -4612,6 +4612,17 @@
               }
             }
           },
+          "429": {
+            "description": "Profile sync limit reached.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the rolling-window budget admits another attempt.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Validation Error",
             "content": {

@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import time
 
@@ -6,11 +7,14 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import func, select
 
 from app.auth import get_current_user, get_jwks_cache
 from app.config import Settings, get_settings
 from app.logto_auth import AuthError, JwksCache, validate_bearer_token
 from app.main import app
+from app.models import User, WriteAttempt
+from app.rate_limit import RateLimited, get_write_attempt_reserver
 from app.userinfo import UserinfoClaims
 
 KID = "test-key-1"
@@ -412,6 +416,90 @@ async def test_me_sync_updates_profile_via_userinfo(keypair, cache, clean_db):
         _clear_sync_overrides()
 
 
+async def test_me_sync_uses_profile_budget_and_rejects_before_userinfo(keypair, cache, clean_db):
+    priv, _ = keypair
+    fetch_calls = 0
+    reserve_calls = []
+
+    async def fetcher(token: str) -> UserinfoClaims:
+        nonlocal fetch_calls
+        fetch_calls += 1
+        raise AssertionError("userinfo must not be called after rate rejection")
+
+    def reject_reserver():
+        async def reject(user_id, budget, endpoint):
+            reserve_calls.append((user_id, budget, endpoint))
+            raise RateLimited("profile_syncs_per_minute", retry_after=23)
+
+        return reject
+
+    _sync_overrides(cache, fetcher)
+    app.dependency_overrides[get_write_attempt_reserver] = reject_reserver
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            response = await ac.post(
+                "/api/v1/me/sync",
+                json={"userinfo_token": "opaque"},
+                headers={"Authorization": f"Bearer {_mint(priv)}"},
+            )
+        assert response.status_code == 429
+        assert response.json() == {"detail": "profile_syncs_per_minute"}
+        assert response.headers["Retry-After"] == "23"
+        assert len(reserve_calls) == 1
+        assert reserve_calls[0][1:] == ("profile_sync", "profile_sync")
+        assert fetch_calls == 0
+    finally:
+        app.dependency_overrides.pop(get_write_attempt_reserver, None)
+        _clear_sync_overrides()
+
+
+async def test_me_sync_parallel_failures_count_and_eleventh_defers(
+    keypair, cache, clean_db, session
+):
+    priv, _ = keypair
+    fetch_calls = 0
+
+    session.add(User(logto_user_id="logto|abc", email="u@example.com", display_name="U"))
+    await session.commit()
+
+    async def fetcher(token: str) -> UserinfoClaims:
+        nonlocal fetch_calls
+        fetch_calls += 1
+        from app.userinfo import UserinfoError
+
+        raise UserinfoError("userinfo_status")
+
+    _sync_overrides(cache, fetcher)
+    headers = {"Authorization": f"Bearer {_mint(priv)}"}
+    transport = ASGITransport(app=app)
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            # The persisted user isolates the durable profile-sync admission lock from first-user
+            # creation while these requests contend across independent request sessions.
+            before = (await ac.get("/api/v1/me", headers=headers)).json()
+            responses = await asyncio.gather(
+                *(
+                    ac.post(
+                        "/api/v1/me/sync",
+                        json={"userinfo_token": "opaque"},
+                        headers=headers,
+                    )
+                    for _ in range(11)
+                )
+            )
+            after = (await ac.get("/api/v1/me", headers=headers)).json()
+
+        assert sorted(response.status_code for response in responses) == [429] + [502] * 10
+        rejected = next(response for response in responses if response.status_code == 429)
+        assert rejected.json() == {"detail": "profile_syncs_per_minute"}
+        assert 1 <= int(rejected.headers["Retry-After"]) <= 60
+        assert fetch_calls == 10
+        assert after == before
+    finally:
+        _clear_sync_overrides()
+
+
 async def test_me_via_bearer_no_name_no_email_does_not_leak_subject(keypair, cache, clean_db):
     # A real Logto JWT carrying no name/username and no email provisions display_name=sub +
     # a synthetic subject-derived email. /me must expose neither: needs_name gates the client and
@@ -435,7 +523,7 @@ async def test_me_via_bearer_no_name_no_email_does_not_leak_subject(keypair, cac
             app.dependency_overrides.pop(dep, None)
 
 
-async def test_me_sync_sub_mismatch_is_403_and_no_change(keypair, cache, clean_db):
+async def test_me_sync_sub_mismatch_is_403_and_no_change(keypair, cache, clean_db, session):
     priv, _ = keypair
 
     async def fetcher(token: str) -> UserinfoClaims:
@@ -453,6 +541,7 @@ async def test_me_sync_sub_mismatch_is_403_and_no_change(keypair, cache, clean_d
             assert resp.status_code == 403
             after = (await ac.get("/api/v1/me", headers=headers)).json()["email"]
             assert after == before  # unchanged
+            assert await session.scalar(select(func.count()).select_from(WriteAttempt)) == 1
     finally:
         _clear_sync_overrides()
 
