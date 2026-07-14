@@ -767,6 +767,17 @@ async def fountain_place(
         if fountain.country_place_id is not None
         else None
     )
+    region = None
+    if city is not None and city.parent_id is not None:
+        region = (
+            await session.execute(
+                select(PlaceBoundary).where(
+                    PlaceBoundary.id == city.parent_id,
+                    PlaceBoundary.place_kind == "region",
+                    PlaceBoundary.is_canonical.is_(True),
+                )
+            )
+        ).scalar_one_or_none()
 
     ttl = settings.seo_cache_max_age_seconds
     response.headers["Cache-Control"] = f"public, max-age={ttl}, s-maxage={ttl}"
@@ -775,6 +786,7 @@ async def fountain_place(
         extra={
             "fountain_id": str(fountain.id),
             "city_place_id": str(fountain.city_place_id) if fountain.city_place_id else None,
+            "region_place_id": str(region.id) if region is not None else None,
             "country_place_id": (
                 str(fountain.country_place_id) if fountain.country_place_id else None
             ),
@@ -784,6 +796,7 @@ async def fountain_place(
     return FountainPlaceOut(
         fountain_id=fountain.id,
         city=PlaceOut.model_validate(city) if city is not None else None,
+        region=PlaceOut.model_validate(region) if region is not None else None,
         country=PlaceOut.model_validate(country) if country is not None else None,
         indexable=indexable,
     )

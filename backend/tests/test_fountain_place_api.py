@@ -44,15 +44,18 @@ async def _add_place(
     fountain_count: int = 5,
     is_canonical: bool = True,
     parent_id=None,
+    place_kind: str | None = None,
 ) -> uuid.UUID:
+    if place_kind is None:
+        place_kind = "country" if subtype == "country" else "city"
     row = (
         await session.execute(
             text(
                 """
                 INSERT INTO place_boundaries
-                    (id, overture_id, subtype, class, name, country_code, slug,
+                    (id, overture_id, subtype, class, place_kind, name, country_code, slug,
                      is_canonical, fountain_count, parent_id, boundary, created_at, updated_at)
-                VALUES (gen_random_uuid(), :oid, :subtype, 'land', :name, :cc, :slug,
+                VALUES (gen_random_uuid(), :oid, :subtype, 'land', :kind, :name, :cc, :slug,
                         :canon, :fc, :parent,
                         ST_Multi(ST_GeomFromText(:wkt, 4326))::geography, now(), now())
                 RETURNING id
@@ -61,6 +64,7 @@ async def _add_place(
             {
                 "oid": overture_id,
                 "subtype": subtype,
+                "kind": place_kind,
                 "name": name,
                 "cc": country_code,
                 "slug": slug,
@@ -78,6 +82,7 @@ async def _add_fountain(
     session,
     *,
     city_place_id=None,
+    region_place_id=None,
     country_place_id=None,
     is_hidden: bool = False,
     is_working: bool = True,
@@ -92,10 +97,11 @@ async def _add_fountain(
                 """
                 INSERT INTO fountains
                     (id, location, is_hidden, is_working, current_status, created_source,
-                     city_place_id, country_place_id, rating_count, average_rating, ranking_score)
+                     city_place_id, region_place_id, country_place_id, rating_count, average_rating,
+                     ranking_score)
                 VALUES (gen_random_uuid(), ST_SetSRID(ST_MakePoint(0.5, 0.5), 4326)::geography,
                         :hidden, :working, :status, 'admin_import',
-                        :city, :country, :rc, :avg, :score)
+                        :city, :region, :country, :rc, :avg, :score)
                 RETURNING id
                 """
             ),
@@ -104,6 +110,7 @@ async def _add_fountain(
                 "working": is_working,
                 "status": current_status,
                 "city": city_place_id,
+                "region": region_place_id,
                 "country": country_place_id,
                 "rc": rating_count,
                 "avg": average_rating,
@@ -157,7 +164,54 @@ async def test_place_resolves_city_and_country_and_indexable(session, api):
     assert body["city"]["slug"] == "manhattan"
     assert body["city"]["name"] == "Manhattan"
     assert body["city"]["country_code"] == "us"
+    assert body["region"] is None
     assert body["country"]["subtype"] == "country"
+
+
+@pytest.mark.asyncio
+async def test_place_returns_parent_region_for_region_tier_city(session, api):
+    country = await _add_place(
+        session,
+        overture_id="us",
+        subtype="country",
+        country_code="us",
+        name="United States",
+        slug="united-states",
+        is_canonical=False,
+    )
+    region = await _add_place(
+        session,
+        overture_id="oregon",
+        subtype="region",
+        country_code="us",
+        name="Oregon",
+        slug="oregon",
+        parent_id=country,
+        place_kind="region",
+    )
+    city = await _add_place(
+        session,
+        overture_id="portland",
+        subtype="locality",
+        country_code="us",
+        name="Portland",
+        slug="portland",
+        parent_id=region,
+    )
+    fid = await _add_fountain(
+        session,
+        city_place_id=city,
+        region_place_id=region,
+        country_place_id=country,
+        rating_count=1,
+    )
+    await session.commit()
+
+    body = (await api.get(f"/api/v1/fountains/{fid}/place")).json()
+    assert body["city"]["slug"] == "portland"
+    assert body["region"]["slug"] == "oregon"
+    assert body["region"]["place_kind"] == "region"
+    assert body["country"]["slug"] == "united-states"
 
 
 @pytest.mark.asyncio

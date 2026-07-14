@@ -9,9 +9,13 @@ import {
   countryPath,
   getCountriesServer,
   getCountryCitiesServer,
+  getCountryRegionsServer,
+  regionPath,
 } from "../../../lib/places";
 import type { PlaceOut } from "../../../lib/places";
 import { log } from "../../../lib/server/log";
+import { jsonLdScript } from "../../../lib/seo/jsonld";
+import { SITE_URL } from "../../../lib/seo/site";
 
 export const dynamic = "force-dynamic";
 const shell = "mx-auto min-h-dvh max-w-2xl bg-surface-raised px-6 py-10";
@@ -44,6 +48,7 @@ export async function generateMetadata({
     title,
     description,
     alternates: { canonical },
+    robots: place.indexable ? undefined : { index: false, follow: true },
     openGraph: { title, description, url: canonical, type: "website" },
   };
 }
@@ -57,11 +62,35 @@ export default async function CountryPage({ params }: { params: Promise<{ countr
   }
 
   const requestId = crypto.randomUUID();
-  const { data: cities } = await getCountryCitiesServer(place.country_code, requestId);
+  const [{ data: regions }, { data: cities }] = await Promise.all([
+    getCountryRegionsServer(place.country_code, requestId),
+    getCountryCitiesServer(place.country_code, requestId),
+  ]);
+  const hasRegions = regions.length > 0;
+  const structuredJson = jsonLdScript({
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: [
+      { "@type": "ListItem", position: 1, name: "FountainRank", item: SITE_URL },
+      {
+        "@type": "ListItem",
+        position: 2,
+        name: "Drinking fountains",
+        item: `${SITE_URL}/drinking-fountains`,
+      },
+      {
+        "@type": "ListItem",
+        position: 3,
+        name: `Drinking fountains in ${place.name}`,
+        item: `${SITE_URL}${countryPath(place.country_code)}`,
+      },
+    ],
+  });
 
   return (
     <>
       <SiteHeader variant="bar" />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: structuredJson }} />
       <main className={shell}>
         <Link href="/" className="text-sm text-brand-ink underline">
           ← Back to the map
@@ -74,7 +103,26 @@ export default async function CountryPage({ params }: { params: Promise<{ countr
           stations mapped in {place.name} on FountainRank.
         </p>
 
-        {cities.length > 0 ? (
+        {hasRegions ? (
+          <section className="mt-8">
+            <h2 className="text-lg font-bold text-brand-ink">Regions</h2>
+            <ul className="mt-3 divide-y divide-border">
+              {regions.map((region) => (
+                <li key={region.id} className="flex items-center justify-between py-2">
+                  <Link
+                    href={regionPath(place.country_code, region.slug)}
+                    className="text-brand-ink underline"
+                  >
+                    {region.name}
+                  </Link>
+                  <span className="text-sm text-muted">
+                    {region.fountain_count.toLocaleString()} fountains
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : cities.length > 0 ? (
           <section className="mt-8">
             <h2 className="text-lg font-bold text-brand-ink">Top cities</h2>
             <ul className="mt-3 divide-y divide-border">

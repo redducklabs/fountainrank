@@ -439,11 +439,20 @@ class PlaceOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
+    parent_id: uuid.UUID | None = None
     country_code: str
     slug: str
     name: str
     subtype: str
+    place_kind: str | None
     fountain_count: int
+    indexable: bool = False
+
+
+class PlaceResolveOut(BaseModel):
+    kind: Literal["region", "city"]
+    canonical_path: str
+    place: PlaceOut
 
 
 class PhotoOut(BaseModel):
@@ -567,6 +576,7 @@ class FountainPlaceOut(BaseModel):
 
     fountain_id: uuid.UUID
     city: PlaceOut | None
+    region: PlaceOut | None
     country: PlaceOut | None
     indexable: bool
 

@@ -1,16 +1,34 @@
+import { getIndexableFountainsServer, SITEMAP_FOUNTAIN_CAP } from "../../lib/places";
+import { log } from "../../lib/server/log";
 import { SITE_URL } from "../../lib/seo/site";
 import { buildSitemapIndex, sitemapResponse } from "../../lib/seo/sitemap";
 
 // The sitemap INDEX, served at /sitemap.xml (robots.ts points here). Next's generateSitemaps
 // does not produce an index, so we serve one explicitly that references the chunk sitemaps.
-// Static content (chunk URLs are fixed); the chunks themselves carry the live data.
-export function GET(): Response {
+// Dynamic because the fountain sitemap chunk count comes from the live backend total_count.
+export const dynamic = "force-dynamic";
+
+export async function GET(): Promise<Response> {
+  const { data, status } = await getIndexableFountainsServer(crypto.randomUUID(), 1, 0);
+  if (!data) {
+    log("error", "sitemap index: indexable-fountains count fetch failed", { status });
+    return new Response("", {
+      status: 503,
+      headers: { "Content-Type": "application/xml; charset=utf-8", "Cache-Control": "no-store" },
+    });
+  }
+  const fountainChunkCount = Math.ceil(data.total_count / SITEMAP_FOUNTAIN_CAP);
+  const fountainChunks = Array.from(
+    { length: fountainChunkCount },
+    (_, i) => `${SITE_URL}/sitemaps/fountains/${i}.xml`,
+  );
   const chunks = [
     `${SITE_URL}/sitemaps/core.xml`,
     `${SITE_URL}/sitemaps/countries.xml`,
+    `${SITE_URL}/sitemaps/regions.xml`,
     `${SITE_URL}/sitemaps/cities.xml`,
     `${SITE_URL}/sitemaps/attributes.xml`,
-    `${SITE_URL}/sitemaps/fountains.xml`,
+    ...fountainChunks,
   ];
   return sitemapResponse(buildSitemapIndex(chunks));
 }

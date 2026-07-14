@@ -113,11 +113,35 @@ const detail = {
 };
 
 // A minimal /place response for the h1 + metadata (public data only).
-const placeIn = (city: { name: string; country_code: string } | null, indexable: boolean) => ({
+const placeIn = (
+  city: { name: string; country_code: string; slug?: string } | null,
+  indexable: boolean,
+  region: { name: string; country_code: string; slug: string } | null = null,
+) => ({
   data: {
     fountain_id: "f1",
     city: city
-      ? { id: "c1", slug: "manhattan", subtype: "locality", fountain_count: 5, ...city }
+      ? {
+          id: "c1",
+          parent_id: region ? "r1" : "country-1",
+          slug: "manhattan",
+          subtype: "locality",
+          place_kind: "city",
+          fountain_count: 5,
+          indexable: true,
+          ...city,
+        }
+      : null,
+    region: region
+      ? {
+          id: "r1",
+          parent_id: "country-1",
+          subtype: "administrative",
+          place_kind: "region",
+          fountain_count: 50,
+          indexable: true,
+          ...region,
+        }
       : null,
     country: null,
     indexable,
@@ -257,14 +281,32 @@ describe("FountainPage route (standalone)", () => {
     expect(getPlaceFn).toHaveBeenCalledWith("f1", expect.any(String));
   });
 
-  it("links an indexable fountain detail page back to its city page", async () => {
+  it("links an indexable fountain detail page back to its nested city page", async () => {
     getDetail.mockResolvedValue({ data: detail, status: 200 });
     getNotes.mockResolvedValue({ data: [], status: 200 });
-    getPlaceFn.mockResolvedValue(placeIn({ name: "Manhattan", country_code: "us" }, true));
+    getPlaceFn.mockResolvedValue(
+      placeIn({ name: "Manhattan", country_code: "us" }, true, {
+        name: "New York",
+        country_code: "us",
+        slug: "new-york",
+      }),
+    );
     render(await FountainPage({ params }));
     expect(
       await screen.findByRole("link", { name: /drinking fountains in Manhattan/i }),
-    ).toHaveAttribute("href", "/drinking-fountains/us/manhattan");
+    ).toHaveAttribute("href", "/drinking-fountains/us/new-york/manhattan");
+  });
+
+  it("keeps two-level country fountain detail links flat", async () => {
+    getDetail.mockResolvedValue({ data: detail, status: 200 });
+    getNotes.mockResolvedValue({ data: [], status: 200 });
+    getPlaceFn.mockResolvedValue(
+      placeIn({ name: "Luxembourg", country_code: "lu", slug: "luxembourg" }, true),
+    );
+    render(await FountainPage({ params }));
+    expect(
+      await screen.findByRole("link", { name: /drinking fountains in Luxembourg/i }),
+    ).toHaveAttribute("href", "/drinking-fountains/lu/luxembourg");
   });
 
   it("renders JSON-LD for indexable public detail pages", async () => {
@@ -328,8 +370,12 @@ describe("FountainPage route (standalone)", () => {
     });
   });
 
-  it("builds breadcrumb JSON-LD from home to city to fountain", () => {
-    const place = placeIn({ name: "Manhattan", country_code: "us" }, true).data;
+  it("builds breadcrumb JSON-LD from home to nested city to fountain", () => {
+    const place = placeIn({ name: "Manhattan", country_code: "us" }, true, {
+      name: "New York",
+      country_code: "us",
+      slug: "new-york",
+    }).data;
     const data = buildFountainBreadcrumbStructuredData({ id: "f1", place });
     expect(data["@type"]).toBe("BreadcrumbList");
     expect(data.itemListElement).toEqual([
@@ -343,7 +389,7 @@ describe("FountainPage route (standalone)", () => {
         "@type": "ListItem",
         position: 2,
         name: "Drinking fountains in Manhattan",
-        item: "https://fountainrank.com/drinking-fountains/us/manhattan",
+        item: "https://fountainrank.com/drinking-fountains/us/new-york/manhattan",
       },
       {
         "@type": "ListItem",

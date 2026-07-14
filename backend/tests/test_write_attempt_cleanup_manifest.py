@@ -57,7 +57,9 @@ def test_deploy_applies_cleanup_manifest():
     workflow = DEPLOY.read_text()
     migration = workflow.index('kubectl -n "$NAMESPACE" exec "$POD" -- alembic upgrade head')
     cleanup = workflow.index("envsubst < infra/k8s/write-attempt-cleanup.yaml | kubectl apply -f -")
-    assert migration < cleanup
-    assert (
-        "for f in backend account-deletion-cleanup web logto ingress basemap-tiles; do" in workflow
+    backend_apply = workflow.index("for f in backend; do")
+    remaining_apply = workflow.index(
+        "for f in web account-deletion-cleanup logto ingress basemap-tiles; do"
     )
+    assert backend_apply < migration < remaining_apply
+    assert migration < cleanup

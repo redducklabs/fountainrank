@@ -679,6 +679,108 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/places/{country}/regions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Regions */
+        get: operations["list_regions_api_v1_places__country__regions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/places/{country}/cities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Country Cities */
+        get: operations["list_country_cities_api_v1_places__country__cities_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/places/{country}/resolve/{slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Resolve Level2 Place */
+        get: operations["resolve_level2_place_api_v1_places__country__resolve__slug__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/places/{country}/regions/{region}/cities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Region Cities */
+        get: operations["list_region_cities_api_v1_places__country__regions__region__cities_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/places/{country}/regions/{region}/fountains": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Region Fountains */
+        get: operations["region_fountains_api_v1_places__country__regions__region__fountains_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/places/{country}/regions/{region}/cities/{city}/fountains": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Nested City Fountains */
+        get: operations["nested_city_fountains_api_v1_places__country__regions__region__cities__city__fountains_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/places/{country}/{city}/fountains": {
         parameters: {
             query?: never;
@@ -1300,6 +1402,7 @@ export interface components {
              */
             fountain_id: string;
             city: components["schemas"]["PlaceOut"] | null;
+            region: components["schemas"]["PlaceOut"] | null;
             country: components["schemas"]["PlaceOut"] | null;
             /** Indexable */
             indexable: boolean;
@@ -1473,6 +1576,8 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /** Parent Id */
+            parent_id?: string | null;
             /** Country Code */
             country_code: string;
             /** Slug */
@@ -1481,8 +1586,26 @@ export interface components {
             name: string;
             /** Subtype */
             subtype: string;
+            /** Place Kind */
+            place_kind: string | null;
             /** Fountain Count */
             fountain_count: number;
+            /**
+             * Indexable
+             * @default false
+             */
+            indexable: boolean;
+        };
+        /** PlaceResolveOut */
+        PlaceResolveOut: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "region" | "city";
+            /** Canonical Path */
+            canonical_path: string;
+            place: components["schemas"]["PlaceOut"];
         };
         /** RateRequest */
         RateRequest: {
@@ -1519,6 +1642,8 @@ export interface components {
             postgis_version: string;
             /** Sf To Nyc M */
             sf_to_nyc_m: number;
+            /** Schema Revision */
+            schema_revision: string;
         };
         /** ReportContentRequest */
         ReportContentRequest: {
@@ -3102,6 +3227,212 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PlaceOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_regions_api_v1_places__country__regions_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                country: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlaceOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_country_cities_api_v1_places__country__cities_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                country: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlaceOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolve_level2_place_api_v1_places__country__resolve__slug__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                country: string;
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlaceResolveOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_region_cities_api_v1_places__country__regions__region__cities_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                country: string;
+                region: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlaceOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    region_fountains_api_v1_places__country__regions__region__fountains_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                country: string;
+                region: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CityFountainsOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    nested_city_fountains_api_v1_places__country__regions__region__cities__city__fountains_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                country: string;
+                region: string;
+                city: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CityFountainsOut"];
                 };
             };
             /** @description Validation Error */

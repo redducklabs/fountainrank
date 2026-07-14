@@ -11,6 +11,7 @@ const TERMS_UPDATED = "2026-06-19";
 export function GET(): Response {
   const urls: SitemapUrl[] = [
     { loc: `${SITE_URL}/`, changefreq: "daily", priority: 1.0 },
+    { loc: `${SITE_URL}/drinking-fountains`, changefreq: "weekly", priority: 0.8 },
     { loc: `${SITE_URL}/leaderboard`, changefreq: "daily", priority: 0.8 },
     { loc: `${SITE_URL}/privacy`, lastmod: PRIVACY_UPDATED, changefreq: "yearly", priority: 0.3 },
     { loc: `${SITE_URL}/terms`, lastmod: TERMS_UPDATED, changefreq: "yearly", priority: 0.3 },

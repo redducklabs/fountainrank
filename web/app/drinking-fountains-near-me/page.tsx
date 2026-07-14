@@ -7,6 +7,8 @@ import {
   countryPath,
   getCountriesServer,
   getCountryCitiesServer,
+  getCountryRegionsServer,
+  getRegionCitiesServer,
   NEAR_ME_PATH,
 } from "../../lib/places";
 
@@ -33,9 +35,31 @@ export function generateMetadata(): Metadata {
 export default async function NearMePage() {
   const { data: countries } = await getCountriesServer(crypto.randomUUID());
   const topCountry = countries[0];
-  const { data: cities } = topCountry
-    ? await getCountryCitiesServer(topCountry.country_code, crypto.randomUUID())
+  const { data: regions } = topCountry
+    ? await getCountryRegionsServer(topCountry.country_code, crypto.randomUUID(), 1000)
     : { data: [] };
+  const regionCities =
+    topCountry && regions.length > 0
+      ? (
+          await Promise.all(
+            regions.map(async (region) => {
+              const { data } = await getRegionCitiesServer(
+                topCountry.country_code,
+                region.slug,
+                crypto.randomUUID(),
+              );
+              return data.map((city) => ({ city, regionSlug: region.slug }));
+            }),
+          )
+        ).flat()
+      : topCountry
+        ? (await getCountryCitiesServer(topCountry.country_code, crypto.randomUUID())).data.map(
+            (city) => ({ city, regionSlug: null }),
+          )
+        : [];
+
+  const cityHref = (item: (typeof regionCities)[number]) =>
+    cityPath(item.city.country_code, item.city.slug, item.regionSlug);
 
   return (
     <>
@@ -53,20 +77,17 @@ export default async function NearMePage() {
           Open the map near you
         </Link>
 
-        {cities.length > 0 && (
+        {regionCities.length > 0 && (
           <section className="mt-8">
             <h2 className="text-lg font-bold text-brand-ink">Popular cities</h2>
             <ul className="mt-3 divide-y divide-border">
-              {cities.map((city) => (
-                <li key={city.id} className="flex items-center justify-between py-2">
-                  <Link
-                    href={cityPath(city.country_code, city.slug)}
-                    className="text-brand-ink underline"
-                  >
-                    {city.name}
+              {regionCities.map((item) => (
+                <li key={item.city.id} className="flex items-center justify-between py-2">
+                  <Link href={cityHref(item)} className="text-brand-ink underline">
+                    {item.city.name}
                   </Link>
                   <span className="text-sm text-muted">
-                    {city.fountain_count.toLocaleString()} fountains
+                    {item.city.fountain_count.toLocaleString()} fountains
                   </span>
                 </li>
               ))}

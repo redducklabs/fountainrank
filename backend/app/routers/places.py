@@ -16,7 +16,7 @@ from app.config import Settings, get_settings
 from app.db import get_session
 from app.geo import latitude_of, longitude_of
 from app.models import Fountain, FountainPhoto, PlaceBoundary, PlaceScopeConfig
-from app.schemas import CityFountainPin, CityFountainsOut, Coordinates, PlaceOut
+from app.schemas import CityFountainPin, CityFountainsOut, Coordinates, PlaceOut, PlaceResolveOut
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,169 @@ async def _scope_city_routes_ready(session: AsyncSession, country_code: str) -> 
             )
         )
     )
+
+
+def _place_order_by():
+    return (
+        PlaceBoundary.fountain_count.desc(),
+        PlaceBoundary.name.asc(),
+        PlaceBoundary.id.asc(),
+    )
+
+
+def _place_indexable(place: PlaceBoundary, *, scope_ready: bool, settings: Settings) -> bool:
+    return place.fountain_count >= settings.seo_place_min_fountains and scope_ready
+
+
+async def _place_out(session: AsyncSession, place: PlaceBoundary, settings: Settings) -> PlaceOut:
+    data = PlaceOut.model_validate(place)
+    data.indexable = _place_indexable(
+        place,
+        scope_ready=await _scope_city_routes_ready(session, place.country_code),
+        settings=settings,
+    )
+    return data
+
+
+async def _places_out(
+    session: AsyncSession, places: list[PlaceBoundary], settings: Settings
+) -> list[PlaceOut]:
+    readiness: dict[str, bool] = {}
+    out: list[PlaceOut] = []
+    for place in places:
+        ready = readiness.get(place.country_code)
+        if ready is None:
+            ready = await _scope_city_routes_ready(session, place.country_code)
+            readiness[place.country_code] = ready
+        data = PlaceOut.model_validate(place)
+        data.indexable = _place_indexable(place, scope_ready=ready, settings=settings)
+        out.append(data)
+    return out
+
+
+def _path_for_region(country_code: str, region_slug: str) -> str:
+    return f"/drinking-fountains/{country_code}/{region_slug}"
+
+
+def _path_for_city(country_code: str, city_slug: str, *, region_slug: str | None = None) -> str:
+    if region_slug is None:
+        return f"/drinking-fountains/{country_code}/{city_slug}"
+    return f"/drinking-fountains/{country_code}/{region_slug}/{city_slug}"
+
+
+async def _country_place_id(session: AsyncSession, country_code: str):
+    return (
+        await session.execute(
+            select(PlaceBoundary.id)
+            .where(
+                PlaceBoundary.place_kind == "country",
+                PlaceBoundary.country_code == country_code,
+            )
+            .order_by(PlaceBoundary.overture_id.asc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
+async def _canonical_region(
+    session: AsyncSession, country_code: str, region_slug: str
+) -> PlaceBoundary | None:
+    return (
+        await session.execute(
+            select(PlaceBoundary).where(
+                PlaceBoundary.country_code == country_code,
+                PlaceBoundary.slug == region_slug,
+                PlaceBoundary.place_kind == "region",
+                PlaceBoundary.is_canonical.is_(True),
+            )
+        )
+    ).scalar_one_or_none()
+
+
+async def _canonical_city(
+    session: AsyncSession, country_code: str, city_slug: str, parent_id
+) -> PlaceBoundary | None:
+    return (
+        await session.execute(
+            select(PlaceBoundary).where(
+                PlaceBoundary.country_code == country_code,
+                PlaceBoundary.slug == city_slug,
+                PlaceBoundary.parent_id == parent_id,
+                PlaceBoundary.place_kind == "city",
+                PlaceBoundary.is_canonical.is_(True),
+            )
+        )
+    ).scalar_one_or_none()
+
+
+def _fountain_pin_queries():
+    thumb_id_sq = (
+        select(FountainPhoto.id)
+        .where(FountainPhoto.fountain_id == Fountain.id, FountainPhoto.is_hidden.is_(False))
+        .order_by(FountainPhoto.created_at.desc())
+        .limit(1)
+        .correlate(Fountain)
+        .scalar_subquery()
+    )
+    photo_count_sq = (
+        select(func.count())
+        .select_from(FountainPhoto)
+        .where(FountainPhoto.fountain_id == Fountain.id, FountainPhoto.is_hidden.is_(False))
+        .correlate(Fountain)
+        .scalar_subquery()
+    )
+    return thumb_id_sq, photo_count_sq
+
+
+async def _fountain_pins_for_place(
+    session: AsyncSession,
+    *,
+    place_id,
+    membership_column,
+    limit: int,
+    offset: int,
+) -> list[CityFountainPin]:
+    thumb_id_sq, photo_count_sq = _fountain_pin_queries()
+    rows = (
+        await session.execute(
+            select(
+                Fountain.id,
+                latitude_of(Fountain.location),
+                longitude_of(Fountain.location),
+                Fountain.is_working,
+                Fountain.average_rating,
+                Fountain.rating_count,
+                Fountain.ranking_score,
+                Fountain.current_status,
+                Fountain.last_verified_at,
+                thumb_id_sq.label("thumb_id"),
+                photo_count_sq.label("photo_count"),
+            )
+            .where(membership_column == place_id, Fountain.is_hidden.is_(False))
+            .order_by(
+                Fountain.ranking_score.desc().nulls_last(),
+                Fountain.rating_count.desc(),
+                Fountain.id.asc(),
+            )
+            .limit(limit)
+            .offset(offset)
+        )
+    ).all()
+    return [
+        CityFountainPin(
+            id=row.id,
+            location=Coordinates(latitude=float(row[1]), longitude=float(row[2])),
+            is_working=row.is_working,
+            average_rating=row.average_rating,
+            rating_count=row.rating_count,
+            ranking_score=row.ranking_score,
+            current_status=row.current_status,
+            last_verified_at=row.last_verified_at,
+            photo_count=row.photo_count,
+            thumbnail_url=(f"/api/v1/photos/{row.thumb_id}/thumb" if row.thumb_id else None),
+        )
+        for row in rows
+    ]
 
 
 @router.get("/places", response_model=list[PlaceOut])
@@ -69,11 +232,7 @@ async def list_places(
     contract, not just tests).
     """
     min_count = settings.seo_place_min_fountains
-    order_by = (
-        PlaceBoundary.fountain_count.desc(),
-        PlaceBoundary.name.asc(),
-        PlaceBoundary.id.asc(),
-    )
+    order_by = _place_order_by()
 
     if country is None:
         # Countries are keyed by country_code (the URL segment) and the loader keeps exactly one
@@ -84,8 +243,8 @@ async def list_places(
         stmt = (
             select(PlaceBoundary)
             .where(
-                PlaceBoundary.subtype == "country",
-                PlaceBoundary.fountain_count >= min_count,
+                PlaceBoundary.place_kind == "country",
+                PlaceBoundary.fountain_count > 0,
             )
             .order_by(*order_by)
             .limit(limit)
@@ -98,17 +257,7 @@ async def list_places(
         # Resolve the country row by code (one per code from the loader; overture_id gives a
         # deterministic pick if that invariant is ever violated). A country not loaded yields no
         # cities — the country page 404s on its own (web notFound()).
-        parent_id = (
-            await session.execute(
-                select(PlaceBoundary.id)
-                .where(
-                    PlaceBoundary.subtype == "country",
-                    PlaceBoundary.country_code == country_code,
-                )
-                .order_by(PlaceBoundary.overture_id.asc())
-                .limit(1)
-            )
-        ).scalar_one_or_none()
+        parent_id = await _country_place_id(session, country_code)
         if parent_id is None:
             _set_cache(response, settings)
             logger.info(
@@ -121,13 +270,6 @@ async def list_places(
                 },
             )
             return []
-        if not await _scope_city_routes_ready(session, country_code):
-            _set_cache(response, settings)
-            logger.info(
-                "places served",
-                extra={"scope": "cities", "country": country_code, "rows": 0, "scope_ready": False},
-            )
-            return []
         # Cities ARE is_canonical: canonicalization keeps exactly one row per (country_code, slug)
         # among city-eligible subtypes, which is what owns the /[country]/[city] URL — so the flag
         # is correct and required here to collapse slug collisions.
@@ -135,7 +277,7 @@ async def list_places(
             select(PlaceBoundary)
             .where(
                 PlaceBoundary.parent_id == parent_id,
-                PlaceBoundary.subtype != "country",
+                PlaceBoundary.place_kind == "city",
                 PlaceBoundary.is_canonical.is_(True),
                 PlaceBoundary.fountain_count >= min_count,
             )
@@ -157,7 +299,342 @@ async def list_places(
             "offset": offset,
         },
     )
-    return [PlaceOut.model_validate(row) for row in rows]
+    return await _places_out(session, rows, settings)
+
+
+@router.get("/places/{country}/regions", response_model=list[PlaceOut])
+async def list_regions(
+    response: Response,
+    country: str,
+    limit: int = Query(default=200, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> list[PlaceOut]:
+    cc = country.lower()
+    rows = (
+        (
+            await session.execute(
+                select(PlaceBoundary)
+                .where(
+                    PlaceBoundary.country_code == cc,
+                    PlaceBoundary.place_kind == "region",
+                    PlaceBoundary.is_canonical.is_(True),
+                    PlaceBoundary.fountain_count >= settings.seo_place_min_fountains,
+                )
+                .order_by(*_place_order_by())
+                .limit(limit)
+                .offset(offset)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    _set_cache(response, settings)
+    logger.info(
+        "places served",
+        extra={
+            "scope": "regions",
+            "country": cc,
+            "rows": len(rows),
+            "limit": limit,
+            "offset": offset,
+        },
+    )
+    return await _places_out(session, rows, settings)
+
+
+@router.get("/places/{country}/cities", response_model=list[PlaceOut])
+async def list_country_cities(
+    response: Response,
+    country: str,
+    limit: int = Query(default=200, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> list[PlaceOut]:
+    cc = country.lower()
+    parent_id = await _country_place_id(session, cc)
+    if parent_id is None:
+        _set_cache(response, settings)
+        return []
+    rows = (
+        (
+            await session.execute(
+                select(PlaceBoundary)
+                .where(
+                    PlaceBoundary.country_code == cc,
+                    PlaceBoundary.parent_id == parent_id,
+                    PlaceBoundary.place_kind == "city",
+                    PlaceBoundary.is_canonical.is_(True),
+                    PlaceBoundary.fountain_count >= settings.seo_place_min_fountains,
+                )
+                .order_by(*_place_order_by())
+                .limit(limit)
+                .offset(offset)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    _set_cache(response, settings)
+    logger.info(
+        "places served",
+        extra={
+            "scope": "country_cities",
+            "country": cc,
+            "rows": len(rows),
+            "limit": limit,
+            "offset": offset,
+        },
+    )
+    return await _places_out(session, rows, settings)
+
+
+@router.get("/places/{country}/resolve/{slug}", response_model=PlaceResolveOut)
+async def resolve_level2_place(
+    response: Response,
+    country: str,
+    slug: str,
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> PlaceResolveOut:
+    cc = country.lower()
+    place_slug = slug.lower()
+
+    region = await _canonical_region(session, cc, place_slug)
+    if region is not None:
+        _set_cache(response, settings)
+        logger.info(
+            "place resolved",
+            extra={"country": cc, "slug": place_slug, "kind": "region", "place_id": str(region.id)},
+        )
+        return PlaceResolveOut(
+            kind="region",
+            canonical_path=_path_for_region(cc, region.slug),
+            place=await _place_out(session, region, settings),
+        )
+
+    country_id = await _country_place_id(session, cc)
+    if country_id is not None:
+        city = await _canonical_city(session, cc, place_slug, country_id)
+        if city is not None:
+            _set_cache(response, settings)
+            logger.info(
+                "place resolved",
+                extra={"country": cc, "slug": place_slug, "kind": "city", "place_id": str(city.id)},
+            )
+            return PlaceResolveOut(
+                kind="city",
+                canonical_path=_path_for_city(cc, city.slug),
+                place=await _place_out(session, city, settings),
+            )
+
+    parent = PlaceBoundary.__table__.alias("parent")
+    legacy_row = (
+        await session.execute(
+            select(PlaceBoundary, parent.c.slug.label("region_slug"))
+            .join(parent, parent.c.id == PlaceBoundary.parent_id)
+            .where(
+                PlaceBoundary.country_code == cc,
+                PlaceBoundary.slug == place_slug,
+                PlaceBoundary.place_kind == "city",
+                PlaceBoundary.is_canonical.is_(True),
+                parent.c.place_kind == "region",
+                parent.c.is_canonical.is_(True),
+            )
+            .order_by(
+                PlaceBoundary.fountain_count.desc(),
+                PlaceBoundary.name.asc(),
+                PlaceBoundary.id.asc(),
+            )
+            .limit(1)
+        )
+    ).one_or_none()
+    if legacy_row is not None:
+        city, region_slug = legacy_row
+        _set_cache(response, settings)
+        logger.info(
+            "place resolved",
+            extra={
+                "country": cc,
+                "slug": place_slug,
+                "kind": "city",
+                "redirect": True,
+                "place_id": str(city.id),
+            },
+        )
+        return PlaceResolveOut(
+            kind="city",
+            canonical_path=_path_for_city(cc, city.slug, region_slug=region_slug),
+            place=await _place_out(session, city, settings),
+        )
+
+    _set_cache(response, settings)
+    logger.info("place resolve miss", extra={"country": cc, "slug": place_slug})
+    raise HTTPException(status.HTTP_404_NOT_FOUND, detail="No such place")
+
+
+@router.get("/places/{country}/regions/{region}/cities", response_model=list[PlaceOut])
+async def list_region_cities(
+    response: Response,
+    country: str,
+    region: str,
+    limit: int = Query(default=200, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> list[PlaceOut]:
+    cc = country.lower()
+    region_place = await _canonical_region(session, cc, region.lower())
+    if region_place is None:
+        _set_cache(response, settings)
+        return []
+    rows = (
+        (
+            await session.execute(
+                select(PlaceBoundary)
+                .where(
+                    PlaceBoundary.country_code == cc,
+                    PlaceBoundary.parent_id == region_place.id,
+                    PlaceBoundary.place_kind == "city",
+                    PlaceBoundary.is_canonical.is_(True),
+                    PlaceBoundary.fountain_count >= settings.seo_place_min_fountains,
+                )
+                .order_by(*_place_order_by())
+                .limit(limit)
+                .offset(offset)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    _set_cache(response, settings)
+    logger.info(
+        "places served",
+        extra={
+            "scope": "region_cities",
+            "country": cc,
+            "region": region_place.slug,
+            "rows": len(rows),
+            "limit": limit,
+            "offset": offset,
+        },
+    )
+    return await _places_out(session, rows, settings)
+
+
+async def _place_fountains_response(
+    *,
+    response: Response,
+    session: AsyncSession,
+    settings: Settings,
+    place: PlaceBoundary,
+    membership_column,
+    limit: int,
+    offset: int,
+) -> CityFountainsOut:
+    fountains = await _fountain_pins_for_place(
+        session,
+        place_id=place.id,
+        membership_column=membership_column,
+        limit=limit,
+        offset=offset,
+    )
+    indexable = _place_indexable(
+        place,
+        scope_ready=await _scope_city_routes_ready(session, place.country_code),
+        settings=settings,
+    )
+    _set_cache(response, settings)
+    return CityFountainsOut(
+        place=await _place_out(session, place, settings),
+        fountains=fountains,
+        indexable=indexable,
+    )
+
+
+@router.get("/places/{country}/regions/{region}/fountains", response_model=CityFountainsOut)
+async def region_fountains(
+    response: Response,
+    country: str,
+    region: str,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> CityFountainsOut:
+    cc = country.lower()
+    place = await _canonical_region(session, cc, region.lower())
+    if place is None:
+        _set_cache(response, settings)
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="No such region")
+    out = await _place_fountains_response(
+        response=response,
+        session=session,
+        settings=settings,
+        place=place,
+        membership_column=Fountain.region_place_id,
+        limit=limit,
+        offset=offset,
+    )
+    logger.info(
+        "region fountains served",
+        extra={
+            "country": cc,
+            "region": place.slug,
+            "place_id": str(place.id),
+            "rows": len(out.fountains),
+            "indexable": out.indexable,
+        },
+    )
+    return out
+
+
+@router.get(
+    "/places/{country}/regions/{region}/cities/{city}/fountains",
+    response_model=CityFountainsOut,
+)
+async def nested_city_fountains(
+    response: Response,
+    country: str,
+    region: str,
+    city: str,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> CityFountainsOut:
+    cc = country.lower()
+    region_place = await _canonical_region(session, cc, region.lower())
+    if region_place is None:
+        _set_cache(response, settings)
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="No such region")
+    place = await _canonical_city(session, cc, city.lower(), region_place.id)
+    if place is None:
+        _set_cache(response, settings)
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="No such city")
+    out = await _place_fountains_response(
+        response=response,
+        session=session,
+        settings=settings,
+        place=place,
+        membership_column=Fountain.city_place_id,
+        limit=limit,
+        offset=offset,
+    )
+    logger.info(
+        "nested city fountains served",
+        extra={
+            "country": cc,
+            "region": region_place.slug,
+            "city": place.slug,
+            "place_id": str(place.id),
+            "rows": len(out.fountains),
+            "indexable": out.indexable,
+        },
+    )
+    return out
 
 
 @router.get("/places/{country}/{city}/fountains", response_model=CityFountainsOut)
@@ -180,98 +657,32 @@ async def city_fountains(
     """
     cc = country.lower()
     slug = city.lower()
-    place = (
-        await session.execute(
-            select(PlaceBoundary).where(
-                PlaceBoundary.country_code == cc,
-                PlaceBoundary.slug == slug,
-                PlaceBoundary.is_canonical.is_(True),
-                PlaceBoundary.subtype != "country",
-            )
-        )
-    ).scalar_one_or_none()
+    parent_id = await _country_place_id(session, cc)
+    place = await _canonical_city(session, cc, slug, parent_id) if parent_id is not None else None
     if place is None:
         _set_cache(response, settings)
         logger.info("city fountains: no canonical city", extra={"country": cc, "slug": slug})
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="No such city")
 
-    # Correlated scalar subqueries: the newest visible photo's id (for the thumbnail URL) and the
-    # visible-photo count. Both return exactly one value per Fountain row, so they don't change the
-    # page's row count, order, or pagination — they're just extra columns on the same select.
-    thumb_id_sq = (
-        select(FountainPhoto.id)
-        .where(FountainPhoto.fountain_id == Fountain.id, FountainPhoto.is_hidden.is_(False))
-        .order_by(FountainPhoto.created_at.desc())
-        .limit(1)
-        .correlate(Fountain)
-        .scalar_subquery()
+    out = await _place_fountains_response(
+        response=response,
+        session=session,
+        settings=settings,
+        place=place,
+        membership_column=Fountain.city_place_id,
+        limit=limit,
+        offset=offset,
     )
-    photo_count_sq = (
-        select(func.count())
-        .select_from(FountainPhoto)
-        .where(FountainPhoto.fountain_id == Fountain.id, FountainPhoto.is_hidden.is_(False))
-        .correlate(Fountain)
-        .scalar_subquery()
-    )
-
-    rows = (
-        await session.execute(
-            select(
-                Fountain.id,
-                latitude_of(Fountain.location),
-                longitude_of(Fountain.location),
-                Fountain.is_working,
-                Fountain.average_rating,
-                Fountain.rating_count,
-                Fountain.ranking_score,
-                Fountain.current_status,
-                Fountain.last_verified_at,
-                thumb_id_sq.label("thumb_id"),
-                photo_count_sq.label("photo_count"),
-            )
-            .where(Fountain.city_place_id == place.id, Fountain.is_hidden.is_(False))
-            # Best-rated first: Bayesian ranking_score desc, unrated (NULL) last; then more-rated,
-            # then id for a stable, deterministic page across offsets.
-            .order_by(
-                Fountain.ranking_score.desc().nulls_last(),
-                Fountain.rating_count.desc(),
-                Fountain.id.asc(),
-            )
-            .limit(limit)
-            .offset(offset)
-        )
-    ).all()
-    fountains = [
-        CityFountainPin(
-            id=row.id,
-            location=Coordinates(latitude=float(row[1]), longitude=float(row[2])),
-            is_working=row.is_working,
-            average_rating=row.average_rating,
-            rating_count=row.rating_count,
-            ranking_score=row.ranking_score,
-            current_status=row.current_status,
-            last_verified_at=row.last_verified_at,
-            photo_count=row.photo_count,
-            thumbnail_url=(f"/api/v1/photos/{row.thumb_id}/thumb" if row.thumb_id else None),
-        )
-        for row in rows
-    ]
-    indexable = place.fountain_count >= settings.seo_place_min_fountains and (
-        await _scope_city_routes_ready(session, cc)
-    )
-    _set_cache(response, settings)
     logger.info(
         "city fountains served",
         extra={
             "country": cc,
             "slug": slug,
             "place_id": str(place.id),
-            "rows": len(fountains),
-            "indexable": indexable,
+            "rows": len(out.fountains),
+            "indexable": out.indexable,
             "limit": limit,
             "offset": offset,
         },
     )
-    return CityFountainsOut(
-        place=PlaceOut.model_validate(place), fountains=fountains, indexable=indexable
-    )
+    return out

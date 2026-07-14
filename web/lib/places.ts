@@ -18,9 +18,18 @@ export function countryPath(countryCode: string): string {
   return `/drinking-fountains/${countryCode.toLowerCase()}`;
 }
 
-// Pure: the public route for a city page (country segment + the city's sticky slug).
-export function cityPath(countryCode: string, slug: string): string {
-  return `/drinking-fountains/${countryCode.toLowerCase()}/${slug}`;
+// Pure: the public route for a region page.
+export function regionPath(countryCode: string, regionSlug: string): string {
+  return `/drinking-fountains/${countryCode.toLowerCase()}/${regionSlug}`;
+}
+
+// Pure: the public route for a city page. Region-tier cities include their parent region slug;
+// two-level countries omit it.
+export function cityPath(countryCode: string, slug: string, regionSlug?: string | null): string {
+  const cc = countryCode.toLowerCase();
+  return regionSlug
+    ? `/drinking-fountains/${cc}/${regionSlug}/${slug}`
+    : `/drinking-fountains/${cc}/${slug}`;
 }
 
 // Server-only fetch of the public place list. This module is client-bundlable, so it never
@@ -42,7 +51,8 @@ async function getPlaces(
   }
 }
 
-// The canonical, indexable countries (fountain_count >= K), most-populous first.
+// Countries with fountains for the browse hub, most-populous first. Each row carries the backend's
+// `indexable` verdict for sitemap/page consumers.
 export function getCountriesServer(requestId?: string, limit = 200): Promise<PlacesResult> {
   return getPlaces({ limit }, requestId);
 }
@@ -53,12 +63,72 @@ export function getCountryCitiesServer(
   requestId?: string,
   limit = 48,
 ): Promise<PlacesResult> {
-  return getPlaces({ country, limit }, requestId);
+  const headers: Record<string, string> = {};
+  if (requestId) headers["X-Request-ID"] = requestId;
+  const client = makeClient(resolveApiBaseUrl(), { headers });
+  return client
+    .GET("/api/v1/places/{country}/cities", {
+      params: { path: { country }, query: { limit } },
+    })
+    .then(({ data, response }) => ({ data: data ?? [], status: response?.status ?? 0 }))
+    .catch(() => ({ data: [], status: 0 }));
+}
+
+export function getCountryRegionsServer(
+  country: string,
+  requestId?: string,
+  limit = 48,
+): Promise<PlacesResult> {
+  const headers: Record<string, string> = {};
+  if (requestId) headers["X-Request-ID"] = requestId;
+  const client = makeClient(resolveApiBaseUrl(), { headers });
+  return client
+    .GET("/api/v1/places/{country}/regions", {
+      params: { path: { country }, query: { limit } },
+    })
+    .then(({ data, response }) => ({ data: data ?? [], status: response?.status ?? 0 }))
+    .catch(() => ({ data: [], status: 0 }));
+}
+
+export function getRegionCitiesServer(
+  country: string,
+  region: string,
+  requestId?: string,
+  limit = 48,
+): Promise<PlacesResult> {
+  const headers: Record<string, string> = {};
+  if (requestId) headers["X-Request-ID"] = requestId;
+  const client = makeClient(resolveApiBaseUrl(), { headers });
+  return client
+    .GET("/api/v1/places/{country}/regions/{region}/cities", {
+      params: { path: { country, region }, query: { limit } },
+    })
+    .then(({ data, response }) => ({ data: data ?? [], status: response?.status ?? 0 }))
+    .catch(() => ({ data: [], status: 0 }));
 }
 
 // A canonical city + its ranked fountains (#127 Slice 3). `indexable` is the backend's thin-content
 // verdict (fountain_count >= K); the page sets `noindex` from it. status 404 => no such city.
 export type CityFountainsOut = components["schemas"]["CityFountainsOut"];
+export type PlaceResolveOut = components["schemas"]["PlaceResolveOut"];
+
+export async function resolvePlaceServer(
+  country: string,
+  slug: string,
+  requestId?: string,
+): Promise<{ data: PlaceResolveOut | undefined; status: number }> {
+  const headers: Record<string, string> = {};
+  if (requestId) headers["X-Request-ID"] = requestId;
+  const client = makeClient(resolveApiBaseUrl(), { headers });
+  try {
+    const { data, response } = await client.GET("/api/v1/places/{country}/resolve/{slug}", {
+      params: { path: { country, slug } },
+    });
+    return { data, status: response?.status ?? 0 };
+  } catch {
+    return { data: undefined, status: 0 };
+  }
+}
 
 export async function getCityFountainsServer(
   country: string,
@@ -76,6 +146,51 @@ export async function getCityFountainsServer(
     return { data, status: response?.status ?? 0 };
   } catch {
     // status 0 = no HTTP response (network error / backend down / DNS failure)
+    return { data: undefined, status: 0 };
+  }
+}
+
+export async function getNestedCityFountainsServer(
+  country: string,
+  region: string,
+  city: string,
+  requestId?: string,
+  limit = 100,
+): Promise<{ data: CityFountainsOut | undefined; status: number }> {
+  const headers: Record<string, string> = {};
+  if (requestId) headers["X-Request-ID"] = requestId;
+  const client = makeClient(resolveApiBaseUrl(), { headers });
+  try {
+    const { data, response } = await client.GET(
+      "/api/v1/places/{country}/regions/{region}/cities/{city}/fountains",
+      {
+        params: { path: { country, region, city }, query: { limit } },
+      },
+    );
+    return { data, status: response?.status ?? 0 };
+  } catch {
+    return { data: undefined, status: 0 };
+  }
+}
+
+export async function getRegionFountainsServer(
+  country: string,
+  region: string,
+  requestId?: string,
+  limit = 100,
+): Promise<{ data: CityFountainsOut | undefined; status: number }> {
+  const headers: Record<string, string> = {};
+  if (requestId) headers["X-Request-ID"] = requestId;
+  const client = makeClient(resolveApiBaseUrl(), { headers });
+  try {
+    const { data, response } = await client.GET(
+      "/api/v1/places/{country}/regions/{region}/fountains",
+      {
+        params: { path: { country, region }, query: { limit } },
+      },
+    );
+    return { data, status: response?.status ?? 0 };
+  } catch {
     return { data: undefined, status: 0 };
   }
 }
@@ -157,9 +272,8 @@ export async function getFountainPlaceServer(
 // The indexable fountain ids for the fountains sitemap chunk (spec §6/§7).
 export type FountainSitemapOut = components["schemas"]["FountainSitemapOut"];
 
-// The backend /api/v1/fountains/sitemap `limit` hard cap (server enforces le=50000). The sitemap
-// builder fetches at this cap; if `total_count` exceeds what came back, the chunk logs it (never a
-// silent drop) — a signal to split the fountains chunk via generateSitemaps before it breaks 50k.
+// The backend /api/v1/fountains/sitemap `limit` hard cap (server enforces le=50000). Each sitemap
+// chunk fetches exactly one capped page; the sitemap index sizes chunk URLs from `total_count`.
 export const SITEMAP_FOUNTAIN_CAP = 50000;
 
 // Server-only fetch of the indexable fountain ids. A network error yields `undefined` with status 0
@@ -167,13 +281,14 @@ export const SITEMAP_FOUNTAIN_CAP = 50000;
 export async function getIndexableFountainsServer(
   requestId?: string,
   limit = SITEMAP_FOUNTAIN_CAP,
+  offset = 0,
 ): Promise<{ data: FountainSitemapOut | undefined; status: number }> {
   const headers: Record<string, string> = {};
   if (requestId) headers["X-Request-ID"] = requestId;
   const client = makeClient(resolveApiBaseUrl(), { headers });
   try {
     const { data, response } = await client.GET("/api/v1/fountains/sitemap", {
-      params: { query: { limit } },
+      params: { query: { limit, offset } },
     });
     return { data, status: response?.status ?? 0 };
   } catch {

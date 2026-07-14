@@ -4,7 +4,7 @@ Schema per spec §5 as amended by §11.4/§11.6 (Overture Divisions source):
 identity key is the Overture GERS `overture_id` (unique); `osm_type`/`osm_id` are
 nullable provenance; `subtype` + `class` added; `admin_level` nullable; boundary is
 `Geography(MULTIPOLYGON,4326)` GIST-indexed; the public-namespace uniqueness is a
-partial unique index on `(country_code, slug) WHERE is_canonical`.
+partial unique indexes for canonical regions and cities.
 """
 
 import uuid
@@ -69,15 +69,19 @@ async def test_boundary_gist_index(session):
 
 
 @pytest.mark.asyncio
-async def test_partial_unique_country_slug_canonical(session):
+async def test_partial_unique_place_hierarchy_canonical(session):
     idx = await _indexes(session)
-    assert "uq_place_boundaries_country_slug_canonical" in idx
-    definition = idx["uq_place_boundaries_country_slug_canonical"].lower()
-    assert "unique" in definition
-    assert "country_code" in definition and "slug" in definition
-    # Partial predicate — matches the public URL, which omits admin_level (spec §11.5).
-    assert "is_canonical" in definition
-    assert "where" in definition
+    region = idx["uq_place_boundaries_region_canonical"].lower()
+    assert "unique" in region
+    assert "country_code" in region and "slug" in region
+    assert "is_canonical" in region and "place_kind" in region and "'region'" in region
+    assert "where" in region
+
+    city = idx["uq_place_boundaries_city_canonical"].lower()
+    assert "unique" in city
+    assert "country_code" in city and "parent_id" in city and "slug" in city
+    assert "is_canonical" in city and "place_kind" in city and "'city'" in city
+    assert "where" in city
 
 
 @pytest.mark.asyncio
@@ -135,43 +139,61 @@ async def test_partial_unique_allows_multiple_non_canonical(session):
 
 @pytest.mark.asyncio
 async def test_partial_unique_rejects_duplicate_canonical(session):
-    """The rejecting side of the invariant (spec §11.5/§11.6): two CANONICAL rows sharing
-    (country_code, slug) must violate the partial unique index — the public URL
-    /drinking-fountains/[country]/[city] resolves to exactly one place. Guards against a
-    predicate typo or migration drift that leaves a plausible-looking index that no longer
-    enforces uniqueness."""
+    """Two canonical city rows with the same country/parent/slug violate the v2 public URL
+    namespace."""
     from sqlalchemy.exc import IntegrityError
 
-    from app.models import PlaceBoundary
-
-    poly = "SRID=4326;MULTIPOLYGON(((0 0,1 0,1 1,0 1,0 0)))"
-    session.add(
-        PlaceBoundary(
-            overture_id=f"ov-{uuid.uuid4()}",
-            subtype="locality",
-            place_class="land",
-            name="Canon A",
-            country_code="xx",
-            slug="canon-town",
-            is_canonical=True,
-            boundary=poly,
+    parent_id = (
+        await session.execute(
+            text(
+                """
+                INSERT INTO place_boundaries
+                    (id, overture_id, subtype, class, place_kind, name, country_code, slug,
+                     is_canonical, fountain_count, boundary, created_at, updated_at)
+                VALUES (gen_random_uuid(), :oid, 'region', 'land', 'region', 'Parent', 'xx',
+                        'parent', true, 0,
+                        ST_Multi(ST_GeomFromText('POLYGON((0 0,4 0,4 4,0 4,0 0))', 4326))
+                            ::geography,
+                        now(), now())
+                RETURNING id
+                """
+            ),
+            {"oid": f"ov-{uuid.uuid4()}"},
         )
+    ).scalar_one()
+    await session.execute(
+        text(
+            """
+            INSERT INTO place_boundaries
+                (id, overture_id, subtype, class, place_kind, name, country_code, slug,
+                 is_canonical, fountain_count, parent_id, boundary, created_at, updated_at)
+            VALUES (gen_random_uuid(), :oid, 'locality', 'land', 'city', 'Canon A', 'xx',
+                    'canon-town', true, 0, :parent_id,
+                    ST_Multi(ST_GeomFromText('POLYGON((0 0,1 0,1 1,0 1,0 0))', 4326))
+                        ::geography,
+                    now(), now())
+            """
+        ),
+        {"oid": f"ov-{uuid.uuid4()}", "parent_id": parent_id},
     )
     await session.commit()
 
-    session.add(
-        PlaceBoundary(
-            overture_id=f"ov-{uuid.uuid4()}",
-            subtype="county",
-            place_class="land",
-            name="Canon B",
-            country_code="xx",
-            slug="canon-town",  # same (country_code, slug), also canonical -> rejected
-            is_canonical=True,
-            boundary=poly,
-        )
-    )
     with pytest.raises(IntegrityError):
+        await session.execute(
+            text(
+                """
+                INSERT INTO place_boundaries
+                    (id, overture_id, subtype, class, place_kind, name, country_code, slug,
+                     is_canonical, fountain_count, parent_id, boundary, created_at, updated_at)
+                VALUES (gen_random_uuid(), :oid, 'locality', 'land', 'city', 'Canon B', 'xx',
+                        'canon-town', true, 0, :parent_id,
+                        ST_Multi(ST_GeomFromText('POLYGON((0 0,1 0,1 1,0 1,0 0))', 4326))
+                            ::geography,
+                        now(), now())
+                """
+            ),
+            {"oid": f"ov-{uuid.uuid4()}", "parent_id": parent_id},
+        )
         await session.commit()
     await session.rollback()
 
