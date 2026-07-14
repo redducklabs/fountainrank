@@ -10,12 +10,11 @@ spec:
   replicas: 1
   # The new pod is held NotReady by the /readyz schema gate (app/routers/health.py) until
   # `alembic upgrade head` finishes — the deploy runs migrations by exec-ing into this very pod
-  # AFTER it is applied but BEFORE it is Ready. A one-time data backfill (e.g. migration 0025's
-  # place-hierarchy membership rebuild) can run for many minutes, during which the ReplicaSet has
-  # zero Ready pods. The default progressDeadlineSeconds (600s) then latches
+  # AFTER it is applied but BEFORE it is Ready. While a data-backfill migration runs, the
+  # ReplicaSet has zero Ready pods; the default progressDeadlineSeconds (600s) then latches
   # ProgressDeadlineExceeded and fails `kubectl rollout status` even though the rollout later
-  # succeeds. Set it well above the longest expected migration so a slow backfill never trips it;
-  # a genuinely wedged rollout still fails, just later.
+  # succeeds (observed: migration 0025's one-time membership backfill). 1800s is the operational
+  # ceiling we allow a migration to hold the rollout before we treat it as wedged.
   progressDeadlineSeconds: 1800
   # Recreate-in-place on a small cluster: a single 256Mi pod can't surge alongside
   # its predecessor when no node has the headroom, so the default RollingUpdate
