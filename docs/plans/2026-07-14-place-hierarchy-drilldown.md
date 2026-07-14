@@ -22,6 +22,53 @@ instead of gestured at.*
 
 ---
 
+## Slice 0 — Close the deploy race (PREREQUISITE — without this the rest is unsafe)
+
+**Files:** `.github/workflows/deploy.yml`, `backend/app/routers/health.py`, `infra/k8s/backend.yaml`
+(probe timings only if needed).
+
+**The bug (verified in the current workflow, not assumed).** Plan rev-1 claimed the deploy already
+gates traffic until migrations finish. **That claim is false**, and this change would turn a latent
+weakness into a visible outage:
+
+- `Render + apply workloads` applies **backend *and web*** in one loop
+  (`.github/workflows/deploy.yml:243-255`) — *before* migrations.
+- The migration step then waits only for pod **`phase=Running`**, not `Ready`
+  (`.github/workflows/deploy.yml:261-268`).
+- **`/readyz` only runs two PostGIS queries** (`backend/app/routers/health.py:26-38`). It says
+  nothing about the schema version, so on a production DB already at `0024` it **passes before
+  `0025` runs**. (The workflow's comment — "not Ready until the migration runs" — is only true on an
+  *empty* database where PostGIS is absent.)
+- Web's readiness probe is a bare **`GET /`** (`infra/k8s/web.yaml:75-82`), so the new web image goes
+  Ready immediately.
+
+Net: new web + new backend can serve **while `0025` is mid-flight**, against `place_kind = NULL`
+data → empty place tree, 404s, or 500s on the live site.
+
+**The fix — two parts, both required:**
+
+1. **Make `/readyz` a real schema gate.** It compares the DB's `alembic_version.version_num` against
+   the head revision **embedded in the running image** (`ScriptDirectory.from_config(...)
+   .get_current_head()`); a mismatch — or a missing `alembic_version` table — returns **503**. Then:
+   - new backend pods **cannot serve pre-migration** (they never enter the Service endpoints);
+   - the migration step still works, because it gates on `phase=Running`, not `Ready`, and `exec`s
+     into the pod;
+   - **old backend pods keep serving throughout** (they are Ready), so there is no downtime;
+   - a deploy that *forgets* to migrate now fails **loudly** instead of silently serving broken
+     data. That is the desired behaviour.
+2. **Apply `web` only AFTER migrations.** Split the workload loop: apply `backend` (+ config) →
+   run migrations → then apply `web` and the rest. Otherwise new web (Ready instantly) would call
+   the *old* backend, which has no `/places/{country}/regions`, and region pages would transiently
+   404/500.
+
+**Tests:** `/readyz` returns 503 when `alembic_version` is behind the image's head, and 200 when it
+matches; a unit test asserts the head is read from the image, not hardcoded.
+
+> This is a CI/IaC change made through the committed workflow — never a hand-run `kubectl`
+> (`CLAUDE.md` → *Infrastructure as Code*).
+
+---
+
 ## Slice 1 — Schema + data backfill + membership (the core)
 
 **Files:** `backend/migrations/versions/0025_place_hierarchy.py` (new),
@@ -60,10 +107,27 @@ traffic is gated until migrations finish, so no request ever sees the half-migra
 7. **Run the full §5 data backfill** (steps 2–10: `place_kind` → region parents → 3-FK assignment →
    canonical regions → city parents → recount → canonical cities → canonical remap → recount).
 
+   **The backfill's first statement after deriving `place_kind` MUST be
+   `UPDATE place_boundaries SET is_canonical = false WHERE is_canonical`.** The rows still carry
+   *old-model* winners; the moment `place_kind` is populated they become visible to the new partial
+   unique indexes. Clearing them before the region/city winner passes guarantees the indexes can
+   never see an old winner and a new winner in the same URL group simultaneously. (It happens to be
+   safe even without the reset — the old `(country_code, slug)` rule was *stricter* than
+   `(country_code, parent_id, slug)` — but relying on that is a loose sequence, and the reset makes
+   it explicit.)
+
 **The backfill SQL is FROZEN** in `backend/migrations/sql/0025_backfill.sql` and executed by the
 migration. It **must not** `import app.membership` — a migration must reproduce the state as of its
 own revision forever, and app code drifts. Duplication is the correct trade here; `membership.py`
 continues to own the *ongoing* logic.
+
+**The cost of that trade is a divergence hazard, and it is closed by a parity test.** There are now
+two copies of the hardest algorithm in the codebase. So: run the migration's backfill on a fixture,
+snapshot the full membership state (`fountains.{country,region,city}_place_id` +
+`place_boundaries.{place_kind,parent_id,is_canonical,fountain_count}`), then run
+`refresh_all_memberships()` on the same fixture and **assert the two final states are identical**.
+Step 9's remap and the post-remap recount are the likeliest place to diverge, and divergence there
+would **not** necessarily violate any index — so nothing else would catch it.
 
 **`downgrade()`** — the full old-model recomputation in §10's exact order: drop the two new indexes
 → clear `is_canonical` → restore old parentage (every non-country boundary's parent → its country)
@@ -187,7 +251,12 @@ resolve to the **region**; a not-ready country is `indexable: false`;
 
 **Files:** `packages/api-client/` (regenerate `openapi.json` + `schema.d.ts` from the Slice-2
 backend — never hand-edit, never text-merge), `web/lib/places.ts`,
-`web/app/drinking-fountains/**`, **`web/app/fountains/[id]/page.tsx`**.
+`web/app/drinking-fountains/**`, **`web/app/fountains/[id]/page.tsx`**,
+**`web/app/drinking-fountains-near-me/page.tsx`** (+ its test).
+
+> **Grep for the flat-URL contract before writing code.** Every caller of `cityPath()` and every
+> hand-built `/drinking-fountains/` string is a consumer of the *old* two-segment contract. Two live
+> ones sit **outside** `web/app/drinking-fountains/**` and are easy to miss — both are listed above.
 
 - `page.tsx` — the **hub** (§7). `[country]/page.tsx` — regions, or cities for a 2-level country.
 - **Rename `[city]/` → `[place]/`** (Next forbids two dynamic segments at one level).
@@ -204,10 +273,17 @@ backend — never hand-edit, never text-merge), `web/lib/places.ts`,
 - Region-page **disambiguation link** for the §3.2 collisions.
 - `web/lib/places.ts` gains `regionPath()` and a region-aware `cityPath()`.
 
+- **`/drinking-fountains-near-me` is an always-indexable SEO hub and a missed flat-URL consumer.**
+  Its "Popular cities" links call `cityPath(city.country_code, city.slug)` (~L56-64) and its test
+  asserts `/drinking-fountains/us/san-diego` (`page.test.tsx:57`). Left alone it either emits stale
+  non-canonical links or **fails typecheck** once `cityPath()` is region-aware. It must build
+  canonical nested URLs from the new parent-region data.
+
 **Tests:** the four resolver branches; a legacy flat URL 308s to a canonical nested target; the DC
 collision renders the state page **with** the disambiguation link; **fountain detail breadcrumb +
 "Browse more" emit the canonical nested city URL** for a region-tier city, and the flat URL for a
-2-level country.
+2-level country; **`/drinking-fountains-near-me` emits canonical nested city links** (its existing
+flat-URL assertion is updated, not deleted).
 
 ---
 
