@@ -8,6 +8,15 @@ metadata:
     component: backend
 spec:
   replicas: 1
+  # The new pod is held NotReady by the /readyz schema gate (app/routers/health.py) until
+  # `alembic upgrade head` finishes — the deploy runs migrations by exec-ing into this very pod
+  # AFTER it is applied but BEFORE it is Ready. A one-time data backfill (e.g. migration 0025's
+  # place-hierarchy membership rebuild) can run for many minutes, during which the ReplicaSet has
+  # zero Ready pods. The default progressDeadlineSeconds (600s) then latches
+  # ProgressDeadlineExceeded and fails `kubectl rollout status` even though the rollout later
+  # succeeds. Set it well above the longest expected migration so a slow backfill never trips it;
+  # a genuinely wedged rollout still fails, just later.
+  progressDeadlineSeconds: 1800
   # Recreate-in-place on a small cluster: a single 256Mi pod can't surge alongside
   # its predecessor when no node has the headroom, so the default RollingUpdate
   # deadlocks (FailedScheduling). maxSurge 0 / maxUnavailable 1 tears the old pod
