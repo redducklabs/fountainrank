@@ -313,16 +313,28 @@ async def _maybe_move(session, fountain, cand, run, settings, summary) -> bool:
     return False
 
 
-async def _mark_scope_removals(session, *, run, scope, seen_ext_ids, now, summary) -> None:
+async def _mark_scope_removals(
+    session: AsyncSession,
+    *,
+    run: OsmImportRun,
+    scope: RunScope,
+    seen_ext_ids: set[str],
+    now: datetime,
+    summary: RunSummary,
+) -> None:
     stmt = select(FountainProvenance).where(
         FountainProvenance.source_system == scope.source_system,
         FountainProvenance.scope_id == scope.scope_id,
         FountainProvenance.removed_at.is_(None),
     )
-    if seen_ext_ids:
-        stmt = stmt.where(FountainProvenance.source_external_id.not_in(seen_ext_ids))
     rows = (await session.execute(stmt)).scalars().all()
+    removed_before = summary.removed_count
     for prov in rows:
+        # Filter in Python instead of expanding a potentially continent-sized NOT IN list.
+        # asyncpg rejects statements with more than 32,767 bind arguments; large extracts such
+        # as Spain can exceed that limit even though the scope query itself is bounded.
+        if prov.source_external_id in seen_ext_ids:
+            continue
         # Scope-bounds guard: a sub-region refresh can't remove what it didn't cover.
         if scope.scope_bounds_wkt is not None:
             inside = (
@@ -352,6 +364,15 @@ async def _mark_scope_removals(session, *, run, scope, seen_ext_ids, now, summar
                 prior_values={"removed_at": None, "last_import_run_id": prior_last_run},
             )
         )
+    log.info(
+        "osm_scope_removal_scan",
+        extra={
+            "scope_id": scope.scope_id,
+            "active_provenance_count": len(rows),
+            "seen_external_id_count": len(seen_ext_ids),
+            "removed_count": summary.removed_count - removed_before,
+        },
+    )
 
 
 def _new_provenance(fountain_id, cand, run, now, scope) -> FountainProvenance:
