@@ -5,118 +5,209 @@ spec-review-4). Section references below (§n) are to that spec.
 
 **Branch:** `feat/place-hierarchy-drilldown` → one PR, sliced into reviewable commits.
 
-**Non-negotiable ordering constraint (§10):** the migration and the 308-redirect resolver must be
-in the **same release**. US city URLs move in the same deploy that adds the region tier — if the
-migration lands without the resolver, 1,015 indexed URLs 404. Slices 1–4 therefore ship together;
-none is independently deployable.
+*Revision 2 — rewritten after Codex plan-review-1 (1 [BLOCKER], 4 [MAJOR]). The migration now
+**backfills the data** (without it the live place tree goes empty on deploy), the missed callers
+(admin delete, fountain detail) are in scope, and the scoped-update algorithm is spelled out
+instead of gestured at.*
 
 ---
 
-## Slice 1 — Schema + membership (the core)
+## Two non-negotiable constraints
 
-**Files:** `backend/migrations/versions/0018_place_hierarchy.py` (new),
-`backend/app/models.py`, `backend/app/membership.py`.
+1. **The migration and the 308-redirect resolver ship in the SAME release** (§10). US city URLs
+   move in the same deploy that adds the region tier; a migration without the resolver 404s 1,015
+   indexed URLs.
+2. **Intermediate commits are NOT deployment points.** Slices 1–4 are one atomic unit. Slice 1
+   alone is *not* a shippable backend-only change — do not merge or deploy it independently.
 
-**Migration `0018`:**
-- `place_scope_config.eligible_region_subtypes text[] NOT NULL DEFAULT '{region}'` (§4.1).
-- CHECK `ck_place_scope_config_tiers_disjoint`:
-  `NOT (eligible_city_subtypes && eligible_region_subtypes)`.
-- **Explicit backfill — do not let the server default decide:** `us` → `'{region}'`,
-  `lu` → `'{}'` (LU must stay 2-level or its live URLs move).
-- `place_boundaries.place_kind text NULL`.
-- `fountains.region_place_id uuid NULL` FK → `place_boundaries(id)` `ON DELETE SET NULL`, indexed
-  (mirror `0015_fountain_membership.py`).
-- Drop `uq_place_boundaries_country_slug_canonical`; add `uq_place_boundaries_region_canonical`
-  (`(country_code, slug) WHERE is_canonical AND place_kind='region'`) and
-  `uq_place_boundaries_city_canonical`
-  (`(country_code, parent_id, slug) WHERE is_canonical AND place_kind='city'`).
-- `downgrade()` — the **full old-model recomputation** in §10's exact order (drop new indexes →
-  clear `is_canonical` → restore old parentage → re-select canonical under the old rule → *then*
-  create the old index → drop the added columns). Creating the old index before the re-selection
-  fails; that ordering is the whole point.
+---
 
-**`membership.py` — the 10-step `refresh_all_memberships()` (§5).** Key deltas from today:
-- New `_PLACE_KIND_SQL` (step 2) and a `has_region_tier` notion (`cardinality(...) > 0`, missing
-  row ⇒ true) encoded **once**.
+## Slice 1 — Schema + data backfill + membership (the core)
+
+**Files:** `backend/migrations/versions/0025_place_hierarchy.py` (new),
+`backend/migrations/sql/0025_backfill.sql` (new), `backend/app/models.py`,
+`backend/app/membership.py`, **`backend/app/routers/admin.py`**.
+
+> **The migration is `0025`, `down_revision = "0024"`.** `0018` is already taken
+> (`0018_fountain_photos.py`); current head is `0024_write_attempts.py`.
+
+### 1a. Migration `0025` — schema **and data**
+
+**The upgrade MUST backfill, not just add columns.** Existing `place_boundaries` rows would
+otherwise have `place_kind = NULL`, and the new API returns `place_kind='country'` rows — so
+`/drinking-fountains`, every country/region/city page, the resolver and the sitemaps would go
+**empty or 404 against live US/LU data** the moment the new code serves. This is the plan's #1
+production risk and it is closed here.
+
+This is safe to do inside the migration because `deploy.yml` runs `alembic upgrade head` via
+`kubectl exec` into a pod that is **Running but NOT Ready** (`.github/workflows/deploy.yml:261`) —
+traffic is gated until migrations finish, so no request ever sees the half-migrated state.
+
+**Upgrade order (load-bearing):**
+1. Add `place_scope_config.eligible_region_subtypes text[] NOT NULL DEFAULT '{region}'` + CHECK
+   `ck_place_scope_config_tiers_disjoint` (`NOT (eligible_city_subtypes && eligible_region_subtypes)`).
+2. **Explicitly backfill the two existing rows** — never let the server default decide:
+   `us` → `'{region}'`, `lu` → `'{}'` (LU must stay 2-level or its live URLs move).
+3. Add `place_boundaries.place_kind text NULL`.
+4. Add `fountains.region_place_id uuid NULL` FK → `place_boundaries(id)` `ON DELETE SET NULL`,
+   indexed (mirror `0015_fountain_membership.py`).
+5. **Drop** `uq_place_boundaries_country_slug_canonical`.
+6. **Create** `uq_place_boundaries_region_canonical` (`(country_code, slug)`
+   `WHERE is_canonical AND place_kind='region'`) and `uq_place_boundaries_city_canonical`
+   (`(country_code, parent_id, slug)` `WHERE is_canonical AND place_kind='city'`).
+   Creating them *before* the backfill is deliberate: a buggy backfill then **aborts the migration
+   loudly** instead of silently shipping duplicate canonical rows.
+7. **Run the full §5 data backfill** (steps 2–10: `place_kind` → region parents → 3-FK assignment →
+   canonical regions → city parents → recount → canonical cities → canonical remap → recount).
+
+**The backfill SQL is FROZEN** in `backend/migrations/sql/0025_backfill.sql` and executed by the
+migration. It **must not** `import app.membership` — a migration must reproduce the state as of its
+own revision forever, and app code drifts. Duplication is the correct trade here; `membership.py`
+continues to own the *ongoing* logic.
+
+**`downgrade()`** — the full old-model recomputation in §10's exact order: drop the two new indexes
+→ clear `is_canonical` → restore old parentage (every non-country boundary's parent → its country)
+→ re-select canonical under the **old** `(country_code, slug)` rule → **then** create
+`uq_place_boundaries_country_slug_canonical` → drop the added columns + CHECK. Creating the old
+index before the re-selection fails; that ordering *is* the point.
+
+### 1b. `membership.py` — the 10-step refresh (§5)
+
+- `_PLACE_KIND_SQL` (step 2); a `has_region_tier` notion (`cardinality(...) > 0`, missing row ⇒
+  true) encoded **once**.
 - `_ASSIGN_SQL` grows a **third, independent** region LATERAL. `region_place_id` is a **direct PIP**
   — never derived from the city (§5 rule (a)).
-- `_CANONICAL_*` splits into **region** (step 5: `(country_code, slug)`, tie-break
-  **`ST_Area(boundary) DESC, overture_id ASC`** — geodesic, **count-free**, §5 rule (b)) and
-  **city** (step 8: `(country_code, parent_id, slug)`, tie-break subtype priority →
-  `fountain_count DESC` → `overture_id`).
-- New city-parent step 6: smallest-area **canonical** region covering
-  `ST_PointOnSurface(pb.boundary::geometry)`, tested against the parent's `place_boundary_cells`
-  via GiST (not a raw geography scan); else country; else NULL.
-- **New step 9 — the canonical remap.** Repoint `fountains.city_place_id` at the canonical row of
-  its `(country_code, parent_id, slug)` group; NULL it when the matched city has a NULL parent.
-  This is the fix for the reachability hole — without it, fountains on a non-canonical twin are
-  counted and "city resolved" yet appear on **no** page.
-- Recounts (steps 7 and 10) become a **3-way** `UNION ALL`.
-- **`recompute_fountain_membership()` / `recompute_place_counts()` (§5.1)** get the remap **and the
-  post-remap recount**. Skipping the second recount is a real stale-`indexable` bug.
+- Canonical selection splits in two:
+  - **region** (step 5): `(country_code, slug)`, tie-break **`ST_Area(boundary) DESC, overture_id
+    ASC`** — geodesic (the column is `Geography`; `::geometry` would be degrees² and
+    latitude-distorted) and **count-free** (§5 rule (b)), so no fountain write can ever change a
+    level-2 URL owner.
+  - **city** (step 8): `(country_code, parent_id, slug)`, tie-break subtype priority →
+    `fountain_count DESC` → `overture_id ASC`.
+- City parenting (step 6): smallest-area **canonical** region covering
+  `ST_PointOnSurface(pb.boundary::geometry)`, matched against the parent's `place_boundary_cells`
+  via GiST (**not** a raw geography scan across every region × city); else country; else NULL.
+- **Step 9 — the canonical remap.** Repoint `fountains.city_place_id` at the canonical row of its
+  `(country_code, parent_id, slug)` group; set it **NULL** when the matched city has a NULL parent.
+  Without this, fountains on a non-canonical twin are counted and "city resolved" yet appear on
+  **no** page.
+- Recounts (steps 7, 10) become a **3-way** `UNION ALL` over the three FK columns.
 
-**Tests** (`backend/tests/test_membership.py`, `test_place_*_migration.py`):
-- Two same-slug cities in **different** regions both canonical (the Portland regression).
-- Two same-slug cities in the **same** region: the non-canonical twin's fountains are remapped and
-  listed on the canonical page; nothing orphaned.
+### 1c. Scoped paths (§5.1) — spelled out, not gestured at
+
+`recompute_fountain_membership()` / `recompute_place_counts()` must:
+1. Capture the fountain's **old** `(country_place_id, region_place_id, city_place_id)` **before**
+   reassignment.
+2. Re-assign all three FKs (the step-4 LATERALs scoped by `fountain_id`).
+3. Apply the **step-9 remap** to that fountain (never leave it on a non-canonical city).
+4. Recount **old ∪ new** places.
+5. Re-select canonical cities for the affected `(country_code, parent_id, slug)` groups. **If the
+   winner changed, re-apply the step-9 remap to that whole group's fountains** — a flip moves rows
+   that are not the touched fountain.
+6. **Recount every city place in the affected group AGAIN, after that remap.** Skipping this is a
+   real stale-`indexable` bug: old winner A holds 10 remapped fountains, B overtakes, the remap
+   moves A's fountains to B; without the post-remap recount A keeps a non-zero count and B is
+   undercounted, flipping `indexable` around `K`.
+
+They never re-select canonical **regions** and never re-parent cities — which is *sound by
+construction*, because region canonicality is count-free (§5 rule (b)).
+
+### 1d. Missed caller — admin delete
+
+`backend/app/routers/admin.py:219-242` builds the old-place-id list by hand and captures **only**
+`[country_place_id, city_place_id]` before deleting the row. With `region_place_id` added, the
+deleted fountain's **region count stays stale** (a region page can stay indexable, or show a count
+that includes a fountain that no longer exists). Add `region_place_id` to that captured list.
+
+Other callers audited and OK once the helpers handle region: user add
+(`routers/fountains.py`), admin hide/unhide/location (`routers/admin.py:180`), OSM import + rollback
+(`imports/merge.py:151,516`), boundary load (`imports/boundary_cli.py:105`), membership CLI.
+
+### 1e. Logging (CLAUDE.md Logging & Observability — mandatory)
+
+The refresh must be diagnosable from logs alone. Emit **named structured events** with counts:
+`place_kind_derived` (per-kind counts), `region_canonical_selected` (groups, collisions),
+`city_parented` (parented / null-parent counts), `fountain_assigned` (country/region/city match
+counts, unmatched), `city_canonical_selected`, `city_remapped` (rows remapped, rows NULLed),
+`membership_recounted`. A null-parent or duplicate-slug count > 0 is a **WARNING**, not silence.
+
+### 1f. Tests (`backend/tests/test_membership.py`, migration tests)
+
+- Two same-slug cities in **different** regions both canonical — the **Portland regression**.
+- Two same-slug cities in the **same** region: the non-canonical twin's fountains are remapped onto
+  the canonical row and **listed on its page**; nothing orphaned.
 - A matched city with a NULL parent → `city_place_id = NULL` (country-only, not falsely indexable).
-- Canonical **region** selection ignores fountain counts (add/hide a fountain, canonicality holds).
-- Scoped winner flip: after the flip, old winner count `= 0`, new winner `= group total`.
-- **Idempotence:** refresh twice → identical final state (snapshot-compare, not "zero writes").
+- Canonical **region** selection ignores fountain counts (add/hide a fountain; canonicality holds).
+- **Scoped winner flip** → final counts: old winner `= 0`, new winner `= group total`.
+- **Admin delete decrements the region count** (the 1d regression).
+- **Idempotence:** refresh twice → identical final state (snapshot-compare; *not* "zero writes" —
+  step 4 legitimately rewrites the remapped FK back to raw before step 9 re-applies it).
 - Invariant: no canonical city has a NULL parent or a non-canonical region parent.
 - LU (no region tier) keeps 2-level cities. Unmatched point → country-only.
-- Upgrade → downgrade → old index exists and is satisfied; index/CHECK **names** asserted from
-  `pg_indexes` / `pg_constraint` (`alembic check` does not compare CHECK definitions).
+- **Migration:** upgrade on a US-like fixture populates `place_kind`/parents/canonical and promotes
+  both Portlands; upgrade → downgrade → the old index exists and is satisfied; index + CHECK
+  **names** asserted from `pg_indexes` / `pg_constraint` (`alembic check` does not compare CHECK
+  definitions, so a misnamed check ships silently).
 
-**Done when:** `./run.ps1 check -Backend` green, `alembic check` reports no drift.
+**Done when:** `./run.ps1 check -Backend` green; `alembic check` reports no drift.
 
 ---
 
-## Slice 2 — Places API + coverage gate
+## Slice 2 — Places API, fountain-place contract, coverage gate
 
-**Files:** `backend/app/routers/places.py`, `backend/app/schemas.py`,
+**Files:** `backend/app/routers/places.py`, **`backend/app/routers/fountains.py`**,
+**`backend/app/schemas.py`**, **`backend/app/seo_coverage.py`**,
 `backend/app/imports/seo_coverage_cli.py`.
 
-- Endpoints per §6, using **literal prefixes** (`/regions`, `/cities`, `/resolve`) so FastAPI
+- Endpoints per §6 using **literal prefixes** (`/regions`, `/cities`, `/resolve`) so FastAPI
   declaration order cannot bite. `GET /places/{country}/{city}/fountains` is **retained** (2-level
   countries + back-compat) and declared **last**.
-- `GET /places/{country}/resolve/{slug}` returns `{kind, canonical_path, place}` — the §3.1
-  decision lives here **once**, server-side.
-- `GET /places` keeps returning `place_kind='country'` rows — **never filter countries on
-  `is_canonical`** (the file already documents this trap).
+- `GET /places/{country}/resolve/{slug}` → `{kind, canonical_path, place}`; the §3.1 decision lives
+  here **once**, server-side.
+- `GET /places` returns `place_kind='country'` rows — **never filter countries on `is_canonical`**
+  (that flag governs region/city URL ownership only; `places.py` already documents the trap).
+- **`FountainPlaceOut` must carry the parent region** (`backend/app/schemas.py:556`). It currently
+  returns only `city` + `country`, which is not enough to build a canonical **nested** city URL —
+  see Slice 3. `PlaceOut` gains `place_kind` and the parent region where applicable.
 - `indexable` stays server-computed: `fountain_count >= K` **AND** the place's **country** is
-  `city_routes_ready` (reuse the existing country-scoped `_scope_city_routes_ready()`).
-- **Coverage gate:** a duplicate `(country_code, slug)` among `place_kind='region'` rows **blocks**
-  `city_routes_ready` for that country — a gate **failure**, not a warning (§5.1).
+  `city_routes_ready` (reuse the country-scoped `_scope_city_routes_ready()`).
+- **Coverage gate — the logic lives in `backend/app/seo_coverage.py`, not the CLI wrapper.** A
+  duplicate `(country_code, slug)` among `place_kind='region'` rows **blocks** `city_routes_ready`
+  for that country: a gate **failure**, not a warning line (§5.1).
 
 **Tests:** `/places/us/cities` and `/places/us/resolve/x` are not captured by a dynamic
-`{region}`/`{city}` route; resolver returns all four §3.1 branches; the three §3.2 collisions
-resolve to the **region**; a not-ready country is `indexable: false`.
-
-**Done when:** `./run.ps1 check -Backend` green.
+`{region}`/`{city}` route; the resolver returns all four §3.1 branches; the three §3.2 collisions
+resolve to the **region**; a not-ready country is `indexable: false`;
+`/fountains/{id}/place` returns the parent region for a region-tier city; the coverage report
+**blocks** on a duplicate region slug.
 
 ---
 
-## Slice 3 — Web pages + the 308 resolver
+## Slice 3 — Web pages, the 308 resolver, and the fountain detail page
 
 **Files:** `packages/api-client/` (regenerate `openapi.json` + `schema.d.ts` from the Slice-2
-backend — never hand-edit), `web/lib/places.ts`, `web/app/drinking-fountains/**`.
+backend — never hand-edit, never text-merge), `web/lib/places.ts`,
+`web/app/drinking-fountains/**`, **`web/app/fountains/[id]/page.tsx`**.
 
-- `page.tsx` — the **hub** (§7).
-- `[country]/page.tsx` — lists regions, or cities for a 2-level country.
+- `page.tsx` — the **hub** (§7). `[country]/page.tsx` — regions, or cities for a 2-level country.
 - **Rename `[city]/` → `[place]/`** (Next forbids two dynamic segments at one level).
-  `[country]/[place]/page.tsx` implements §3.1: region page → 2-level city page → **308** via
-  `permanentRedirect()` → 404.
+  `[country]/[place]/page.tsx` implements §3.1: region page → 2-level city page → **308**
+  (`permanentRedirect()`) → 404.
 - `[country]/[place]/[city]/page.tsx` — the city page (moved).
-- Breadcrumbs + `BreadcrumbList` JSON-LD at every level. Breadcrumbs come from the **place tree**
-  (`city.parent_id`), never from `region_place_id` (§5).
+- **`web/app/fountains/[id]/page.tsx` is a missed consumer of the flat URL contract.** It builds
+  breadcrumb JSON-LD and the "Browse more" link with `cityPath(city.country_code, city.slug)`
+  (lines ~174 and ~277). Once cities are nested, those emit **stale flat URLs** — and if
+  `cityPath()` becomes strictly region-aware this is also a **TypeScript compile break**. It must
+  be updated to build the canonical **nested** path from the new `FountainPlaceOut` parent region.
+- Breadcrumbs come from the **place tree** (`city.parent_id`), never from `region_place_id` (§5) —
+  the two can legitimately disagree for a city straddling a state line.
 - Region-page **disambiguation link** for the §3.2 collisions.
-- `cityPath()` / `countryPath()` gain `regionPath()` and a region-aware `cityPath()`.
+- `web/lib/places.ts` gains `regionPath()` and a region-aware `cityPath()`.
 
 **Tests:** the four resolver branches; a legacy flat URL 308s to a canonical nested target; the DC
-collision renders the state page **with** the disambiguation link.
-
-**Done when:** `./run.ps1 check -Web` green.
+collision renders the state page **with** the disambiguation link; **fountain detail breadcrumb +
+"Browse more" emit the canonical nested city URL** for a region-tier city, and the flat URL for a
+2-level country.
 
 ---
 
@@ -127,7 +218,7 @@ collision renders the state page **with** the disambiguation link.
 `web/app/sitemaps/core.xml/route.ts`, `web/app/sitemap.xml/route.ts`,
 `web/app/sitemaps/fountains.xml/route.ts`.
 
-- `core.xml` += `/drinking-fountains`. `regions.xml` new. `cities.xml` → **nested** URLs.
+- `core.xml` += `/drinking-fountains`; `regions.xml` new; `cities.xml` → **nested** URLs.
 - **Fountains chunking (§8):** `[chunk]` must match `^(\d+)\.xml$`, **zero-based**, chunk `n` →
   `offset = n*50000`. Out-of-range → **404**, never an empty 200. Legacy
   `/sitemaps/fountains.xml` → **308** → `/sitemaps/fountains/0.xml`.
@@ -138,26 +229,24 @@ collision renders the state page **with** the disambiguation link.
 **Tests:** chunk boundaries at exactly 50k and at `total_count % 50000 == 0`; out-of-range 404;
 legacy 308; index 503 on backend failure.
 
-**Done when:** `./run.ps1 check -Web` green.
-
 ---
 
 ## Slice 5 — Style guide (mandatory, `CLAUDE.md`)
 
-**File:** `docs/style-guide.md`. Add, **before they ship**: hub country grid, region list,
-breadcrumb trail (+ JSON-LD), region-page disambiguation link.
+`docs/style-guide.md` — add **before they ship**: hub country grid, region list, breadcrumb trail
+(+ JSON-LD), region-page disambiguation link.
 
 ---
 
 ## Slice 6 — Boundary registry (60 new rows)
 
-**File:** `.github/boundary-source-regions.yml`. One `overture:<cc>` row per ISO country with an
-active fountain scope, `status: active`, all pinned to `overture_release_id: 2026-06-17.0`.
+`.github/boundary-source-regions.yml`: one `overture:<cc>` row per ISO country with an active
+fountain scope, `status: active`, pinned to `overture_release_id: 2026-06-17.0`.
 
 Derived from the current `.github/osm-import-regions.yml` (111 active scopes = 53 US + 58 non-US).
 Scopes are **not** 1:1 with countries: `asia/malaysia-singapore-brunei` → **MY, SG, BN**;
 `europe/guernsey-jersey` → **GG, JE**; `europe/ireland-and-northern-ireland` → **IE** (NI belongs to
-GB). Result: **62 countries; `us` + `lu` already exist → 60 new rows:**
+GB). Result: **62 countries; `us` + `lu` exist → 60 new rows:**
 
 ```
 AD AL AT AU BA BE BG BN BY BZ CH CL CY CZ DE DK EE ES FI FO FR GB GE GG GR HR HU IE IM IS
@@ -166,34 +255,37 @@ IT JE KE KR LI LT LV MC MD ME MK MT MU MY NC NL NO PL PT RO RS SE SG SI SK TR UA
 
 **Verify, never assume (§9):** `XK` (Kosovo), `FO`, `GG`/`JE`/`IM`, `NC` may be absent from Overture
 or nested under a parent state. A dry-run loading **zero features** is the signal the code is wrong
-— **retire that row** rather than ship a country that can never resolve.
+— **retire that row** rather than ship a country that can never resolve. The rollout logs each
+scope's dry-run feature count explicitly (§1e).
 
 ---
 
 ## Slice 7 — Full local mirror, PR, Codex PR loop
 
-`./run.ps1 check` (full — a cross-workspace `api-client` contract break must not slip through).
+`./run.ps1 check` (**full** — a cross-workspace `api-client` contract break must not slip through).
 Then PR → CI green → Codex PR-review loop to `VERDICT: APPROVED` → every PR comment addressed →
 **squash-merge**.
 
 > On this Windows/WSL host the backend mirror is fully verifiable via an isolated
-> `UV_PROJECT_ENVIRONMENT`, but component-render/full JS unit suites and mobile's React-Compiler
-> lint are **CI-only** (`claude_help/local-dev.md`). Report CI's result for those — never a local
-> green that was not obtained.
+> `UV_PROJECT_ENVIRONMENT`, but component-render / full JS unit suites and mobile's React-Compiler
+> lint are **CI-only** (`claude_help/local-dev.md`). Report CI's result for those — never claim a
+> local green that was not obtained.
 
 ---
 
 ## Rollout (post-merge, operator-driven)
 
-1. **Deploy:** `gh workflow run deploy.yml --ref main` (merging does **not** deploy). Migration +
+1. **Deploy:** `gh workflow run deploy.yml --ref main` (merging does **not** deploy). The migration
+   backfills the data and the readiness gate holds traffic until it completes, so migration +
    resolver + pages go live together.
 2. **Verify US/LU BEFORE loading any new country:** the three §3.2 collisions render the state page;
-   a sample of the 1,015 legacy city URLs 308s to a live nested URL; both Portlands resolve;
-   `/drinking-fountains` hub renders.
-3. **Germany first** — the validation country. `gh workflow run osm-boundary-load.yml --ref main
-   -f scope_id=overture:de -f overture_release_id=2026-06-17.0 -f dry_run=true`, then apply.
-   Confirm **Hamburg** — a city-state that is simultaneously a *Land* and a city — resolves as a
-   **city** and not only as a region; fix DE's `place_scope_config` if not.
-4. **Fan out** the remaining countries, checking each dry-run's feature count (§9).
+   a sample of the 1,015 legacy city URLs 308 to live nested URLs; both Portlands resolve; the
+   `/drinking-fountains` hub renders; fountain detail breadcrumbs point at nested city URLs.
+3. **Germany first** — the validation country:
+   `gh workflow run osm-boundary-load.yml --ref main -f scope_id=overture:de
+   -f overture_release_id=2026-06-17.0 -f dry_run=true`, then apply. Confirm **Hamburg** — a
+   city-state that is simultaneously a *Land* and a city — resolves as a **city**, not only a
+   region; fix DE's `place_scope_config` if not.
+4. **Fan out** the remaining countries, checking each dry-run's feature count.
 5. **Coverage gate**, then sign off `city_routes_ready` per country **in a reviewed migration**.
    Loading a country does **not** index it.
