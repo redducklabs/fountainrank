@@ -48,7 +48,14 @@ for example — has **no place membership at all** and appears on no page.
 **Goals**
 - A top-level `/drinking-fountains` hub that reaches every country we have fountains for.
 - Country → state/province → city drill-down, each level an indexable SSR page.
-- Every fountain reachable from a crawlable page, including duplicate-named cities.
+- **The crawlability promise, stated precisely:** every fountain that resolves to a city is listed
+  on **exactly one** canonical city page, *including* fountains in duplicate-named cities (the
+  defect-3 fix) and fountains that land on a non-canonical duplicate polygon (§5 step 9). A
+  fountain that resolves to **no** eligible city polygon (an unincorporated area) is **counted** on
+  its region and country pages and may surface in their "top fountains" lists, but its **detail page
+  stays `noindex`** — that is the unchanged #127 §7 thin-content predicate
+  (`city_place_id IS NOT NULL`), and this spec does **not** widen it. "Every fountain reachable"
+  therefore means *every city-resolved fountain*, not *every row in the table*.
 - Boundary coverage for every country that has an active fountain import scope.
 - Preserve the ranking of the 1,015 live city URLs, except for the three enumerated collisions
   in §3.2 — which are named, costed, and mitigated rather than discovered later.
@@ -240,9 +247,12 @@ break it:
    (#127 §11.5). This is the **raw** assignment — it may land on a non-canonical row; step 9 fixes
    that.
 5. **Select canonical regions** — one per `(country_code, slug)` among `place_kind='region'`,
-   tie-broken **`ST_Area(boundary::geometry) DESC, overture_id ASC`**. **Deliberately count-free**
-   (rule (b)): a region's URL ownership is a pure function of the boundary data, immutable under
-   fountain writes.
+   tie-broken **`ST_Area(boundary) DESC, overture_id ASC`**. `boundary` is `Geography`, so this is
+   **geodesic** area in m² — *not* `ST_Area(boundary::geometry)`, which would be degrees² and
+   latitude-distorted, making "largest region wins" wrong away from the equator. Region
+   canonicality is not on the hot path, so correctness beats the geometry shortcut. **Deliberately
+   count-free** (rule (b)): a region's URL ownership is a pure function of the boundary data,
+   immutable under fountain writes.
 6. **Parent the cities:** `city.parent_id` = the smallest-area **canonical** region covering
    `ST_PointOnSurface(city.boundary::geometry)`; if the country has no region tier → the country;
    if the country has a region tier but no canonical region covers the city → **NULL** (the
@@ -307,8 +317,14 @@ A scoped update:
 2. **Applies the step-9 canonical remap** to that fountain — so a scoped write can never introduce
    a fountain pointing at a non-canonical city.
 3. Recounts the affected places (old ∪ new).
-4. Re-selects **canonical cities** for the affected `(country_code, parent_id, slug)` groups, then
-   **re-applies the step-9 remap to that group's fountains** if the winner changed.
+4. Re-selects **canonical cities** for the affected `(country_code, parent_id, slug)` groups; if the
+   winner changed, **re-applies the step-9 remap to that whole group's fountains**.
+5. **Recounts every city place in the affected group *again*, after that remap** — the scoped
+   mirror of full-refresh step 10. Without it the counts go stale exactly when the winner flips:
+   old winner A holds 10 remapped fountains, B overtakes it, the remap moves A's fountains to B, and
+   unless A and B are recounted **after** the move, A keeps a non-zero count and B is undercounted —
+   which can flip `indexable` around the threshold `K`. Tested with a winner flip asserting final
+   counts `A = 0` and `B = <group total>`.
 
 **They never re-select canonical regions and never re-parent cities — and this is now an
 invariant, not an assumption.** Because canonical region selection is **purely geometric**
