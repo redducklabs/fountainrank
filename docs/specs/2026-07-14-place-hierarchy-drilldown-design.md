@@ -143,7 +143,7 @@ incidental one.
 
 | Route | Source | Content | Indexable? |
 |---|---|---|---|
-| `/drinking-fountains` | all canonical countries | Intro + country list w/ counts | Yes (always) |
+| `/drinking-fountains` | `place_kind='country'` rows with `fountain_count > 0` (countries are **not** `is_canonical` rows — that flag governs city/region URL ownership only) | Intro + country list w/ counts | Yes (always) |
 | `/drinking-fountains/[country]` | `place_kind='country'` | Intro + count + its regions (or its cities if no region tier) | Yes iff `fountain_count >= K` and the country is `city_routes_ready` |
 | `/drinking-fountains/[country]/[region]` | `place_kind='region'` | Intro + count + its cities + top fountains | Yes iff `fountain_count >= K` and **the region's country** is `city_routes_ready` |
 | `/drinking-fountains/[country]/[region]/[city]` | `place_kind='city'` | Intro + count + ranked fountain list | **Yes — primary**, iff `fountain_count >= K` and **the city's country** is `city_routes_ready` |
@@ -214,43 +214,65 @@ break it either. This invariant is asserted by a test, not merely documented.
 
 ## 5. Membership refresh — `refresh_all_memberships()`
 
-The pass is **8 steps, and genuinely acyclic**. Revision 1 was not: it derived a fountain's region
+The pass is **10 steps, and genuinely acyclic**. Revision 1 was not: it derived a fountain's region
 from its city's parent, while region canonicality was tie-broken on region `fountain_count` — so
-counts depended on parentage which depended on canonicality which depended on counts. The fix is
-to make **`fountains.region_place_id` a pure geometric fact**:
+counts depended on parentage which depended on canonicality which depended on counts. Two rules
+break it:
 
-> **`region_place_id` is the direct point-in-polygon match against the country's eligible region
-> polygons. It is never derived from the fountain's city.**
-
-This removes the cycle entirely. Every step below depends only on geometry, or on counts that
-depend only on geometry.
+> **(a) `region_place_id` is the direct point-in-polygon match** against the country's eligible
+> region polygons. It is **never** derived from the fountain's city.
+>
+> **(b) Canonical *region* selection is purely geometric** — it never reads a fountain count. So no
+> fountain write can ever change which region owns a level-2 URL (this is what makes the scoped
+> paths in §5.1 provably safe).
 
 1. **Rebuild `place_boundary_cells`** — unchanged (`ST_Subdivide`, `TRUNCATE` + re-`INSERT` +
    `ANALYZE`).
 2. **Derive `place_kind`** for every boundary from `subtype` + the country's eligible sets.
 3. **Parent the regions:** `region.parent_id` = the `place_kind='country'` row with the same
-   `country_code` (a cheap column lookup — this is what the existing `_PARENT_SET_SQL` already
-   does, and it is correct for this tier).
+   `country_code` (a cheap column lookup — what the existing `_PARENT_SET_SQL` already does, and
+   correct for this tier).
 4. **Assign the three fountain FKs** — `country_place_id`, `region_place_id`, `city_place_id` —
    each by an **independent** point-in-polygon LATERAL against `place_boundary_cells`
    (`ST_Covers(c.geom, f.location::geometry)`, the existing pattern). City assignment is unchanged
    (most-specific eligible: `locality` > `localadmin` > `county`, smallest-area, `overture_id`
    tie-break). An unmatched point still yields **country-only, never a coarser forced tier**
-   (#127 §11.5).
-5. **Recount `fountain_count`** for every place — a 3-way `UNION ALL` over the three FK columns
-   (was 2-way). A region's count is therefore **every non-hidden fountain inside it**, not the sum
-   of its cities' counts: fountains in unincorporated areas still roll up to the state. This is the
-   honest number and it is what the state page displays.
-6. **Select canonical regions** — one per `(country_code, slug)` among `place_kind='region'`;
-   tie-break on the fresh `fountain_count`, then `overture_id`. Depends only on step-5 counts,
-   which depend only on geometry. **No dependency on cities.**
-7. **Parent the cities:** `city.parent_id` = the smallest-area **canonical** region covering
-   `ST_PointOnSurface(city.boundary::geometry)`; if the country has no region tier, → the country;
-   if the country has a region tier but no canonical region covers the city, → **NULL** (the
+   (#127 §11.5). This is the **raw** assignment — it may land on a non-canonical row; step 9 fixes
+   that.
+5. **Select canonical regions** — one per `(country_code, slug)` among `place_kind='region'`,
+   tie-broken **`ST_Area(boundary::geometry) DESC, overture_id ASC`**. **Deliberately count-free**
+   (rule (b)): a region's URL ownership is a pure function of the boundary data, immutable under
+   fountain writes.
+6. **Parent the cities:** `city.parent_id` = the smallest-area **canonical** region covering
+   `ST_PointOnSurface(city.boundary::geometry)`; if the country has no region tier → the country;
+   if the country has a region tier but no canonical region covers the city → **NULL** (the
    degenerate case of §3, which then cannot be canonical).
+7. **Recount `fountain_count`** for every place — a 3-way `UNION ALL` over the three FK columns
+   (was 2-way). A region's count is **every non-hidden fountain inside it**, not the sum of its
+   cities' counts: fountains in unincorporated areas still roll up to the state. This is the honest
+   number and it is what the state page displays.
 8. **Select canonical cities** — one per `(country_code, parent_id, slug)` among
-   `place_kind='city'` with a **non-NULL** `parent_id`; tie-break on `fountain_count`, then
-   `overture_id`.
+   `place_kind='city'` with a **non-NULL** `parent_id`; tie-break subtype priority
+   (`locality` > `localadmin` > `county`), then `fountain_count DESC`, then `overture_id ASC`
+   (preserving #127 §4.3's "prefer the richer page").
+9. **Remap `fountains.city_place_id` onto the canonical city of its URL group.** *(New in rev 3 —
+   this closes a real reachability hole.)* Step 4 assigns the raw covering polygon, which may be the
+   **non-canonical** twin of a `(country_code, parent_id, slug)` group. Every public city endpoint
+   filters `WHERE city_place_id = <canonical place id>`, so those fountains would exist, be counted,
+   and satisfy the "city resolved" indexability predicate — while **appearing on no city page at
+   all**. So:
+   - if the assigned city is non-canonical, repoint `city_place_id` at the **canonical** row of its
+     `(country_code, parent_id, slug)` group;
+   - if the assigned city has a **NULL parent** (the degenerate §3 case — it owns no URL and has no
+     canonical sibling), set `city_place_id = NULL` so the fountain is country-only rather than
+     falsely "city resolved".
+
+   **Consequence:** a non-NULL `city_place_id` now *always* points at a canonical, URL-owning city.
+   This keeps the existing `fountain_indexable_predicate()` (`city_place_id IS NOT NULL`,
+   `backend/app/filters.py`) correct **by construction** — no predicate change needed — and
+   guarantees every fountain with a city is listed on exactly one crawlable city page.
+10. **Recount `fountain_count`** again, so the published counts reflect the step-9 remap (a
+    non-canonical twin ends at 0; the canonical row carries the group's fountains).
 
 **Containment test (step 7).** `ST_PointOnSurface` is used rather than the centroid (a centroid can
 fall outside a concave or multi-part polygon) and rather than full `ST_Covers(parent, child)`
@@ -268,29 +290,43 @@ City): the fountain is listed on its city's page (nested under the city's region
 always coherent, and this divergence is **asserted by a test** rather than left as a latent
 surprise.
 
-**Idempotence is a required test.** Steps 4→8 read only geometry and geometry-derived counts and
-never read their own prior output, so a second `refresh_all_memberships()` on unchanged data must
-change **zero rows**. The test runs the refresh twice and asserts no-op.
+**Idempotence is a required test.** Step 4 re-derives the raw assignment from geometry alone on
+every run, overwriting step 9's remap, so steps 5→10 reproduce identically. The test therefore
+asserts **the final state after two refreshes equals the final state after one** (snapshot
+`fountains.{country,region,city}_place_id` + `place_boundaries.{place_kind,parent_id,is_canonical,
+fountain_count}` and compare) — *not* "zero rows written", since step 4 legitimately rewrites the
+remapped FK back to raw before step 9 re-applies it.
 
 ### 5.1 Scoped update paths — `recompute_fountain_membership()` / `recompute_place_counts()`
 
 These already exist (a user add, an OSM import, a hide/unhide, an admin delete) and **must not be
 left behind by this change**, or canonical state goes stale the moment a fountain is added.
 
-- **They re-assign all three FKs** for the touched fountain (the step-4 LATERALs, scoped by
-  `fountain_id`), recount the affected places (old ∪ new), and re-select **canonical cities** for
-  the affected `(country_code, parent_id, slug)` groups.
-- **They deliberately do NOT re-select canonical regions and do NOT re-parent cities.**
+A scoped update:
+1. Re-assigns all three FKs for the touched fountain (the step-4 LATERALs, scoped by `fountain_id`).
+2. **Applies the step-9 canonical remap** to that fountain — so a scoped write can never introduce
+   a fountain pointing at a non-canonical city.
+3. Recounts the affected places (old ∪ new).
+4. Re-selects **canonical cities** for the affected `(country_code, parent_id, slug)` groups, then
+   **re-applies the step-9 remap to that group's fountains** if the winner changed.
 
-  *Why this is safe, stated as a rule rather than an oversight:* regions are only ever created,
-  changed, or removed by a **boundary load**, and every boundary load runs the **full** refresh
-  (`boundary_cli` already calls `refresh_all_memberships`). A fountain-count change can only flip a
-  canonical *region* when two regions in the same country share a slug — which does not occur in
-  the loaded data and which the Slice-1e coverage report surfaces if it ever does. Re-parenting
-  every city on every single-fountain write would be a full-table spatial pass on the hot path.
+**They never re-select canonical regions and never re-parent cities — and this is now an
+invariant, not an assumption.** Because canonical region selection is **purely geometric**
+(step 5, rule (b)), *no fountain write can change it*. There is no count to go stale. Region
+parentage and canonicality change only when boundaries change, i.e. only on a **boundary load** —
+which always runs the full refresh (`boundary_cli` already calls `refresh_all_memberships`).
 
-  This limitation is **explicit and tested**: a scoped update must leave `place_kind`, region
-  canonicality, and city parentage untouched, and must not violate the §4.2 invariant.
+Review-1 justified this with "duplicate region slugs don't occur in the data, and the coverage
+report would surface it." That was observability, not an invariant, and it was rightly rejected.
+Rule (b) replaces it with a structural guarantee.
+
+**Belt and braces — the coverage gate turns the residual risk into a hard blocker.** A duplicate
+`(country_code, slug)` among `place_kind='region'` rows means one region silently owns another's
+level-2 URL. The Slice-1e coverage gate (`backend/app/imports/seo_coverage_cli.py`) therefore
+**blocks `city_routes_ready` for that country** — it is a gate failure, not a warning line.
+
+The scoped paths' limits are **explicit and tested**: a scoped update leaves `place_kind`, region
+canonicality and city parentage untouched, and never violates the §4.2 invariant.
 
 ---
 
@@ -354,6 +390,11 @@ the **region-page disambiguation link** (§3.2).
     entries). An `<n>` at or beyond that count → **404**, never an empty 200.
   - The legacy **`/sitemaps/fountains.xml` 308-redirects to `/sitemaps/fountains/0.xml`** so the
     URL already known to Search Console does not break.
+- **`/sitemap.xml` becomes dynamic and therefore needs a failure contract.** It is static today; it
+  must now fetch `total_count` to know how many fountain chunks to emit. If that fetch fails, it
+  **returns an uncacheable transient `503`** — matching the existing
+  `web/app/sitemaps/fountains.xml/route.ts` pattern. It must **never** serve a cacheable index that
+  silently omits the fountain chunks, which would de-list every fountain URL.
 - Every chunk stays < 50k URLs (#127 §6).
 
 ---
@@ -426,7 +467,14 @@ so **their canonical URLs change in the same deploy**.
 - **Membership**
   - Two same-slug cities in different regions of one country **both** become canonical — the
     Portland case, the direct regression test for defect 3.
-  - `refresh_all_memberships()` run **twice** changes zero rows (idempotence, §5).
+  - **Reachability (§5 step 9):** two same-slug city polygons in the **same** parent region — every
+    fountain in the non-canonical twin is remapped onto the canonical row and **is listed on the
+    canonical city page**. Nothing is orphaned. A fountain whose only covering city has a NULL
+    parent gets `city_place_id = NULL` and is therefore not falsely "city resolved".
+  - **Canonical region selection ignores fountain counts** (§5 rule (b)): adding/hiding fountains
+    never flips a region's canonicality.
+  - `refresh_all_memberships()` run **twice** yields an identical final state (idempotence, §5 —
+    snapshot-compare, not "zero writes").
   - The §4.2 invariant: no canonical city has a NULL parent or a non-canonical region parent.
   - A region-vs-city slug collision resolves to the region (§3.2).
   - A country with no region tier keeps 2-level cities (the LU case).
@@ -458,6 +506,9 @@ so **their canonical URLs change in the same deploy**.
 | Mixed 2-/3-level within one country | **Not allowed** | Keeps level 2 unambiguous: in a region-tier country, level 2 is regions only |
 | Region-vs-city slug collision | Region wins; 3 enumerated legacy URLs change identity | Deterministic and stable — suffixing the region would let an unrelated city rename a state's URL |
 | `fountains.region_place_id` | **Direct PIP only**, never derived from the city | Removes the canonicality↔count cycle; makes the pass acyclic and idempotent |
+| Canonical **region** tie-break | **Purely geometric** (`ST_Area DESC, overture_id`) — never a fountain count | No fountain write can change a level-2 URL owner; makes the scoped paths provably safe rather than "probably fine" |
+| `fountains.city_place_id` | **Remapped onto the canonical city** of its URL group (step 9); NULL if the group owns no URL | Closes a real reachability hole — a fountain on a non-canonical twin would be counted and "city resolved" yet listed on **no** page |
+| Duplicate region slug in a country | **Hard coverage-gate blocker** on `city_routes_ready` | An invariant, not a warning line |
 | Breadcrumb source | The place tree (`city.parent_id`), not `region_place_id` | Coherent even when a city straddles a region border |
 | Region `fountain_count` | Every fountain in the region, not the sum of its cities | Honest; fountains outside any city still roll up |
 | `eligible_region_subtypes` | `NOT NULL`, empty array ⇒ no tier | Two states, not three — no `COALESCE` tri-state trap |
