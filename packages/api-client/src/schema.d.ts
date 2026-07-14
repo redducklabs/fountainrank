@@ -3392,6 +3392,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description Profile sync limit reached. */
+            429: {
+                headers: {
+                    /** @description Seconds until the rolling-window budget admits another attempt. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     geocode_api_v1_geocode_get: {

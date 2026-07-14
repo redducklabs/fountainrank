@@ -41,6 +41,8 @@ def test_openapi_exposes_me_sync_endpoint():
     assert "SyncProfileRequest" in schema["components"]["schemas"]
     ref = op["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
     assert ref.endswith("/MeResponse")
+    retry_after = op["responses"]["429"]["headers"]["Retry-After"]
+    assert retry_after["schema"] == {"type": "integer"}
 
 
 def test_openapi_exposes_me_patch_endpoint():

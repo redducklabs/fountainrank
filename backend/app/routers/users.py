@@ -34,6 +34,7 @@ from app.models import (
     User,
     UserContributionStats,
 )
+from app.rate_limit import RateLimited, WriteAttemptReserver, get_write_attempt_reserver
 from app.schemas import (
     BadgeOut,
     ContributionEventOut,
@@ -60,6 +61,16 @@ from app.userinfo import (
 logger = logging.getLogger("app.users")
 
 router = APIRouter(prefix="/api/v1", tags=["users"])
+
+PROFILE_SYNC_RATE_LIMIT_RESPONSE = {
+    "description": "Profile sync limit reached.",
+    "headers": {
+        "Retry-After": {
+            "description": "Seconds until the rolling-window budget admits another attempt.",
+            "schema": {"type": "integer"},
+        }
+    },
+}
 
 
 def me_response(user: User) -> MeResponse:
@@ -499,13 +510,27 @@ async def get_my_badges(
     return [BadgeOut(key=b.key, name=b.name, description=b.description) for b in badges]
 
 
-@router.post("/me/sync", response_model=MeResponse)
+@router.post(
+    "/me/sync",
+    response_model=MeResponse,
+    responses={status.HTTP_429_TOO_MANY_REQUESTS: PROFILE_SYNC_RATE_LIMIT_RESPONSE},
+)
 async def sync_me(
     body: SyncProfileRequest,
     current_user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     fetch_userinfo: Annotated[UserinfoFetcher, Depends(get_userinfo_fetcher)],
+    reserve_write_attempt: Annotated[WriteAttemptReserver, Depends(get_write_attempt_reserver)],
 ) -> MeResponse:
+    try:
+        await reserve_write_attempt(current_user.id, "profile_sync", "profile_sync")
+    except RateLimited as exc:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=exc.reason,
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from exc
+
     # Backend-authoritative: call Logto userinfo with the forwarded opaque token.
     try:
         claims = await fetch_userinfo(body.userinfo_token)

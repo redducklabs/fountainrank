@@ -85,6 +85,20 @@ describe("syncProfileOnSignIn", () => {
     expect(result).toBe("failed");
   });
 
+  it.each([429, 502])("makes one bounded attempt and returns failed on HTTP %i", async (status) => {
+    const fetchImpl = vi.fn(async () => new Response("nope", { status }));
+
+    const result = await syncProfileOnSignIn({
+      apiBaseUrl: API,
+      resourceToken: "jwt",
+      userinfoToken: "op",
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    expect(result).toBe("failed");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
   it("returns 'failed' (never throws) when the network rejects", async () => {
     const fetchImpl = (async () => {
       throw new TypeError("Network request failed");
