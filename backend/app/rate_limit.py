@@ -1,8 +1,10 @@
-"""Durable, Postgres-count-based per-user rate limiting for the fountain-photos feature
-(design §6): a burst of parallel requests must be bounded by row counts in the database —
-not an in-process counter — so the limits hold across pods without a Redis dependency.
+"""Durable, Postgres-count-based per-user rate limiting for authenticated writes and the
+fountain-photos feature: bursts must be bounded by database row counts — not an in-process
+counter — so the limits hold across pods without a Redis dependency.
 
-Two independent gates:
+Three independent gates:
+- **Authenticated JSON writes** (`reserve_write_attempt`) commit one admission attempt before
+  domain work. Contribution endpoints share a budget; profile sync uses a separate budget.
 - **Upload reservation** (`reserve_upload`/`finalize_upload`) is the *first authoritative
   gate* for an upload, evaluated **before** the request body is read or any Pillow/S3 work
   runs. It counts `upload_attempts` rows in two dimensions so that failed attempts still
@@ -13,7 +15,7 @@ Two independent gates:
 - **Report rate** (`check_report_rate`) is a cheap insert-time check with no reservation:
   count `content_reports` by that reporter in rolling windows.
 
-Both gates run under a per-user Postgres advisory lock (`pg_advisory_xact_lock`, two-arg
+All gates run under a per-user Postgres advisory lock (`pg_advisory_xact_lock`, two-arg
 form) so the count-then-insert is atomic against concurrent requests from the same user —
 a plain count-then-insert races (concurrent requests all observe the same pre-count and all
 proceed). The lock is transaction-scoped: it releases automatically on commit/rollback, and
@@ -24,13 +26,17 @@ CPU/S3 work — so it cannot starve the connection pool.
 import logging
 import uuid
 import zlib
+from collections.abc import Awaitable, Callable
+from typing import Literal
 
+from fastapi import Depends
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
-from app.locks import CONTENT_REPORT_LOCK_NS, PHOTO_UPLOAD_LOCK_NS
-from app.models import ContentReport, UploadAttempt
+from app.db import get_session
+from app.locks import CONTENT_REPORT_LOCK_NS, PHOTO_UPLOAD_LOCK_NS, WRITE_RATE_LIMIT_LOCK_NS
+from app.models import ContentReport, UploadAttempt, WriteAttempt
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +53,38 @@ REPORTS_PER_DAY = 100
 
 _MINUTE_WINDOW_SECONDS = 60
 _DAY_WINDOW_SECONDS = 24 * 60 * 60
+
+WriteBudget = Literal["contribution_write", "profile_sync"]
+WriteEndpoint = Literal[
+    "fountain_create",
+    "rating_submit",
+    "attribute_submit",
+    "condition_submit",
+    "note_submit",
+    "profile_sync",
+]
+
+CONTRIBUTION_WRITES_PER_MIN = 20
+CONTRIBUTION_WRITES_PER_DAY = 200
+PROFILE_SYNCS_PER_MIN = 10
+PROFILE_SYNCS_PER_DAY = 100
+
+_WRITE_LIMITS: dict[WriteBudget, tuple[int, int, str, str]] = {
+    "contribution_write": (
+        CONTRIBUTION_WRITES_PER_MIN,
+        CONTRIBUTION_WRITES_PER_DAY,
+        "contribution_writes_per_minute",
+        "contribution_writes_per_day",
+    ),
+    "profile_sync": (
+        PROFILE_SYNCS_PER_MIN,
+        PROFILE_SYNCS_PER_DAY,
+        "profile_syncs_per_minute",
+        "profile_syncs_per_day",
+    ),
+}
+
+WriteAttemptReserver = Callable[[uuid.UUID, WriteBudget, WriteEndpoint], Awaitable[None]]
 
 
 class RateLimited(Exception):
@@ -76,6 +114,108 @@ async def acquire_user_lock(session: AsyncSession, namespace: int, user_id: uuid
     await session.execute(
         text("SELECT pg_advisory_xact_lock(:ns, :uk)"), {"ns": namespace, "uk": key}
     )
+
+
+async def reserve_write_attempt(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    budget: WriteBudget,
+    endpoint: WriteEndpoint,
+) -> None:
+    """Commit one durable authenticated-write admission attempt.
+
+    A per-user transaction advisory lock makes count-and-insert race-free across pods.
+    Rejections explicitly roll back before raising so the lock and any uncommitted auth
+    provisioning are released together. Admissions commit before later domain work.
+    """
+    minute_limit, day_limit, minute_reason, day_reason = _WRITE_LIMITS[budget]
+    await acquire_user_lock(session, WRITE_RATE_LIMIT_LOCK_NS, user_id)
+
+    # MATERIALIZED guarantees clock_timestamp() is evaluated once. Counts, oldest rows,
+    # and Retry-After therefore all use one PostgreSQL clock and never Python wall time.
+    row = (
+        await session.execute(
+            text(
+                "WITH clock AS MATERIALIZED (SELECT clock_timestamp() AS now), "
+                "counts AS ("
+                " SELECT count(*) FILTER (WHERE created_at > clock.now - interval '60 seconds') "
+                "        AS minute_count, "
+                " count(*) FILTER (WHERE created_at > clock.now - interval '86400 seconds') "
+                "        AS day_count, "
+                " min(created_at) FILTER "
+                "   (WHERE created_at > clock.now - interval '60 seconds') AS minute_oldest, "
+                " min(created_at) FILTER "
+                "   (WHERE created_at > clock.now - interval '86400 seconds') AS day_oldest, "
+                " clock.now AS now "
+                " FROM clock LEFT JOIN write_attempts "
+                "   ON user_id = :user_id AND budget = :budget "
+                " GROUP BY clock.now"
+                ") "
+                "SELECT minute_count, day_count, "
+                " GREATEST(1, ceil(extract(epoch FROM "
+                "   (minute_oldest + interval '60 seconds' - now))))::integer AS minute_retry, "
+                " GREATEST(1, ceil(extract(epoch FROM "
+                "   (day_oldest + interval '86400 seconds' - now))))::integer AS day_retry "
+                "FROM counts"
+            ),
+            {"user_id": user_id, "budget": budget},
+        )
+    ).one()
+
+    if row.minute_count >= minute_limit:
+        await session.rollback()
+        logger.info(
+            "write_rate_limited",
+            extra={
+                "user_id": str(user_id),
+                "budget": budget,
+                "endpoint": endpoint,
+                "window": "minute",
+                "count": row.minute_count,
+                "retry_after": row.minute_retry,
+            },
+        )
+        raise RateLimited(minute_reason, retry_after=row.minute_retry)
+
+    if row.day_count >= day_limit:
+        await session.rollback()
+        logger.info(
+            "write_rate_limited",
+            extra={
+                "user_id": str(user_id),
+                "budget": budget,
+                "endpoint": endpoint,
+                "window": "day",
+                "count": row.day_count,
+                "retry_after": row.day_retry,
+            },
+        )
+        raise RateLimited(day_reason, retry_after=row.day_retry)
+
+    session.add(WriteAttempt(user_id=user_id, budget=budget, endpoint=endpoint))
+    await session.commit()
+    logger.info(
+        "write_rate_admitted",
+        extra={
+            "user_id": str(user_id),
+            "budget": budget,
+            "endpoint": endpoint,
+            "window": "minute_and_day",
+            "count": row.minute_count + 1,
+            "day_count": row.day_count + 1,
+        },
+    )
+
+
+def get_write_attempt_reserver(
+    session: AsyncSession = Depends(get_session),
+) -> WriteAttemptReserver:
+    """Overrideable FastAPI seam bound to the request's existing database session."""
+
+    async def reserve(user_id: uuid.UUID, budget: WriteBudget, endpoint: WriteEndpoint) -> None:
+        await reserve_write_attempt(session, user_id, budget, endpoint)
+
+    return reserve
 
 
 async def _count_since(

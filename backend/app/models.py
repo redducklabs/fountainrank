@@ -55,6 +55,36 @@ class User(Base):
     )
 
 
+class WriteAttempt(Base):
+    """Durable admission-attempt ledger for authenticated JSON write budgets."""
+
+    __tablename__ = "write_attempts"
+    __table_args__ = (
+        CheckConstraint("budget IN ('contribution_write','profile_sync')", name="rate_budget"),
+        CheckConstraint(
+            "endpoint IN ('fountain_create','rating_submit','attribute_submit',"
+            "'condition_submit','note_submit','profile_sync')",
+            name="rate_endpoint",
+        ),
+        Index("ix_write_attempts_user_budget_created", "user_id", "budget", "created_at"),
+        Index("ix_write_attempts_created_at", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE", name="fk_write_attempts_user"),
+        nullable=False,
+    )
+    budget: Mapped[str] = mapped_column(String(32), nullable=False)
+    endpoint: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class DeletedAccount(Base):
     __tablename__ = "deleted_accounts"
     __table_args__ = (

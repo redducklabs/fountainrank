@@ -266,6 +266,11 @@ jobs:
             -l "app=fountainrank-backend,version=$IMAGE_TAG" \
             -o jsonpath='{.items[0].metadata.name}')"
           kubectl -n "$NAMESPACE" exec "$POD" -- alembic upgrade head
+      # This CronJob queries the write_attempts table introduced by migration 0024. Apply it only
+      # after migrations so a deploy at minute :37 cannot schedule the new command against the
+      # pre-migration schema.
+      - name: Apply write-attempt cleanup after migrations
+        run: envsubst < infra/k8s/write-attempt-cleanup.yaml | kubectl apply -f -
       - name: Wait for rollouts
         run: |
           kubectl -n "$NAMESPACE" rollout status deploy/fountainrank-backend --timeout=180s

@@ -1,10 +1,37 @@
+import uuid
+
+import pytest
+from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 
-from app.auth import get_current_user
+from app.auth import ensure_named_user, get_current_user
 from app.main import app
 from app.models import User
 
 LOC = {"latitude": 37.0, "longitude": -122.0}
+
+
+def test_ensure_named_user_preserves_typed_conflict():
+    anonymous = User(
+        id=uuid.uuid4(),
+        logto_user_id="pure-anonymous",
+        email="pure-anonymous@example.com",
+        display_name="pure-anonymous",
+    )
+    with pytest.raises(HTTPException) as error:
+        ensure_named_user(anonymous)
+    assert error.value.status_code == 409
+    assert error.value.detail == "display_name_required"
+
+
+def test_ensure_named_user_returns_named_user():
+    named = User(
+        id=uuid.uuid4(),
+        logto_user_id="pure-named",
+        email="pure-named@example.com",
+        display_name="Pure Named",
+    )
+    assert ensure_named_user(named) is named
 
 
 async def test_anonymous_user_blocked_from_contributing(clean_db, session):

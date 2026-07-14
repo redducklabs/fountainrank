@@ -156,6 +156,11 @@ async def require_named_user(user: User = Depends(get_current_user)) -> User:
     """Gate contribution-write endpoints: a user whose name resolves to "Anonymous" (no nickname
     and display_name == subject) must set a display name first (kill Anonymous). Reads, GET/PATCH
     /me, and admin endpoints are intentionally NOT gated."""
+    return ensure_named_user(user)
+
+
+def ensure_named_user(user: User) -> User:
+    """Pure contribution name guard, usable after an endpoint's early rate reservation."""
     if resolved_display_name(user.display_name, user.logto_user_id, user.nickname) is None:
         logger.warning("contribution blocked: no display name", extra={"user_id": str(user.id)})
         raise HTTPException(status.HTTP_409_CONFLICT, detail="display_name_required")
