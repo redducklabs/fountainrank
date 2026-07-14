@@ -11,7 +11,10 @@ spec:
   # Recreate-in-place on a small cluster: a single 256Mi pod can't surge alongside
   # its predecessor when no node has the headroom, so the default RollingUpdate
   # deadlocks (FailedScheduling). maxSurge 0 / maxUnavailable 1 tears the old pod
-  # down first. The deploy gates on `kubectl rollout status` (not `wait --for=available`).
+  # down first. This also avoids old backend code serving against newly migrated data
+  # during schema/data backfills that intentionally change public URL ownership. The
+  # deploy accepts a backend outage window while migrations run, then gates on
+  # `kubectl rollout status` (not `wait --for=available`).
   strategy:
     type: RollingUpdate
     rollingUpdate:

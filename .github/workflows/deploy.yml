@@ -240,7 +240,7 @@ jobs:
             --dry-run=client -o yaml | kubectl apply -f -
           doctl registry kubernetes-manifest "$DO_REGISTRY" \
             --name regcred --namespace "$NAMESPACE" | kubectl apply -f -
-      - name: Render + apply workloads
+      - name: Render + apply backend before migrations
         env:
           GOOGLE_DELEGATED_USER: ${{ vars.GOOGLE_DELEGATED_USER }}
           FROM_EMAIL: ${{ vars.FROM_EMAIL }}
@@ -250,14 +250,16 @@ jobs:
           ADMIN_SUBJECTS: ${{ vars.ADMIN_SUBJECTS }}
         run: |
           export NAMESPACE ENVIRONMENT IMAGE_TAG REGISTRY DOMAIN GOOGLE_DELEGATED_USER FROM_EMAIL LOGTO_APP_ID LOGTO_MANAGEMENT_RESOURCE LOGTO_MANAGEMENT_API_BASE_URL ADMIN_SUBJECTS
-          for f in backend account-deletion-cleanup web logto ingress basemap-tiles; do
+          for f in backend; do
             envsubst < "infra/k8s/$f.yaml" | kubectl apply -f -
           done
-      # Migrations run BEFORE gating backend readiness: /readyz runs a PostGIS query,
-      # and PostGIS is enabled by migration 0001. The pod reaches Running (DB-free
-      # /healthz startup probe) but is NOT Ready until the migration runs — so gating
-      # rollout first would deadlock. Select the NEW image's pod by its `version`
-      # label (= IMAGE_TAG) so re-deploys never exec the old pod / old image.
+      # Migrations run before applying web. /readyz is an Alembic schema gate, so the
+      # new backend pod reaches Running (/healthz startup probe) but stays NotReady
+      # while the DB revision is behind the image head. This single-replica deploy
+      # intentionally has a backend outage window during migrations; it avoids old
+      # backend code serving against newly migrated data. Select the NEW image's pod
+      # by its `version` label (= IMAGE_TAG) so re-deploys never exec the old pod /
+      # old image.
       - name: Run DB migrations (before rollout gate)
         run: |
           kubectl -n "$NAMESPACE" wait --for=jsonpath='{.status.phase}'=Running \
@@ -266,6 +268,19 @@ jobs:
             -l "app=fountainrank-backend,version=$IMAGE_TAG" \
             -o jsonpath='{.items[0].metadata.name}')"
           kubectl -n "$NAMESPACE" exec "$POD" -- alembic upgrade head
+      - name: Render + apply remaining workloads after migrations
+        env:
+          GOOGLE_DELEGATED_USER: ${{ vars.GOOGLE_DELEGATED_USER }}
+          FROM_EMAIL: ${{ vars.FROM_EMAIL }}
+          LOGTO_APP_ID: ${{ vars.LOGTO_APP_ID }}
+          LOGTO_MANAGEMENT_RESOURCE: ${{ vars.LOGTO_MANAGEMENT_RESOURCE }}
+          LOGTO_MANAGEMENT_API_BASE_URL: ${{ vars.LOGTO_MANAGEMENT_API_BASE_URL }}
+          ADMIN_SUBJECTS: ${{ vars.ADMIN_SUBJECTS }}
+        run: |
+          export NAMESPACE ENVIRONMENT IMAGE_TAG REGISTRY DOMAIN GOOGLE_DELEGATED_USER FROM_EMAIL LOGTO_APP_ID LOGTO_MANAGEMENT_RESOURCE LOGTO_MANAGEMENT_API_BASE_URL ADMIN_SUBJECTS
+          for f in web account-deletion-cleanup logto ingress basemap-tiles; do
+            envsubst < "infra/k8s/$f.yaml" | kubectl apply -f -
+          done
       # This CronJob queries the write_attempts table introduced by migration 0024. Apply it only
       # after migrations so a deploy at minute :37 cannot schedule the new command against the
       # pre-migration schema.
