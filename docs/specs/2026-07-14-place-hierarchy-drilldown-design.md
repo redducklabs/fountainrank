@@ -6,6 +6,12 @@ Overture source (§11.3), the identity contract (§11.4), the level model (§11.
 thin-content predicate (§7), the Slice-1e readiness gate — **stands unchanged** and is
 depended upon here.
 
+*Revision 2 — rewritten after Codex spec-review-1 (7 [MAJOR] findings). The membership pass is
+now genuinely acyclic (§5), scoped update paths are specified (§5.1), the region config is
+two-state rather than tri-state (§4.1), the sitemap chunk contract is exact (§8), the downgrade
+is a full old-model recomputation (§10), and the region/city slug collisions are **enumerated
+from production** rather than hand-waved (§3.2).*
+
 ---
 
 ## 1. Problem
@@ -17,23 +23,25 @@ Three defects, all of which block "find every fountain we have from a search eng
    reaches the place tree, and a user has no way to browse from the top.
 
 2. **No state/province tier.** `place_boundaries` already *contains* Overture `region` rows —
-   the loader filters on `class='land'`, not on `subtype` (`backend/app/imports/boundaries.py`)
-   — but nothing links or renders them. `parent_id` today is only city → country. There is no
-   country → state → city drill-down.
+   the loader filters on `class='land'`, not on `subtype` (`backend/app/imports/boundaries.py`),
+   and the #127 DuckDB source query selects
+   `subtype IN ('country','region','county','localadmin','locality')`. But nothing links or
+   renders them: `_PARENT_SET_SQL` in `backend/app/membership.py` today sets **every** non-country
+   boundary's parent to the country row with the same `country_code`. There is no country → state
+   → city drill-down.
 
 3. **Flat city URLs structurally cannot represent all fountains.** The canonical index is
    `uq_place_boundaries_country_slug_canonical` — partial-unique on `(country_code, slug)
-   WHERE is_canonical`. Exactly one row per country may own a slug. Verified against
-   production: the live cities sitemap holds **1,015 URLs**, one of which is
-   `/drinking-fountains/us/portland`. **Portland, Maine has no page and cannot have one.** The
-   same holds for every duplicated US city name (Springfield, Columbus, Arlington, Kansas
-   City…). This is a correctness bug, not a cosmetic one: those fountains are in the database,
-   are on the map, and are unreachable by crawl.
+   WHERE is_canonical`. Exactly one row per country may own a slug. Verified against production:
+   the live cities sitemap holds **1,015 URLs**, one of which is `/drinking-fountains/us/portland`.
+   **Portland, Maine has no page and cannot have one.** The same holds for every duplicated US
+   city name (Springfield, Columbus, Arlington, Kansas City…). This is a correctness bug: those
+   fountains are in the database, are on the map, and are unreachable by crawl.
 
 Separately, boundaries have only ever been loaded for **US** and **LU**
-(`.github/boundary-source-regions.yml`), while fountains are now imported for ~59 countries
-(`.github/osm-import-regions.yml`). Every non-US/LU fountain — all of Germany, for example —
-has **no place membership at all** and therefore appears on no page.
+(`.github/boundary-source-regions.yml`), while fountains are imported for **62 countries**
+(`.github/osm-import-regions.yml`, 111 active scopes). Every non-US/LU fountain — all of Germany,
+for example — has **no place membership at all** and appears on no page.
 
 ## 2. Goals / non-goals
 
@@ -42,15 +50,16 @@ has **no place membership at all** and therefore appears on no page.
 - Country → state/province → city drill-down, each level an indexable SSR page.
 - Every fountain reachable from a crawlable page, including duplicate-named cities.
 - Boundary coverage for every country that has an active fountain import scope.
-- No loss of the ranking already accumulated by the 1,015 live city URLs.
+- Preserve the ranking of the 1,015 live city URLs, except for the three enumerated collisions
+  in §3.2 — which are named, costed, and mitigated rather than discovered later.
 
 **Non-goals**
 - County/borough tiers below the city. Neighborhoods, microhoods, macrohoods stay excluded
-  (§11.5 of the #127 spec).
-- Per-city attribute pages (still out of scope, per #127 §4.5).
+  (#127 §11.5).
+- Per-city attribute pages (still out of scope, #127 §4.5).
 - Changing the fountain detail route `/fountains/[id]`.
-- Auto-indexing newly loaded countries. The Slice-1e `city_routes_ready` owner-signoff gate
-  stays in force and still defaults to false.
+- Auto-indexing newly loaded countries. The Slice-1e `city_routes_ready` owner-signoff gate stays
+  in force and still defaults to false.
 
 ---
 
@@ -66,248 +75,375 @@ has **no place membership at all** and therefore appears on no page.
 ```
 
 - **Country segment:** ISO-3166-1 alpha-2, lowercased (unchanged).
-- **The middle segment is optional and per-country**, driven by data
-  (`place_scope_config.eligible_region_subtypes`). A country with an empty/NULL region set has
-  no state tier and its cities remain at `/[country]/[city]`. Luxembourg, Monaco, Malta,
-  Singapore, and city-states behave this way.
+- **The middle segment is per-country and driven by data** —
+  `place_scope_config.eligible_region_subtypes`. A country whose set is **empty** has no state
+  tier, and its cities stay at `/[country]/[city]`. Luxembourg, Monaco, Malta, Singapore and
+  city-states behave this way.
+- **In a country that HAS a region tier, level 2 is regions ONLY — cities are always level 3.**
+  There is no mixed 2-level/3-level city namespace within one country. A city polygon in a
+  region-tier country that no canonical region covers is **not canonical** and owns no URL (a
+  degenerate case that does not occur in the loaded data — Overture region coverage of the US is
+  complete; the Slice-1e coverage report surfaces it if it ever does). Its fountains keep their
+  country membership and still appear on the country page.
 - **City uniqueness becomes `(country_code, parent_id, slug)`**, not `(country_code, slug)`.
   This is the change that fixes defect 3.
 - **Region uniqueness is `(country_code, slug)`** among canonical regions.
-- Slugs stay **sticky** (assigned on first insert, never overwritten — #127 §4.3), so this
-  change never re-slugs an existing row; it only changes which rows may be canonical *and*
-  where a canonical city sits in the path.
+- Slugs stay **sticky** (assigned on first insert, never overwritten — #127 §4.3). This change
+  never re-slugs a row; it changes only which rows may be canonical and where a canonical city
+  sits in the path.
 
 ### 3.1 Level-2 resolution order (binding)
 
-`/drinking-fountains/[country]/[place]` is ambiguous by construction — the segment may be a
-state, a 2-level city, or a legacy flat city URL. It resolves in exactly this order:
+`/drinking-fountains/[country]/[place]` resolves in exactly this order:
 
 1. `[place]` is a **canonical region** in `[country]` → render the **state page**.
-2. `[place]` is a **canonical city** in `[country]` whose parent is the **country** (2-level
-   country) → render the **city page**.
-3. `[place]` is a **canonical city** in `[country]` whose parent is a **region** → **permanent
-   redirect** to `/[country]/[region-slug]/[place]`.
-4. Otherwise → 404.
-
-**Region-beats-city collision rule (accepted trade-off).** When a slug is *both* a canonical
-region and a city — `/us/new-york`, `/us/washington` — rule 1 wins and the legacy city URL
-becomes the **state page**, not a redirect to the city. It does not 404, the state page links
-prominently to the city, and the city remains reachable at its nested URL. We accept a changed
-page identity on a small number of legacy URLs rather than a 404 or an ambiguous route.
+2. `[place]` is a **canonical city** whose parent is the **country** (only possible in a country
+   with no region tier) → render the **city page**.
+3. `[place]` is a **canonical city** whose parent is a **region** (a legacy flat URL) →
+   **permanent redirect** to `/[country]/[region-slug]/[place]`.
+4. Otherwise → **404**.
 
 **Redirect status.** Next's `permanentRedirect()` emits **308**, not 301. Google treats 308 and
-301 equivalently for consolidation. We use 308 rather than adding a static `redirects()` table
-to `next.config.ts`, because the mapping is data (it changes as boundaries load) and cannot be
+301 equivalently for consolidation. We use it rather than a static `redirects()` table in
+`next.config.ts` because the mapping is *data* — it changes as boundaries load — and cannot be
 statically enumerated.
 
-### 3.2 Page types (replaces #127 §4.4's table)
+### 3.2 Region/city slug collisions — enumerated from production
+
+Rule 1 beats rule 3, so a slug that is **both** a canonical region and a legacy canonical city
+resolves to the **region**, and that legacy city URL changes identity instead of redirecting.
+This is the one place the "preserve the 1,015 URLs" goal is knowingly broken, so the exact cost
+is enumerated rather than left to be discovered in production. Intersecting the 1,000 live US
+city slugs against the 52 US state/territory slugs yields **exactly three** collisions:
+
+| Legacy URL | What it actually is | Fountains | New URL for the city |
+|---|---|---|---|
+| `/drinking-fountains/us/delaware` | Delaware, **Ohio** | 3 | `/us/ohio/delaware` |
+| `/drinking-fountains/us/washington` | Washington, **DC** | **196** | `/us/district-of-columbia/washington` |
+| `/drinking-fountains/us/wyoming` | Wyoming, **Michigan** | 5 | `/us/michigan/wyoming` |
+
+**`new-york` is NOT a collision** — Overture splits New York City into boroughs
+(`manhattan`, `queens`, `brooklyn`), so no canonical US city holds that slug and the state takes
+it uncontested.
+
+**Decision: the region wins the bare slug.** It is deterministic and stable — the alternative
+(suffixing a colliding region's slug) would make a *state's* URL depend on whether some unrelated
+city exists, so adding or removing a city could silently rename a state's URL. Stable URLs matter
+more than three legacy pages.
+
+**Cost and mitigation.** Two of the three are trivial (3 and 5 fountains). The one that costs
+something is Washington, DC (196 fountains): its content moves to
+`/us/district-of-columbia/washington`, which is a *better*, unambiguous URL, is in the sitemap,
+and is crawled from the DC region page. To mitigate the ambiguity for users, **a region page whose
+slug also matches a city elsewhere in the country renders a disambiguation link** to that city
+("Looking for Washington, District of Columbia?"). This is a named, tested UI element, not an
+incidental one.
+
+### 3.3 Page types (replaces #127 §4.4's table)
 
 | Route | Source | Content | Indexable? |
 |---|---|---|---|
 | `/drinking-fountains` | all canonical countries | Intro + country list w/ counts | Yes (always) |
-| `/drinking-fountains/[country]` | `place_kind='country'` | Intro + count + its regions (or its cities if no region tier) | Yes iff `fountain_count >= K` and country is `city_routes_ready` |
-| `/drinking-fountains/[country]/[region]` | `place_kind='region'` | Intro + count + its cities + top fountains | Yes iff `fountain_count >= K` and `city_routes_ready` |
-| `/drinking-fountains/[country]/[region]/[city]` | `place_kind='city'` | Intro + count + ranked fountain list | **Yes — primary**, iff `fountain_count >= K` and `city_routes_ready` |
+| `/drinking-fountains/[country]` | `place_kind='country'` | Intro + count + its regions (or its cities if no region tier) | Yes iff `fountain_count >= K` and the country is `city_routes_ready` |
+| `/drinking-fountains/[country]/[region]` | `place_kind='region'` | Intro + count + its cities + top fountains | Yes iff `fountain_count >= K` and **the region's country** is `city_routes_ready` |
+| `/drinking-fountains/[country]/[region]/[city]` | `place_kind='city'` | Intro + count + ranked fountain list | **Yes — primary**, iff `fountain_count >= K` and **the city's country** is `city_routes_ready` |
 
-The hub is the only always-indexable page: it is a real navigational index and is never thin
-(it is empty only if we have no countries at all, which cannot happen in production).
+`city_routes_ready` lives on `place_scope_config` and is **country-scoped** — the existing
+`_scope_city_routes_ready()` helper (missing row ⇒ false) is reused unchanged and now gates
+region routes as well as city routes. One owner signoff per country, not two.
+
+The hub is the only always-indexable page: it is a real navigational index and is thin only if we
+have no countries at all, which cannot happen in production.
 
 ---
 
 ## 4. Data model
 
-### 4.1 `place_scope_config`
-- **Add `eligible_region_subtypes` `text[] NULL`.** Code default when the row is absent:
-  `{region}`. An **explicit empty array** means *this country has no state tier* — distinct from
-  a missing row. Nullable so the column has a safe default for the existing us/lu rows.
-- **Add a CHECK that the two eligible sets are disjoint:**
-  `CHECK (eligible_region_subtypes IS NULL OR NOT (eligible_city_subtypes && eligible_region_subtypes))`.
-  A subtype that is simultaneously the region tier and the city tier would make `place_kind`
-  ambiguous; fail closed at the schema rather than pick a silent winner.
-- `city_routes_ready` is **unchanged** and now gates region routes as well as city routes — one
-  owner signoff per country, not two.
+### 4.1 `place_scope_config` — two states, not three
+
+- **Add `eligible_region_subtypes text[] NOT NULL DEFAULT '{region}'`.** Deliberately **NOT
+  NULL**, so the column has exactly two meanings and no `COALESCE` tri-state trap:
+  - **non-empty array** → the country has a region tier at those subtypes;
+  - **empty array `'{}'`** → the country has **no** region tier (2-level URLs).
+  - A country with **no row at all** falls back to the code default `{region}` (mirroring how
+    `eligible_city_subtypes` already defaults to `{locality, localadmin}`).
+- **The migration backfills the two existing rows explicitly** — it must not let the server
+  default decide:
+  - `us` → `'{region}'`
+  - `lu` → `'{}'` — Luxembourg's municipal tier is `county` communes (#127 §11.5). Giving LU a
+    region tier would nest its communes under cantons and **change its live URLs**. LU stays
+    2-level, exactly as it is today.
+- **Add a disjointness CHECK** (`ck_place_scope_config_tiers_disjoint`):
+  `CHECK (NOT (eligible_city_subtypes && eligible_region_subtypes))`. A subtype that is
+  simultaneously the region tier and the city tier would make `place_kind` ambiguous — fail closed
+  at the schema rather than pick a silent winner.
+- Expose a single **`has_region_tier(country)`** helper (`cardinality(...) > 0`, missing row ⇒
+  true) used by every SQL and API path, so the emptiness rule is encoded once.
+- `city_routes_ready` is **unchanged**.
 
 ### 4.2 `place_boundaries`
-- **Add `place_kind` `text NULL`**: `'country' | 'region' | 'city' | NULL`. Derived during the
-  membership refresh from `subtype` + the country's eligible sets. `NULL` = a loaded polygon
-  that owns no URL tier (a US county, a neighborhood, an ineligible subtype). Storing it makes
-  routing and the partial indexes explicit instead of re-deriving the subtype ladder in five
-  places.
-- **`parent_id` semantics change** (column already exists): region → country; city → its region
-  when the country has a region tier, else → country. Country → NULL.
-- **Replace the canonical unique index.** Drop
-  `uq_place_boundaries_country_slug_canonical`; add two:
+
+- **Add `place_kind text NULL`**: `'country' | 'region' | 'city' | NULL`. Derived during the
+  membership refresh from `subtype` + the country's eligible sets. `NULL` = a loaded polygon that
+  owns no URL tier (a US county, a neighborhood, an ineligible subtype). Storing it makes routing
+  and the partial indexes explicit instead of re-deriving the subtype ladder in five places.
+- **`parent_id` semantics change** (the column already exists): region → country; city → its
+  **canonical** region when the country has a region tier, else → country; country → NULL.
+- **Replace the canonical unique index.** Drop `uq_place_boundaries_country_slug_canonical`; add:
   - `uq_place_boundaries_region_canonical` — unique `(country_code, slug)`
     `WHERE is_canonical AND place_kind = 'region'`
   - `uq_place_boundaries_city_canonical` — unique `(country_code, parent_id, slug)`
     `WHERE is_canonical AND place_kind = 'city'`
 
-  Because canonical regions are unique on `(country_code, slug)`, `parent_id` ↔ region-slug is
-  1:1, so the city index enforces exactly the URL's uniqueness and nothing weaker.
+**The invariant that makes the city index sufficient.** The index enforces URL uniqueness only if
+every canonical city's `parent_id` is the country or a **canonical** region — otherwise two
+canonical cities could map to the same public path via a non-canonical region that shares a
+winning region's slug. **This holds by construction, not by hope:** §5 step 7 sets a city's
+`parent_id` *only* to a canonical region (or the country), and it runs *after* canonical regions
+are chosen in step 6. A city whose `parent_id` is NULL is never canonical (step 8). The scoped
+update paths (§5.1) never re-parent cities and never re-select canonical regions, so they cannot
+break it either. This invariant is asserted by a test, not merely documented.
 
 ### 4.3 `fountains`
-- **Add `region_place_id` `uuid NULL`** FK → `place_boundaries(id)` `ON DELETE SET NULL`,
-  indexed. The third denormalized membership FK alongside the existing `country_place_id` /
-  `city_place_id`.
+
+- **Add `region_place_id uuid NULL`** FK → `place_boundaries(id)` `ON DELETE SET NULL`, indexed —
+  the third denormalized membership FK alongside the existing `country_place_id` / `city_place_id`
+  (migration `0015_fountain_membership.py`).
 
 ---
 
-## 5. Membership refresh (`backend/app/membership.py`)
+## 5. Membership refresh — `refresh_all_memberships()`
 
-The refresh becomes an **acyclic 7-step pass**. The ordering matters: canonical selection
-tie-breaks on `fountain_count`, and city canonicality depends on region canonicality, so the
-steps must run in this order or the result is order-dependent.
+The pass is **8 steps, and genuinely acyclic**. Revision 1 was not: it derived a fountain's region
+from its city's parent, while region canonicality was tie-broken on region `fountain_count` — so
+counts depended on parentage which depended on canonicality which depended on counts. The fix is
+to make **`fountains.region_place_id` a pure geometric fact**:
 
-1. **Rebuild `place_boundary_cells`** (unchanged — `ST_Subdivide`, `TRUNCATE` + re-`INSERT` +
+> **`region_place_id` is the direct point-in-polygon match against the country's eligible region
+> polygons. It is never derived from the fountain's city.**
+
+This removes the cycle entirely. Every step below depends only on geometry, or on counts that
+depend only on geometry.
+
+1. **Rebuild `place_boundary_cells`** — unchanged (`ST_Subdivide`, `TRUNCATE` + re-`INSERT` +
    `ANALYZE`).
-2. **Derive `place_kind`** for every boundary from `subtype` + the country's eligible sets
-   (defaults `{region}` / `{locality, localadmin}`).
-3. **Derive `parent_id`.**
-   - region → the covering `place_kind='country'` polygon.
-   - city → the smallest-area covering `place_kind='region'` polygon in the same country; if the
-     country has no region tier (or no region covers it), → the country.
-   - Containment is tested with **`ST_PointOnSurface(child.boundary)`**, not the centroid: a
-     centroid can fall outside a concave or multi-part polygon, and full `ST_Covers(parent,
-     child)` is brittle against boundary-precision disagreements between tiers.
-4. **Assign fountains** — `country_place_id`, `region_place_id`, `city_place_id` — by
-   point-in-polygon against the cells (the existing LATERAL pattern, extended).
-   - `region_place_id` = **the matched city's parent region when the city matched and its parent
-     is a region**, else the direct region point-in-polygon match, else NULL. Deriving it from
-     the city's parent first guarantees the breadcrumb is coherent: a fountain can never be
-     listed on a city page nested under region A while being counted in region B.
-   - City assignment is unchanged: most-specific eligible covering polygon
-     (`locality` > `localadmin` > `county`, smallest-area, `overture_id` tie-break).
-   - An unmatched point still yields **country-only, never a coarser forced tier** (#127 §11.5).
+2. **Derive `place_kind`** for every boundary from `subtype` + the country's eligible sets.
+3. **Parent the regions:** `region.parent_id` = the `place_kind='country'` row with the same
+   `country_code` (a cheap column lookup — this is what the existing `_PARENT_SET_SQL` already
+   does, and it is correct for this tier).
+4. **Assign the three fountain FKs** — `country_place_id`, `region_place_id`, `city_place_id` —
+   each by an **independent** point-in-polygon LATERAL against `place_boundary_cells`
+   (`ST_Covers(c.geom, f.location::geometry)`, the existing pattern). City assignment is unchanged
+   (most-specific eligible: `locality` > `localadmin` > `county`, smallest-area, `overture_id`
+   tie-break). An unmatched point still yields **country-only, never a coarser forced tier**
+   (#127 §11.5).
 5. **Recount `fountain_count`** for every place — a 3-way `UNION ALL` over the three FK columns
-   (was 2-way). A region's count is therefore **every non-hidden fountain inside it**, not the
-   sum of its cities' counts: fountains in unincorporated areas still roll up to the state. This
-   is the honest number and it is what the state page displays.
-6. **Select canonical regions** — one per `(country_code, slug)` among `place_kind='region'`,
-   tie-break on the fresh `fountain_count`, then `overture_id`.
-7. **Select canonical cities** — one per `(country_code, parent_id, slug)` among
-   `place_kind='city'`, tie-break on `fountain_count`, then `overture_id`. **A city is eligible
-   for canonical only if its parent is a country or a *canonical* region** — otherwise its URL
-   would reference a region segment that no page serves.
+   (was 2-way). A region's count is therefore **every non-hidden fountain inside it**, not the sum
+   of its cities' counts: fountains in unincorporated areas still roll up to the state. This is the
+   honest number and it is what the state page displays.
+6. **Select canonical regions** — one per `(country_code, slug)` among `place_kind='region'`;
+   tie-break on the fresh `fountain_count`, then `overture_id`. Depends only on step-5 counts,
+   which depend only on geometry. **No dependency on cities.**
+7. **Parent the cities:** `city.parent_id` = the smallest-area **canonical** region covering
+   `ST_PointOnSurface(city.boundary::geometry)`; if the country has no region tier, → the country;
+   if the country has a region tier but no canonical region covers the city, → **NULL** (the
+   degenerate case of §3, which then cannot be canonical).
+8. **Select canonical cities** — one per `(country_code, parent_id, slug)` among
+   `place_kind='city'` with a **non-NULL** `parent_id`; tie-break on `fountain_count`, then
+   `overture_id`.
 
-**Consequence to accept:** if two regions in one country collide on slug, the loser is
-non-canonical and its cities cannot be canonical either. Two same-named states within one
-country do not occur in the Overture data we load; the Slice-1e coverage report surfaces it if
-it ever does.
+**Containment test (step 7).** `ST_PointOnSurface` is used rather than the centroid (a centroid can
+fall outside a concave or multi-part polygon) and rather than full `ST_Covers(parent, child)`
+(brittle against boundary-precision disagreements between tiers). `boundary` is
+`Geography(MULTIPOLYGON,4326)`, so the expression casts explicitly —
+`ST_PointOnSurface(pb.boundary::geometry)` — and is tested against the **parent's
+`place_boundary_cells`** via the GiST index, exactly like the fountain PIP, so this does not
+regress into a raw geography scan across every region × city.
+
+**Breadcrumbs come from the place tree, not from `region_place_id`.** A fountain's displayed
+hierarchy is `city → city.parent_id → country`. Because `region_place_id` is an independent
+geometric fact, the two can disagree for a **city that straddles a state line** (Texarkana, Kansas
+City): the fountain is listed on its city's page (nested under the city's region) while being
+*counted* in the region its point actually falls in. Both statements are true, the breadcrumb is
+always coherent, and this divergence is **asserted by a test** rather than left as a latent
+surprise.
+
+**Idempotence is a required test.** Steps 4→8 read only geometry and geometry-derived counts and
+never read their own prior output, so a second `refresh_all_memberships()` on unchanged data must
+change **zero rows**. The test runs the refresh twice and asserts no-op.
+
+### 5.1 Scoped update paths — `recompute_fountain_membership()` / `recompute_place_counts()`
+
+These already exist (a user add, an OSM import, a hide/unhide, an admin delete) and **must not be
+left behind by this change**, or canonical state goes stale the moment a fountain is added.
+
+- **They re-assign all three FKs** for the touched fountain (the step-4 LATERALs, scoped by
+  `fountain_id`), recount the affected places (old ∪ new), and re-select **canonical cities** for
+  the affected `(country_code, parent_id, slug)` groups.
+- **They deliberately do NOT re-select canonical regions and do NOT re-parent cities.**
+
+  *Why this is safe, stated as a rule rather than an oversight:* regions are only ever created,
+  changed, or removed by a **boundary load**, and every boundary load runs the **full** refresh
+  (`boundary_cli` already calls `refresh_all_memberships`). A fountain-count change can only flip a
+  canonical *region* when two regions in the same country share a slug — which does not occur in
+  the loaded data and which the Slice-1e coverage report surfaces if it ever does. Re-parenting
+  every city on every single-fountain write would be a full-table spatial pass on the hot path.
+
+  This limitation is **explicit and tested**: a scoped update must leave `place_kind`, region
+  canonicality, and city parentage untouched, and must not violate the §4.2 invariant.
 
 ---
 
 ## 6. Backend API (`backend/app/routers/places.py`)
 
+Route shapes use **literal prefixes** (`regions`, `cities`, `resolve`) so that FastAPI's
+declaration-order sensitivity for dynamic segments cannot bite — `/places/us/cities` can never be
+captured as `{region}`. Tests assert this explicitly.
+
 - `GET /api/v1/places` — canonical **countries**. Unchanged.
-- `GET /api/v1/places/{country}/regions` — that country's canonical regions, most fountains
-  first. Empty list for a country with no region tier.
-- `GET /api/v1/places/{country}/{region}/cities` — the region's canonical cities.
-- `GET /api/v1/places/{country}/cities` — a 2-level country's cities (parent = country).
-- `GET /api/v1/places/{country}/resolve/{slug}` — **the level-2 resolver.** Returns
-  `{ kind: 'region' | 'city', canonical_path, place }` or 404. This is what makes the web route
-  a dumb consumer: the redirect decision lives in one server-side place, not duplicated in the
-  page.
-- `GET /api/v1/places/{country}/{region}/{city}/fountains` — the nested city page's ranked
-  fountains + `indexable`. The existing 2-segment
-  `GET /api/v1/places/{country}/{city}/fountains` is **retained** to serve 2-level countries.
-- `GET /api/v1/places/{country}/{region}/fountains` — the region page's top fountains +
+- `GET /api/v1/places/{country}/regions` — canonical regions, most fountains first. **Empty list
+  for a country with no region tier.**
+- `GET /api/v1/places/{country}/cities` — a **2-level** country's canonical cities.
+- `GET /api/v1/places/{country}/regions/{region}/cities` — a region's canonical cities.
+- `GET /api/v1/places/{country}/regions/{region}/fountains` — the region page's top fountains +
   `indexable`.
+- `GET /api/v1/places/{country}/regions/{region}/cities/{city}/fountains` — the nested city page.
+- `GET /api/v1/places/{country}/resolve/{slug}` — **the level-2 resolver**, returning
+  `{ kind: 'region' | 'city', canonical_path, place }` or 404. The §3.1 decision lives here, once,
+  server-side — the web page is a dumb consumer and never re-derives it.
+- `GET /api/v1/places/{country}/{city}/fountains` — **retained** (2-level countries + backwards
+  compatibility). Declared last.
 
 `indexable` stays a **server-computed verdict** (#127 §7): `fountain_count >= K` **AND** the
-country is `city_routes_ready`. The web never re-derives the threshold.
+place's country is `city_routes_ready`. The web never re-derives the threshold.
 
 ---
 
 ## 7. Web (`web/app/drinking-fountains/`)
 
-- `page.tsx` — **new hub.** Countries with counts, linking down. Also linked from the footer and
+- `page.tsx` — **new hub.** Countries with counts, linking down. Linked from the footer and
   `core.xml`.
 - `[country]/page.tsx` — lists **regions** when the country has a region tier, else its cities.
-- `[country]/[place]/page.tsx` — **the resolver route.** Next.js forbids two dynamic segments at
-  one level, so the existing `[city]/` directory is **renamed to `[place]/`**. Implements §3.1:
-  region page, 2-level city page, 308 redirect, or 404.
+- `[country]/[place]/page.tsx` — **the resolver route.** Next forbids two dynamic segments at one
+  level, so the existing `[city]/` directory is **renamed to `[place]/`**. Implements §3.1: region
+  page, 2-level city page, 308 redirect, or 404.
 - `[country]/[place]/[city]/page.tsx` — the city page (the existing city page, moved).
-- Breadcrumbs on every level, with `BreadcrumbList` JSON-LD, so the hierarchy is machine-legible.
-- New UI elements (hub country grid, region list, breadcrumb) are documented in
-  `docs/style-guide.md` before they ship — mandatory per `CLAUDE.md`.
+- Breadcrumbs on every level with `BreadcrumbList` JSON-LD, so the hierarchy is machine-legible.
+
+**Style guide (mandatory — `CLAUDE.md`).** These new elements are added to `docs/style-guide.md`
+**before** they ship: **hub country grid**, **region list**, **breadcrumb trail (+ JSON-LD)**, and
+the **region-page disambiguation link** (§3.2).
 
 ---
 
-## 8. Sitemaps
+## 8. Sitemaps — exact contract
 
 - `core.xml` — add `/drinking-fountains`.
-- **`regions.xml` — new chunk**, canonical regions of `city_routes_ready` countries.
-- `cities.xml` — same set, but URLs become **nested** for cities under a region tier.
-- **`fountains.xml` must be chunked.** It is capped at `SITEMAP_FOUNTAIN_CAP = 50000` and the US
-  alone is at 24,466. Worldwide will exceed the 50k-URL sitemap limit. Becomes
-  `/sitemaps/fountains/[chunk].xml`, each chunk `limit=50000 offset=chunk*50000`; the index at
-  `/sitemap.xml` emits `ceil(total_count / 50000)` chunk entries. The backend endpoint already
-  supports `offset` and already returns `total_count` — no backend change needed.
-- Every chunk stays < 50k URLs, per #127 §6.
+- **`regions.xml` — new chunk.** Canonical regions of `city_routes_ready` countries.
+- `cities.xml` — same set as today, but each URL is **nested** for cities under a region tier.
+- **`fountains.xml` must be chunked.** It is capped at `SITEMAP_FOUNTAIN_CAP = 50000`, the US alone
+  is at 24,466, and worldwide will exceed the 50k-URL sitemap limit.
+  - New route: **`web/app/sitemaps/fountains/[chunk]/route.ts`**, serving
+    **`/sitemaps/fountains/<n>.xml`**.
+  - The `[chunk]` segment MUST match **`^(\d+)\.xml$`**; anything else → **404**. `<n>` is
+    **zero-based**. Chunk `n` requests `limit=50000, offset=n*50000` from the existing backend
+    endpoint (which already accepts `offset` and already returns `total_count` — **no backend
+    change**).
+  - The index at `/sitemap.xml` emits `ceil(total_count / 50000)` chunk entries (so
+    `total_count = 100000` → chunks `0` and `1`, **not** three; `total_count = 0` → no chunk
+    entries). An `<n>` at or beyond that count → **404**, never an empty 200.
+  - The legacy **`/sitemaps/fountains.xml` 308-redirects to `/sitemaps/fountains/0.xml`** so the
+    URL already known to Search Console does not break.
+- Every chunk stays < 50k URLs (#127 §6).
 
 ---
 
 ## 9. Worldwide boundary coverage
 
 `.github/boundary-source-regions.yml` gains one `overture:<cc>` row per ISO country that has an
-active fountain scope — **62 countries** (`us` + `lu` already exist, so **60 new rows**), all
-pinned to the same immutable Overture release `2026-06-17.0` already in use. Pin, never chase
-latest (#127 §11.3). The full enumeration lives in the implementation plan.
+active fountain scope, all pinned to the immutable Overture release `2026-06-17.0` already in use
+(pin, never chase latest — #127 §11.3).
 
-Derived from the active scopes in `.github/osm-import-regions.yml`. Note that a fountain scope is
-not 1:1 with a country: `asia/malaysia-singapore-brunei` yields **MY, SG, BN**;
-`europe/guernsey-jersey` yields **GG, JE**; `europe/ireland-and-northern-ireland` contributes
-**IE** (the NI part belongs to GB).
+**Count, derived from the current `.github/osm-import-regions.yml`** (111 active scopes = 53 US
+state scopes + 58 non-US scopes). Scopes are **not** 1:1 with countries:
+`asia/malaysia-singapore-brunei` → **MY, SG, BN**; `europe/guernsey-jersey` → **GG, JE**;
+`europe/ireland-and-northern-ireland` → **IE** (the NI part belongs to GB). That yields **61
+non-US countries + US = 62**; `us` and `lu` already exist, so **60 new rows**. The plan carries the
+full enumeration.
 
-**Uncertain country codes — verify, do not assume.** Overture's `country` value for
-`XK` (Kosovo), `FO` (Faroe Islands), `GG`/`JE`/`IM` (crown dependencies) and `NC` (New
-Caledonia) may be absent or may nest under a parent state. The boundary-load **dry-run reports a
-feature count**; a dry-run that loads **zero features is the signal that the code is wrong or
-unsupported** — retire that row rather than shipping a country that can never resolve. This is a
-per-country verification step in the rollout, not an assumption baked into the spec.
+**Uncertain country codes — verify, never assume.** Overture's `country` value for `XK` (Kosovo),
+`FO` (Faroe Islands), `GG` / `JE` / `IM` (crown dependencies) and `NC` (New Caledonia) may be
+absent or may nest under a parent state. The boundary-load **dry-run reports a feature count**; a
+dry-run that loads **zero features is the signal that the code is wrong or unsupported** — retire
+that row rather than ship a country that can never resolve. This is a per-country rollout step, not
+an assumption baked into the spec.
 
 ---
 
-## 10. Migration + deploy ordering (the dangerous part)
+## 10. Migration, downgrade, and deploy ordering
 
-The migration re-derives membership for **existing** US/LU rows. US cities acquire a region
-parent, so **their canonical URLs change in the same deploy**. Therefore:
+The migration re-derives membership for **existing** US/LU rows. US cities acquire a region parent,
+so **their canonical URLs change in the same deploy**.
 
-- The 308-redirect resolver (§3.1) and the migration **must ship in the same release**. If the
+- **The 308-redirect resolver (§3.1) and the migration MUST ship in the same release.** If the
   migration lands without the resolver, 1,015 indexed URLs 404.
-- The migration is **reversible**: `downgrade()` restores the single `(country_code, slug)`
-  partial unique index and drops the added columns. Because a downgrade would re-collide the
-  duplicate-city rows that the upgrade legitimately made canonical, `downgrade()` **must first
-  reset `is_canonical = false` and re-select** under the old rule, or the old unique index
-  cannot be created. This is explicitly implemented and tested, not assumed.
+- **`downgrade()` is a full old-model recomputation, not just an index swap.** The upgrade
+  legitimately creates canonical rows that *violate* the old unique index (both Portlands), so the
+  order is load-bearing:
+  1. Drop `uq_place_boundaries_city_canonical` + `uq_place_boundaries_region_canonical`.
+  2. `UPDATE place_boundaries SET is_canonical = false` (clear the new-model winners).
+  3. Restore the old parentage: every non-country boundary's `parent_id` → its country row (the
+     original `_PARENT_SET_SQL` behavior).
+  4. Re-select canonical under the **old** rule — one per `(country_code, slug)` among
+     city-eligible subtypes, tie-break `fountain_count`.
+  5. **Only then** create `uq_place_boundaries_country_slug_canonical` (it would fail if created
+     before steps 2–4).
+  6. Drop `fountains.region_place_id`, `place_boundaries.place_kind`,
+     `place_scope_config.eligible_region_subtypes` and its CHECK.
+- **Tested end-to-end:** upgrade → downgrade → the old index exists, is satisfied, and the flat
+  city API serves again.
 - `alembic check` must report **no drift**, and the new index/constraint **names** are asserted
-  against `pg_indexes` — `alembic check` does not compare CHECK-constraint definitions, so a
-  misnamed check can otherwise ship silently (`claude_help/testing-ci.md`).
+  against `pg_indexes` / `pg_constraint` — `alembic check` does not compare CHECK-constraint
+  definitions, so a misnamed check can otherwise ship silently
+  (`claude_help/testing-ci.md`).
 
-Rollout order after merge:
+**Rollout order after merge:**
 1. Deploy (`gh workflow run deploy.yml --ref main`) — migration + resolver + pages go live
-   together. US/LU behavior is verified before any new country is loaded.
+   together. Verify US/LU behavior (including the three §3.2 redirect/collision cases) **before**
+   loading any new country.
 2. Boundary-load **Germany** (dry-run → apply) as the validation country: confirm its city tier
-   really is `locality`/`localadmin` and that **Hamburg**, a city-state, resolves as a city and
-   not only as a region. Adjust `place_scope_config` for DE if not.
-3. Fan out the remaining countries.
-4. Run the coverage gate; sign off `city_routes_ready` per country **in a reviewed migration**
-   — loading a country does **not** index it.
+   really is `locality`/`localadmin`, and that **Hamburg** — a city-state that is simultaneously a
+   *Land* and a city — resolves as a **city** and not only as a region. Adjust DE's
+   `place_scope_config` if not.
+3. Fan out the remaining countries, checking each dry-run's feature count (§9).
+4. Run the coverage gate; sign off `city_routes_ready` per country **in a reviewed migration** —
+   loading a country does **not** index it.
 
 ---
 
 ## 11. Testing
 
-- **Membership:** two same-slug cities in different regions of one country both become canonical
-  (the Portland case — the defect-3 regression test). A region-vs-city slug collision. A country
-  with no region tier keeps 2-level cities. An unmatched point → country-only. A fountain whose
-  city's parent region differs from its own PIP region → the city's parent wins (§5, step 4).
+- **Membership**
+  - Two same-slug cities in different regions of one country **both** become canonical — the
+    Portland case, the direct regression test for defect 3.
+  - `refresh_all_memberships()` run **twice** changes zero rows (idempotence, §5).
+  - The §4.2 invariant: no canonical city has a NULL parent or a non-canonical region parent.
+  - A region-vs-city slug collision resolves to the region (§3.2).
+  - A country with no region tier keeps 2-level cities (the LU case).
+  - An unmatched point → country-only.
+  - A city straddling a region border: its fountains list on the city's page while counting in the
+    PIP region (§5) — the breadcrumb stays coherent.
+  - **Scoped paths** (§5.1): a single-fountain recompute re-canonicalizes its city group but leaves
+    `place_kind`, region canonicality and city parentage untouched, and does not violate the
+    invariant.
 - **Migration:** upgrade on a seeded US-like fixture promotes both Portlands; downgrade restores
-  the old index without violating it.
-- **Resolver:** all four branches of §3.1, including the region-beats-city collision.
-- **Redirects:** a legacy flat city URL 308s to its nested URL; the redirect target is canonical.
-- **Sitemaps:** nested city URLs; `regions.xml` content; `fountains.xml` chunk boundaries at
-  exactly 50k and at `total_count % 50000 == 0`.
+  the old index without violating it; index/CHECK names asserted from the catalog.
+- **Resolver:** all four branches of §3.1, plus the three enumerated collisions.
+- **Redirects:** a legacy flat city URL 308s to its nested URL and the target is canonical.
+- **Sitemaps:** nested city URLs; `regions.xml`; `fountains.xml` chunk boundaries at exactly 50k
+  and at `total_count % 50000 == 0`; an out-of-range chunk 404s; the legacy `fountains.xml` 308s.
+- **API:** `/places/us/cities` and `/places/us/resolve/x` are not captured by a dynamic
+  `{region}`/`{city}` route (§6).
 - **Indexability:** a country that is not `city_routes_ready` is `noindex` and absent from
   sitemaps, even with a high `fountain_count`.
 
@@ -317,10 +453,14 @@ Rollout order after merge:
 
 | Decision | Choice | Why |
 |---|---|---|
-| City URL shape | Nest under region, 308 from legacy flat URLs | Only shape that can represent duplicate city names; preserves the 1,015 indexed URLs |
-| Region segment | Optional, per-country, data-driven | City-states and micro-countries have no meaningful state tier |
-| Region-vs-city slug collision | Region wins; legacy URL becomes the state page | Deterministic; avoids a 404 and an ambiguous route |
-| Region `fountain_count` | All fountains in the region, not the sum of its cities | Honest; fountains outside any city still roll up |
-| Fountain's region | The matched city's parent, falling back to direct PIP | Guarantees a coherent breadcrumb |
+| City URL shape | Nest under region; 308 from legacy flat URLs | The only shape that can represent duplicate city names; preserves the indexed URLs |
+| Region segment | Per-country, data-driven; empty set ⇒ no tier | City-states and micro-countries have no meaningful state tier |
+| Mixed 2-/3-level within one country | **Not allowed** | Keeps level 2 unambiguous: in a region-tier country, level 2 is regions only |
+| Region-vs-city slug collision | Region wins; 3 enumerated legacy URLs change identity | Deterministic and stable — suffixing the region would let an unrelated city rename a state's URL |
+| `fountains.region_place_id` | **Direct PIP only**, never derived from the city | Removes the canonicality↔count cycle; makes the pass acyclic and idempotent |
+| Breadcrumb source | The place tree (`city.parent_id`), not `region_place_id` | Coherent even when a city straddles a region border |
+| Region `fountain_count` | Every fountain in the region, not the sum of its cities | Honest; fountains outside any city still roll up |
+| `eligible_region_subtypes` | `NOT NULL`, empty array ⇒ no tier | Two states, not three — no `COALESCE` tri-state trap |
+| Scoped update paths | Re-canonicalize cities only; never re-parent or re-canonicalize regions | Regions change only on a boundary load, which runs the full pass |
 | `place_kind` | Stored, derived on refresh | Explicit routing + explicit partial indexes; no re-derived subtype ladders |
 | New-country indexing | Still gated by `city_routes_ready` | Loading data is not the same as publishing it |
