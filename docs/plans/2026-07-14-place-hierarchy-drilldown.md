@@ -89,8 +89,14 @@ data → empty place tree, 404s, or 500s on the live site.
    **The backfill MUST skip the cell rebuild** (§5 step 1) and start at step 2. Point this out in
    the migration's docstring so a future maintainer does not "helpfully" add it back.
 
-**Tests:** `/readyz` returns 503 when the DB is behind the image head and 200 when it is at or
-**ahead** of it (the rollback case); the head is read from the image, not hardcoded.
+**Tests:** `/readyz` returns 503 when the DB is behind the image head, 200 when it matches, 200 when
+the DB is **ahead** of it (the rollback case), and **503 on an unknown/unrecognised DB revision**;
+the head is read from the image, not hardcoded.
+
+> **Assumption, stated so it can be checked:** the repo has a **single linear Alembic chain**
+> (currently `…0024`). The ancestor check and the single `alembic_version.version_num` read are
+> valid under that assumption; an Alembic **branch/merge** topology would invalidate both. If a
+> branch is ever introduced, this gate must be revisited.
 
 > This is a CI/IaC change made through the committed workflow — never a hand-run `kubectl`
 > (`CLAUDE.md` → *Infrastructure as Code*).
@@ -132,12 +138,33 @@ traffic is gated until migrations finish, so no request ever sees the half-migra
    (`(country_code, parent_id, slug)` `WHERE is_canonical AND place_kind='city'`).
    Creating them *before* the backfill is deliberate: a buggy backfill then **aborts the migration
    loudly** instead of silently shipping duplicate canonical rows.
-7. **Run the §5 data backfill, steps 2–10 only** (`place_kind` → region parents → 3-FK assignment →
+7. **FAIL-CLOSED CELL PREFLIGHT — before the backfill reads a single cell.**
+
+   The backfill skips the `place_boundary_cells` rebuild (step 8 below), which is only sound if the
+   cells are actually populated. **Nothing in the schema or the migration chain guarantees that:**
+   `0016_place_boundary_cells.py` creates the table **empty** and leaves population to an operator
+   backfill. And `boundary_cli` **commits boundary batches before** running the refresh, so a
+   previously failed boundary load can leave committed boundaries with **no** cells.
+
+   If the cells were empty, every point-in-polygon join would simply match nothing — the backfill
+   would set all three FKs to NULL, recount everything to zero, and **commit a silently empty place
+   tree**. It would not error. That is the worst failure mode in this plan.
+
+   So: **if `place_boundaries` has any rows, assert every `place_boundaries.id` has at least one
+   `place_boundary_cells.place_id`. If not, ABORT the migration** with an error naming the repair
+   (run the membership/cell rebuild from the current image, then re-deploy). An empty
+   `place_boundaries` (a fresh DB / CI) is fine — the backfill is a no-op.
+
+   **Test:** "boundaries exist, cells empty" → the migration **fails loudly**, and does *not*
+   silently zero membership.
+
+8. **Run the §5 data backfill, steps 2–10 only** (`place_kind` → region parents → 3-FK assignment →
    canonical regions → city parents → recount → canonical cities → canonical remap → recount).
    **Skip §5 step 1 (the `place_boundary_cells` rebuild).** This migration changes **no boundary
-   geometry**, so the cells are already correct — and `ST_Subdivide` over ~59k US polygons is the
+   geometry**, so existing cells remain valid — and `ST_Subdivide` over ~59k US polygons is the
    single most expensive step in a refresh. Skipping it is what keeps the Slice-0 downtime window
-   short. Say so in the migration docstring so nobody "helpfully" adds it back.
+   short, and step 7 is what makes skipping it *safe rather than merely convenient*. Say so in the
+   migration docstring so nobody "helpfully" adds it back — or removes the preflight.
 
    **The backfill's first statement after deriving `place_kind` MUST be
    `UPDATE place_boundaries SET is_canonical = false WHERE is_canonical`.** The rows still carry
@@ -383,9 +410,13 @@ Then PR → CI green → Codex PR-review loop to `VERDICT: APPROVED` → every P
 
 ## Rollout (post-merge, operator-driven)
 
-1. **Deploy:** `gh workflow run deploy.yml --ref main` (merging does **not** deploy). The migration
-   backfills the data and the readiness gate holds traffic until it completes, so migration +
-   resolver + pages go live together.
+1. **Deploy:** `gh workflow run deploy.yml --ref main` (merging does **not** deploy).
+   **Expect a backend outage window, by design** (Slice 0): backend is single-replica with
+   `maxSurge: 0`, so the old pod is gone and the new pod is held **NotReady** by the `/readyz`
+   schema gate until `0025` finishes. **Backend API traffic is unavailable for the duration of the
+   migration** — that is the deliberate price of never serving old code against new data. Web is
+   applied *after* migrations. **Begin verification only once both the backend and web rollouts
+   report Ready** — not while the migration is still running.
 2. **Verify US/LU BEFORE loading any new country:** the three §3.2 collisions render the state page;
    a sample of the 1,015 legacy city URLs 308 to live nested URLs; both Portlands resolve; the
    `/drinking-fountains` hub renders; fountain detail breadcrumbs point at nested city URLs.
