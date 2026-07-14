@@ -308,7 +308,155 @@ regions:
     source: pbf
     status: active
 
-  # Europe
+  # Europe. Use Great Britain + Ireland and Northern Ireland instead of the overlapping United
+  # Kingdom extract. Portugal already includes the Azores, so the separate Azores extract is not
+  # registered. The Russia-wide extract remains excluded because its antimeridian-crossing polygon
+  # fails the mandatory scope-bounds guard; it requires non-overlapping safe sub-scopes first.
+  - key: europe/albania
+    scope_id: geofabrik:albania
+    dataset: geofabrik:albania
+    source: pbf
+    status: active
+  - key: europe/andorra
+    scope_id: geofabrik:andorra
+    dataset: geofabrik:andorra
+    source: pbf
+    status: active
+  - key: europe/austria
+    scope_id: geofabrik:austria
+    dataset: geofabrik:austria
+    source: pbf
+    status: active
+  - key: europe/belarus
+    scope_id: geofabrik:belarus
+    dataset: geofabrik:belarus
+    source: pbf
+    status: active
+  - key: europe/belgium
+    scope_id: geofabrik:belgium
+    dataset: geofabrik:belgium
+    source: pbf
+    status: active
+  - key: europe/bosnia-herzegovina
+    scope_id: geofabrik:bosnia-herzegovina
+    dataset: geofabrik:bosnia-herzegovina
+    source: pbf
+    status: active
+  - key: europe/bulgaria
+    scope_id: geofabrik:bulgaria
+    dataset: geofabrik:bulgaria
+    source: pbf
+    status: active
+  - key: europe/croatia
+    scope_id: geofabrik:croatia
+    dataset: geofabrik:croatia
+    source: pbf
+    status: active
+  - key: europe/cyprus
+    scope_id: geofabrik:cyprus
+    dataset: geofabrik:cyprus
+    source: pbf
+    status: active
+  - key: europe/czech-republic
+    scope_id: geofabrik:czech-republic
+    dataset: geofabrik:czech-republic
+    source: pbf
+    status: active
+  - key: europe/denmark
+    scope_id: geofabrik:denmark
+    dataset: geofabrik:denmark
+    source: pbf
+    status: active
+  - key: europe/estonia
+    scope_id: geofabrik:estonia
+    dataset: geofabrik:estonia
+    source: pbf
+    status: active
+  - key: europe/faroe-islands
+    scope_id: geofabrik:faroe-islands
+    dataset: geofabrik:faroe-islands
+    source: pbf
+    status: active
+  - key: europe/finland
+    scope_id: geofabrik:finland
+    dataset: geofabrik:finland
+    source: pbf
+    status: active
+  - key: europe/france
+    scope_id: geofabrik:france
+    dataset: geofabrik:france
+    source: pbf
+    status: active
+  - key: europe/georgia
+    scope_id: geofabrik:georgia
+    dataset: geofabrik:georgia
+    source: pbf
+    status: active
+  - key: europe/germany
+    scope_id: geofabrik:germany
+    dataset: geofabrik:germany
+    source: pbf
+    status: active
+  - key: europe/greece
+    scope_id: geofabrik:greece
+    dataset: geofabrik:greece
+    source: pbf
+    status: active
+  - key: europe/great-britain
+    scope_id: geofabrik:great-britain
+    dataset: geofabrik:great-britain
+    source: pbf
+    status: active
+  - key: europe/guernsey-jersey
+    scope_id: geofabrik:guernsey-jersey
+    dataset: geofabrik:guernsey-jersey
+    source: pbf
+    status: active
+  - key: europe/hungary
+    scope_id: geofabrik:hungary
+    dataset: geofabrik:hungary
+    source: pbf
+    status: active
+  - key: europe/iceland
+    scope_id: geofabrik:iceland
+    dataset: geofabrik:iceland
+    source: pbf
+    status: active
+  - key: europe/ireland-and-northern-ireland
+    scope_id: geofabrik:ireland-and-northern-ireland
+    dataset: geofabrik:ireland-and-northern-ireland
+    source: pbf
+    status: active
+  - key: europe/isle-of-man
+    scope_id: geofabrik:isle-of-man
+    dataset: geofabrik:isle-of-man
+    source: pbf
+    status: active
+  - key: europe/italy
+    scope_id: geofabrik:italy
+    dataset: geofabrik:italy
+    source: pbf
+    status: active
+  - key: europe/kosovo
+    scope_id: geofabrik:kosovo
+    dataset: geofabrik:kosovo
+    source: pbf
+    status: active
+  - key: europe/latvia
+    scope_id: geofabrik:latvia
+    dataset: geofabrik:latvia
+    source: pbf
+    status: active
+  - key: europe/liechtenstein
+    scope_id: geofabrik:liechtenstein
+    dataset: geofabrik:liechtenstein
+    source: pbf
+    status: active
+  - key: europe/lithuania
+    scope_id: geofabrik:lithuania
+    dataset: geofabrik:lithuania
+    source: pbf
+    status: active
   - key: europe/monaco
     scope_id: geofabrik:monaco
     dataset: geofabrik:monaco
@@ -324,6 +472,21 @@ regions:
     dataset: geofabrik:malta
     source: pbf
     status: active
+  - key: europe/macedonia
+    scope_id: geofabrik:macedonia
+    dataset: geofabrik:macedonia
+    source: pbf
+    status: active
+  - key: europe/moldova
+    scope_id: geofabrik:moldova
+    dataset: geofabrik:moldova
+    source: pbf
+    status: active
+  - key: europe/montenegro
+    scope_id: geofabrik:montenegro
+    dataset: geofabrik:montenegro
+    source: pbf
+    status: active
   - key: europe/netherlands
     scope_id: geofabrik:netherlands
     dataset: geofabrik:netherlands
@@ -332,6 +495,61 @@ regions:
   - key: europe/portugal
     scope_id: geofabrik:portugal
     dataset: geofabrik:portugal
+    source: pbf
+    status: active
+  - key: europe/norway
+    scope_id: geofabrik:norway
+    dataset: geofabrik:norway
+    source: pbf
+    status: active
+  - key: europe/poland
+    scope_id: geofabrik:poland
+    dataset: geofabrik:poland
+    source: pbf
+    status: active
+  - key: europe/romania
+    scope_id: geofabrik:romania
+    dataset: geofabrik:romania
+    source: pbf
+    status: active
+  - key: europe/serbia
+    scope_id: geofabrik:serbia
+    dataset: geofabrik:serbia
+    source: pbf
+    status: active
+  - key: europe/slovakia
+    scope_id: geofabrik:slovakia
+    dataset: geofabrik:slovakia
+    source: pbf
+    status: active
+  - key: europe/slovenia
+    scope_id: geofabrik:slovenia
+    dataset: geofabrik:slovenia
+    source: pbf
+    status: active
+  - key: europe/spain
+    scope_id: geofabrik:spain
+    dataset: geofabrik:spain
+    source: pbf
+    status: active
+  - key: europe/sweden
+    scope_id: geofabrik:sweden
+    dataset: geofabrik:sweden
+    source: pbf
+    status: active
+  - key: europe/switzerland
+    scope_id: geofabrik:switzerland
+    dataset: geofabrik:switzerland
+    source: pbf
+    status: active
+  - key: europe/turkey
+    scope_id: geofabrik:turkey
+    dataset: geofabrik:turkey
+    source: pbf
+    status: active
+  - key: europe/ukraine
+    scope_id: geofabrik:ukraine
+    dataset: geofabrik:ukraine
     source: pbf
     status: active
 
