@@ -33,3 +33,371 @@ scopes:
     country: US
     overture_release_id: 2026-06-17.0
     status: active
+
+  # ---- #127 follow-up: worldwide place hierarchy (spec 2026-07-14 §9). One row per ISO
+  # country that has an ACTIVE fountain import scope in .github/osm-import-regions.yml.
+  # Same pinned release as us/lu — pin, never chase latest.
+  #
+  # UNVERIFIED country codes (XK, FO, GG, JE, IM, NC): Overture may not carry these as a
+  # `country` division, or may nest them under a parent state. A dry-run that loads ZERO
+  # features means the code is wrong/unsupported -> RETIRE the row, do not ship it.
+
+  # Andorra
+  - scope_id: overture:ad
+    country: AD
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Albania
+  - scope_id: overture:al
+    country: AL
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Austria
+  - scope_id: overture:at
+    country: AT
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Australia
+  - scope_id: overture:au
+    country: AU
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Bosnia and Herzegovina
+  - scope_id: overture:ba
+    country: BA
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Belgium
+  - scope_id: overture:be
+    country: BE
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Bulgaria
+  - scope_id: overture:bg
+    country: BG
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Brunei
+  - scope_id: overture:bn
+    country: BN
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Belarus
+  - scope_id: overture:by
+    country: BY
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Belize
+  - scope_id: overture:bz
+    country: BZ
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Switzerland
+  - scope_id: overture:ch
+    country: CH
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Chile
+  - scope_id: overture:cl
+    country: CL
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Cyprus
+  - scope_id: overture:cy
+    country: CY
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Czech Republic
+  - scope_id: overture:cz
+    country: CZ
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Germany
+  - scope_id: overture:de
+    country: DE
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Denmark
+  - scope_id: overture:dk
+    country: DK
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Estonia
+  - scope_id: overture:ee
+    country: EE
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Spain
+  - scope_id: overture:es
+    country: ES
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Finland
+  - scope_id: overture:fi
+    country: FI
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Faroe Islands  # UNVERIFIED - dry-run must report >0 features
+  - scope_id: overture:fo
+    country: FO
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # France
+  - scope_id: overture:fr
+    country: FR
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # United Kingdom
+  - scope_id: overture:gb
+    country: GB
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Georgia
+  - scope_id: overture:ge
+    country: GE
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Guernsey  # UNVERIFIED - dry-run must report >0 features
+  - scope_id: overture:gg
+    country: GG
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Greece
+  - scope_id: overture:gr
+    country: GR
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Croatia
+  - scope_id: overture:hr
+    country: HR
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Hungary
+  - scope_id: overture:hu
+    country: HU
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Ireland
+  - scope_id: overture:ie
+    country: IE
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Isle of Man  # UNVERIFIED - dry-run must report >0 features
+  - scope_id: overture:im
+    country: IM
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Iceland
+  - scope_id: overture:is
+    country: IS
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Italy
+  - scope_id: overture:it
+    country: IT
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Jersey  # UNVERIFIED - dry-run must report >0 features
+  - scope_id: overture:je
+    country: JE
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Kenya
+  - scope_id: overture:ke
+    country: KE
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # South Korea
+  - scope_id: overture:kr
+    country: KR
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Liechtenstein
+  - scope_id: overture:li
+    country: LI
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Lithuania
+  - scope_id: overture:lt
+    country: LT
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Latvia
+  - scope_id: overture:lv
+    country: LV
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Monaco
+  - scope_id: overture:mc
+    country: MC
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Moldova
+  - scope_id: overture:md
+    country: MD
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Montenegro
+  - scope_id: overture:me
+    country: ME
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # North Macedonia
+  - scope_id: overture:mk
+    country: MK
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Malta
+  - scope_id: overture:mt
+    country: MT
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Mauritius
+  - scope_id: overture:mu
+    country: MU
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Malaysia
+  - scope_id: overture:my
+    country: MY
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # New Caledonia  # UNVERIFIED - dry-run must report >0 features
+  - scope_id: overture:nc
+    country: NC
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Netherlands
+  - scope_id: overture:nl
+    country: NL
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Norway
+  - scope_id: overture:no
+    country: NO
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Poland
+  - scope_id: overture:pl
+    country: PL
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Portugal
+  - scope_id: overture:pt
+    country: PT
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Romania
+  - scope_id: overture:ro
+    country: RO
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Serbia
+  - scope_id: overture:rs
+    country: RS
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Sweden
+  - scope_id: overture:se
+    country: SE
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Singapore
+  - scope_id: overture:sg
+    country: SG
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Slovenia
+  - scope_id: overture:si
+    country: SI
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Slovakia
+  - scope_id: overture:sk
+    country: SK
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Turkey
+  - scope_id: overture:tr
+    country: TR
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Ukraine
+  - scope_id: overture:ua
+    country: UA
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Uruguay
+  - scope_id: overture:uy
+    country: UY
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # Kosovo  # UNVERIFIED - dry-run must report >0 features
+  - scope_id: overture:xk
+    country: XK
+    overture_release_id: 2026-06-17.0
+    status: active
+
+  # South Africa
+  - scope_id: overture:za
+    country: ZA
+    overture_release_id: 2026-06-17.0
+    status: active
