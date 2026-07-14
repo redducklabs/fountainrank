@@ -45,24 +45,52 @@ weakness into a visible outage:
 Net: new web + new backend can serve **while `0025` is mid-flight**, against `place_kind = NULL`
 data → empty place tree, 404s, or 500s on the live site.
 
-**The fix — two parts, both required:**
+**The fix — three parts:**
 
-1. **Make `/readyz` a real schema gate.** It compares the DB's `alembic_version.version_num` against
-   the head revision **embedded in the running image** (`ScriptDirectory.from_config(...)
-   .get_current_head()`); a mismatch — or a missing `alembic_version` table — returns **503**. Then:
-   - new backend pods **cannot serve pre-migration** (they never enter the Service endpoints);
-   - the migration step still works, because it gates on `phase=Running`, not `Ready`, and `exec`s
-     into the pod;
-   - **old backend pods keep serving throughout** (they are Ready), so there is no downtime;
-   - a deploy that *forgets* to migrate now fails **loudly** instead of silently serving broken
-     data. That is the desired behaviour.
-2. **Apply `web` only AFTER migrations.** Split the workload loop: apply `backend` (+ config) →
-   run migrations → then apply `web` and the rest. Otherwise new web (Ready instantly) would call
-   the *old* backend, which has no `/places/{country}/regions`, and region pages would transiently
-   404/500.
+1. **Make `/readyz` a real schema gate — one that is rollback-safe.** It compares the DB's
+   `alembic_version.version_num` against the head **embedded in the running image**
+   (`ScriptDirectory.from_config(...).get_current_head()`):
+   - DB **behind** the image head (the image expects a migration that has not run), or the
+     `alembic_version` table is **missing** → **503**.
+   - DB **at or ahead of** the image head → **Ready**.
 
-**Tests:** `/readyz` returns 503 when `alembic_version` is behind the image's head, and 200 when it
-matches; a unit test asserts the head is read from the image, not hardcoded.
+   The "or ahead" half is not a nicety: a **strict equality** gate would permanently 503 any
+   **rollback** to an older image (its head is behind the DB), making the deploy unrecoverable.
+   Implement by checking that the image's head is the DB revision **or one of its ancestors**
+   (`script.iterate_revisions(db_rev, "base")`), not by string equality.
+   - First deploy to an **empty** DB still works: no `alembic_version` → 503 → the migration step
+     gates on `phase=Running` (not `Ready`) and `exec`s in → then Ready.
+   - There is **no HPA** in `infra/k8s/`, so no scale-up can race the migration.
+   - A deploy that *forgets* to migrate now fails **loudly** instead of silently serving broken data.
+
+2. **Apply `web` only AFTER migrations.** Split the workload loop: `backend` (+ config) → migrate →
+   then `web` and the rest. Otherwise new web (Ready instantly, bare `GET /` probe) calls the *old*
+   backend, which has no `/places/{country}/regions`, and region pages transiently 404/500.
+
+3. **Keep `maxSurge: 0` — and accept a bounded, explicit downtime window.** This is deliberate, and
+   the reasoning matters:
+
+   Backend is `replicas: 1, maxSurge: 0, maxUnavailable: 1` (`infra/k8s/backend.yaml:10-19`), so the
+   old pod is torn down **before** the new one starts. Combined with the `/readyz` gate, backend has
+   **zero Ready pods for the duration of the migration** — a real outage window, and I am not going
+   to pretend otherwise.
+
+   **Surging (`maxSurge: 1, maxUnavailable: 0`) looks like the fix but is strictly worse here.** It
+   would keep the *old* backend serving while the backfill runs — and the old code is
+   **incompatible with the new data**: after the backfill, both Portlands are `is_canonical`, so the
+   old flat `(country_code, slug)` canonical lookup matches **two rows** and its `scalar_one`
+   raises → **500s on live city pages**. Tearing the old pod down first avoids the old-code/new-data
+   overlap entirely. The single-replica `maxSurge: 0` topology, which already gives every deploy a
+   downtime window, is here a *feature*.
+
+   **So: minimise the window instead of pretending it away.** The dominant cost of a full membership
+   refresh is the `place_boundary_cells` rebuild (`ST_Subdivide` over ~59k US polygons) — and this
+   migration **does not change any boundary geometry**, so the cells are already correct.
+   **The backfill MUST skip the cell rebuild** (§5 step 1) and start at step 2. Point this out in
+   the migration's docstring so a future maintainer does not "helpfully" add it back.
+
+**Tests:** `/readyz` returns 503 when the DB is behind the image head and 200 when it is at or
+**ahead** of it (the rollback case); the head is read from the image, not hardcoded.
 
 > This is a CI/IaC change made through the committed workflow — never a hand-run `kubectl`
 > (`CLAUDE.md` → *Infrastructure as Code*).
@@ -104,8 +132,12 @@ traffic is gated until migrations finish, so no request ever sees the half-migra
    (`(country_code, parent_id, slug)` `WHERE is_canonical AND place_kind='city'`).
    Creating them *before* the backfill is deliberate: a buggy backfill then **aborts the migration
    loudly** instead of silently shipping duplicate canonical rows.
-7. **Run the full §5 data backfill** (steps 2–10: `place_kind` → region parents → 3-FK assignment →
+7. **Run the §5 data backfill, steps 2–10 only** (`place_kind` → region parents → 3-FK assignment →
    canonical regions → city parents → recount → canonical cities → canonical remap → recount).
+   **Skip §5 step 1 (the `place_boundary_cells` rebuild).** This migration changes **no boundary
+   geometry**, so the cells are already correct — and `ST_Subdivide` over ~59k US polygons is the
+   single most expensive step in a refresh. Skipping it is what keeps the Slice-0 downtime window
+   short. Say so in the migration docstring so nobody "helpfully" adds it back.
 
    **The backfill's first statement after deriving `place_kind` MUST be
    `UPDATE place_boundaries SET is_canonical = false WHERE is_canonical`.** The rows still carry
