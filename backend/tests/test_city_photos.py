@@ -54,14 +54,15 @@ async def _add_place(
     parent_id=None,
     wkt: str = _UNIT_SQUARE,
 ):
+    place_kind = "country" if subtype == "country" else "city"
     row = (
         await session.execute(
             text(
                 """
                 INSERT INTO place_boundaries
-                    (id, overture_id, subtype, class, name, country_code, slug,
+                    (id, overture_id, subtype, class, place_kind, name, country_code, slug,
                      is_canonical, fountain_count, parent_id, boundary, created_at, updated_at)
-                VALUES (gen_random_uuid(), :oid, :subtype, 'land', :name, :cc, :slug,
+                VALUES (gen_random_uuid(), :oid, :subtype, 'land', :kind, :name, :cc, :slug,
                         :canon, :fc, :parent,
                         ST_Multi(ST_GeomFromText(:wkt, 4326))::geography, now(), now())
                 RETURNING id
@@ -70,6 +71,7 @@ async def _add_place(
             {
                 "oid": overture_id,
                 "subtype": subtype,
+                "kind": place_kind,
                 "name": name,
                 "cc": country_code,
                 "slug": slug,

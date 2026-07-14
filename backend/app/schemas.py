@@ -443,7 +443,14 @@ class PlaceOut(BaseModel):
     slug: str
     name: str
     subtype: str
+    place_kind: str | None
     fountain_count: int
+
+
+class PlaceResolveOut(BaseModel):
+    kind: Literal["region", "city"]
+    canonical_path: str
+    place: PlaceOut
 
 
 class PhotoOut(BaseModel):
@@ -567,6 +574,7 @@ class FountainPlaceOut(BaseModel):
 
     fountain_id: uuid.UUID
     city: PlaceOut | None
+    region: PlaceOut | None
     country: PlaceOut | None
     indexable: bool
 

@@ -49,16 +49,19 @@ async def _add_place(
     fountain_count: int,
     is_canonical: bool,
     parent_id=None,
+    place_kind: str | None = None,
     wkt: str = _UNIT_SQUARE,
 ):
+    if place_kind is None:
+        place_kind = "country" if subtype == "country" else "city"
     row = (
         await session.execute(
             text(
                 """
                 INSERT INTO place_boundaries
-                    (id, overture_id, subtype, class, name, country_code, slug,
+                    (id, overture_id, subtype, class, place_kind, name, country_code, slug,
                      is_canonical, fountain_count, parent_id, boundary, created_at, updated_at)
-                VALUES (gen_random_uuid(), :oid, :subtype, 'land', :name, :cc, :slug,
+                VALUES (gen_random_uuid(), :oid, :subtype, 'land', :kind, :name, :cc, :slug,
                         :canon, :fc, :parent,
                         ST_Multi(ST_GeomFromText(:wkt, 4326))::geography, now(), now())
                 RETURNING id
@@ -67,6 +70,7 @@ async def _add_place(
             {
                 "oid": overture_id,
                 "subtype": subtype,
+                "kind": place_kind,
                 "name": name,
                 "cc": country_code,
                 "slug": slug,
@@ -98,21 +102,33 @@ def _sq(x0: float, y0: float, x1: float, y1: float) -> str:
 
 
 async def _set_scope_ready(
-    session, country_code: str, ready: bool, *, subtypes=("locality", "localadmin")
+    session,
+    country_code: str,
+    ready: bool,
+    *,
+    subtypes=("locality", "localadmin"),
+    region_subtypes=(),
 ):
     """Insert/patch a place_scope_config row so a test scope is (not) city-routes-ready. us/lu are
     seeded ready=true by migration 0017; use this for other test country codes."""
     await session.execute(
         text(
             """
-            INSERT INTO place_scope_config (country_code, eligible_city_subtypes, city_routes_ready)
-            VALUES (:cc, :subs, :ready)
+            INSERT INTO place_scope_config
+                (country_code, eligible_city_subtypes, eligible_region_subtypes, city_routes_ready)
+            VALUES (:cc, :subs, :region_subs, :ready)
             ON CONFLICT (country_code)
             DO UPDATE SET eligible_city_subtypes = EXCLUDED.eligible_city_subtypes,
+                          eligible_region_subtypes = :region_subs,
                           city_routes_ready = EXCLUDED.city_routes_ready
             """
         ),
-        {"cc": country_code, "subs": list(subtypes), "ready": ready},
+        {
+            "cc": country_code,
+            "subs": list(subtypes),
+            "region_subs": list(region_subtypes),
+            "ready": ready,
+        },
     )
 
 
@@ -467,6 +483,201 @@ async def test_real_refresh_makes_country_and_city_listable(session, api):
     cities = (await api.get("/api/v1/places", params={"country": "us"})).json()
     assert [c["slug"] for c in cities] == ["san-diego"]
     assert cities[0]["fountain_count"] == 3
+
+
+@pytest.mark.asyncio
+async def test_literal_prefix_routes_are_not_captured_by_dynamic_routes(session, api):
+    us = await _add_place(
+        session,
+        overture_id="us",
+        subtype="country",
+        country_code="us",
+        name="United States",
+        slug="united-states",
+        fountain_count=10,
+        is_canonical=False,
+    )
+    await _add_place(
+        session,
+        overture_id="sd",
+        subtype="locality",
+        country_code="us",
+        name="San Diego",
+        slug="san-diego",
+        fountain_count=5,
+        is_canonical=True,
+        parent_id=us,
+    )
+    await _set_scope_ready(session, "us", ready=True)
+    await session.commit()
+
+    cities = await api.get("/api/v1/places/us/cities")
+    assert cities.status_code == 200
+    assert [p["slug"] for p in cities.json()] == ["san-diego"]
+
+    resolve = await api.get("/api/v1/places/us/resolve/x")
+    assert resolve.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_level2_resolver_returns_region_city_redirect_and_404(session, api):
+    us = await _add_place(
+        session,
+        overture_id="us",
+        subtype="country",
+        country_code="us",
+        name="United States",
+        slug="united-states",
+        fountain_count=10,
+        is_canonical=False,
+    )
+    region = await _add_place(
+        session,
+        overture_id="ca",
+        subtype="region",
+        country_code="us",
+        name="California",
+        slug="california",
+        fountain_count=9,
+        is_canonical=True,
+        parent_id=us,
+        place_kind="region",
+    )
+    await _add_place(
+        session,
+        overture_id="sd",
+        subtype="locality",
+        country_code="us",
+        name="San Diego",
+        slug="san-diego",
+        fountain_count=5,
+        is_canonical=True,
+        parent_id=us,
+    )
+    await _add_place(
+        session,
+        overture_id="la",
+        subtype="locality",
+        country_code="us",
+        name="Los Angeles",
+        slug="los-angeles",
+        fountain_count=8,
+        is_canonical=True,
+        parent_id=region,
+    )
+    await session.commit()
+
+    region_resp = (await api.get("/api/v1/places/us/resolve/california")).json()
+    assert region_resp["kind"] == "region"
+    assert region_resp["canonical_path"] == "/drinking-fountains/us/california"
+    assert region_resp["place"]["place_kind"] == "region"
+
+    city_resp = (await api.get("/api/v1/places/us/resolve/san-diego")).json()
+    assert city_resp["kind"] == "city"
+    assert city_resp["canonical_path"] == "/drinking-fountains/us/san-diego"
+
+    redirect_resp = (await api.get("/api/v1/places/us/resolve/los-angeles")).json()
+    assert redirect_resp["kind"] == "city"
+    assert redirect_resp["canonical_path"] == "/drinking-fountains/us/california/los-angeles"
+
+    assert (await api.get("/api/v1/places/us/resolve/nowhere")).status_code == 404
+
+
+@pytest.mark.parametrize("slug", ["delaware", "washington", "wyoming"])
+@pytest.mark.asyncio
+async def test_region_city_collisions_resolve_to_region(session, api, slug):
+    us = await _add_place(
+        session,
+        overture_id="us",
+        subtype="country",
+        country_code="us",
+        name="United States",
+        slug="united-states",
+        fountain_count=10,
+        is_canonical=False,
+    )
+    region = await _add_place(
+        session,
+        overture_id=f"region-{slug}",
+        subtype="region",
+        country_code="us",
+        name=slug.title(),
+        slug=slug,
+        fountain_count=9,
+        is_canonical=True,
+        parent_id=us,
+        place_kind="region",
+    )
+    await _add_place(
+        session,
+        overture_id=f"city-{slug}",
+        subtype="locality",
+        country_code="us",
+        name=slug.title(),
+        slug=slug,
+        fountain_count=5,
+        is_canonical=True,
+        parent_id=region,
+    )
+    await session.commit()
+
+    body = (await api.get(f"/api/v1/places/us/resolve/{slug}")).json()
+    assert body["kind"] == "region"
+    assert body["place"]["id"] == str(region)
+    assert body["canonical_path"] == f"/drinking-fountains/us/{slug}"
+
+
+@pytest.mark.asyncio
+async def test_region_and_nested_city_endpoints(session, api):
+    us = await _add_place(
+        session,
+        overture_id="us",
+        subtype="country",
+        country_code="us",
+        name="United States",
+        slug="united-states",
+        fountain_count=5,
+        is_canonical=False,
+    )
+    region = await _add_place(
+        session,
+        overture_id="oregon",
+        subtype="region",
+        country_code="us",
+        name="Oregon",
+        slug="oregon",
+        fountain_count=5,
+        is_canonical=True,
+        parent_id=us,
+        place_kind="region",
+    )
+    city = await _add_place(
+        session,
+        overture_id="portland",
+        subtype="locality",
+        country_code="us",
+        name="Portland",
+        slug="portland",
+        fountain_count=4,
+        is_canonical=True,
+        parent_id=region,
+    )
+    await _set_scope_ready(session, "us", ready=True, region_subtypes=("region",))
+    await _add_city_fountain(session, city, ranking_score=0.9, rating_count=4)
+    await session.execute(
+        text("UPDATE fountains SET region_place_id = :region"), {"region": region}
+    )
+    await session.commit()
+
+    regions = (await api.get("/api/v1/places/us/regions")).json()
+    assert [r["slug"] for r in regions] == ["oregon"]
+    cities = (await api.get("/api/v1/places/us/regions/oregon/cities")).json()
+    assert [c["slug"] for c in cities] == ["portland"]
+    region_page = (await api.get("/api/v1/places/us/regions/oregon/fountains")).json()
+    assert region_page["indexable"] is True
+    city_page = (await api.get("/api/v1/places/us/regions/oregon/cities/portland/fountains")).json()
+    assert city_page["indexable"] is True
+    assert len(city_page["fountains"]) == 1
 
 
 # --- GET /api/v1/places/{country}/{city}/fountains (Slice 3) ---

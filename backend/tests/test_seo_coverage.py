@@ -16,17 +16,26 @@ def _sq(x0, y0, x1, y1):
 
 
 async def _boundary(session, *, oid, subtype, cc, name, slug, wkt):
+    place_kind = "country" if subtype == "country" else "city"
     await session.execute(
         text(
             """
             INSERT INTO place_boundaries
-                (id, overture_id, subtype, class, name, country_code, slug, is_canonical,
-                 fountain_count, boundary, created_at, updated_at)
-            VALUES (gen_random_uuid(), :oid, :subtype, 'land', :name, :cc, :slug, false, 0,
+                (id, overture_id, subtype, class, place_kind, name, country_code, slug,
+                 is_canonical, fountain_count, boundary, created_at, updated_at)
+            VALUES (gen_random_uuid(), :oid, :subtype, 'land', :kind, :name, :cc, :slug, false, 0,
                     ST_Multi(ST_GeomFromText(:wkt, 4326))::geography, now(), now())
             """
         ),
-        {"oid": oid, "subtype": subtype, "cc": cc, "name": name, "slug": slug, "wkt": wkt},
+        {
+            "oid": oid,
+            "subtype": subtype,
+            "kind": place_kind,
+            "cc": cc,
+            "name": name,
+            "slug": slug,
+            "wkt": wkt,
+        },
     )
 
 
@@ -45,9 +54,10 @@ async def _scope(session, cc, subtypes, ready):
     await session.execute(
         text(
             "INSERT INTO place_scope_config "
-            "(country_code, eligible_city_subtypes, city_routes_ready) "
-            "VALUES (:cc, :s, :r) ON CONFLICT (country_code) DO UPDATE SET "
+            "(country_code, eligible_city_subtypes, eligible_region_subtypes, city_routes_ready) "
+            "VALUES (:cc, :s, ARRAY[]::text[], :r) ON CONFLICT (country_code) DO UPDATE SET "
             "eligible_city_subtypes = EXCLUDED.eligible_city_subtypes, "
+            "eligible_region_subtypes = EXCLUDED.eligible_region_subtypes, "
             "city_routes_ready = EXCLUDED.city_routes_ready"
         ),
         {"cc": cc, "s": list(subtypes), "r": ready},
@@ -162,6 +172,40 @@ async def test_coverage_pct_null_when_no_matched(session):
     cc = next(s for s in report.scopes if s.country_code == "cc")
     assert cc.fountains_in_country == 0
     assert cc.city_coverage_pct is None
+
+
+@pytest.mark.asyncio
+async def test_duplicate_region_slug_blocks_recommended_ready(session):
+    await _boundary(
+        session,
+        oid="dd",
+        subtype="country",
+        cc="dd",
+        name="Deeland",
+        slug="deeland",
+        wkt=_sq(0, 0, 10, 10),
+    )
+    await session.execute(
+        text(
+            """
+            INSERT INTO place_boundaries
+                (id, overture_id, subtype, class, place_kind, name, country_code, slug,
+                 is_canonical, fountain_count, boundary, created_at, updated_at)
+            VALUES
+                (gen_random_uuid(), 'dd-r1', 'region', 'land', 'region', 'Dup', 'dd', 'dup',
+                 true, 5, ST_Multi(ST_GeomFromText(:wkt, 4326))::geography, now(), now()),
+                (gen_random_uuid(), 'dd-r2', 'region', 'land', 'region', 'Dup 2', 'dd', 'dup',
+                 false, 0, ST_Multi(ST_GeomFromText(:wkt, 4326))::geography, now(), now())
+            """
+        ),
+        {"wkt": _sq(0, 0, 5, 5)},
+    )
+    await _scope(session, "dd", ["locality", "localadmin"], ready=True)
+    report = await compute_coverage(session)
+
+    dd = next(s for s in report.scopes if s.country_code == "dd")
+    assert dd.recommended_ready is False
+    assert dd.blocking_issues == ["duplicate_region_slug"]
 
 
 @pytest.mark.asyncio

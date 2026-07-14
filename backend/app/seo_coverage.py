@@ -64,6 +64,7 @@ class ScopeCoverage:
     top_unmatched_clusters: list[Cluster] = field(default_factory=list)
     invalid_boundaries: int = 0
     recommended_ready: bool = False
+    blocking_issues: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -129,6 +130,27 @@ async def compute_coverage(
                 text(
                     "SELECT country_code, count(*) AS n FROM place_boundaries "
                     "WHERE NOT ST_IsValid(boundary::geometry) GROUP BY country_code"
+                )
+            )
+        ).all()
+    }
+
+    duplicate_region_slugs = {
+        r.country_code: r.n
+        for r in (
+            await bind.execute(
+                text(
+                    """
+                    SELECT country_code, count(*) AS n
+                    FROM (
+                        SELECT country_code, slug
+                        FROM place_boundaries
+                        WHERE place_kind = 'region'
+                        GROUP BY country_code, slug
+                        HAVING count(*) > 1
+                    ) dup
+                    GROUP BY country_code
+                    """
                 )
             )
         ).all()
@@ -209,6 +231,9 @@ async def compute_coverage(
             for st, n in sorted(by_subtype.get(cc, {}).items())
         ]
         pct = _pct(city_matched, in_country)
+        blocking_issues = []
+        if duplicate_region_slugs.get(cc, 0):
+            blocking_issues.append("duplicate_region_slug")
         scopes.append(
             ScopeCoverage(
                 country_code=cc,
@@ -224,7 +249,12 @@ async def compute_coverage(
                 city_assignment_by_subtype=shares,
                 top_unmatched_clusters=clusters.get(cc, []),
                 invalid_boundaries=invalid.get(cc, 0),
-                recommended_ready=pct is not None and pct >= settings.seo_coverage_ready_pct,
+                recommended_ready=(
+                    not blocking_issues
+                    and pct is not None
+                    and pct >= settings.seo_coverage_ready_pct
+                ),
+                blocking_issues=blocking_issues,
             )
         )
 
