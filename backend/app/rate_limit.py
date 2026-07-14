@@ -1,8 +1,10 @@
-"""Durable, Postgres-count-based per-user rate limiting for the fountain-photos feature
-(design §6): a burst of parallel requests must be bounded by row counts in the database —
-not an in-process counter — so the limits hold across pods without a Redis dependency.
+"""Durable, Postgres-count-based per-user rate limiting for authenticated writes and the
+fountain-photos feature: bursts must be bounded by database row counts — not an in-process
+counter — so the limits hold across pods without a Redis dependency.
 
-Two independent gates:
+Three independent gates:
+- **Authenticated JSON writes** (`reserve_write_attempt`) commit one admission attempt before
+  domain work. Contribution endpoints share a budget; profile sync uses a separate budget.
 - **Upload reservation** (`reserve_upload`/`finalize_upload`) is the *first authoritative
   gate* for an upload, evaluated **before** the request body is read or any Pillow/S3 work
   runs. It counts `upload_attempts` rows in two dimensions so that failed attempts still
@@ -13,7 +15,7 @@ Two independent gates:
 - **Report rate** (`check_report_rate`) is a cheap insert-time check with no reservation:
   count `content_reports` by that reporter in rolling windows.
 
-Both gates run under a per-user Postgres advisory lock (`pg_advisory_xact_lock`, two-arg
+All gates run under a per-user Postgres advisory lock (`pg_advisory_xact_lock`, two-arg
 form) so the count-then-insert is atomic against concurrent requests from the same user —
 a plain count-then-insert races (concurrent requests all observe the same pre-count and all
 proceed). The lock is transaction-scoped: it releases automatically on commit/rollback, and

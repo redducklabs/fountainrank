@@ -55,7 +55,9 @@ def test_cleanup_cronjob_is_hardened_and_database_only():
 
 def test_deploy_applies_cleanup_manifest():
     workflow = DEPLOY.read_text()
+    migration = workflow.index('kubectl -n "$NAMESPACE" exec "$POD" -- alembic upgrade head')
+    cleanup = workflow.index("envsubst < infra/k8s/write-attempt-cleanup.yaml | kubectl apply -f -")
+    assert migration < cleanup
     assert (
-        "for f in backend account-deletion-cleanup write-attempt-cleanup web logto ingress "
-        "basemap-tiles; do"
-    ) in workflow
+        "for f in backend account-deletion-cleanup web logto ingress basemap-tiles; do" in workflow
+    )

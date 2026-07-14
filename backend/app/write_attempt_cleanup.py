@@ -3,12 +3,13 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import func, select, text
+from sqlalchemy import exists, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db import get_sessionmaker
 from app.logging_config import configure_logging
+from app.models import WriteAttempt
 
 logger = logging.getLogger("app.write_attempt_cleanup")
 
@@ -63,7 +64,15 @@ async def cleanup_write_attempts(
         if batch_deleted < batch_size:
             break
     else:
-        capped = True
+        # A full final batch does not prove backlog remains: the deletable row count may be
+        # an exact multiple of batch_size * max_batches. Probe once so WARNING means the
+        # cleanup genuinely stopped with old rows remaining, not merely that it hit the loop
+        # boundary after deleting the final row.
+        capped = bool(
+            (
+                await session.execute(select(exists().where(WriteAttempt.created_at < cutoff)))
+            ).scalar_one()
+        )
 
     level = logging.WARNING if capped else logging.INFO
     logger.log(

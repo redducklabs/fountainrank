@@ -83,6 +83,22 @@ async def test_caps_at_ten_batches_and_warns(session, caplog):
     assert not hasattr(record, "user_id")
 
 
+async def test_exact_run_capacity_is_not_reported_as_capped(session, caplog):
+    user = await _user(session, "exact-capacity")
+    await _seed(session, user.id, 100, "31 days")
+
+    with caplog.at_level("INFO", logger="app.write_attempt_cleanup"):
+        result = await cleanup_write_attempts(session, batch_size=10, max_batches=10)
+
+    assert result.deleted == 100
+    assert result.batches == 10
+    assert result.capped is False
+    assert await _count(session) == 0
+    record = next(record for record in caplog.records if record.name == "app.write_attempt_cleanup")
+    assert record.levelname == "INFO"
+    assert record.cap is False
+
+
 def test_cli_exits_zero_on_success(monkeypatch):
     def successful_run(coroutine):
         coroutine.close()
