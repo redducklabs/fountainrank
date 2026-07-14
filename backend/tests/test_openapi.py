@@ -109,6 +109,20 @@ def test_openapi_gated_writes_document_display_name_required_409():
         assert ref == "#/components/schemas/DisplayNameRequiredConflict", path
 
 
+def test_openapi_contribution_writes_document_rate_limit_429():
+    schema = app.openapi()
+    for path in (
+        "/api/v1/fountains",
+        "/api/v1/fountains/{fountain_id}/ratings",
+        "/api/v1/fountains/{fountain_id}/attributes",
+        "/api/v1/fountains/{fountain_id}/conditions",
+        "/api/v1/fountains/{fountain_id}/notes",
+    ):
+        response = schema["paths"][path]["post"]["responses"]["429"]
+        retry_after = response["headers"]["Retry-After"]
+        assert retry_after["schema"]["type"] == "integer", path
+
+
 def test_openapi_exposes_admin_moderation_contract():
     schema = app.openapi()
     paths = schema["paths"]

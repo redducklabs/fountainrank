@@ -399,6 +399,17 @@
             },
             "description": "Conflict"
           },
+          "429": {
+            "description": "Contribution write limit reached.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the rolling-window budget admits another attempt.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -1009,6 +1020,17 @@
             },
             "description": "Conflict"
           },
+          "429": {
+            "description": "Contribution write limit reached.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the rolling-window budget admits another attempt.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -1135,6 +1157,17 @@
               }
             },
             "description": "Conflict"
+          },
+          "429": {
+            "description": "Contribution write limit reached.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the rolling-window budget admits another attempt.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -1263,6 +1296,17 @@
             },
             "description": "Conflict"
           },
+          "429": {
+            "description": "Contribution write limit reached.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the rolling-window budget admits another attempt.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -1389,6 +1433,17 @@
               }
             },
             "description": "Conflict"
+          },
+          "429": {
+            "description": "Contribution write limit reached.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the rolling-window budget admits another attempt.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",

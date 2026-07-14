@@ -9,7 +9,7 @@ from sqlalchemy import cast, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import get_current_user, get_optional_user, require_named_user
+from app.auth import ensure_named_user, get_current_user, get_optional_user
 from app.conditions import recompute_fountain_status
 from app.config import Settings, get_settings
 from app.consensus import recompute_attribute_consensus
@@ -55,6 +55,12 @@ from app.models import (
     User,
 )
 from app.ranking import recompute_fountain_ranking
+from app.rate_limit import (
+    RateLimited,
+    WriteAttemptReserver,
+    WriteEndpoint,
+    get_write_attempt_reserver,
+)
 from app.reports import create_content_report
 from app.schemas import (
     AddFountainRequest,
@@ -81,6 +87,33 @@ from app.schemas import (
 router = APIRouter(prefix="/api/v1", tags=["fountains"])
 logger = logging.getLogger(__name__)
 TRUNCATED_HEADER = "X-FountainRank-Truncated"
+
+RATE_LIMIT_RESPONSE = {
+    "description": "Contribution write limit reached.",
+    "headers": {
+        "Retry-After": {
+            "description": "Seconds until the rolling-window budget admits another attempt.",
+            "schema": {"type": "integer"},
+        }
+    },
+}
+
+
+async def _reserve_contribution_write(
+    reserve_write_attempt: WriteAttemptReserver,
+    user: User,
+    endpoint: WriteEndpoint,
+) -> None:
+    """Charge the shared contribution budget before any name guard or domain work."""
+    try:
+        await reserve_write_attempt(user.id, "contribution_write", endpoint)
+    except RateLimited as exc:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=exc.reason,
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from exc
+    ensure_named_user(user)
 
 
 async def _validate_rating_types(session: AsyncSession, ratings: list[RatingInput]) -> None:
@@ -761,15 +794,20 @@ async def fountain_place(
     response_model=FountainDetail,
     status_code=status.HTTP_201_CREATED,
     responses={
-        status.HTTP_409_CONFLICT: {"model": DuplicateFountainConflict | DisplayNameRequiredConflict}
+        status.HTTP_409_CONFLICT: {
+            "model": DuplicateFountainConflict | DisplayNameRequiredConflict
+        },
+        status.HTTP_429_TOO_MANY_REQUESTS: RATE_LIMIT_RESPONSE,
     },
 )
 async def add_fountain(
     payload: AddFountainRequest,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_named_user),
+    user: User = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
+    reserve_write_attempt: WriteAttemptReserver = Depends(get_write_attempt_reserver),
 ) -> FountainDetail | JSONResponse:
+    await _reserve_contribution_write(reserve_write_attempt, user, "fountain_create")
     await _validate_rating_types(session, payload.ratings)
     # Validate add-time attribute observations BEFORE creating the fountain — a bad
     # observation 422s the whole add (the txn never commits).
@@ -908,15 +946,20 @@ async def add_fountain(
 @router.post(
     "/fountains/{fountain_id}/ratings",
     response_model=FountainDetail,
-    responses={status.HTTP_409_CONFLICT: {"model": DisplayNameRequiredConflict}},
+    responses={
+        status.HTTP_409_CONFLICT: {"model": DisplayNameRequiredConflict},
+        status.HTTP_429_TOO_MANY_REQUESTS: RATE_LIMIT_RESPONSE,
+    },
 )
 async def submit_ratings(
     fountain_id: uuid.UUID,
     payload: RateRequest,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_named_user),
+    user: User = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
+    reserve_write_attempt: WriteAttemptReserver = Depends(get_write_attempt_reserver),
 ) -> FountainDetail:
+    await _reserve_contribution_write(reserve_write_attempt, user, "rating_submit")
     # Lock the parent fountain row for the txn so concurrent raters serialize their
     # aggregate recompute. The per-rating ON CONFLICT keeps the rating ROWS race-safe,
     # but two concurrent recomputes could each read a snapshot missing the other's
@@ -998,14 +1041,19 @@ async def submit_ratings(
 @router.post(
     "/fountains/{fountain_id}/attributes",
     response_model=FountainDetail,
-    responses={status.HTTP_409_CONFLICT: {"model": DisplayNameRequiredConflict}},
+    responses={
+        status.HTTP_409_CONFLICT: {"model": DisplayNameRequiredConflict},
+        status.HTTP_429_TOO_MANY_REQUESTS: RATE_LIMIT_RESPONSE,
+    },
 )
 async def submit_attributes(
     fountain_id: uuid.UUID,
     payload: ObserveAttributesRequest,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_named_user),
+    user: User = Depends(get_current_user),
+    reserve_write_attempt: WriteAttemptReserver = Depends(get_write_attempt_reserver),
 ) -> FountainDetail:
+    await _reserve_contribution_write(reserve_write_attempt, user, "attribute_submit")
     # Lock the fountain row for the txn so concurrent observers serialize their consensus
     # recompute (mirrors submit_ratings' FOR UPDATE discipline).
     fountain = (
@@ -1065,15 +1113,20 @@ async def submit_attributes(
 @router.post(
     "/fountains/{fountain_id}/conditions",
     response_model=FountainDetail,
-    responses={status.HTTP_409_CONFLICT: {"model": DisplayNameRequiredConflict}},
+    responses={
+        status.HTTP_409_CONFLICT: {"model": DisplayNameRequiredConflict},
+        status.HTTP_429_TOO_MANY_REQUESTS: RATE_LIMIT_RESPONSE,
+    },
 )
 async def submit_condition(
     fountain_id: uuid.UUID,
     payload: ConditionReportRequest,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_named_user),
+    user: User = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
+    reserve_write_attempt: WriteAttemptReserver = Depends(get_write_attempt_reserver),
 ) -> FountainDetail:
+    await _reserve_contribution_write(reserve_write_attempt, user, "condition_submit")
     # One captured timestamp drives the row created_at, the status recompute window, and the
     # rolling-24h condition point-window gate (#124) — so they can never straddle a boundary.
     report_time = datetime.now(tz=UTC)
@@ -1177,14 +1230,19 @@ async def submit_condition(
 @router.post(
     "/fountains/{fountain_id}/notes",
     response_model=NoteOut,
-    responses={status.HTTP_409_CONFLICT: {"model": DisplayNameRequiredConflict}},
+    responses={
+        status.HTTP_409_CONFLICT: {"model": DisplayNameRequiredConflict},
+        status.HTTP_429_TOO_MANY_REQUESTS: RATE_LIMIT_RESPONSE,
+    },
 )
 async def submit_note(
     fountain_id: uuid.UUID,
     payload: AddNoteRequest,
     session: AsyncSession = Depends(get_session),
-    user: User = Depends(require_named_user),
+    user: User = Depends(get_current_user),
+    reserve_write_attempt: WriteAttemptReserver = Depends(get_write_attempt_reserver),
 ) -> NoteOut:
+    await _reserve_contribution_write(reserve_write_attempt, user, "note_submit")
     fountain = (
         await session.execute(
             select(Fountain)
