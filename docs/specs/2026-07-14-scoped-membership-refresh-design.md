@@ -74,6 +74,14 @@ full refresh (assign → recount → canonical, because canonical tie-breaks on 
    place_boundaries WHERE country_code = :cc)`, `INSERT` `ST_Subdivide` cells for X's boundaries only,
    `ANALYZE place_boundary_cells`. Other countries' cells untouched. (First load: DELETE is a no-op.)
 2. **`place_kind`** for X — `_PLACE_KIND_SQL + AND pb.country_code = :cc`.
+2b. **Scoped parent reset** — the country-scoped equivalent of `_PARENT_RESET_SQL`, run **after**
+   step 2 and **before** any re-parenting:
+   `UPDATE place_boundaries SET parent_id = NULL WHERE country_code = :cc AND place_kind IS DISTINCT
+   FROM 'region'`. Load-bearing for a row whose `place_kind` **changed** on this load: a boundary that
+   went `region → NULL`, `city → NULL`, or `region → ineligible` would otherwise keep its old
+   `parent_id`, which a full refresh clears. (Regions keep their parent here and have it re-set in
+   step 3; cities are NULLed here and re-parented in step 6.) Scoped to `country_code = :cc` so
+   non-X rows are untouched.
 3. **Region parent** for X — `_REGION_PARENT_SQL` scoped to X.
 4. **Capture `P_old`, then reassign `C` with the GLOBAL `_ASSIGN_SQL`** (all-country country PIP +
    `overture_id` tie-break — **not** country-filtered), applied `WHERE f.id ∈ C`. A border/moved
