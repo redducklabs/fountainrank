@@ -1,0 +1,165 @@
+name: Run loader Job
+description: >-
+  Run a backend CLI as an isolated one-shot Kubernetes Job (spec 2026-07-15). Streams the
+  prepared input file(s) in via kubectl exec, then tails logs and returns the Job's real
+  terminal result. Assumes kubeconfig is already configured (doctl step in the caller).
+inputs:
+  job_name:
+    required: true
+    description: "Deterministic Job name (also the pod label selector)."
+  argv_json:
+    required: true
+    description: "JSON array of strings: the exact CLI argv."
+  files_json:
+    required: true
+    description: "JSON array of {local, container}; container must match ^/work/[A-Za-z0-9._-]+$."
+  active_deadline_seconds:
+    required: true
+    description: "Hard Job ceiling (abandoned-Job backstop)."
+  ready_timeout_seconds:
+    required: true
+    description: "Upper bound the entrypoint waits for streamed inputs."
+  mem_request:
+    required: false
+    default: "768Mi"
+  mem_limit:
+    required: false
+    default: "3Gi"
+  namespace:
+    required: false
+    default: "fountainrank"
+runs:
+  using: composite
+  steps:
+    - name: Run isolated loader Job
+      shell: bash
+      env:
+        JOB_NAME: ${{ inputs.job_name }}
+        ARGV_JSON: ${{ inputs.argv_json }}
+        FILES_JSON: ${{ inputs.files_json }}
+        ACTIVE_DEADLINE: ${{ inputs.active_deadline_seconds }}
+        READY_TIMEOUT: ${{ inputs.ready_timeout_seconds }}
+        MEM_REQUEST: ${{ inputs.mem_request }}
+        MEM_LIMIT: ${{ inputs.mem_limit }}
+        NS: ${{ inputs.namespace }}
+      run: |
+        set -euo pipefail
+
+        # 0) Assert we are on the production cluster before any cluster op.
+        CTX="$(kubectl config current-context)"
+        echo "kube context: $CTX"
+        case "$CTX" in
+          *fountainrank-production-cluster*) ;;
+          *) echo "::error::refusing to run: unexpected kube context '$CTX'"; exit 1 ;;
+        esac
+
+        # 1) Discover the DEPLOYED backend image (by container name) so the Job runs prod code.
+        IMAGE="$(kubectl -n "$NS" get deployment fountainrank-backend \
+          -o jsonpath='{.spec.template.spec.containers[?(@.name=="backend")].image}')"
+        [ -n "$IMAGE" ] || { echo "::error::could not discover backend image"; exit 1; }
+        echo "loader image: $IMAGE"
+
+        # 2) Pre-flight: clear any stale Job of this name.
+        kubectl -n "$NS" delete job "$JOB_NAME" --ignore-not-found --wait --timeout=60s
+
+        # 3) Render (stdlib python; json.dumps escapes all argv) and create.
+        python3 backend/app/imports/loader_job_render.py \
+          --job-name "$JOB_NAME" --image "$IMAGE" --namespace "$NS" \
+          --argv-json "$ARGV_JSON" --files-json "$FILES_JSON" \
+          --mem-request "$MEM_REQUEST" --mem-limit "$MEM_LIMIT" \
+          --active-deadline-seconds "$ACTIVE_DEADLINE" \
+          --ready-timeout-seconds "$READY_TIMEOUT" \
+          | kubectl -n "$NS" create -f -
+
+        SEL="batch.kubernetes.io/job-name=$JOB_NAME"
+
+        # On ANY in-step failure: dump diagnostics + delete the Job. (The caller's if:always()
+        # step is the guaranteed teardown on job cancellation.)
+        cleanup() {
+          rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "::group::loader Job diagnostics"
+            kubectl -n "$NS" describe job "$JOB_NAME" || true
+            kubectl -n "$NS" describe pod -l "$SEL" || true
+            kubectl -n "$NS" logs -l "$SEL" --tail=100 || true
+            echo "::endgroup::"
+            kubectl -n "$NS" delete job "$JOB_NAME" --ignore-not-found --wait --timeout=60s || true
+          fi
+          return $rc
+        }
+        trap cleanup EXIT
+
+        # 4) Wait until EXACTLY ONE pod exists for the Job (kubectl wait can't wait for a
+        #    not-yet-created pod), then wait for THAT pod to be Running.
+        POD=""
+        for _ in $(seq 1 60); do
+          names="$(kubectl -n "$NS" get pod -l "$SEL" -o jsonpath='{.items[*].metadata.name}')"
+          n=$(printf '%s' "$names" | wc -w)
+          if [ "$n" -gt 1 ]; then echo "::error::expected 1 loader pod, found $n ($names)"; exit 1; fi
+          if [ "$n" -eq 1 ]; then POD="$names"; break; fi
+          sleep 2
+        done
+        [ -n "$POD" ] || { echo "::error::loader pod was never created"; exit 1; }
+        echo "loader pod: $POD"
+
+        # Poll for Running, failing FAST on un-runnable states (image pull / unschedulable /
+        # config error) instead of blocking the whole timeout.
+        deadline=$((SECONDS + 180))
+        while true; do
+          phase="$(kubectl -n "$NS" get "pod/$POD" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+          [ "$phase" = "Running" ] && break
+          reason="$(kubectl -n "$NS" get "pod/$POD" -o jsonpath='{.status.containerStatuses[0].state.waiting.reason}' 2>/dev/null || true)"
+          case "$reason" in
+            ImagePullBackOff|ErrImagePull|InvalidImageName|CreateContainerConfigError|CreateContainerError)
+              echo "::error::loader pod $POD cannot start (container waiting: $reason)"; exit 1 ;;
+          esac
+          sched="$(kubectl -n "$NS" get "pod/$POD" -o jsonpath='{.status.conditions[?(@.type=="PodScheduled")].reason}' 2>/dev/null || true)"
+          [ "$sched" = "Unschedulable" ] && { echo "::error::loader pod $POD is Unschedulable (node capacity?)"; exit 1; }
+          if [ "$phase" = "Failed" ] || [ "$phase" = "Succeeded" ]; then
+            echo "::error::loader pod $POD reached terminal phase '$phase' before streaming inputs"; exit 1
+          fi
+          [ "$SECONDS" -ge "$deadline" ] && { echo "::error::loader pod $POD did not reach Running within 180s"; exit 1; }
+          sleep 3
+        done
+        echo "loader pod $POD is Running"
+
+        # 5) Stream each input file (fields extracted with python — no delimiter fragility),
+        #    verifying the local file exists and the streamed copy is non-empty, then arm .ready.
+        count="$(printf '%s' "$FILES_JSON" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
+        for idx in $(seq 0 "$((count-1))"); do
+          LOCAL="$(printf '%s' "$FILES_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)[$idx]['local'])")"
+          CONTAINER="$(printf '%s' "$FILES_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)[$idx]['container'])")"
+          [ -n "$LOCAL" ] && [ -s "$LOCAL" ] || { echo "::error::local input missing/empty: $LOCAL"; exit 1; }
+          echo "stream $LOCAL -> $CONTAINER"
+          kubectl -n "$NS" exec -i "$POD" -- sh -c 'cat > "$1"' -- "$CONTAINER" < "$LOCAL"
+          kubectl -n "$NS" exec "$POD" -- test -s "$CONTAINER" \
+            || { echo "::error::streamed file empty in pod: $CONTAINER"; exit 1; }
+        done
+        kubectl -n "$NS" exec "$POD" -- touch /work/.ready
+
+        # 6) Tail logs in the background (visibility); the terminal poll loop is the authority.
+        ( kubectl -n "$NS" logs -f "$POD" 2>&1 || true ) &
+        LOGPID=$!
+        while true; do
+          COMPLETE="$(kubectl -n "$NS" get job "$JOB_NAME" -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' 2>/dev/null || true)"
+          FAILED="$(kubectl -n "$NS" get job "$JOB_NAME" -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}' 2>/dev/null || true)"
+          if [ "$COMPLETE" = "True" ]; then
+            kill "$LOGPID" 2>/dev/null || true; wait "$LOGPID" 2>/dev/null || true
+            echo "loader Job completed"; exit 0
+          fi
+          if [ "$FAILED" = "True" ]; then
+            kill "$LOGPID" 2>/dev/null || true; wait "$LOGPID" 2>/dev/null || true
+            REASON="$(kubectl -n "$NS" get job "$JOB_NAME" -o jsonpath='{.status.conditions[?(@.type=="Failed")].reason}' 2>/dev/null || true)"
+            OOM="$(kubectl -n "$NS" get pod -l "$SEL" -o jsonpath='{.items[0].status.containerStatuses[0].state.terminated.reason}{" "}{.items[0].status.containerStatuses[0].lastState.terminated.reason}' 2>/dev/null || true)"
+            case "$OOM" in
+              *OOMKilled*) echo "::error::loader pod OOMKilled — raise mem_limit or investigate node memory"; exit 1 ;;
+            esac
+            if [ "$REASON" = "DeadlineExceeded" ]; then
+              echo "::error::loader Job hit activeDeadlineSeconds ($ACTIVE_DEADLINE) — raise the input or investigate (not a plain crash)"
+            else
+              echo "::error::loader Job failed (reason=${REASON:-unknown})"
+            fi
+            exit 1
+          fi
+          sleep 5
+        done

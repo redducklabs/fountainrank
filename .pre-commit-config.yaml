@@ -20,6 +20,11 @@ repos:
     rev: v1.7.12
     hooks:
       - id: actionlint
+        # `queue` is a valid GitHub Actions concurrency key (queue: single|max), but actionlint
+        # <=v1.7.12 (latest) errors "unexpected key queue for concurrency". Narrow, justified
+        # ignore — remove when actionlint learns the key. (actionlint is pre-commit-only here,
+        # not a CI gate.)
+        args: ["-ignore", 'unexpected key "queue" for "concurrency" section']
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.17
     hooks:
