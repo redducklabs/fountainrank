@@ -185,7 +185,11 @@ jobs:
         with:
           job_name: boundary-load
           namespace: ${{ env.NAMESPACE }}
-          active_deadline_seconds: "5400"
+          # 5h backstop: fractal-coastline countries (e.g. Chile — 72k boundary cells) have a
+          # genuinely slow city-parenting membership step that exceeded a 90min deadline. Loads are
+          # serialized (queue: max), so a generous backstop is safe. A faster _CITY_PARENT_SQL is a
+          # tracked follow-up; until then this lets the geometrically-worst countries finish.
+          active_deadline_seconds: "18000"
           ready_timeout_seconds: "600"
           argv_json: ${{ steps.loader.outputs.argv_json }}
           files_json: ${{ steps.loader.outputs.files_json }}
