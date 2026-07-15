@@ -147,10 +147,18 @@ spec:
               readOnly: true
           resources:
             requests:
-              memory: "256Mi"
+              # 512Mi (up from 256Mi): the pod both serves traffic AND runs operator boundary loads
+              # (osm-boundary-load execs the streaming loader + a PostGIS-heavy membership refresh in
+              # this pod). At the old 512Mi *limit* the pod was OOMKilled (exit 137) mid-load even on
+              # a small country (Austria, 2.3k features) once it was also serving crawl traffic to
+              # the newly-indexed pages. The bumped request still schedules safely on the s-2vcpu-4gb
+              # node (~1Gi of requests currently placed there); the 1.5Gi *limit* is a burst ceiling,
+              # so watch node memory during large-country loads (a Job-isolated loader is the cleaner
+              # long-term fix).
+              memory: "512Mi"
               cpu: "100m"
             limits:
-              memory: "512Mi"
+              memory: "1536Mi"
               cpu: "500m"
           startupProbe:
             httpGet:
