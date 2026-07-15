@@ -210,7 +210,9 @@ final "Run … in backend pod" step is replaced by a call to `run-loader-job`, p
   `osm-import.yml:147-149`) and the same argv including **`--scope-bounds-wkt-file /work/osm-scope.wkt
   --require-scope-bounds`** (`osm-import.yml:156-159`) — dropping either would fail every non-dry import
   or weaken the fail-closed removal guard the CLI enforces (`cli.py --require-scope-bounds`). Its refresh
-  is a **full** `refresh_all_memberships` (`merge.py:521`), so `active_deadline_seconds: 10800`.
+  is a **full** `refresh_all_memberships` (`merge.py:521`), so `active_deadline_seconds: 10800`,
+  `ready_timeout_seconds: 900` (Overpass `import.geojson` is bbox-limited to ≤6° per side, so it is
+  small — between boundary and PBF).
 
 The `doctl` auth + kubeconfig steps stay; the action assumes a configured kubeconfig + `$NAMESPACE`.
 
@@ -288,14 +290,19 @@ DOKS; out of scope here, see `fountainrank-doks-cluster-undersized-nodes` histor
   on this host) on the composite action + all three workflows. **Deploy-guard test:** assert
   `loader-job` appears in **no** apply list in `.github/workflows/deploy.yml` (today those are explicit
   `for f in …` lists at `deploy.yml:253` and `:286` plus the `write-attempt-cleanup` line — a future
-  `infra/k8s/*.yaml` glob must not sweep the on-demand Job in).
+  `infra/k8s/*.yaml` glob must not sweep the on-demand Job in). **Run the pinned `actionlint`
+  (`.pre-commit-config.yaml` `rhysd/actionlint@v1.7.12`) against a workflow that uses `queue: max`;
+  `queue` is a newer concurrency key — if the pinned version rejects it, bump the pin deliberately in
+  the same PR rather than letting local/CI review fail later.**
 - **Render-safety (argv injection):** unit-test the jq command build with adversarial values — a
   `--label` containing spaces, single/double quotes, `$(…)`, backticks, `;`, and `${NAMESPACE}`-shaped
   text — asserting each lands as exactly one argv element in the rendered JSON and that the wrapper's
   `$i`/`$@` survive the allow-listed `envsubst` verbatim. Also assert `files_json` container paths
   outside `^/work/[A-Za-z0-9._-]+$` are rejected.
-- **Cross-workflow serialization:** assert all three lock-taking workflows share the one concurrency
-  group (§C.1) so a boundary Job and an import Job cannot run concurrently.
+- **Cross-workflow serialization:** assert all three lock-taking workflows carry the **same**
+  concurrency `group` **and** `cancel-in-progress: false` **and** `queue: max` (§C.1) — the group alone
+  would regress to the default single-pending behavior that cancels older pending runs (the production
+  root cause).
 - **Authenticated smoke (in the operator workflow only, after `kubectl config current-context`):**
   optional `kubectl create --dry-run=server` of the rendered manifest.
 - **Handoff end-to-end:** a **dry-run boundary Job** proving create → wait-Running → stream file(s) →
