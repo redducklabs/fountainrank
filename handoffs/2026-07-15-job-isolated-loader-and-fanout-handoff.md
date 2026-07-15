@@ -47,15 +47,17 @@ rounds), plan (2), and each PR. Codex review artifacts in `temp/codex-reviews/` 
 - Chile diagnosed: acquired the lock in **194ms** (no stall), but its 72,845 cells made city-parenting
   run >56 min and hit the (then 90-min) deadline. Not a regression — a genuinely slow membership step.
 
-## 5. Current fan-out state (as of 2026-07-15 ~20:30 UTC)
+## 5. Current fan-out state (as of 2026-07-15 ~21:30 UTC)
 
 - **Indexed (source of truth):** 15 — `ad al at au ba be bz ch cy cz de dk lu mc us`
   (`curl -s "https://api.fountainrank.com/api/v1/places?limit=300" | python -c "import json,sys;print(sorted(set(p['country_code'] for p in json.load(sys.stdin))))"`).
 - **Loaded (have cells):** 18 = indexed 15 + `bg bn by` (loaded fine but **0 fountains**, so correctly
   not in the drill-down index — nothing to fix).
-- **Queue:** 1 running + **43 pending** boundary loads, all re-dispatched with the **18000s** deadline,
-  fractal-slow countries (`gb se fi is no hr gr cl`) ordered **LAST** so they don't block the fast ones.
-  (I had cancelled the earlier 42 old-5400-deadline pending runs and re-dispatched cleanly.)
+- **Queue:** 1 running + **44 pending** boundary loads, all on the **free `ubuntu-latest`** runners with
+  the **18000s** deadline, fractal-slow countries (`cl fi gb gr hr is no se`) ordered **LAST** so they
+  don't block the fast ones. (During this session the queue was cancelled + cleanly re-dispatched twice
+  — once to apply the 5h deadline, once while investigating runner cost; the current 44 is the live set.
+  Remaining order used: `ee es fr ge hu ie it ke kr li lt lv md me mk mt mu my nl pl pt ro rs sg si sk tr ua uy za fo gg im je nc xk cl fi gb gr hr is no se`.)
 - **Full target set** (what should end up loaded): the 8 original + the 54-country fan-out list from the
   prior handoff. Remaining-to-load at re-dispatch = 47:
   `cl cy cz dk ee es fi fr gb ge gr hr hu ie is it ke kr li lt lv md me mk mt mu my nl no pl pt ro rs se sg si sk tr ua uy za fo gg im je nc xk`
@@ -86,6 +88,16 @@ Because `queue: max` serializes, total time ≈ sum of all country times.
 - Do **NOT** run `deploy.yml` while a load is in flight (it rolls the pod; the Job is separate but
   don't churn). Deploy is only needed if you change **backend** code (the Job runs the deployed image);
   workflow/action/renderer changes take effect on `main` with no deploy.
+- **Runners — leave the loaders on `ubuntu-latest`; do NOT move them to `redducklabs-runners`.**
+  `fountainrank` is a **public repo**, so GitHub-hosted standard runners are **free/unlimited** — the
+  fan-out costs $0 in Actions minutes (verified this session). The loaders are Class B on `ubuntu-latest`
+  *by design* (they wield the prod `DIGITALOCEAN_ACCESS_TOKEN` + cluster kubeconfig; Class A
+  self-hosted runners are "no secrets" — see the `# Class B` comments). The self-hosted runners are
+  **ARC pods inside the prod DOKS cluster**, so switching would (a) save $0, (b) consume the already
+  memory-tight `s-2vcpu-4gb` node (the loader Job + a runner pod likely won't both fit — recall the
+  768Mi Unschedulable), and (c) weaken the Class-B isolation by running a prod-credential workflow
+  inside prod. Net: strictly worse. The runner idle-polls during hours-long fractal loads, but that's
+  wasted wall-clock, not money — the real fix is the §7.1 city-parenting optimization.
 
 ## 7. Tracked follow-ups (NOT blocking the fan-out)
 
