@@ -89,30 +89,44 @@ full refresh (assign → recount → canonical, because canonical tie-breaks on 
 6. **City parent** for X — `_CITY_PARENT_SQL` with its `city_pt` CTE filtered to `country_code = :cc`
    (so `ST_PointOnSurface` runs only over X's cities), parenting X cities to X's canonical regions.
 
-7–10. **The complete affected-city-group pipeline — reused verbatim from `recompute_place_counts`,
-   not hand-rolled.** City canonical DOES tie-break on `fountain_count`, so a neighbour's
-   duplicate-city winner can flip when a fountain crosses in, and the whole group must be recomputed
-   — not just `C`. Let `P = P_old ∪ P_new ∪ (all X place ids)` (`P_new` = the places `C` holds after
-   step 4; `P_old` captured before it). Run, over `P`, exactly the admin-delete pipeline:
-   - **`_RECOUNT_PLACES_SQL`(P)** — 3-way recount of every place in `P` (X's countries/regions/cities
-     **and** any neighbour place a moved fountain touched, so Y's count can't go stale).
-   - **`_RECOUNT_CITY_GROUPS_RAW_SQL`(P)** — **raw** (geometry-based) recount of **every member** of
-     each affected `(country_code, parent_id, slug)` group, including the non-candidate members of a
-     touched neighbour group. This is load-bearing: the persisted DB is *post-remap*, so a
-     non-canonical twin sits at `count=0`; without the raw recount it could never become the winner a
-     full refresh would pick.
-   - **`_RECANON_RESET_SQL`(P) + `_RECANON_SET_SQL`(P)** — reselect the canonical city for every
-     affected group on the fresh raw counts.
-   - **`_REMAP_CITY_GROUPS_SQL`(P)** — remap **every fountain in each affected group** (not just `C`)
-     onto the group's new canonical city. This is the fix for the "winner flips but non-candidate
-     fountains stay on the old canonical city" divergence.
-   - **`_RECOUNT_CITY_GROUPS_SQL`(P)** — post-remap recount so the published counts reflect the remap.
+7–11. **Fountain counts + city canonical + remap = a BATCH of `recompute_fountain_membership`,
+   mirrored statement-for-statement.** The scoped refresh must reproduce that proven single-fountain
+   sequence, over the whole candidate set `C` at once, so it inherits its exact behaviour — including
+   the NULL-parent remap that a group-only pipeline misses. Let `P = P_old ∪ P_new ∪ (all X place
+   ids)` (`P_new` = places `C` holds after step 4; `P_old` captured before it):
+   - **`recompute_place_counts(session, P)`** — the admin-delete group pipeline:
+     `_RECOUNT_PLACES_SQL`(P) → **`_RECOUNT_CITY_GROUPS_RAW_SQL`(P)** (raw geometry recount of every
+     member of each affected `(country_code, parent_id, slug)` group, so a post-remap zero-count twin
+     can regain the count needed to win) → `_RECANON_RESET_SQL`/`_RECANON_SET_SQL`(P) (reselect the
+     canonical city per affected group) → **`_REMAP_CITY_GROUPS_SQL`(P)** (remap **every** fountain in
+     each affected group onto the new canonical city — not just `C`) → `_RECOUNT_CITY_GROUPS_SQL`(P).
+   - **`_REMAP_CITY_SQL` over `C`** — the step the group pipeline does **not** do: its
+     `CASE WHEN city.parent_id IS NULL THEN NULL` branch sets `city_place_id = NULL` for a candidate
+     fountain whose covering city lost its canonical parent (the degenerate §3 case). Exactly the
+     `_REMAP_CITY_SQL` call `recompute_fountain_membership` runs after `recompute_place_counts`.
+   - **Final recount** of `P` plus any place whose count the NULL-remap just changed — mirroring
+     `recompute_fountain_membership`'s trailing `recompute_place_counts` when the final city differs
+     from the raw assignment.
 
-   This is precisely what `recompute_place_counts(session, P)` already does. The scoped refresh
-   therefore = **X-boundary reclassification (steps 1–6)** + **global reassignment of `C` (step 4)** +
-   **`recompute_place_counts` over `P` (steps 7–10)** — three proven pieces, no new count/canonical
-   logic. Region reclassification is X-scoped and safe; everything fountain/count/city-canonical is
-   the existing group-aware old∪new machinery over the complete affected set.
+   So the scoped refresh = **X-boundary reclassification (steps 1–6)** + **`_ASSIGN_SQL` over `C`
+   (step 4)** + **the `recompute_fountain_membership` count/canonical/remap tail, batched over `C`
+   with affected set `P` (steps 7–11)**. Region reclassification is X-scoped and safe; every
+   fountain/count/city-canonical/remap operation is the existing proven machinery over the complete
+   affected set. No new count/canonical/remap SQL is written.
+
+## Shared invariant with the existing incremental path — same-group city polygons don't overlap
+
+`_RECOUNT_CITY_GROUPS_RAW_SQL` counts a group's members by **geometry** (`ST_Covers`), not by the FK.
+This reconstructs raw counts for non-candidate neighbour fountains (its whole purpose), but it counts
+a fountain for **every** covering city in the group — whereas `_ASSIGN_SQL` picks exactly **one** raw
+city (subtype priority → smallest area → `overture_id`). The two therefore agree **iff two cities in
+the same `(country_code, parent_id, slug)` group never geometrically overlap** — true for Overture
+`division_area` at one subtype tier (administrative divisions partition, not overlap). This invariant
+is **not new**: the existing `recompute_place_counts` (admin-delete / single-fountain path) already
+relies on it, so the scoped refresh is exactly as full-refresh-equivalent as the code already in
+production. The design states it explicitly and the tests assert non-overlap for the fixtures; if
+Overture ever ships overlapping same-group polygons it would already break the shipped incremental
+path, and is caught by the whole-DB parity oracle.
 
 ## Wiring
 
