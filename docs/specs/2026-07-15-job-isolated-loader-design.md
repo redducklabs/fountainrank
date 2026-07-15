@@ -188,10 +188,13 @@ a future `infra/k8s/*.yaml` glob to sweep in:
   `import.geojson` can be large and streams over `kubectl exec -i`, so a fixed 5-min wait could kill a
   legitimate slow upload). It bounds a runner that dies mid-stream; `activeDeadlineSeconds` is the outer
   backstop, and during this wait the loader has **not** run, so **no** `ADD_FOUNTAIN_LOCK` is held.
-- **Resources:** default request `768Mi` / limit `3Gi`, cpu request `100m` / limit `1`, both
-  overridable per call. Scheduling keys on *requests* (serving pod requests only `512Mi` on the
-  `s-2vcpu-4gb` node), so `768Mi` places; the streaming loader (`_BATCH_SIZE = 1000`,
-  `boundary_cli.py:42`) keeps real usage modest. See *Resources & node pressure* for the limit caveat.
+- **Resources:** default request `256Mi` / limit `1Gi`, cpu request `100m` / limit `1`, both
+  overridable per call. Scheduling keys on *requests*, and the single `s-2vcpu-4gb` node has only
+  ~700Mi of memory-request headroom alongside the serving stack (backend/web/logto/basemap/ingress),
+  so a `768Mi` request is **Unschedulable** — `256Mi` fits. The loader's real footprint is modest: the
+  heavy PostGIS membership work runs in the **managed** Postgres (a separate host), not the pod, and
+  the loader streams the input in batches (`_BATCH_SIZE = 1000`, `boundary_cli.py:42`). A large PBF
+  import can raise the per-call limit. See *Resources & node pressure*.
 
 ### C. Workflow changes
 
@@ -269,11 +272,13 @@ cannot register a `post:` hook, so cleanup is layered:
 
 ## Resources & node pressure
 
-Scheduling is by *requests*, but a `3Gi` limit on a `4Gi` node is a burst ceiling: if a large-PBF Job
-approaches it while the API, web, Logto, and basemap pods are active, the node can hit `MemoryPressure`.
-Requirement: the operator workflow surfaces pod `OOMKilled` and node `MemoryPressure`/eviction events
-after a load, and the runbook documents the response — raise `mem_request`, lower `mem_limit`, or make
-a separate node-pool/size decision — rather than silently re-OOMing. (Node resize is `ForceNew` on
+Scheduling is by *requests*, and the single `s-2vcpu-4gb` node runs ~76% memory-requested by the
+serving stack, leaving ~700Mi — hence the `256Mi` request (a `768Mi` request was Unschedulable). The
+`1Gi` limit is a burst ceiling; if a large-PBF Job approaches it while the API, web, Logto, and basemap
+pods are active, the node can hit `MemoryPressure`. Requirement: the operator workflow surfaces pod
+`OOMKilled` and node `MemoryPressure`/eviction events after a load (the action reports `OOMKilled`
+distinctly), and the runbook documents the response — raise the per-call `mem_request`/`mem_limit`, or
+make a separate node-pool/size decision — rather than silently re-OOMing. (Node resize is `ForceNew` on
 DOKS; out of scope here, see `fountainrank-doks-cluster-undersized-nodes` history.)
 
 ## Why this resolves each symptom

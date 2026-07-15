@@ -17,7 +17,7 @@
 - Backend local check mirror (in `backend/`, isolated env): `uv run ruff check .` + `uv run ruff format --check .` + `uv run alembic check` + `uv run pytest`.
 - The Job renderer is **stdlib-only** (system `python3` runs it on the runner; no third-party imports).
 - **actionlint is pre-commit-only, NOT a CI gate** (`ci.yml` jobs are `backend`, `workspace-js`, `mobile-doctor`). `temp/actionlint` is a **local, gitignored** binary (`.gitignore:54`); the real gate is the `rhysd/actionlint` pre-commit pin. v1.7.12 is the latest release and does not know the `queue` concurrency key, so Task 4 adds a narrow justified `-ignore`.
-- Loader Job resource/timeout defaults (spec §B/§C): boundary `active_deadline_seconds=5400`/`ready_timeout_seconds=600`; PBF `21600`/`1800`; Overpass `10800`/`900`. Memory request `768Mi`, limit `3Gi`; cpu `100m`/`1`. `ttlSecondsAfterFinished=600`, `terminationGracePeriodSeconds=30`, `restartPolicy: Never`, `backoffLimit: 0`, `imagePullSecrets: regcred`, pod `fsGroup: 1000`.
+- Loader Job resource/timeout defaults (spec §B/§C): boundary `active_deadline_seconds=5400`/`ready_timeout_seconds=600`; PBF `21600`/`1800`; Overpass `10800`/`900`. Memory request `256Mi`, limit `1Gi`; cpu `100m`/`1` (sized to fit the `s-2vcpu-4gb` node's ~700Mi request headroom; a `768Mi` request is Unschedulable). `ttlSecondsAfterFinished=600`, `terminationGracePeriodSeconds=30`, `restartPolicy: Never`, `backoffLimit: 0`, `imagePullSecrets: regcred`, pod `fsGroup: 1000`.
 - Shared concurrency group for all three workflows: `{ group: db-membership-write-production, cancel-in-progress: false, queue: max }`.
 - Container-path allow-list for streamed files (enforced by the renderer): `^/work/[A-Za-z0-9._-]+$`.
 
