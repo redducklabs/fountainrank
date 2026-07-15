@@ -5,12 +5,6 @@ load) and `docs/specs/2026-06-21-osm-pbf-large-scale-import-design.md`. **No cha
 model, the loader/membership SQL, or the URL contract** — only to *where* the loader CLI runs and how
 a cancelled run is torn down.
 
-> Revision 2 — rewritten after Codex spec-review-1 (7 [MAJOR]): added `imagePullSecrets` + `fsGroup`,
-> a safe JSON-array argv/file encoding, a real Job terminal-wait poll loop, per-workflow overridable
-> `activeDeadlineSeconds`, explicit termination/cleanup guarantees, a lock-holding cancellation test,
-> a deploy-apply-list guard — and **removed** the loader-session `statement_timeout` (it would abort
-> legitimately-serialized/long refreshes).
-
 ## Problem — the worldwide boundary fan-out stalls, OOMs, and makes no progress
 
 Both operator data-load workflows run their CLI **inside the running backend serving pod** via
@@ -59,7 +53,14 @@ Run each operator load in its **own isolated Kubernetes Job**, so that:
 - A serial fan-out completes each country in its true ~15-min time with no 60-min stalls.
 
 Scope (per owner decision): **generalize to a reusable "run a backend CLI as an isolated Job"
-pattern and convert BOTH `osm-boundary-load.yml` and `osm-import-pbf.yml`.**
+pattern and convert the operator loader workflows.** The owner asked for boundary + PBF; the review
+surfaced that `osm-import.yml` (the Overpass importer) `kubectl exec`s a loader into the serving pod
+**and** takes the same `ADD_FOUNTAIN_LOCK` (`osm-import.yml:157` → `merge.py` full refresh), so leaving
+it on the old pattern would keep a third orphan door open on the shared lock. The reusable action makes
+its conversion trivial, so this spec converts **all three** lock-taking loader workflows
+(`osm-boundary-load.yml`, `osm-import-pbf.yml`, `osm-import.yml`). *(Owner decision point: convert the
+third now, as specced, or defer it to a documented follow-up — but note the orphan fix is incomplete
+until it is done.)*
 
 ## Key architectural decision — fetch on the runner, execute in a Job
 
@@ -85,14 +86,16 @@ Inputs (all strings; structured inputs are **JSON** so nothing is shell-split):
 | `job_name` | Deterministic Job/metadata name, e.g. `boundary-load`, `osm-pbf-import`. |
 | `argv_json` | JSON **array of strings** — the exact CLI argv, e.g. `["python","-m","app.imports.boundary_cli","--path","/work/boundary.geojsonl", …]`. |
 | `files_json` | JSON array of `{ "local": "<runner path>", "container": "/work/<name>" }`; every `container` MUST match `^/work/[A-Za-z0-9._-]+$` (allow-listed — no traversal, no arbitrary dest). |
-| `active_deadline_seconds` | Per-call hard ceiling (see §B). |
+| `active_deadline_seconds` | Per-call hard ceiling for the whole Job (see §B). |
+| `ready_timeout_seconds` | Per-call upper bound the Job entrypoint waits for the streamed inputs (`.ready`), sized for worst-case upload time (see §B). |
 | `mem_request` / `mem_limit` | Per-call resource sizing (defaults in §B). |
 
 **Why JSON, not a shell string (addresses the argv-injection finding):** the manifest `command` is
-rendered as an **exec-form array** (`jq` maps `argv_json` element-for-element into the YAML/JSON list),
+rendered as an **exec-form array** (`jq` maps `argv_json` element-for-element into the JSON list),
 so a value like the PBF `label` (`osm-import-pbf.yml:25`, user-supplied, may contain spaces/metachars)
-is a single argv element and is **never** word-split or shell-evaluated. No `eval`, no `"$@"` string
-concatenation of untrusted data.
+is a single argv element and is **never** word-split or shell-evaluated. Untrusted data is never
+concatenated into a shell string; the wrapper's `exec "$@"` runs the properly-quoted arg vector, so
+there is no `eval` and no interpolation surface.
 
 The action steps:
 
@@ -101,11 +104,22 @@ The action steps:
    `kubectl -n "$NAMESPACE" get deployment fountainrank-backend -o jsonpath='{.spec.template.spec.containers[?(@.name=="backend")].image}'`
    — the Job runs the **exact code currently in production**, never a drifting `latest`, and the
    container is selected **by name** (`backend`) so a future sidecar can't shift `containers[0]`.
-2. **Pre-flight cleanup.** `kubectl delete job "$job_name" --ignore-not-found --wait` (the workflow
-   `concurrency` group already serializes; this clears a stale Job from an abnormally-terminated
-   prior run).
-3. **Render + create the Job** (envsubst of the template in §B with the discovered image + the
-   `jq`-built command array; `kubectl create -f -`).
+2. **Pre-flight cleanup.** `kubectl delete job "$job_name" --ignore-not-found --wait` (the unified
+   concurrency group in §C.1 serializes all lock-taking workflows; this clears a stale Job from an
+   abnormally-terminated prior run).
+3. **Render + create the Job.** Two-stage, chosen so the untrusted argv and the wrapper's shell
+   syntax are never mangled:
+   - Build the exec-form `command` **array as a JSON value with `jq`** — the `sh -c` wrapper string
+     (containing literal `$i`/`$@`) passed via `--arg` and the argv appended via `--argjson argv …`.
+     `jq` guarantees correct JSON quoting/escaping for arbitrary strings (spaces, quotes, `$`, shell
+     metacharacters), so a value like the PBF `--label` cannot break out. Emit it as
+     `${COMMAND_JSON}` (a flow-style JSON array, which is valid YAML).
+   - Substitute the remaining **scalar** placeholders with an **allow-listed** `envsubst` —
+     `envsubst '${NAMESPACE} ${JOB_NAME} ${IMAGE} ${MEM_REQUEST} ${MEM_LIMIT} ${ACTIVE_DEADLINE} ${READY_TIMEOUT} ${COMMAND_JSON}'`. Naming the vars explicitly is load-bearing: a bare `envsubst`
+     would eat the wrapper's `$i`/`$@`; restricting it to this list leaves all shell variables literal.
+   Then `kubectl create -f -`. (This intentionally departs from the repo's plain-`envsubst` manifest
+   convention for this one template because it carries operator-supplied argv; `kubeconform` still
+   validates the rendered output.)
 4. **Wait for the Job's pod to be Running, failing fast on un-runnable states.** Select the pod by the
    stable Job label —
    `kubectl -n "$NAMESPACE" get pod -l batch.kubernetes.io/job-name="$job_name"` — assert **exactly
@@ -117,11 +131,15 @@ The action steps:
    `kubectl exec -i "$pod" -- sh -c 'cat > "$1"' -- "<container>"` (target is the allow-listed path),
    verify non-empty (`kubectl exec "$pod" -- test -s "<container>"`), then finally
    `kubectl exec "$pod" -- touch /work/.ready`. The entrypoint (§B) blocks until `.ready`.
-6. **Tail logs + wait for a real terminal state.** `kubectl logs -f job/"$job_name"` for operator
-   visibility, and a **poll loop** (there is no single `kubectl wait` for "complete OR failed") that
-   watches the Job's `.status.conditions[]` for `Complete=True` **or** `Failed=True`, and also treats
-   `DeadlineExceeded` / pod `OOMKilled` as failure with a **distinct** message. It returns the loader's
-   real result so CI reflects it: success ⇒ step passes; any failure ⇒ non-zero.
+6. **Tail logs + wait for a real terminal state — deterministic structure.** There is no single
+   `kubectl wait` for "complete OR failed", so the poll loop is the **authority** and the log tail is
+   subordinate: (a) once the pod exists, start `kubectl logs -f job/"$job_name"` **in the background**
+   for operator visibility; (b) run a foreground **poll loop** that watches the Job's
+   `.status.conditions[]` for `Complete=True` **or** `Failed=True`, treating `DeadlineExceeded` and
+   pod `OOMKilled` as failure with a **distinct** message; (c) when the poll resolves, kill/`wait` the
+   background log process so the step never blocks in `logs -f`; (d) on failure, dump
+   `kubectl describe job/"$job_name"` + the failed pod + recent logs for diagnosis. Return the loader's
+   real result: success ⇒ step passes; any failure ⇒ non-zero.
 7. **Guaranteed cleanup** — see *Termination & cleanup* below.
 
 ### B. Job manifest — `infra/k8s/loader-job.yaml` (rendered per-run; NOT applied by `deploy.yml`)
@@ -159,11 +177,16 @@ A `batch/v1` **Job** (not CronJob) copying the security/DB wiring of
   after the grace period. Python's default SIGTERM handling terminates the process, closing the asyncpg
   connection, so Postgres rolls back the open transaction and releases `ADD_FOUNTAIN_LOCK` promptly;
   30 s is the hard backstop if it doesn't exit cleanly.
-- **Entrypoint** — the manifest `command` is an exec-form array: a tiny `sh` wait-for-ready wrapper as
-  the first elements, then the `argv_json` elements appended verbatim (no image change, no shell
-  interpolation of untrusted data). Shape:
-  `["sh","-c","i=0; while [ ! -f /work/.ready ]; do i=$((i+1)); [ \"$i\" -gt 300 ] && { echo '::error::input files never arrived within 300s'; exit 1; }; sleep 1; done; exec \"$@\"","loader", <argv…>]`
-  (`$0`=`loader`, `$@`=argv). The 300 s wait bounds a runner that dies mid-stream.
+- **Entrypoint** — the manifest `command` is an exec-form array (built by `jq`, §A.3): a tiny `sh`
+  wait-for-ready wrapper as the first elements, then the `argv_json` elements appended verbatim (no
+  image change, no shell interpolation of untrusted data). Shape:
+  `["sh","-c","i=0; while [ ! -f /work/.ready ]; do i=$((i+1)); [ \"$i\" -gt ${READY_TIMEOUT} ] && { echo '::error::input files never arrived'; exit 1; }; sleep 1; done; exec \"$@\"","loader", <argv…>]`
+  (`$0`=`loader`, `$@`=argv). `$i`/`$@` are literal because the allow-listed `envsubst` (§A.3) does not
+  substitute them; only `${READY_TIMEOUT}` is. **`ready_timeout_seconds` is a per-call input, sized for
+  worst-case upload** (default boundary `600`, PBF `1800` — the PBF `import.geojson` can be large and
+  streams over `kubectl exec -i`, so a fixed 5-min wait could kill a legitimate slow upload). It bounds
+  a runner that dies mid-stream; `activeDeadlineSeconds` is the outer backstop, and during this wait the
+  loader has **not** run, so **no** `ADD_FOUNTAIN_LOCK` is held.
 - **Resources:** default request `768Mi` / limit `3Gi`, cpu request `100m` / limit `1`, both
   overridable per call. Scheduling keys on *requests* (serving pod requests only `512Mi` on the
   `s-2vcpu-4gb` node), so `768Mi` places; the streaming loader (`_BATCH_SIZE = 1000`,
@@ -171,7 +194,7 @@ A `batch/v1` **Job** (not CronJob) copying the security/DB wiring of
 
 ### C. Workflow changes
 
-Both workflows keep every step up to and including fetch/validate/prepare **unchanged**. Only the
+All three workflows keep every step up to and including fetch/validate/prepare **unchanged**. Only the
 final "Run … in backend pod" step is replaced by a call to `run-loader-job`, plus a **top-level
 `if: always()` cleanup step** (see *Termination & cleanup*):
 
@@ -183,8 +206,31 @@ final "Run … in backend pod" step is replaced by a call to `run-loader-job`, p
   (`import.geojson→/work/osm-import.geojson`, `scope.wkt→/work/osm-scope.wkt`), the equivalent
   `python -m app.imports.cli …` argv (including `--label` as one JSON element),
   `active_deadline_seconds: 21600`.
+- **`osm-import.yml`** (Overpass) → `job_name: osm-import`, its existing single streamed
+  `import.geojson` + `python -m app.imports.cli …` argv. Its refresh path is a **full**
+  `refresh_all_memberships` (`merge.py:521`), so size `active_deadline_seconds` generously (e.g.
+  `10800`). *(Subject to the owner scope decision above.)*
 
 The `doctl` auth + kubeconfig steps stay; the action assumes a configured kubeconfig + `$NAMESPACE`.
+
+### C.1. Serialize every `ADD_FOUNTAIN_LOCK` workflow under one concurrency group
+
+Isolating the loader into a Job removes the *orphan*, but not cross-workflow **lock** contention.
+Three operator workflows all take `ADD_FOUNTAIN_LOCK` during their membership refresh — boundary load
+(`membership.py:1172`), PBF import and Overpass import (both via `merge.py:89/434` →
+`refresh_all_memberships`) — yet today they sit in **two** groups: `boundary-load-production`
+(`osm-boundary-load.yml:31`) and `osm-import-production` (shared by `osm-import-pbf.yml:35` and
+`osm-import.yml:32`). An operator can therefore start a boundary Job and an import Job at once; one
+Job would then sit in `pg_advisory_xact_lock` for the other's whole refresh, burning its
+`activeDeadlineSeconds` and reproducing the *stalled-load* symptom (minus the orphan).
+
+Fix: put **all three** workflows in a single shared group, e.g.
+`concurrency: { group: db-membership-write-production, cancel-in-progress: false }`, so GitHub queues
+the second dispatch instead of letting a second Job block on the lock. This supersedes the old
+"boundaries and fountain imports use different tables, so separate groups" reasoning — that overlooked
+the **shared advisory lock** taken by the membership refresh, which is the real serialization point.
+As defense-in-depth, the action logs when it is waiting on the lock (a `pg_advisory_xact_lock` that
+doesn't return promptly) so a cross-workflow wait is visible rather than silent.
 
 ### D. Considered and rejected — a loader-session `statement_timeout`
 
@@ -226,16 +272,23 @@ DOKS; out of scope here, see `fountainrank-doks-cluster-undersized-nodes` histor
 |---|---|
 | Shared-pod OOM (`exit 137`) | Loader runs in its own pod with its own memory; the API pod is never in the blast radius. |
 | Orphaned lock-holder → 60-min stalls | Cancel/failure → `if: always()` `kubectl delete job` → pod SIGTERM/SIGKILL (≤ grace period) → asyncpg connection drops → Postgres rolls back the txn → `ADD_FOUNTAIN_LOCK` released. No process survives to orphan it; `activeDeadlineSeconds` is the abandoned-Job backstop. |
-| No progress / re-loads pile up | With loads no longer blocking each other, a serial fan-out advances at ~15 min/country. |
+| No progress / re-loads pile up | With the loader isolated **and** all lock-taking workflows serialized under one concurrency group (§C.1), no Job ever blocks on the lock; a serial fan-out advances at ~15 min/country. |
 
 ## Testing
 
-- **Static (local/PR, cluster-independent):** `envsubst < infra/k8s/loader-job.yaml | kubeconform`
-  (per `claude_help/kubernetes-infra.md`), and `actionlint` (via WSL on this host) on the composite
-  action + both workflows. **Deploy-guard test:** assert `loader-job` appears in **no** apply list in
-  `.github/workflows/deploy.yml` (today those are explicit `for f in …` lists at `deploy.yml:253` and
-  `:286` plus the `write-attempt-cleanup` line — a future `infra/k8s/*.yaml` glob must not sweep the
-  on-demand Job in).
+- **Static (local/PR, cluster-independent):** render the manifest (jq command build + allow-listed
+  `envsubst`, §A.3) and `kubeconform` it (per `claude_help/kubernetes-infra.md`); `actionlint` (via WSL
+  on this host) on the composite action + all three workflows. **Deploy-guard test:** assert
+  `loader-job` appears in **no** apply list in `.github/workflows/deploy.yml` (today those are explicit
+  `for f in …` lists at `deploy.yml:253` and `:286` plus the `write-attempt-cleanup` line — a future
+  `infra/k8s/*.yaml` glob must not sweep the on-demand Job in).
+- **Render-safety (argv injection):** unit-test the jq command build with adversarial values — a
+  `--label` containing spaces, single/double quotes, `$(…)`, backticks, `;`, and `${NAMESPACE}`-shaped
+  text — asserting each lands as exactly one argv element in the rendered JSON and that the wrapper's
+  `$i`/`$@` survive the allow-listed `envsubst` verbatim. Also assert `files_json` container paths
+  outside `^/work/[A-Za-z0-9._-]+$` are rejected.
+- **Cross-workflow serialization:** assert all three lock-taking workflows share the one concurrency
+  group (§C.1) so a boundary Job and an import Job cannot run concurrently.
 - **Authenticated smoke (in the operator workflow only, after `kubectl config current-context`):**
   optional `kubectl create --dry-run=server` of the rendered manifest.
 - **Handoff end-to-end:** a **dry-run boundary Job** proving create → wait-Running → stream file(s) →
