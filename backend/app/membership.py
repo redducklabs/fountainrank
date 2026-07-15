@@ -56,10 +56,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from sqlalchemy import func, select, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.locks import ADD_FOUNTAIN_LOCK_KEY
+from app.locks import acquire_add_fountain_lock
 
 log = logging.getLogger(__name__)
 
@@ -1169,7 +1169,7 @@ async def refresh_country_memberships(
     for the old/new touched places.
     """
     cc = country_code.lower()
-    await session.execute(select(func.pg_advisory_xact_lock(ADD_FOUNTAIN_LOCK_KEY)))
+    await acquire_add_fountain_lock(session, context="refresh_country_memberships")
     await _prepare_scoped_refresh_temp_tables(session)
 
     log_extra = {"country": cc, "scope": "country"}
@@ -1284,7 +1284,7 @@ async def refresh_all_memberships(
     re-entrant, so callers that already hold it (``merge``/``rollback``) are unaffected; the same
     lock also serializes the cell rebuild + PIP against those callers' cell reads.
     """
-    await session.execute(select(func.pg_advisory_xact_lock(ADD_FOUNTAIN_LOCK_KEY)))
+    await acquire_add_fountain_lock(session, context="refresh_all_memberships")
     if rebuild_cells:
         await rebuild_place_boundary_cells(session)
     await session.execute(_PLACE_KIND_SQL)

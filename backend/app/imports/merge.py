@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.geo import point_geography
 from app.imports.osm import OsmCandidate
-from app.locks import ADD_FOUNTAIN_LOCK_KEY
+from app.locks import acquire_add_fountain_lock
 from app.membership import refresh_all_memberships
 from app.models import (
     Fountain,
@@ -86,7 +86,7 @@ async def merge_candidates(
     summary = RunSummary(run_id=run.id, dry_run=dry_run)
 
     if not dry_run:
-        await session.execute(select(func.pg_advisory_xact_lock(ADD_FOUNTAIN_LOCK_KEY)))
+        await acquire_add_fountain_lock(session, context="osm_import_merge")
 
     settings = get_settings()
     for cand in candidates:
@@ -431,7 +431,7 @@ def _refresh_provenance(prov, cand, run, now, scope) -> tuple[bool, dict | None]
 async def rollback_run(session: AsyncSession, run_id: uuid.UUID) -> int:
     # Serialize against concurrent adds/imports and lock each affected row before
     # inspecting/mutating it. Never deletes user rows or ratings.
-    await session.execute(select(func.pg_advisory_xact_lock(ADD_FOUNTAIN_LOCK_KEY)))
+    await acquire_add_fountain_lock(session, context="osm_import_rollback")
     events = (
         (
             await session.execute(
