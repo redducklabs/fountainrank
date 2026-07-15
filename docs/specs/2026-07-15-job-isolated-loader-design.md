@@ -5,6 +5,12 @@ load) and `docs/specs/2026-06-21-osm-pbf-large-scale-import-design.md`. **No cha
 model, the loader/membership SQL, or the URL contract** — only to *where* the loader CLI runs and how
 a cancelled run is torn down.
 
+> Revision 2 — rewritten after Codex spec-review-1 (7 [MAJOR]): added `imagePullSecrets` + `fsGroup`,
+> a safe JSON-array argv/file encoding, a real Job terminal-wait poll loop, per-workflow overridable
+> `activeDeadlineSeconds`, explicit termination/cleanup guarantees, a lock-holding cancellation test,
+> a deploy-apply-list guard — and **removed** the loader-session `statement_timeout` (it would abort
+> legitimately-serialized/long refreshes).
+
 ## Problem — the worldwide boundary fan-out stalls, OOMs, and makes no progress
 
 Both operator data-load workflows run their CLI **inside the running backend serving pod** via
@@ -29,11 +35,12 @@ production fan-out session (loading the remaining ~54 countries) exhibited three
 `kubectl exec` **does not propagate GitHub's job-cancellation kill to the in-pod process.** When a
 run is cancelled (the fan-out driver produced many cancelled runs — GitHub's `concurrency` keeps at
 most one running + one pending per group, auto-cancelling the rest), the runner's `kubectl exec`
-client dies but the **`python -m app.imports.boundary_cli` process keeps running inside the serving
-pod**, still holding its open transaction and the `ADD_FOUNTAIN_LOCK` advisory lock while it finishes
-its ~14-min refresh. During the runaway, several such orphans stacked up on the one advisory lock, so
-the next real load waited ~1 hour for them to drain. The orphans also accumulate memory in the shared
-pod → the OOM failures.
+client dies but the **loader process keeps running inside the serving pod**, still holding its open
+transaction and the `ADD_FOUNTAIN_LOCK` advisory lock while it finishes its ~14-min refresh. During
+the runaway, several such orphans stacked up on the one advisory lock, so the next real load waited
+~1 hour for them to drain. The orphans also accumulate memory in the shared pod → the OOM failures.
+The PBF importer shares the exact exposure: `backend/app/imports/merge.py` takes the same
+`ADD_FOUNTAIN_LOCK` (`merge.py:89`, `434`) around `refresh_all_memberships` (`merge.py:152`, `521`).
 
 Evidence: no DB timeout can produce a ~3,600 s cutoff (`statement_timeout`, `lock_timeout`,
 `idle_session_timeout` = `0`; `idle_in_transaction_session_timeout` = 24 h), so the gap was a
@@ -47,8 +54,8 @@ overture:au`) was observed running in the pod. All three symptoms trace to the o
 Run each operator load in its **own isolated Kubernetes Job**, so that:
 
 - The loader never shares memory with the API (kills the OOM-in-serving-pod failure mode).
-- Cancelling a run (or the runner dying) **tears the loader down and releases the advisory lock
-  immediately** — no process can survive to orphan the lock.
+- Cancelling a run (or the runner dying) **tears the loader down and releases the advisory lock**
+  within a bounded interval — no process can survive to orphan the lock.
 - A serial fan-out completes each country in its true ~15-min time with no 60-min stalls.
 
 Scope (per owner decision): **generalize to a reusable "run a backend CLI as an isolated Job"
@@ -71,94 +78,175 @@ PBF Job pod.
 
 ### A. Reusable composite action — `.github/actions/run-loader-job/`
 
-Inputs: `job_name`, `image` (optional; defaults to discovery), the CLI **argv**, a list of
-`local_path:container_path` file pairs to stream, and resource overrides. It:
+Inputs (all strings; structured inputs are **JSON** so nothing is shell-split):
 
-1. **Discovers the deployed image** — `kubectl -n "$NAMESPACE" get deployment fountainrank-backend
-   -o jsonpath='{.spec.template.spec.containers[0].image}'` — so the Job runs the **exact code
-   currently in production**, never a drifting `latest`.
-2. **Pre-flight cleanup** — `kubectl delete job "$job_name" --ignore-not-found --wait` (the workflow
-   `concurrency` group already serializes, so at most one is ever live; this clears a stale one from
-   an abnormally-terminated prior run).
-3. **Renders + creates** the Job (envsubst of the template in §B, `kubectl create -f -`).
-4. **Waits for the Job pod to be Running**, then streams each input file
-   (`kubectl exec -i "$pod" -- sh -c 'cat > <container_path>'`) and finally
-   `kubectl exec "$pod" -- touch /work/.ready`.
-5. **Streams logs** (`kubectl logs -f job/"$job_name"`) and **waits for terminal state**
-   (`kubectl wait --for=condition=complete/failed`), then reads the Job's success condition and
-   **exits non-zero on failure** so CI reflects the true result.
-6. **Trap** on `EXIT`/`INT`/`TERM` → `kubectl delete job "$job_name" --wait` — a cancelled run (which
-   sends a signal to the step) tears down the Job, killing the pod and releasing the lock.
+| Input | Meaning |
+|---|---|
+| `job_name` | Deterministic Job/metadata name, e.g. `boundary-load`, `osm-pbf-import`. |
+| `argv_json` | JSON **array of strings** — the exact CLI argv, e.g. `["python","-m","app.imports.boundary_cli","--path","/work/boundary.geojsonl", …]`. |
+| `files_json` | JSON array of `{ "local": "<runner path>", "container": "/work/<name>" }`; every `container` MUST match `^/work/[A-Za-z0-9._-]+$` (allow-listed — no traversal, no arbitrary dest). |
+| `active_deadline_seconds` | Per-call hard ceiling (see §B). |
+| `mem_request` / `mem_limit` | Per-call resource sizing (defaults in §B). |
+
+**Why JSON, not a shell string (addresses the argv-injection finding):** the manifest `command` is
+rendered as an **exec-form array** (`jq` maps `argv_json` element-for-element into the YAML/JSON list),
+so a value like the PBF `label` (`osm-import-pbf.yml:25`, user-supplied, may contain spaces/metachars)
+is a single argv element and is **never** word-split or shell-evaluated. No `eval`, no `"$@"` string
+concatenation of untrusted data.
+
+The action steps:
+
+1. **Verify context, then discover the deployed image.** `kubectl config current-context` (assert the
+   production cluster before any cluster op), then
+   `kubectl -n "$NAMESPACE" get deployment fountainrank-backend -o jsonpath='{.spec.template.spec.containers[?(@.name=="backend")].image}'`
+   — the Job runs the **exact code currently in production**, never a drifting `latest`, and the
+   container is selected **by name** (`backend`) so a future sidecar can't shift `containers[0]`.
+2. **Pre-flight cleanup.** `kubectl delete job "$job_name" --ignore-not-found --wait` (the workflow
+   `concurrency` group already serializes; this clears a stale Job from an abnormally-terminated
+   prior run).
+3. **Render + create the Job** (envsubst of the template in §B with the discovered image + the
+   `jq`-built command array; `kubectl create -f -`).
+4. **Wait for the Job's pod to be Running, failing fast on un-runnable states.** Select the pod by the
+   stable Job label —
+   `kubectl -n "$NAMESPACE" get pod -l batch.kubernetes.io/job-name="$job_name"` — assert **exactly
+   one**, then `kubectl wait --for=jsonpath='{.status.phase}'=Running pod -l … --timeout=180s` (the
+   same idiom `deploy.yml` already uses for the backend pod). If the wait times out, inspect the pod
+   for `ImagePullBackOff`/`ErrImagePull`, `Unschedulable`, or a pre-`.ready` `CrashLoopBackOff` and
+   `::error::` with the specific cause (don't hang).
+5. **Stream inputs, then arm the loader.** For each `files_json` entry
+   `kubectl exec -i "$pod" -- sh -c 'cat > "$1"' -- "<container>"` (target is the allow-listed path),
+   verify non-empty (`kubectl exec "$pod" -- test -s "<container>"`), then finally
+   `kubectl exec "$pod" -- touch /work/.ready`. The entrypoint (§B) blocks until `.ready`.
+6. **Tail logs + wait for a real terminal state.** `kubectl logs -f job/"$job_name"` for operator
+   visibility, and a **poll loop** (there is no single `kubectl wait` for "complete OR failed") that
+   watches the Job's `.status.conditions[]` for `Complete=True` **or** `Failed=True`, and also treats
+   `DeadlineExceeded` / pod `OOMKilled` as failure with a **distinct** message. It returns the loader's
+   real result so CI reflects it: success ⇒ step passes; any failure ⇒ non-zero.
+7. **Guaranteed cleanup** — see *Termination & cleanup* below.
 
 ### B. Job manifest — `infra/k8s/loader-job.yaml` (rendered per-run; NOT applied by `deploy.yml`)
 
 A `batch/v1` **Job** (not CronJob) copying the security/DB wiring of
 `infra/k8s/account-deletion-cleanup.yaml`:
 
-- **Image:** the discovered backend image (`§A.1`).
+- **Image:** the discovered backend image (§A.1). **`imagePullSecrets: [{ name: regcred }]`** — the
+  backend image lives in the private DO registry; both the CronJob (`account-deletion-cleanup.yaml:48`)
+  and the Deployment (`backend.yaml:41`) pull with `regcred`, so without it the Job `ImagePullBackOff`s
+  and never starts.
 - **Env:** minimal — `DATABASE_URL` (secretKeyRef) + `DB_SSL_ROOT_CERT` with the `database-ca.crt`
   volume. The loaders talk to Postgres only; no Logto/Spaces/email env.
 - **Volumes:** the CA secret (read-only) + a writable `emptyDir` at `/work` for the streamed files
   (root fs stays read-only).
-- **`securityContext`:** `runAsNonRoot`, `runAsUser/Group 1000`, `readOnlyRootFilesystem: true`,
-  `allowPrivilegeEscalation: false`, drop ALL caps, `seccompProfile: RuntimeDefault` — matching the
-  cleanup CronJob so the manifest passes the security scanners.
+- **Pod `securityContext`:** `runAsNonRoot`, `runAsUser/Group 1000`, **`fsGroup: 1000`**, seccomp
+  `RuntimeDefault`; container `securityContext`: `readOnlyRootFilesystem: true`,
+  `allowPrivilegeEscalation: false`, drop ALL caps — matching the cleanup CronJob so the manifest
+  passes the security scanners. **`fsGroup: 1000` is load-bearing:** the `/work` `emptyDir` must be
+  group-writable by uid 1000 or the `kubectl exec … cat > /work/…` stream (which runs as the
+  container's non-root user) fails before `.ready` (`account-deletion-cleanup.yaml:41-47` sets the
+  same `fsGroup`). A test MUST assert the non-root container can create each streamed file **and**
+  `/work/.ready`.
 - **`restartPolicy: Never`, `backoffLimit: 0`** — a failed load fails the Job; no silent retry and no
   re-entering the wait loop.
-- **`activeDeadlineSeconds`** (default `7200`, overridable per workflow) — hard self-terminate
-  backstop: even if the cancellation trap never runs (runner hard-killed), the Job dies on its own and
-  releases the lock. Set generously above the largest legitimate load's runtime (a big PBF import may
-  need more than a scoped boundary load).
+- **`activeDeadlineSeconds`** — per-workflow, operator-overridable, and set **generously above the
+  largest legitimate load** so it only ever fires on a truly-abandoned Job (not as a load SLA):
+  boundary default **`5400`** (90 min; observed worst case is a ~15-min scoped refresh with wide
+  margin), PBF default **`21600`** (6 h; the PBF path allows up to a 6 GB pre-filter extract,
+  `osm-import-pbf.yml:44`, and a full `refresh_all_memberships`, `merge.py:152/521`). The terminal-wait
+  loop reports a deadline kill as `::error::job exceeded activeDeadlineSeconds (Nn) — raise the input
+  or investigate`, **distinct** from a loader crash.
 - **`ttlSecondsAfterFinished: 600`** — auto-clean finished Jobs.
-- **Entrypoint** — an inline `sh` wrapper (no image change) that waits up to ~300 s for `/work/.ready`
-  then `exec`s the passed CLI argv:
-  `command: ["sh","-c","i=0; while [ ! -f /work/.ready ]; do i=$((i+1)); [ $i -gt 300 ] && { echo '::error::input files never arrived'; exit 1; }; sleep 1; done; exec \"$@\"","--", <cli argv…>]`
-- **Resources:** request `768Mi` / limit `3Gi`, cpu request `100m` / limit `1`. Scheduling keys on
-  *requests* (serving pod requests only `512Mi` on the `s-2vcpu-4gb` node), so `768Mi` places; the
-  streaming loader (`_BATCH_SIZE = 1000`, `boundary_cli.py:42`) keeps real usage modest and the `3Gi`
-  limit absorbs US-boundary / large-PBF bursts. On a 4 GB node the `3Gi` limit is a burst ceiling to
-  watch, but it is now isolated from the API.
+- **`terminationGracePeriodSeconds: 30`** — on delete, Kubernetes SIGTERMs the container and SIGKILLs
+  after the grace period. Python's default SIGTERM handling terminates the process, closing the asyncpg
+  connection, so Postgres rolls back the open transaction and releases `ADD_FOUNTAIN_LOCK` promptly;
+  30 s is the hard backstop if it doesn't exit cleanly.
+- **Entrypoint** — the manifest `command` is an exec-form array: a tiny `sh` wait-for-ready wrapper as
+  the first elements, then the `argv_json` elements appended verbatim (no image change, no shell
+  interpolation of untrusted data). Shape:
+  `["sh","-c","i=0; while [ ! -f /work/.ready ]; do i=$((i+1)); [ \"$i\" -gt 300 ] && { echo '::error::input files never arrived within 300s'; exit 1; }; sleep 1; done; exec \"$@\"","loader", <argv…>]`
+  (`$0`=`loader`, `$@`=argv). The 300 s wait bounds a runner that dies mid-stream.
+- **Resources:** default request `768Mi` / limit `3Gi`, cpu request `100m` / limit `1`, both
+  overridable per call. Scheduling keys on *requests* (serving pod requests only `512Mi` on the
+  `s-2vcpu-4gb` node), so `768Mi` places; the streaming loader (`_BATCH_SIZE = 1000`,
+  `boundary_cli.py:42`) keeps real usage modest. See *Resources & node pressure* for the limit caveat.
 
 ### C. Workflow changes
 
 Both workflows keep every step up to and including fetch/validate/prepare **unchanged**. Only the
-final "Run … in backend pod" step is replaced by a call to `run-loader-job`:
+final "Run … in backend pod" step is replaced by a call to `run-loader-job`, plus a **top-level
+`if: always()` cleanup step** (see *Termination & cleanup*):
 
-- **`osm-boundary-load.yml`** → `job_name: boundary-load`, one file
-  (`$OUT → /work/boundary.geojsonl`), argv `python -m app.imports.boundary_cli --path
-  /work/boundary.geojsonl --overture-release-id "$RELEASE_ID" --scope-id "$SCOPE_ID" [$DRY]`.
+- **`osm-boundary-load.yml`** → `job_name: boundary-load`, `files_json:
+  [{local:$OUT, container:/work/boundary.geojsonl}]`, `argv_json: ["python","-m",
+  "app.imports.boundary_cli","--path","/work/boundary.geojsonl","--overture-release-id",<rel>,
+  "--scope-id",<scope>, …dry]`, `active_deadline_seconds: 5400`.
 - **`osm-import-pbf.yml`** → `job_name: osm-pbf-import`, two files
-  (`import.geojson → /work/osm-import.geojson`, `scope.wkt → /work/osm-scope.wkt`), argv `python -m
-  app.imports.cli --path /work/osm-import.geojson --scope-id … --dataset … --build-id … --label … 
-  --scope-bounds-wkt-file /work/osm-scope.wkt --require-scope-bounds [$DRY]`.
+  (`import.geojson→/work/osm-import.geojson`, `scope.wkt→/work/osm-scope.wkt`), the equivalent
+  `python -m app.imports.cli …` argv (including `--label` as one JSON element),
+  `active_deadline_seconds: 21600`.
 
-The `doctl` auth + `kubectl` config steps stay; the action assumes a configured kubeconfig +
-`$NAMESPACE`.
+The `doctl` auth + kubeconfig steps stay; the action assumes a configured kubeconfig + `$NAMESPACE`.
 
-### D. Belt-and-suspenders — bounded loader DB session
+### D. Considered and rejected — a loader-session `statement_timeout`
 
-Because the root-cause investigation found the server-side timeouts effectively disabled, set a
-bounded `statement_timeout` (and a short `idle_in_transaction_session_timeout`) **on the loader's DB
-session only** (via the loader's engine/connect options or a `SET LOCAL` at the start of the load
-transaction), so that even a wedged-but-undeleted refresh cannot hold `ADD_FOUNTAIN_LOCK`
-indefinitely. This is scoped to the loader path and does not touch the serving pod's sessions.
+An earlier draft proposed a bounded `statement_timeout` on the loader session as belt-and-suspenders.
+**Removed.** In PostgreSQL `statement_timeout` also runs **while a statement waits on
+`pg_advisory_xact_lock`**, so a legitimately-serialized run behind another active loader would abort;
+it would also kill the known-long membership statements (`refresh_all_memberships` /
+`refresh_country_memberships`, `membership.py:1162-1311`). The Job model already covers the wedged/
+abandoned case: deleting the Job (on cancel) or `activeDeadlineSeconds` (on abandonment) drops the
+connection and releases the lock. Adding a statement timeout would trade the fixed failure mode for a
+new one on the exact large loads this is meant to support.
+
+### Termination & cleanup (guaranteeing the lock is released)
+
+The orphan fix rests on the Job being torn down whenever the run ends abnormally. Composite actions
+cannot register a `post:` hook, so cleanup is layered:
+
+1. **Primary:** a **top-level workflow step with `if: always()`** — `kubectl delete job "$job_name"
+   --wait --ignore-not-found` — runs on success, failure, **and cancellation** (GitHub runs
+   `always()` steps when a job is cancelled). Deleting the Job deletes the pod → SIGTERM/SIGKILL →
+   asyncpg connection drops → Postgres releases `ADD_FOUNTAIN_LOCK`.
+2. **Backstop A:** `activeDeadlineSeconds` self-terminates a Job whose run was hard-killed before the
+   cleanup step could run.
+3. **Backstop B:** `ttlSecondsAfterFinished` + the pre-flight delete (§A.2) ensure no stale Job
+   lingers into the next dispatch.
+
+## Resources & node pressure
+
+Scheduling is by *requests*, but a `3Gi` limit on a `4Gi` node is a burst ceiling: if a large-PBF Job
+approaches it while the API, web, Logto, and basemap pods are active, the node can hit `MemoryPressure`.
+Requirement: the operator workflow surfaces pod `OOMKilled` and node `MemoryPressure`/eviction events
+after a load, and the runbook documents the response — raise `mem_request`, lower `mem_limit`, or make
+a separate node-pool/size decision — rather than silently re-OOMing. (Node resize is `ForceNew` on
+DOKS; out of scope here, see `fountainrank-doks-cluster-undersized-nodes` history.)
 
 ## Why this resolves each symptom
 
 | Symptom | Mechanism of the fix |
 |---|---|
 | Shared-pod OOM (`exit 137`) | Loader runs in its own pod with its own memory; the API pod is never in the blast radius. |
-| Orphaned lock-holder → 60-min stalls | Cancel/runner-death → trap `kubectl delete job` → pod SIGKILL → DB connection drops → Postgres rolls back the txn → advisory lock released at once. No process survives to orphan it. `activeDeadlineSeconds` is the backstop; the bounded session timeout (§D) is defense-in-depth. |
+| Orphaned lock-holder → 60-min stalls | Cancel/failure → `if: always()` `kubectl delete job` → pod SIGTERM/SIGKILL (≤ grace period) → asyncpg connection drops → Postgres rolls back the txn → `ADD_FOUNTAIN_LOCK` released. No process survives to orphan it; `activeDeadlineSeconds` is the abandoned-Job backstop. |
 | No progress / re-loads pile up | With loads no longer blocking each other, a serial fan-out advances at ~15 min/country. |
 
 ## Testing
 
-- **Static:** render the manifest and `kubectl create --dry-run=server` / kubeconform it; `actionlint`
-  (via WSL on this host) on the action + both workflows.
-- **Handoff end-to-end:** a **dry-run boundary Job** in prod (`dry_run=true` → no writes) proving
-  create → wait-Running → stream file → `.ready` → CLI runs → logs tail → exit propagates.
-- **Cancellation/lock-release:** start a real Job, cancel the run, assert the Job pod is gone and no
-  `ADD_FOUNTAIN_LOCK` advisory lock lingers (`pg_locks`/`pg_stat_activity` query).
+- **Static (local/PR, cluster-independent):** `envsubst < infra/k8s/loader-job.yaml | kubeconform`
+  (per `claude_help/kubernetes-infra.md`), and `actionlint` (via WSL on this host) on the composite
+  action + both workflows. **Deploy-guard test:** assert `loader-job` appears in **no** apply list in
+  `.github/workflows/deploy.yml` (today those are explicit `for f in …` lists at `deploy.yml:253` and
+  `:286` plus the `write-attempt-cleanup` line — a future `infra/k8s/*.yaml` glob must not sweep the
+  on-demand Job in).
+- **Authenticated smoke (in the operator workflow only, after `kubectl config current-context`):**
+  optional `kubectl create --dry-run=server` of the rendered manifest.
+- **Handoff end-to-end:** a **dry-run boundary Job** proving create → wait-Running → stream file(s) →
+  `.ready` → CLI runs → logs tail → exit propagates, **plus** an assertion the non-root container
+  created `/work/<file>` and `/work/.ready` (the `fsGroup` check).
+- **Cancellation / lock-release (must hold the lock — dry-run does NOT):** dry-run skips the membership
+  refresh (`boundary_cli.py:129-137`), so it never takes `ADD_FOUNTAIN_LOCK`. Use a **non-dry re-load
+  of an already-indexed micro-state** (e.g. Monaco/Andorra — tiny, idempotent, partial committed
+  batches are safe to re-run per `boundary_cli.py:126`), cancel the run mid-refresh, and assert within
+  a bounded interval that the Job **and** its pod are gone and the advisory lock has disappeared
+  (`pg_locks`/`pg_stat_activity` — the query used in the root-cause investigation).
 - **Regression:** a real AT/AU load completing in ~15 min with **no** 60-min gap (compare the
   loader-start → first-membership-log delta to the ~3,606 s baseline).
 
@@ -166,9 +254,10 @@ indefinitely. This is scoped to the loader path and does not touch the serving p
 
 - No change to the fetch/validate/prepare steps, the loader/membership SQL, the URL/indexing
   contract, or the pinned DuckDB/osmium/Overture/Geofabrik versions.
-- Not making the loader self-fetch; not enabling DO Spaces.
+- Not making the loader self-fetch; not enabling DO Spaces; not adding a loader-session
+  `statement_timeout` (§D).
 - Not re-sizing the DOKS nodes (the Job fits current node requests); revisit only if large-PBF Jobs
-  fail to schedule.
+  fail to schedule or pressure the node.
 
 ## Process
 
