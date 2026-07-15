@@ -27,6 +27,7 @@ from app.membership import (
     rebuild_place_boundary_cells,
     recompute_fountain_membership,
     refresh_all_memberships,
+    refresh_country_memberships,
 )
 
 BACKEND = Path(__file__).resolve().parents[1]
@@ -1251,3 +1252,269 @@ async def test_migration_backfill_matches_refresh_all_memberships(session):
     await refresh_all_memberships(session, rebuild_cells=False)
 
     assert await _membership_snapshot(session) == frozen_snapshot
+
+
+def _stable_uuid(name: str) -> uuid.UUID:
+    return uuid.uuid5(uuid.NAMESPACE_URL, f"fountainrank-test:{name}")
+
+
+async def _reset_scoped_fixture(session) -> None:
+    await session.execute(
+        text("TRUNCATE fountains, place_boundary_cells, place_boundaries RESTART IDENTITY CASCADE")
+    )
+
+
+async def _add_scoped_boundary(
+    session,
+    *,
+    key: str,
+    overture_id: str,
+    subtype: str,
+    country_code: str,
+    name: str,
+    slug: str,
+    wkt: str,
+):
+    boundary_id = _stable_uuid(f"boundary:{key}")
+    await session.execute(
+        text(
+            """
+            INSERT INTO place_boundaries
+                (id, overture_id, subtype, class, name, country_code, slug, is_canonical,
+                 fountain_count, boundary, created_at, updated_at)
+            VALUES (:id, :oid, :subtype, 'land', :name, :cc, :slug, false, 0,
+                    ST_Multi(ST_GeomFromText(:wkt, 4326))::geography, now(), now())
+            """
+        ),
+        {
+            "id": boundary_id,
+            "oid": overture_id,
+            "subtype": subtype,
+            "name": name,
+            "cc": country_code,
+            "slug": slug,
+            "wkt": wkt,
+        },
+    )
+    return boundary_id
+
+
+async def _add_scoped_fountain(session, key: str, lat: float, lng: float):
+    fountain_id = _stable_uuid(f"fountain:{key}")
+    await session.execute(
+        text(
+            """
+            INSERT INTO fountains (id, location, is_hidden, created_source)
+            VALUES (:id, ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography,
+                    false, 'admin_import')
+            """
+        ),
+        {"id": fountain_id, "lat": lat, "lng": lng},
+    )
+    return fountain_id
+
+
+async def _set_scoped_boundary_wkt(session, key: str, wkt: str) -> None:
+    await session.execute(
+        text(
+            """
+            UPDATE place_boundaries
+            SET boundary = ST_Multi(ST_GeomFromText(:wkt, 4326))::geography
+            WHERE id = :id
+            """
+        ),
+        {"id": _stable_uuid(f"boundary:{key}"), "wkt": wkt},
+    )
+
+
+async def _set_scoped_boundary_subtype(session, key: str, subtype: str) -> None:
+    await session.execute(
+        text("UPDATE place_boundaries SET subtype = :subtype WHERE id = :id"),
+        {"id": _stable_uuid(f"boundary:{key}"), "subtype": subtype},
+    )
+
+
+async def _seed_country_a_scoped_base(session) -> None:
+    await _add_scoped_boundary(
+        session,
+        key="a-country",
+        overture_id="z-a-country",
+        subtype="country",
+        country_code="aa",
+        name="Country A",
+        slug="country-a",
+        wkt=_sq(0, 0, 12, 10),
+    )
+    await _add_scoped_boundary(
+        session,
+        key="a-region",
+        overture_id="z-a-region",
+        subtype="region",
+        country_code="aa",
+        name="A Region",
+        slug="region",
+        wkt=_sq(0, 0, 12, 10),
+    )
+    await _add_scoped_boundary(
+        session,
+        key="a-city",
+        overture_id="z-a-city",
+        subtype="locality",
+        country_code="aa",
+        name="A City",
+        slug="city",
+        wkt=_sq(1, 1, 11, 9),
+    )
+
+
+async def _seed_country_b_scoped_base(session) -> None:
+    await _add_scoped_boundary(
+        session,
+        key="b-country",
+        overture_id="a-b-country",
+        subtype="country",
+        country_code="bb",
+        name="Country B",
+        slug="country-b",
+        wkt=_sq(10, 0, 20, 10),
+    )
+    await _add_scoped_boundary(
+        session,
+        key="b-region",
+        overture_id="a-b-region",
+        subtype="region",
+        country_code="bb",
+        name="B Region",
+        slug="region",
+        wkt=_sq(10, 0, 20, 10),
+    )
+    await _add_scoped_boundary(
+        session,
+        key="b-city",
+        overture_id="a-b-city",
+        subtype="locality",
+        country_code="bb",
+        name="B City",
+        slug="city",
+        wkt=_sq(10.25, 1, 19, 9),
+    )
+
+
+async def _seed_two_country_scoped_base(session) -> None:
+    await _seed_country_a_scoped_base(session)
+    await _seed_country_b_scoped_base(session)
+
+
+async def _assert_same_group_cities_do_not_overlap(session) -> None:
+    overlaps = (
+        await session.execute(
+            text(
+                """
+                SELECT count(*)
+                FROM place_boundaries a
+                JOIN place_boundaries b
+                  ON a.id < b.id
+                 AND a.country_code = b.country_code
+                 AND a.parent_id = b.parent_id
+                 AND a.slug = b.slug
+                 AND a.place_kind = 'city'
+                 AND b.place_kind = 'city'
+                WHERE ST_Overlaps(a.boundary::geometry, b.boundary::geometry)
+                   OR ST_Contains(a.boundary::geometry, b.boundary::geometry)
+                   OR ST_Contains(b.boundary::geometry, a.boundary::geometry)
+                """
+            )
+        )
+    ).scalar_one()
+    assert overlaps == 0
+
+
+async def _scoped_parity_snapshot(session, setup) -> tuple:
+    await _reset_scoped_fixture(session)
+    await setup(session)
+    await refresh_country_memberships(session, "bb")
+    await _assert_same_group_cities_do_not_overlap(session)
+    scoped = await _membership_snapshot(session)
+
+    await _reset_scoped_fixture(session)
+    await setup(session)
+    await refresh_all_memberships(session)
+    await _assert_same_group_cities_do_not_overlap(session)
+    full = await _membership_snapshot(session)
+    assert scoped == full
+    return scoped
+
+
+async def _setup_first_load_b(session) -> None:
+    await _seed_country_a_scoped_base(session)
+    await refresh_all_memberships(session)
+    await _seed_country_b_scoped_base(session)
+    await _add_scoped_fountain(session, "b-new", lat=2, lng=11)
+
+
+async def _setup_b_shrinks_into_a(session) -> None:
+    await _seed_two_country_scoped_base(session)
+    await _add_scoped_fountain(session, "cross-to-a", lat=2, lng=10.5)
+    await refresh_all_memberships(session)
+    await _set_scoped_boundary_wkt(session, "b-country", _sq(11, 0, 20, 10))
+    await _set_scoped_boundary_wkt(session, "b-region", _sq(11, 0, 20, 10))
+    await _set_scoped_boundary_wkt(session, "b-city", _sq(11.25, 1, 19, 9))
+
+
+async def _setup_b_expands_over_a(session) -> None:
+    await _seed_two_country_scoped_base(session)
+    await _set_scoped_boundary_wkt(session, "b-country", _sq(12, 0, 20, 10))
+    await _set_scoped_boundary_wkt(session, "b-region", _sq(12, 0, 20, 10))
+    await _set_scoped_boundary_wkt(session, "b-city", _sq(12.25, 1, 19, 9))
+    await _add_scoped_fountain(session, "cross-to-b", lat=2, lng=10.5)
+    await refresh_all_memberships(session)
+    await _set_scoped_boundary_wkt(session, "b-country", _sq(10, 0, 20, 10))
+    await _set_scoped_boundary_wkt(session, "b-region", _sq(10, 0, 20, 10))
+    await _set_scoped_boundary_wkt(session, "b-city", _sq(10.25, 1, 19, 9))
+
+
+async def _setup_shared_border_point(session) -> None:
+    await _seed_country_a_scoped_base(session)
+    await refresh_all_memberships(session)
+    await _seed_country_b_scoped_base(session)
+    await _add_scoped_fountain(session, "border", lat=2, lng=10)
+
+
+async def _setup_b_city_becomes_ineligible(session) -> None:
+    await _seed_two_country_scoped_base(session)
+    await _add_scoped_fountain(session, "b-city-tier-change", lat=2, lng=11)
+    await refresh_all_memberships(session)
+    await _set_scoped_boundary_subtype(session, "b-city", "neighborhood")
+
+
+async def _setup_b_city_loses_parent(session) -> None:
+    await _seed_two_country_scoped_base(session)
+    await _add_scoped_fountain(session, "b-null-parent", lat=2, lng=11)
+    await refresh_all_memberships(session)
+    await _set_scoped_boundary_wkt(session, "b-region", _sq(15, 0, 20, 10))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "setup",
+    [
+        _setup_first_load_b,
+        _setup_b_shrinks_into_a,
+        _setup_b_expands_over_a,
+        _setup_shared_border_point,
+        _setup_b_city_becomes_ineligible,
+        _setup_b_city_loses_parent,
+    ],
+)
+async def test_refresh_country_memberships_matches_full_refresh_under_mutation(session, setup):
+    await _scoped_parity_snapshot(session, setup)
+
+
+@pytest.mark.asyncio
+async def test_refresh_country_memberships_is_idempotent(session):
+    await _reset_scoped_fixture(session)
+    await _setup_first_load_b(session)
+    await refresh_country_memberships(session, "bb")
+    once = await _membership_snapshot(session)
+    await refresh_country_memberships(session, "bb")
+    assert await _membership_snapshot(session) == once
