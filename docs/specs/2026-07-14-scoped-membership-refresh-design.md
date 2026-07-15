@@ -79,28 +79,40 @@ full refresh (assign → recount → canonical, because canonical tie-breaks on 
    `overture_id` tie-break — **not** country-filtered), applied `WHERE f.id ∈ C`. A border/moved
    fountain therefore resolves to exactly the country a full refresh would pick, including a neighbour
    Y.
-5. **Country-scoped, tier-INDEPENDENT canonical reset for X**:
-   `UPDATE place_boundaries SET is_canonical = false WHERE country_code = :cc AND is_canonical` — clears
-   a row that changed tier (e.g. a former canonical city now `place_kind IS NULL`), which a
-   `place_kind`-filtered reset would miss. Then select X's canonical **regions**.
+5. **Region canonical for X — count-free, so X-only is exact.** Country-scoped, tier-INDEPENDENT
+   reset (`UPDATE place_boundaries SET is_canonical = false WHERE country_code = :cc AND is_canonical`
+   — clears a row that changed tier, which a `place_kind`-filtered reset would miss), then select X's
+   canonical **regions**. Regions never depend on a neighbour or on any fountain count (the parent
+   spec makes region canonical `ST_Area`-geodesic, count-free), so a cross-border fountain move can
+   **never** change a region winner — X is the only country whose regions can change, and only
+   because X's boundaries changed.
 6. **City parent** for X — `_CITY_PARENT_SQL` with its `city_pt` CTE filtered to `country_code = :cc`
    (so `ST_PointOnSurface` runs only over X's cities), parenting X cities to X's canonical regions.
-7. **Recount the complete affected set** `P_new ∪ P_old ∪ (all X places)`, where `P_new` = the places
-   `C` holds after step 4 (may include Y's). Recount is the existing 3-way count restricted to that
-   id set.
-8. **Re-reset (X) + reselect canonical regions (X) + select canonical cities for the affected groups.**
-   Canonical cities are reselected for every `(country_code, parent_id, slug)` group touched — all of
-   X's city groups (X reclassified) **plus** any neighbour group a moved fountain changed the count of
-   (derived from `P_old ∪ P_new`). Mirrors `recompute_fountain_membership`'s group reselection, not a
-   whole-DB reselect.
-9. **Remap** `C`'s `city_place_id` onto the canonical city of each fountain's
-   `(country_code, parent_id, slug)` group (the global `_REMAP_CITY_SQL` restricted to `C`).
-10. **Recount** the affected set again (post-remap).
 
-Boundary-derived steps (1,2,3,5,6,8-canonical) are scoped to X and are per-country-safe. Fountain
-steps (4,7,9,10) use the **global** logic over the bounded `C` / affected-place set, so a
-cross-border move is handled exactly as a full refresh would. No step filters a fountain's country
-PIP to X, and no recount is limited to X.
+7–10. **The complete affected-city-group pipeline — reused verbatim from `recompute_place_counts`,
+   not hand-rolled.** City canonical DOES tie-break on `fountain_count`, so a neighbour's
+   duplicate-city winner can flip when a fountain crosses in, and the whole group must be recomputed
+   — not just `C`. Let `P = P_old ∪ P_new ∪ (all X place ids)` (`P_new` = the places `C` holds after
+   step 4; `P_old` captured before it). Run, over `P`, exactly the admin-delete pipeline:
+   - **`_RECOUNT_PLACES_SQL`(P)** — 3-way recount of every place in `P` (X's countries/regions/cities
+     **and** any neighbour place a moved fountain touched, so Y's count can't go stale).
+   - **`_RECOUNT_CITY_GROUPS_RAW_SQL`(P)** — **raw** (geometry-based) recount of **every member** of
+     each affected `(country_code, parent_id, slug)` group, including the non-candidate members of a
+     touched neighbour group. This is load-bearing: the persisted DB is *post-remap*, so a
+     non-canonical twin sits at `count=0`; without the raw recount it could never become the winner a
+     full refresh would pick.
+   - **`_RECANON_RESET_SQL`(P) + `_RECANON_SET_SQL`(P)** — reselect the canonical city for every
+     affected group on the fresh raw counts.
+   - **`_REMAP_CITY_GROUPS_SQL`(P)** — remap **every fountain in each affected group** (not just `C`)
+     onto the group's new canonical city. This is the fix for the "winner flips but non-candidate
+     fountains stay on the old canonical city" divergence.
+   - **`_RECOUNT_CITY_GROUPS_SQL`(P)** — post-remap recount so the published counts reflect the remap.
+
+   This is precisely what `recompute_place_counts(session, P)` already does. The scoped refresh
+   therefore = **X-boundary reclassification (steps 1–6)** + **global reassignment of `C` (step 4)** +
+   **`recompute_place_counts` over `P` (steps 7–10)** — three proven pieces, no new count/canonical
+   logic. Region reclassification is X-scoped and safe; everything fountain/count/city-canonical is
+   the existing group-aware old∪new machinery over the complete affected set.
 
 ## Wiring
 
