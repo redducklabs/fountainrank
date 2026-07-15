@@ -58,9 +58,8 @@ surfaced that `osm-import.yml` (the Overpass importer) `kubectl exec`s a loader 
 **and** takes the same `ADD_FOUNTAIN_LOCK` (`osm-import.yml:157` → `merge.py` full refresh), so leaving
 it on the old pattern would keep a third orphan door open on the shared lock. The reusable action makes
 its conversion trivial, so this spec converts **all three** lock-taking loader workflows
-(`osm-boundary-load.yml`, `osm-import-pbf.yml`, `osm-import.yml`). *(Owner decision point: convert the
-third now, as specced, or defer it to a documented follow-up — but note the orphan fix is incomplete
-until it is done.)*
+(`osm-boundary-load.yml`, `osm-import-pbf.yml`, `osm-import.yml`) — the design and tests assume all
+three are in scope.
 
 ## Key architectural decision — fetch on the runner, execute in a Job
 
@@ -206,10 +205,12 @@ final "Run … in backend pod" step is replaced by a call to `run-loader-job`, p
   (`import.geojson→/work/osm-import.geojson`, `scope.wkt→/work/osm-scope.wkt`), the equivalent
   `python -m app.imports.cli …` argv (including `--label` as one JSON element),
   `active_deadline_seconds: 21600`.
-- **`osm-import.yml`** (Overpass) → `job_name: osm-import`, its existing single streamed
-  `import.geojson` + `python -m app.imports.cli …` argv. Its refresh path is a **full**
-  `refresh_all_memberships` (`merge.py:521`), so size `active_deadline_seconds` generously (e.g.
-  `10800`). *(Subject to the owner scope decision above.)*
+- **`osm-import.yml`** (Overpass) → `job_name: osm-import`, **two files** exactly as today
+  (`import.geojson→/work/osm-import.geojson`, `scope.wkt→/work/osm-scope.wkt`;
+  `osm-import.yml:147-149`) and the same argv including **`--scope-bounds-wkt-file /work/osm-scope.wkt
+  --require-scope-bounds`** (`osm-import.yml:156-159`) — dropping either would fail every non-dry import
+  or weaken the fail-closed removal guard the CLI enforces (`cli.py --require-scope-bounds`). Its refresh
+  is a **full** `refresh_all_memberships` (`merge.py:521`), so `active_deadline_seconds: 10800`.
 
 The `doctl` auth + kubeconfig steps stay; the action assumes a configured kubeconfig + `$NAMESPACE`.
 
@@ -224,13 +225,18 @@ Three operator workflows all take `ADD_FOUNTAIN_LOCK` during their membership re
 Job would then sit in `pg_advisory_xact_lock` for the other's whole refresh, burning its
 `activeDeadlineSeconds` and reproducing the *stalled-load* symptom (minus the orphan).
 
-Fix: put **all three** workflows in a single shared group, e.g.
-`concurrency: { group: db-membership-write-production, cancel-in-progress: false }`, so GitHub queues
-the second dispatch instead of letting a second Job block on the lock. This supersedes the old
-"boundaries and fountain imports use different tables, so separate groups" reasoning — that overlooked
-the **shared advisory lock** taken by the membership refresh, which is the real serialization point.
-As defense-in-depth, the action logs when it is waiting on the lock (a `pg_advisory_xact_lock` that
-doesn't return promptly) so a cross-workflow wait is visible rather than silent.
+Fix: put **all three** workflows in a single shared group **with `queue: max`**:
+`concurrency: { group: db-membership-write-production, cancel-in-progress: false, queue: max }`. GitHub
+Actions concurrency defaults to `queue: single` — **one** pending run, and a newer dispatch **cancels**
+the older pending one (verified against GitHub's concurrency docs). That default IS the cancelled-runs
+symptom from the Problem section: a fan-out that dispatches many countries at once leaves one running,
+one pending, and cancels the rest. `queue: max` (up to 100 pending, FIFO) makes bulk dispatch **queue
+serially** instead of cancelling — so the fan-out can dispatch every country up front and they run
+one-at-a-time in order. This supersedes the old "boundaries and fountain imports use different tables,
+so separate groups" reasoning — that overlooked the **shared advisory lock** taken by the membership
+refresh, which is the real serialization point. (Additionally, the loader CLI should log a line
+immediately before and after acquiring `ADD_FOUNTAIN_LOCK` so any residual lock wait is visible in
+logs — a small, logging-standard-aligned loader addition, not an action-level capability.)
 
 ### D. Considered and rejected — a loader-session `statement_timeout`
 
@@ -272,7 +278,8 @@ DOKS; out of scope here, see `fountainrank-doks-cluster-undersized-nodes` histor
 |---|---|
 | Shared-pod OOM (`exit 137`) | Loader runs in its own pod with its own memory; the API pod is never in the blast radius. |
 | Orphaned lock-holder → 60-min stalls | Cancel/failure → `if: always()` `kubectl delete job` → pod SIGTERM/SIGKILL (≤ grace period) → asyncpg connection drops → Postgres rolls back the txn → `ADD_FOUNTAIN_LOCK` released. No process survives to orphan it; `activeDeadlineSeconds` is the abandoned-Job backstop. |
-| No progress / re-loads pile up | With the loader isolated **and** all lock-taking workflows serialized under one concurrency group (§C.1), no Job ever blocks on the lock; a serial fan-out advances at ~15 min/country. |
+| Cancelled-run churn on bulk dispatch | `queue: max` on the shared group (§C.1) queues dispatched runs FIFO instead of the default `queue: single` behavior that cancels the older pending run — the fan-out can enqueue every country at once without cancellations. |
+| No progress / re-loads pile up | With the loader isolated **and** all lock-taking workflows serialized under one queued concurrency group (§C.1), no Job ever blocks on the lock; a serial fan-out advances at ~15 min/country. |
 
 ## Testing
 
