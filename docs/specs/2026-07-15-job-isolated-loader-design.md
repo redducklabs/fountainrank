@@ -141,10 +141,12 @@ The action steps:
    real result: success ⇒ step passes; any failure ⇒ non-zero.
 7. **Guaranteed cleanup** — see *Termination & cleanup* below.
 
-### B. Job manifest — `infra/k8s/loader-job.yaml` (rendered per-run; NOT applied by `deploy.yml`)
+### B. Job manifest — emitted as JSON by `loader_job_render.py` (per-run; no standing manifest)
 
-A `batch/v1` **Job** (not CronJob) copying the security/DB wiring of
-`infra/k8s/account-deletion-cleanup.yaml`:
+A `batch/v1` **Job** (not CronJob), constructed as a Python dict and emitted as JSON, copying the
+security/DB wiring of `infra/k8s/account-deletion-cleanup.yaml`. Because it is generated at dispatch
+(there is **no** static `infra/k8s/loader-job.yaml`), there is nothing for `deploy.yml` to apply or for
+a future `infra/k8s/*.yaml` glob to sweep in:
 
 - **Image:** the discovered backend image (§A.1). **`imagePullSecrets: [{ name: regcred }]`** — the
   backend image lives in the private DO registry; both the CronJob (`account-deletion-cleanup.yaml:48`)
@@ -290,7 +292,8 @@ DOKS; out of scope here, see `fountainrank-doks-cluster-undersized-nodes` histor
   host) on the composite action + all three workflows. **Deploy-guard test:** assert
   `loader-job` appears in **no** apply list in `.github/workflows/deploy.yml` (today those are explicit
   `for f in …` lists at `deploy.yml:253` and `:286` plus the `write-attempt-cleanup` line — a future
-  `infra/k8s/*.yaml` glob must not sweep the on-demand Job in). **Run the pinned `actionlint`
+  `infra/k8s/*.yaml` glob must not sweep the on-demand Job in — and there is no static loader manifest
+  under `infra/k8s/` to sweep, which is the structural guarantee). **Run the pinned `actionlint`
   (`.pre-commit-config.yaml` `rhysd/actionlint@v1.7.12`) against a workflow that uses `queue: max`;
   `queue` is a newer concurrency key — if the pinned version rejects it, bump the pin deliberately in
   the same PR rather than letting local/CI review fail later.**
