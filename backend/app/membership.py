@@ -373,24 +373,36 @@ _REGION_PARENT_SQL = text(
     """
 )
 
+# Parent each city to the smallest-area canonical region covering its representative point (spec
+# §5 step 6). ``ST_PointOnSurface`` on a full city MULTIPOLYGON is expensive, so it is materialized
+# ONCE per city in ``city_pt`` (``AS MATERIALIZED`` blocks CTE inlining that would otherwise push
+# the call back inside the region LATERAL and recompute it per candidate cell — observed to turn a
+# US+DE refresh into a >35-min single statement). With the point precomputed, ``ST_Covers(cell.geom,
+# cp.pt)`` is a clean constant-vs-column GiST probe against the cell index.
 _CITY_PARENT_SQL = text(
     """
+    WITH city_pt AS MATERIALIZED (
+        SELECT c.id, c.country_code,
+               ST_PointOnSurface(c.boundary::geometry) AS pt
+        FROM place_boundaries c
+        WHERE c.place_kind = 'city'
+    )
     UPDATE place_boundaries city
     SET parent_id = p.parent_id
     FROM (
-        SELECT c.id AS city_id,
+        SELECT cp.id AS city_id,
                CASE
                    WHEN COALESCE(cardinality(cfg.eligible_region_subtypes), 1) = 0
                        THEN country.id
                    ELSE region.id
                END AS parent_id
-        FROM place_boundaries c
-        LEFT JOIN place_scope_config cfg ON cfg.country_code = c.country_code
+        FROM city_pt cp
+        LEFT JOIN place_scope_config cfg ON cfg.country_code = cp.country_code
         LEFT JOIN LATERAL (
             SELECT pb.id
             FROM place_boundaries pb
             WHERE pb.place_kind = 'country'
-              AND pb.country_code = c.country_code
+              AND pb.country_code = cp.country_code
             ORDER BY pb.overture_id ASC
             LIMIT 1
         ) country ON TRUE
@@ -400,12 +412,11 @@ _CITY_PARENT_SQL = text(
             JOIN place_boundaries pb ON pb.id = cell.place_id
             WHERE pb.place_kind = 'region'
               AND pb.is_canonical = true
-              AND pb.country_code = c.country_code
-              AND ST_Covers(cell.geom, ST_PointOnSurface(c.boundary::geometry))
+              AND pb.country_code = cp.country_code
+              AND ST_Covers(cell.geom, cp.pt)
             ORDER BY ST_Area(pb.boundary) ASC, pb.overture_id ASC
             LIMIT 1
         ) region ON TRUE
-        WHERE c.place_kind = 'city'
     ) p
     WHERE city.id = p.city_id
       AND city.parent_id IS DISTINCT FROM p.parent_id
