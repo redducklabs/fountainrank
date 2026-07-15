@@ -20,9 +20,10 @@ inputs:
     required: true
     description: "Upper bound the entrypoint waits for streamed inputs."
   # The loader pod's real footprint is modest — the heavy PostGIS work runs in the MANAGED
-  # Postgres, not the pod, and the loader streams the input in batches. Sized to fit the
+  # Postgres, not the pod. The boundary loader streams its input in batches; the OSM importer
+  # json-loads its PBF/bbox-filtered (much-smaller-than-the-extract) payload. Sized to fit the
   # s-2vcpu-4gb node, which has only ~700Mi of memory-request headroom alongside the serving
-  # stack (a 768Mi request was Unschedulable). Override per call for a large PBF import.
+  # stack (a 768Mi request was Unschedulable). Override mem_limit per call for a large import.
   mem_request:
     required: false
     default: "256Mi"

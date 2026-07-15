@@ -192,9 +192,10 @@ a future `infra/k8s/*.yaml` glob to sweep in:
   overridable per call. Scheduling keys on *requests*, and the single `s-2vcpu-4gb` node has only
   ~700Mi of memory-request headroom alongside the serving stack (backend/web/logto/basemap/ingress),
   so a `768Mi` request is **Unschedulable** — `256Mi` fits. The loader's real footprint is modest: the
-  heavy PostGIS membership work runs in the **managed** Postgres (a separate host), not the pod, and
-  the loader streams the input in batches (`_BATCH_SIZE = 1000`, `boundary_cli.py:42`). A large PBF
-  import can raise the per-call limit. See *Resources & node pressure*.
+  heavy PostGIS membership work runs in the **managed** Postgres (a separate host), not the pod. The
+  boundary loader streams its input in batches (`_BATCH_SIZE = 1000`, `boundary_cli.py:42`); the OSM
+  importer (`app.imports.cli`) `json.load`s its PBF/bbox-**filtered** payload (much smaller than the
+  raw extract). A large import can raise the per-call `mem_limit`. See *Resources & node pressure*.
 
 ### C. Workflow changes
 

@@ -49,7 +49,7 @@ BASE = dict(
     image="registry.example/fountainrank-backend:abc123",
     namespace="fountainrank",
     files=[{"local": "/tmp/x.geojsonl", "container": "/work/boundary.geojsonl"}],
-    mem_request="768Mi", mem_limit="3Gi", cpu_request="100m", cpu_limit="1",
+    mem_request="256Mi", mem_limit="1Gi", cpu_request="100m", cpu_limit="1",
     active_deadline_seconds=5400, ready_timeout_seconds=600,
 )
 
@@ -91,8 +91,8 @@ def test_security_and_backstop_fields():
     c = _container(m)
     assert c["securityContext"]["readOnlyRootFilesystem"] is True
     assert c["securityContext"]["capabilities"]["drop"] == ["ALL"]
-    assert c["resources"]["requests"]["memory"] == "768Mi"
-    assert c["resources"]["limits"]["memory"] == "3Gi"
+    assert c["resources"]["requests"]["memory"] == "256Mi"
+    assert c["resources"]["limits"]["memory"] == "1Gi"
     envs = {e["name"]: e for e in c["env"]}
     assert envs["DATABASE_URL"]["valueFrom"]["secretKeyRef"]["key"] == "database-url"
     assert envs["DB_SSL_ROOT_CERT"]["value"].endswith("/database-ca.crt")
@@ -273,8 +273,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--namespace", required=True)
     p.add_argument("--argv-json", required=True)
     p.add_argument("--files-json", required=True)
-    p.add_argument("--mem-request", default="768Mi")
-    p.add_argument("--mem-limit", default="3Gi")
+    p.add_argument("--mem-request", default="256Mi")
+    p.add_argument("--mem-limit", default="1Gi")
     p.add_argument("--cpu-request", default="100m")
     p.add_argument("--cpu-limit", default="1")
     p.add_argument("--active-deadline-seconds", type=int, required=True)
@@ -419,7 +419,7 @@ git commit -m "feat(locks): log ADD_FOUNTAIN_LOCK wait/acquire on the loader pat
 
 **Interfaces:**
 - Consumes: `loader_job_render.py` (Task 1) via `python3 backend/app/imports/loader_job_render.py`.
-- Produces: a composite action with inputs `job_name`, `argv_json`, `files_json`, `active_deadline_seconds`, `ready_timeout_seconds`, `mem_request` (default `768Mi`), `mem_limit` (default `3Gi`), `namespace` (default `fountainrank`). Guaranteed teardown on cancellation is the caller's `if: always()` step (composite actions have no `post:`); this action also deletes the Job on its own in-step failures.
+- Produces: a composite action with inputs `job_name`, `argv_json`, `files_json`, `active_deadline_seconds`, `ready_timeout_seconds`, `mem_request` (default `256Mi`), `mem_limit` (default `1Gi`), `namespace` (default `fountainrank`). Guaranteed teardown on cancellation is the caller's `if: always()` step (composite actions have no `post:`); this action also deletes the Job on its own in-step failures.
 
 - [ ] **Step 1: Write the action**
 
@@ -436,8 +436,8 @@ inputs:
   files_json: { required: true, description: "JSON array of {local, container}; container must match ^/work/[A-Za-z0-9._-]+$." }
   active_deadline_seconds: { required: true, description: "Hard Job ceiling (abandoned-Job backstop)." }
   ready_timeout_seconds: { required: true, description: "Upper bound the entrypoint waits for streamed inputs." }
-  mem_request: { required: false, default: "768Mi" }
-  mem_limit: { required: false, default: "3Gi" }
+  mem_request: { required: false, default: "256Mi" }
+  mem_limit: { required: false, default: "1Gi" }
   namespace: { required: false, default: "fountainrank" }
 runs:
   using: composite
