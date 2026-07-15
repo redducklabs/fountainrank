@@ -31,7 +31,8 @@ depends_on = None
 # Every ISO country with an active scope in .github/boundary-source-regions.yml (62).
 _COUNTRIES = (
     "ad al at au ba be bg bn by bz ch cl cy cz de dk ee es fi fo fr gb ge gg gr hr hu ie im is "
-    "it je ke kr li lt lu lv mc md me mk mt mu my nc nl no pl pt ro rs se sg si sk tr ua us uy xk za"
+    "it je ke kr li lt lu lv mc md me mk mt mu my nc nl no pl pt ro rs se sg si sk tr ua us uy "
+    "xk za"
 ).split()
 
 
