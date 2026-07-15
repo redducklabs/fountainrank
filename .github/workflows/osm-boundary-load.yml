@@ -26,10 +26,12 @@ on:
         default: true
 
 concurrency:
-  # Serialize boundary loads with each other — two concurrent upserts to place_boundaries could
-  # deadlock. Disjoint from the fountain imports (different tables), so its own group.
-  group: boundary-load-production
+  # ALL operator workflows that take ADD_FOUNTAIN_LOCK during their membership refresh share this
+  # group so they never contend on the lock; queue: max lets a bulk fan-out enqueue every country
+  # FIFO instead of the default single-pending behavior that cancels older pending runs.
+  group: db-membership-write-production
   cancel-in-progress: false
+  queue: max
 
 permissions:
   contents: read
@@ -154,31 +156,39 @@ jobs:
       - name: Save kubeconfig
         run: doctl kubernetes cluster kubeconfig save "$CLUSTER_NAME"
 
-      - name: Run boundary loader in backend pod
+      - name: Build loader inputs
+        id: loader
         env:
           SCOPE_ID: ${{ github.event.inputs.scope_id }}
           RELEASE_ID: ${{ github.event.inputs.overture_release_id }}
           DRY_RUN: ${{ github.event.inputs.dry_run }}
         run: |
           set -euo pipefail
-          POD="$(kubectl -n "$NAMESPACE" get pod -l app=fountainrank-backend \
-            --field-selector=status.phase=Running \
-            -o jsonpath='{.items[0].metadata.name}')"
-          if [ -z "$POD" ]; then echo "::error::no Running backend pod found"; exit 1; fi
-          echo "backend pod: $POD"
-          POD_FILE=/tmp/boundary-load.geojsonl
-          # Always remove the streamed file from the pod's ephemeral disk, even if the loader fails
-          # (a country-scale GeoJSONSeq is 100s of MB — don't leak it into the running pod).
-          trap 'kubectl -n "$NAMESPACE" exec "$POD" -- rm -f "$POD_FILE" 2>/dev/null || true' EXIT
-          # Stream the fetched GeoJSONSeq into the pod, then run the already-deployed loader there.
-          kubectl -n "$NAMESPACE" exec -i "$POD" -- sh -c "cat > $POD_FILE" < "$OUT"
-          if ! kubectl -n "$NAMESPACE" exec "$POD" -- test -s "$POD_FILE"; then
-            echo "::error::boundary GeoJSONSeq missing/empty in pod"; exit 1
-          fi
-          DRY=""
-          if [ "$DRY_RUN" = "true" ]; then DRY="--dry-run"; fi
-          echo "::group::boundary loader (dry_run=$DRY_RUN, scope=$SCOPE_ID, release=$RELEASE_ID)"
-          kubectl -n "$NAMESPACE" exec "$POD" -- \
-            python -m app.imports.boundary_cli --path "$POD_FILE" \
-            --overture-release-id "$RELEASE_ID" --scope-id "$SCOPE_ID" $DRY
-          echo "::endgroup::"
+          # OUT is already exported from an earlier GITHUB_ENV step. json.dumps emits single-line
+          # JSON (safe for $GITHUB_OUTPUT) and encodes every value as one argv element.
+          python3 - >> "$GITHUB_OUTPUT" <<'PY'
+          import json
+          import os
+
+          argv = ["python", "-m", "app.imports.boundary_cli", "--path", "/work/boundary.geojsonl",
+                  "--overture-release-id", os.environ["RELEASE_ID"], "--scope-id", os.environ["SCOPE_ID"]]
+          if os.environ["DRY_RUN"] == "true":
+              argv.append("--dry-run")
+          files = [{"local": os.environ["OUT"], "container": "/work/boundary.geojsonl"}]
+          print("argv_json=" + json.dumps(argv))
+          print("files_json=" + json.dumps(files))
+          PY
+
+      - name: Run boundary loader (isolated Job)
+        uses: ./.github/actions/run-loader-job
+        with:
+          job_name: boundary-load
+          namespace: ${{ env.NAMESPACE }}
+          active_deadline_seconds: "5400"
+          ready_timeout_seconds: "600"
+          argv_json: ${{ steps.loader.outputs.argv_json }}
+          files_json: ${{ steps.loader.outputs.files_json }}
+
+      - name: Delete loader Job (guaranteed teardown)
+        if: always()
+        run: kubectl -n "$NAMESPACE" delete job boundary-load --ignore-not-found --wait --timeout=60s
