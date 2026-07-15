@@ -113,6 +113,23 @@ _REBUILD_CELLS_SQL = text(
 # the cell GiST index.
 _ANALYZE_CELLS_SQL = text("ANALYZE place_boundary_cells")
 _COUNT_CELLS_SQL = text("SELECT count(*) FROM place_boundary_cells")
+_DELETE_COUNTRY_CELLS_SQL = text(
+    """
+    DELETE FROM place_boundary_cells cell
+    USING place_boundaries pb
+    WHERE pb.id = cell.place_id
+      AND pb.country_code = :cc
+    """
+)
+_REBUILD_COUNTRY_CELLS_SQL = text(
+    """
+    INSERT INTO place_boundary_cells (id, place_id, geom)
+    SELECT gen_random_uuid(), pb.id, sub.geom
+    FROM place_boundaries pb
+    CROSS JOIN LATERAL ST_Subdivide(pb.boundary::geometry, 128) AS sub(geom)
+    WHERE pb.country_code = :cc
+    """
+)
 
 # Derive URL tier from subtype + per-country scope configuration.
 _PLACE_KIND_SQL = text(
@@ -131,6 +148,35 @@ _PLACE_KIND_SQL = text(
     FROM place_boundaries src
     LEFT JOIN place_scope_config cfg ON cfg.country_code = src.country_code
     WHERE pb.id = src.id
+      AND pb.place_kind IS DISTINCT FROM CASE
+        WHEN src.subtype = 'country' THEN 'country'
+        WHEN src.subtype = ANY(
+            COALESCE(cfg.eligible_region_subtypes, {_DEFAULT_REGION_ELIGIBLE_SQL})
+        )
+            THEN 'region'
+        WHEN src.subtype = ANY(COALESCE(cfg.eligible_city_subtypes, {_DEFAULT_ELIGIBLE_SQL}))
+            THEN 'city'
+        ELSE NULL
+    END
+    """
+)
+_PLACE_KIND_COUNTRY_SQL = text(
+    f"""
+    UPDATE place_boundaries pb
+    SET place_kind = CASE
+        WHEN pb.subtype = 'country' THEN 'country'
+        WHEN pb.subtype = ANY(
+            COALESCE(cfg.eligible_region_subtypes, {_DEFAULT_REGION_ELIGIBLE_SQL})
+        )
+            THEN 'region'
+        WHEN pb.subtype = ANY(COALESCE(cfg.eligible_city_subtypes, {_DEFAULT_ELIGIBLE_SQL}))
+            THEN 'city'
+        ELSE NULL
+    END
+    FROM place_boundaries src
+    LEFT JOIN place_scope_config cfg ON cfg.country_code = src.country_code
+    WHERE pb.id = src.id
+      AND src.country_code = :cc
       AND pb.place_kind IS DISTINCT FROM CASE
         WHEN src.subtype = 'country' THEN 'country'
         WHEN src.subtype = ANY(
@@ -219,6 +265,58 @@ _ASSIGN_SQL = text(
            OR f.city_place_id IS DISTINCT FROM m.city_place_id)
     """
 )
+_ASSIGN_CANDIDATE_SQL = text(
+    f"""
+    UPDATE fountains f
+    SET country_place_id = m.country_place_id,
+        region_place_id = m.region_place_id,
+        city_place_id = m.city_place_id
+    FROM (
+        SELECT
+            f2.id AS fountain_id,
+            cc.country_place_id,
+            region.region_place_id,
+            city.city_place_id
+        FROM fountains f2
+        JOIN membership_candidate_fountains cf ON cf.id = f2.id
+        LEFT JOIN LATERAL (
+            SELECT pb.id AS country_place_id, pb.country_code
+            FROM place_boundary_cells c
+            JOIN place_boundaries pb ON pb.id = c.place_id
+            WHERE pb.place_kind = 'country'
+              AND ST_Covers(c.geom, f2.location::geometry)
+            ORDER BY pb.overture_id ASC
+            LIMIT 1
+        ) cc ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT pb.id AS region_place_id
+            FROM place_boundary_cells c
+            JOIN place_boundaries pb ON pb.id = c.place_id
+            WHERE pb.country_code = cc.country_code
+              AND pb.place_kind = 'region'
+              AND ST_Covers(c.geom, f2.location::geometry)
+            ORDER BY ST_Area(pb.boundary) ASC, pb.overture_id ASC
+            LIMIT 1
+        ) region ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT pb.id AS city_place_id
+            FROM place_boundary_cells c
+            JOIN place_boundaries pb ON pb.id = c.place_id
+            WHERE pb.country_code = cc.country_code
+              AND pb.place_kind = 'city'
+              AND ST_Covers(c.geom, f2.location::geometry)
+            ORDER BY ({_priority_case("pb.subtype")}) DESC,
+                     ST_Area(pb.boundary) ASC,
+                     pb.overture_id ASC
+            LIMIT 1
+        ) city ON TRUE
+    ) m
+    WHERE f.id = m.fountain_id
+      AND (f.country_place_id IS DISTINCT FROM m.country_place_id
+           OR f.region_place_id IS DISTINCT FROM m.region_place_id
+           OR f.city_place_id IS DISTINCT FROM m.city_place_id)
+    """
+)
 
 # Recompute fountain_count for a specific set of places (the single-fountain path). Only non-hidden
 # fountains count (the public number + the >= K gate). A place appears in exactly one of the two FK
@@ -265,6 +363,9 @@ _RECOUNT_ALL_SQL = text(
 )
 
 _CANONICAL_RESET_SQL = text("UPDATE place_boundaries SET is_canonical = false WHERE is_canonical")
+_CANONICAL_RESET_COUNTRY_SQL = text(
+    "UPDATE place_boundaries SET is_canonical = false WHERE country_code = :cc AND is_canonical"
+)
 _CANONICAL_REGIONS_SQL = text(
     """
     WITH ranked AS (
@@ -274,6 +375,21 @@ _CANONICAL_REGIONS_SQL = text(
         ) AS rn
         FROM place_boundaries
         WHERE place_kind = 'region'
+    )
+    UPDATE place_boundaries SET is_canonical = true
+    WHERE id IN (SELECT id FROM ranked WHERE rn = 1)
+    """
+)
+_CANONICAL_REGIONS_COUNTRY_SQL = text(
+    """
+    WITH ranked AS (
+        SELECT id, ROW_NUMBER() OVER (
+            PARTITION BY country_code, slug
+            ORDER BY ST_Area(boundary) DESC, overture_id ASC
+        ) AS rn
+        FROM place_boundaries
+        WHERE place_kind = 'region'
+          AND country_code = :cc
     )
     UPDATE place_boundaries SET is_canonical = true
     WHERE id IN (SELECT id FROM ranked WHERE rn = 1)
@@ -351,6 +467,15 @@ _RECANON_SET_SQL = text(
 _PARENT_RESET_SQL = text(
     "UPDATE place_boundaries SET parent_id = NULL WHERE place_kind IS DISTINCT FROM 'region'"
 )
+_PARENT_RESET_COUNTRY_SQL = text(
+    """
+    UPDATE place_boundaries
+    SET parent_id = NULL
+    WHERE country_code = :cc
+      AND place_kind IS DISTINCT FROM 'region'
+      AND parent_id IS NOT NULL
+    """
+)
 _REGION_PARENT_SQL = text(
     """
     UPDATE place_boundaries child
@@ -372,6 +497,28 @@ _REGION_PARENT_SQL = text(
       AND child.parent_id IS DISTINCT FROM p.country_id
     """
 )
+_REGION_PARENT_COUNTRY_SQL = text(
+    """
+    UPDATE place_boundaries child
+    SET parent_id = p.country_id
+    FROM (
+        SELECT c.id AS child_id, ctry.id AS country_id
+        FROM place_boundaries c
+        LEFT JOIN LATERAL (
+            SELECT pb.id
+            FROM place_boundaries pb
+            WHERE pb.place_kind = 'country'
+              AND pb.country_code = c.country_code
+            ORDER BY pb.overture_id ASC
+            LIMIT 1
+        ) ctry ON TRUE
+        WHERE c.place_kind = 'region'
+          AND c.country_code = :cc
+    ) p
+    WHERE child.id = p.child_id
+      AND child.parent_id IS DISTINCT FROM p.country_id
+    """
+)
 
 # Parent each city to the smallest-area canonical region covering its representative point (spec
 # §5 step 6). ``ST_PointOnSurface`` on a full city MULTIPOLYGON is expensive, so it is materialized
@@ -386,6 +533,50 @@ _CITY_PARENT_SQL = text(
                ST_PointOnSurface(c.boundary::geometry) AS pt
         FROM place_boundaries c
         WHERE c.place_kind = 'city'
+    )
+    UPDATE place_boundaries city
+    SET parent_id = p.parent_id
+    FROM (
+        SELECT cp.id AS city_id,
+               CASE
+                   WHEN COALESCE(cardinality(cfg.eligible_region_subtypes), 1) = 0
+                       THEN country.id
+                   ELSE region.id
+               END AS parent_id
+        FROM city_pt cp
+        LEFT JOIN place_scope_config cfg ON cfg.country_code = cp.country_code
+        LEFT JOIN LATERAL (
+            SELECT pb.id
+            FROM place_boundaries pb
+            WHERE pb.place_kind = 'country'
+              AND pb.country_code = cp.country_code
+            ORDER BY pb.overture_id ASC
+            LIMIT 1
+        ) country ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT pb.id
+            FROM place_boundary_cells cell
+            JOIN place_boundaries pb ON pb.id = cell.place_id
+            WHERE pb.place_kind = 'region'
+              AND pb.is_canonical = true
+              AND pb.country_code = cp.country_code
+              AND ST_Covers(cell.geom, cp.pt)
+            ORDER BY ST_Area(pb.boundary) ASC, pb.overture_id ASC
+            LIMIT 1
+        ) region ON TRUE
+    ) p
+    WHERE city.id = p.city_id
+      AND city.parent_id IS DISTINCT FROM p.parent_id
+    """
+)
+_CITY_PARENT_COUNTRY_SQL = text(
+    """
+    WITH city_pt AS MATERIALIZED (
+        SELECT c.id, c.country_code,
+               ST_PointOnSurface(c.boundary::geometry) AS pt
+        FROM place_boundaries c
+        WHERE c.place_kind = 'city'
+          AND c.country_code = :cc
     )
     UPDATE place_boundaries city
     SET parent_id = p.parent_id
@@ -442,6 +633,30 @@ _REMAP_CITY_SQL = text(
          AND canonical.place_kind = 'city'
          AND canonical.is_canonical = true
         WHERE (CAST(:fountain_id AS uuid) IS NULL OR f2.id = CAST(:fountain_id AS uuid))
+    ) remap
+    WHERE f.id = remap.fountain_id
+      AND f.city_place_id IS DISTINCT FROM remap.canonical_city_id
+    """
+)
+_REMAP_CITY_CANDIDATE_SQL = text(
+    """
+    UPDATE fountains f
+    SET city_place_id = remap.canonical_city_id
+    FROM (
+        SELECT f2.id AS fountain_id,
+               CASE
+                   WHEN city.parent_id IS NULL THEN NULL
+                   ELSE canonical.id
+               END AS canonical_city_id
+        FROM fountains f2
+        JOIN membership_candidate_fountains cf ON cf.id = f2.id
+        JOIN place_boundaries city ON city.id = f2.city_place_id
+        LEFT JOIN place_boundaries canonical
+          ON canonical.country_code = city.country_code
+         AND canonical.parent_id = city.parent_id
+         AND canonical.slug = city.slug
+         AND canonical.place_kind = 'city'
+         AND canonical.is_canonical = true
     ) remap
     WHERE f.id = remap.fountain_id
       AND f.city_place_id IS DISTINCT FROM remap.canonical_city_id
@@ -557,6 +772,144 @@ _SUMMARY_SQL = text(
     """
 )
 
+_CREATE_CANDIDATE_FOUNTAINS_TEMP_SQL = text(
+    """
+    CREATE TEMP TABLE IF NOT EXISTS membership_candidate_fountains (
+        id uuid PRIMARY KEY
+    ) ON COMMIT DROP
+    """
+)
+_CREATE_AFFECTED_PLACES_TEMP_SQL = text(
+    """
+    CREATE TEMP TABLE IF NOT EXISTS membership_affected_places (
+        id uuid PRIMARY KEY
+    ) ON COMMIT DROP
+    """
+)
+_CREATE_RAW_CITY_MEMBERSHIP_TEMP_SQL = text(
+    """
+    CREATE TEMP TABLE IF NOT EXISTS membership_raw_city_membership (
+        fountain_id uuid PRIMARY KEY,
+        city_place_id uuid NULL
+    ) ON COMMIT DROP
+    """
+)
+_CREATE_FINAL_CHANGED_PLACES_TEMP_SQL = text(
+    """
+    CREATE TEMP TABLE IF NOT EXISTS membership_final_changed_places (
+        id uuid PRIMARY KEY
+    ) ON COMMIT DROP
+    """
+)
+_CLEAR_CANDIDATE_FOUNTAINS_TEMP_SQL = text("TRUNCATE membership_candidate_fountains")
+_CLEAR_AFFECTED_PLACES_TEMP_SQL = text("TRUNCATE membership_affected_places")
+_CLEAR_RAW_CITY_MEMBERSHIP_TEMP_SQL = text("TRUNCATE membership_raw_city_membership")
+_CLEAR_FINAL_CHANGED_PLACES_TEMP_SQL = text("TRUNCATE membership_final_changed_places")
+_CAPTURE_COUNTRY_CANDIDATES_SQL = text(
+    """
+    INSERT INTO membership_candidate_fountains (id)
+    SELECT DISTINCT f.id
+    FROM fountains f
+    WHERE EXISTS (
+        SELECT 1
+        FROM place_boundary_cells cell
+        JOIN place_boundaries pb ON pb.id = cell.place_id
+        WHERE pb.country_code = :cc
+          AND ST_Covers(cell.geom, f.location::geometry)
+    )
+    OR EXISTS (
+        SELECT 1
+        FROM place_boundaries pb
+        WHERE pb.country_code = :cc
+          AND pb.id IN (f.country_place_id, f.region_place_id, f.city_place_id)
+    )
+    ON CONFLICT DO NOTHING
+    """
+)
+_ADD_CANDIDATE_PLACES_TO_AFFECTED_SQL = text(
+    """
+    INSERT INTO membership_affected_places (id)
+    SELECT DISTINCT place_id
+    FROM (
+        SELECT f.country_place_id AS place_id
+        FROM fountains f
+        JOIN membership_candidate_fountains cf ON cf.id = f.id
+        WHERE f.country_place_id IS NOT NULL
+        UNION ALL
+        SELECT f.region_place_id
+        FROM fountains f
+        JOIN membership_candidate_fountains cf ON cf.id = f.id
+        WHERE f.region_place_id IS NOT NULL
+        UNION ALL
+        SELECT f.city_place_id
+        FROM fountains f
+        JOIN membership_candidate_fountains cf ON cf.id = f.id
+        WHERE f.city_place_id IS NOT NULL
+    ) places
+    ON CONFLICT DO NOTHING
+    """
+)
+_ADD_COUNTRY_PLACES_TO_AFFECTED_SQL = text(
+    """
+    INSERT INTO membership_affected_places (id)
+    SELECT id
+    FROM place_boundaries
+    WHERE country_code = :cc
+    ON CONFLICT DO NOTHING
+    """
+)
+_CAPTURE_RAW_CITY_MEMBERSHIP_SQL = text(
+    """
+    INSERT INTO membership_raw_city_membership (fountain_id, city_place_id)
+    SELECT f.id, f.city_place_id
+    FROM fountains f
+    JOIN membership_candidate_fountains cf ON cf.id = f.id
+    ON CONFLICT (fountain_id) DO UPDATE SET city_place_id = EXCLUDED.city_place_id
+    """
+)
+_CAPTURE_FINAL_CHANGED_PLACES_SQL = text(
+    """
+    INSERT INTO membership_final_changed_places (id)
+    SELECT DISTINCT place_id
+    FROM (
+        SELECT raw.city_place_id AS place_id
+        FROM membership_raw_city_membership raw
+        JOIN fountains f ON f.id = raw.fountain_id
+        WHERE raw.city_place_id IS DISTINCT FROM f.city_place_id
+          AND raw.city_place_id IS NOT NULL
+        UNION ALL
+        SELECT f.city_place_id
+        FROM membership_raw_city_membership raw
+        JOIN fountains f ON f.id = raw.fountain_id
+        WHERE raw.city_place_id IS DISTINCT FROM f.city_place_id
+          AND f.city_place_id IS NOT NULL
+    ) places
+    ON CONFLICT DO NOTHING
+    """
+)
+_ADD_FINAL_CHANGED_PLACES_TO_AFFECTED_SQL = text(
+    """
+    INSERT INTO membership_affected_places (id)
+    SELECT id
+    FROM membership_final_changed_places
+    ON CONFLICT DO NOTHING
+    """
+)
+_SELECT_AFFECTED_PLACE_IDS_SQL = text("SELECT id FROM membership_affected_places ORDER BY id")
+_SELECT_FINAL_CHANGED_PLACE_IDS_SQL = text(
+    "SELECT id FROM membership_final_changed_places ORDER BY id"
+)
+_COUNT_COUNTRY_CANDIDATES_SQL = text("SELECT count(*) FROM membership_candidate_fountains")
+_COUNT_AFFECTED_PLACES_SQL = text("SELECT count(*) FROM membership_affected_places")
+_COUNT_COUNTRY_CELLS_SQL = text(
+    """
+    SELECT count(*)
+    FROM place_boundary_cells cell
+    JOIN place_boundaries pb ON pb.id = cell.place_id
+    WHERE pb.country_code = :cc
+    """
+)
+
 
 @dataclass
 class MembershipRefreshSummary:
@@ -591,6 +944,34 @@ async def rebuild_place_boundary_cells(session: AsyncSession) -> int:
     await session.execute(_ANALYZE_CELLS_SQL)
     cells = (await session.execute(_COUNT_CELLS_SQL)).scalar_one()
     log.info("place_boundary_cells_rebuilt", extra={"cells": cells})
+    return cells
+
+
+async def _prepare_scoped_refresh_temp_tables(session: AsyncSession) -> None:
+    await session.execute(_CREATE_CANDIDATE_FOUNTAINS_TEMP_SQL)
+    await session.execute(_CREATE_AFFECTED_PLACES_TEMP_SQL)
+    await session.execute(_CREATE_RAW_CITY_MEMBERSHIP_TEMP_SQL)
+    await session.execute(_CREATE_FINAL_CHANGED_PLACES_TEMP_SQL)
+    await session.execute(_CLEAR_CANDIDATE_FOUNTAINS_TEMP_SQL)
+    await session.execute(_CLEAR_AFFECTED_PLACES_TEMP_SQL)
+    await session.execute(_CLEAR_RAW_CITY_MEMBERSHIP_TEMP_SQL)
+    await session.execute(_CLEAR_FINAL_CHANGED_PLACES_TEMP_SQL)
+
+
+async def rebuild_country_boundary_cells(session: AsyncSession, country_code: str) -> int:
+    """Replace ``place_boundary_cells`` only for one country's boundaries.
+
+    Mirrors :func:`rebuild_place_boundary_cells`, but deletes and re-subdivides only the loaded
+    country's boundaries. The caller owns the transaction and must hold ``ADD_FOUNTAIN_LOCK``.
+    """
+    cc = country_code.lower()
+    await session.execute(_DELETE_COUNTRY_CELLS_SQL, {"cc": cc})
+    await session.execute(_REBUILD_COUNTRY_CELLS_SQL, {"cc": cc})
+    await session.execute(_ANALYZE_CELLS_SQL)
+    cells = (await session.execute(_COUNT_COUNTRY_CELLS_SQL, {"cc": cc})).scalar_one()
+    log.info(
+        "place_boundary_cells_rebuilt", extra={"cells": cells, "country": cc, "scope": "country"}
+    )
     return cells
 
 
@@ -692,11 +1073,12 @@ async def recompute_fountain_membership(session: AsyncSession, fountain_id) -> N
     )
 
 
-async def _log_place_kind_summary(session: AsyncSession) -> None:
+async def _log_place_kind_summary(session: AsyncSession, extra: dict | None = None) -> None:
     row = (await session.execute(_PLACE_KIND_SUMMARY_SQL)).one()
     log.info(
         "place_kind_derived",
         extra={
+            **(extra or {}),
             "countries": row.countries,
             "regions": row.regions,
             "cities": row.cities,
@@ -705,7 +1087,7 @@ async def _log_place_kind_summary(session: AsyncSession) -> None:
     )
 
 
-async def _log_city_parent_summary(session: AsyncSession) -> None:
+async def _log_city_parent_summary(session: AsyncSession, extra: dict | None = None) -> None:
     row = (
         await session.execute(
             text(
@@ -724,15 +1106,16 @@ async def _log_city_parent_summary(session: AsyncSession) -> None:
     log.log(
         level,
         "city_parented",
-        extra={"parented": row.parented, "null_parent": row.null_parent},
+        extra={**(extra or {}), "parented": row.parented, "null_parent": row.null_parent},
     )
 
 
-async def _log_assignment_summary(session: AsyncSession) -> None:
+async def _log_assignment_summary(session: AsyncSession, extra: dict | None = None) -> None:
     row = (await session.execute(_SUMMARY_SQL)).one()
     log.info(
         "fountain_assigned",
         extra={
+            **(extra or {}),
             "fountains_total": row.fountains_total,
             "matched_country": row.matched_country,
             "matched_region": row.matched_region,
@@ -743,7 +1126,9 @@ async def _log_assignment_summary(session: AsyncSession) -> None:
     )
 
 
-async def _log_canonical_summary(session: AsyncSession, event: str) -> None:
+async def _log_canonical_summary(
+    session: AsyncSession, event: str, extra: dict | None = None
+) -> None:
     row = (
         await session.execute(
             text(
@@ -766,11 +1151,113 @@ async def _log_canonical_summary(session: AsyncSession, event: str) -> None:
         level,
         event,
         extra={
+            **(extra or {}),
             "regions": row.regions,
             "cities": row.cities,
             "duplicate_region_slugs": row.duplicate_region_slugs,
         },
     )
+
+
+async def refresh_country_memberships(
+    session: AsyncSession, country_code: str
+) -> MembershipRefreshSummary:
+    """Re-derive membership after loading one country's boundaries.
+
+    Boundary-derived state is scoped to ``country_code``. Fountain assignment remains global for a
+    stable candidate set, then the existing affected-place count/canonical/remap pipeline is reused
+    for the old/new touched places.
+    """
+    cc = country_code.lower()
+    await session.execute(select(func.pg_advisory_xact_lock(ADD_FOUNTAIN_LOCK_KEY)))
+    await _prepare_scoped_refresh_temp_tables(session)
+
+    log_extra = {"country": cc, "scope": "country"}
+    await rebuild_country_boundary_cells(session, cc)
+    await session.execute(_PLACE_KIND_COUNTRY_SQL, {"cc": cc})
+    await _log_place_kind_summary(session, log_extra)
+    await session.execute(_PARENT_RESET_COUNTRY_SQL, {"cc": cc})
+    await session.execute(_REGION_PARENT_COUNTRY_SQL, {"cc": cc})
+    log.info("region_parented", extra=log_extra)
+
+    await session.execute(_CAPTURE_COUNTRY_CANDIDATES_SQL, {"cc": cc})
+    candidate_count = (await session.execute(_COUNT_COUNTRY_CANDIDATES_SQL)).scalar_one()
+    await session.execute(_ADD_CANDIDATE_PLACES_TO_AFFECTED_SQL)
+    await session.execute(_ASSIGN_CANDIDATE_SQL)
+    await session.execute(_CAPTURE_RAW_CITY_MEMBERSHIP_SQL)
+    await session.execute(_ADD_CANDIDATE_PLACES_TO_AFFECTED_SQL)
+    await session.execute(_ADD_COUNTRY_PLACES_TO_AFFECTED_SQL, {"cc": cc})
+    await _log_assignment_summary(session, log_extra)
+
+    await session.execute(_CANONICAL_RESET_COUNTRY_SQL, {"cc": cc})
+    await session.execute(_CANONICAL_REGIONS_COUNTRY_SQL, {"cc": cc})
+    await _log_canonical_summary(session, "region_canonical_selected", log_extra)
+    await session.execute(_CITY_PARENT_COUNTRY_SQL, {"cc": cc})
+    await _log_city_parent_summary(session, log_extra)
+
+    affected_ids = [row.id for row in (await session.execute(_SELECT_AFFECTED_PLACE_IDS_SQL)).all()]
+    await recompute_place_counts(session, affected_ids)
+
+    await session.execute(_REMAP_CITY_CANDIDATE_SQL)
+    await session.execute(_CAPTURE_FINAL_CHANGED_PLACES_SQL)
+    final_changed_ids = [
+        row.id for row in (await session.execute(_SELECT_FINAL_CHANGED_PLACE_IDS_SQL)).all()
+    ]
+    if final_changed_ids:
+        await session.execute(_ADD_FINAL_CHANGED_PLACES_TO_AFFECTED_SQL)
+        affected_ids = [
+            row.id for row in (await session.execute(_SELECT_AFFECTED_PLACE_IDS_SQL)).all()
+        ]
+        await recompute_place_counts(session, affected_ids)
+    affected_count = (await session.execute(_COUNT_AFFECTED_PLACES_SQL)).scalar_one()
+    log.info(
+        "city_remapped",
+        extra={
+            "country": cc,
+            "scope": "country",
+            "candidate_fountains": candidate_count,
+            "affected_places": affected_count,
+            "final_changed_places": len(final_changed_ids),
+        },
+    )
+
+    row = (await session.execute(_SUMMARY_SQL)).one()
+    summary = MembershipRefreshSummary(
+        fountains_total=row.fountains_total,
+        matched_country=row.matched_country,
+        matched_region=row.matched_region,
+        matched_city=row.matched_city,
+        country_only=row.country_only,
+        unmatched=row.unmatched,
+        canonical_places=row.canonical_places,
+        null_parent_cities=row.null_parent_cities,
+        duplicate_region_slugs=row.duplicate_region_slugs,
+    )
+    level = (
+        logging.WARNING
+        if summary.null_parent_cities or summary.duplicate_region_slugs
+        else logging.INFO
+    )
+    log.log(
+        level,
+        "membership_refresh_complete",
+        extra={
+            "country": cc,
+            "scope": "country",
+            "candidate_fountains": candidate_count,
+            "affected_places": affected_count,
+            "fountains_total": summary.fountains_total,
+            "matched_country": summary.matched_country,
+            "matched_region": summary.matched_region,
+            "matched_city": summary.matched_city,
+            "country_only": summary.country_only,
+            "unmatched": summary.unmatched,
+            "canonical_places": summary.canonical_places,
+            "null_parent_cities": summary.null_parent_cities,
+            "duplicate_region_slugs": summary.duplicate_region_slugs,
+        },
+    )
+    return summary
 
 
 async def refresh_all_memberships(

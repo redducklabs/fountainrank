@@ -19,6 +19,8 @@ import argparse
 import asyncio
 import json
 import logging
+import os
+import re
 from typing import TextIO
 
 from app.db import get_sessionmaker
@@ -29,7 +31,7 @@ from app.imports.boundary_load import (
     log_boundary_load_complete,
 )
 from app.logging_config import configure_logging
-from app.membership import refresh_all_memberships
+from app.membership import refresh_all_memberships, refresh_country_memberships
 
 log = logging.getLogger(__name__)
 
@@ -38,6 +40,26 @@ log = logging.getLogger(__name__)
 # OOM-killed the loader pod. The idempotent overture_id upsert makes a partially-committed load
 # safe to re-run.
 _BATCH_SIZE = 1000
+_COUNTRY_RE = re.compile(r"^[A-Za-z]{2}$")
+
+
+def _country_from_scope(scope_id: str | None) -> str | None:
+    """Best-effort extraction for registry-backed Overture scopes such as ``overture:de``."""
+    if not scope_id or not scope_id.startswith("overture:"):
+        return None
+    candidate = scope_id.removeprefix("overture:")
+    if _COUNTRY_RE.fullmatch(candidate):
+        return candidate.lower()
+    return None
+
+
+def _resolved_refresh_country(scope_id: str | None, country_code: str | None) -> str | None:
+    if country_code and _COUNTRY_RE.fullmatch(country_code):
+        return country_code.lower()
+    env_country = os.getenv("COUNTRY")
+    if env_country and _COUNTRY_RE.fullmatch(env_country):
+        return env_country.lower()
+    return _country_from_scope(scope_id)
 
 
 def _read_batch(fh: TextIO, batch_size: int, skip_counts: dict[str, int]) -> list[BoundaryFeature]:
@@ -72,8 +94,10 @@ async def run_boundary_load(
     dry_run: bool,
     release_id: str | None = None,
     scope_id: str | None = None,
+    country_code: str | None = None,
     batch_size: int = _BATCH_SIZE,
     refresh_membership: bool = True,
+    refresh_all: bool = False,
 ) -> BoundaryLoadSummary:
     """Stream a GeoJSONSeq ``division_area`` file into ``place_boundaries`` in committed batches.
 
@@ -105,7 +129,11 @@ async def run_boundary_load(
             if refresh_membership and not dry_run:
                 # All boundaries are now committed — re-derive fountain membership in one set-based
                 # pass and commit it as its own transaction (its own structured summary log).
-                await refresh_all_memberships(session)
+                refresh_country = _resolved_refresh_country(scope_id, country_code)
+                if refresh_all or refresh_country is None:
+                    await refresh_all_memberships(session)
+                else:
+                    await refresh_country_memberships(session, refresh_country)
                 await session.commit()
     finally:
         await asyncio.to_thread(fh.close)
@@ -130,6 +158,12 @@ def main(argv: list[str] | None = None) -> int:
     # Opt out of the post-load membership refresh (#127 Slice 1d) — e.g. load several countries
     # then refresh once with app.imports.membership_cli. Default: refresh after every non-dry load.
     p.add_argument("--skip-membership-refresh", action="store_true")
+    p.add_argument("--country-code", default=None)
+    p.add_argument(
+        "--all",
+        action="store_true",
+        help="Run the full membership refresh instead of the scoped country refresh.",
+    )
     a = p.parse_args(argv)
     summary = asyncio.run(
         run_boundary_load(
@@ -137,7 +171,9 @@ def main(argv: list[str] | None = None) -> int:
             dry_run=a.dry_run,
             release_id=a.overture_release_id,
             scope_id=a.scope_id,
+            country_code=a.country_code,
             refresh_membership=not a.skip_membership_refresh,
+            refresh_all=a.all,
         )
     )
     # Diagnostics already went through structured logging (run_boundary_load emits the summary).
