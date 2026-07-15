@@ -106,19 +106,19 @@ The action steps:
 2. **Pre-flight cleanup.** `kubectl delete job "$job_name" --ignore-not-found --wait` (the unified
    concurrency group in §C.1 serializes all lock-taking workflows; this clears a stale Job from an
    abnormally-terminated prior run).
-3. **Render + create the Job.** Two-stage, chosen so the untrusted argv and the wrapper's shell
-   syntax are never mangled:
-   - Build the exec-form `command` **array as a JSON value with `jq`** — the `sh -c` wrapper string
-     (containing literal `$i`/`$@`) passed via `--arg` and the argv appended via `--argjson argv …`.
-     `jq` guarantees correct JSON quoting/escaping for arbitrary strings (spaces, quotes, `$`, shell
-     metacharacters), so a value like the PBF `--label` cannot break out. Emit it as
-     `${COMMAND_JSON}` (a flow-style JSON array, which is valid YAML).
-   - Substitute the remaining **scalar** placeholders with an **allow-listed** `envsubst` —
-     `envsubst '${NAMESPACE} ${JOB_NAME} ${IMAGE} ${MEM_REQUEST} ${MEM_LIMIT} ${ACTIVE_DEADLINE} ${READY_TIMEOUT} ${COMMAND_JSON}'`. Naming the vars explicitly is load-bearing: a bare `envsubst`
-     would eat the wrapper's `$i`/`$@`; restricting it to this list leaves all shell variables literal.
-   Then `kubectl create -f -`. (This intentionally departs from the repo's plain-`envsubst` manifest
-   convention for this one template because it carries operator-supplied argv; `kubeconform` still
-   validates the rendered output.)
+3. **Render + create the Job — a stdlib Python renderer, not `envsubst`.** Because this manifest
+   carries operator-supplied argv (the PBF `--label` can contain spaces/quotes/`$`/metacharacters), it
+   is rendered by a small **stdlib-only Python script**,
+   `backend/app/imports/loader_job_render.py` — matching the repo's other CI-helper scripts
+   (`boundaries_registry.py`, `regions.py`, `poly_to_wkt.py`) that the workflows already invoke with
+   system `python3`. It takes the discovered image, `job_name`, `argv_json`, `files_json`, the resource
+   values, `active_deadline_seconds`, and `ready_timeout_seconds`, and emits the **complete Job manifest
+   as JSON on stdout** via `json.dumps`. `json.dumps` guarantees correct escaping of every argv element,
+   so a hostile `--label` lands as exactly one exec-form `command` array element and can never break
+   out. **No `envsubst`** on this template, so the wrapper's literal `$i`/`$@` cannot be corrupted (the
+   `envsubst`-substitution finding is structurally eliminated). The action pipes it straight to
+   `kubectl create -f -`; `kubeconform` validates the same rendered JSON. The renderer is pure
+   (inputs → JSON string), so it is unit-tested by `pytest` in the existing CI `backend` job.
 4. **Wait for the Job's pod to be Running, failing fast on un-runnable states.** Select the pod by the
    stable Job label —
    `kubectl -n "$NAMESPACE" get pod -l batch.kubernetes.io/job-name="$job_name"` — assert **exactly
@@ -176,16 +176,16 @@ A `batch/v1` **Job** (not CronJob) copying the security/DB wiring of
   after the grace period. Python's default SIGTERM handling terminates the process, closing the asyncpg
   connection, so Postgres rolls back the open transaction and releases `ADD_FOUNTAIN_LOCK` promptly;
   30 s is the hard backstop if it doesn't exit cleanly.
-- **Entrypoint** — the manifest `command` is an exec-form array (built by `jq`, §A.3): a tiny `sh`
-  wait-for-ready wrapper as the first elements, then the `argv_json` elements appended verbatim (no
-  image change, no shell interpolation of untrusted data). Shape:
-  `["sh","-c","i=0; while [ ! -f /work/.ready ]; do i=$((i+1)); [ \"$i\" -gt ${READY_TIMEOUT} ] && { echo '::error::input files never arrived'; exit 1; }; sleep 1; done; exec \"$@\"","loader", <argv…>]`
-  (`$0`=`loader`, `$@`=argv). `$i`/`$@` are literal because the allow-listed `envsubst` (§A.3) does not
-  substitute them; only `${READY_TIMEOUT}` is. **`ready_timeout_seconds` is a per-call input, sized for
-  worst-case upload** (default boundary `600`, PBF `1800` — the PBF `import.geojson` can be large and
-  streams over `kubectl exec -i`, so a fixed 5-min wait could kill a legitimate slow upload). It bounds
-  a runner that dies mid-stream; `activeDeadlineSeconds` is the outer backstop, and during this wait the
-  loader has **not** run, so **no** `ADD_FOUNTAIN_LOCK` is held.
+- **Entrypoint** — the manifest `command` is an exec-form array emitted by the Python renderer (§A.3):
+  a tiny `sh` wait-for-ready wrapper as the first elements, then the `argv_json` elements appended
+  verbatim (no image change, no shell interpolation of untrusted data). Shape:
+  `["sh","-c","i=0; while [ ! -f /work/.ready ]; do i=$((i+1)); [ \"$i\" -gt <ready_timeout> ] && { echo '::error::input files never arrived'; exit 1; }; sleep 1; done; exec \"$@\"","loader", <argv…>]`
+  (`$0`=`loader`, `$@`=argv). `$i`/`$@` are literal JSON string content — the renderer performs no shell
+  substitution — and the numeric `<ready_timeout>` is interpolated by the renderer. **`ready_timeout_seconds`
+  is a per-call input, sized for worst-case upload** (default boundary `600`, PBF `1800` — the PBF
+  `import.geojson` can be large and streams over `kubectl exec -i`, so a fixed 5-min wait could kill a
+  legitimate slow upload). It bounds a runner that dies mid-stream; `activeDeadlineSeconds` is the outer
+  backstop, and during this wait the loader has **not** run, so **no** `ADD_FOUNTAIN_LOCK` is held.
 - **Resources:** default request `768Mi` / limit `3Gi`, cpu request `100m` / limit `1`, both
   overridable per call. Scheduling keys on *requests* (serving pod requests only `512Mi` on the
   `s-2vcpu-4gb` node), so `768Mi` places; the streaming loader (`_BATCH_SIZE = 1000`,
@@ -285,19 +285,20 @@ DOKS; out of scope here, see `fountainrank-doks-cluster-undersized-nodes` histor
 
 ## Testing
 
-- **Static (local/PR, cluster-independent):** render the manifest (jq command build + allow-listed
-  `envsubst`, §A.3) and `kubeconform` it (per `claude_help/kubernetes-infra.md`); `actionlint` (via WSL
-  on this host) on the composite action + all three workflows. **Deploy-guard test:** assert
+- **Static (local/PR, cluster-independent):** run `loader_job_render.py` on a sample input and
+  `kubeconform` the emitted JSON (per `claude_help/kubernetes-infra.md`); `actionlint` (via WSL on this
+  host) on the composite action + all three workflows. **Deploy-guard test:** assert
   `loader-job` appears in **no** apply list in `.github/workflows/deploy.yml` (today those are explicit
   `for f in …` lists at `deploy.yml:253` and `:286` plus the `write-attempt-cleanup` line — a future
   `infra/k8s/*.yaml` glob must not sweep the on-demand Job in). **Run the pinned `actionlint`
   (`.pre-commit-config.yaml` `rhysd/actionlint@v1.7.12`) against a workflow that uses `queue: max`;
   `queue` is a newer concurrency key — if the pinned version rejects it, bump the pin deliberately in
   the same PR rather than letting local/CI review fail later.**
-- **Render-safety (argv injection):** unit-test the jq command build with adversarial values — a
-  `--label` containing spaces, single/double quotes, `$(…)`, backticks, `;`, and `${NAMESPACE}`-shaped
-  text — asserting each lands as exactly one argv element in the rendered JSON and that the wrapper's
-  `$i`/`$@` survive the allow-listed `envsubst` verbatim. Also assert `files_json` container paths
+- **Render-safety (argv injection) — `pytest` in the existing CI `backend` job:** unit-test
+  `loader_job_render.py` with adversarial values — a `--label` containing spaces, single/double quotes,
+  `$(…)`, backticks, `;`, newlines, and `${NAMESPACE}`-shaped text — parsing the emitted JSON and
+  asserting each lands as exactly one `command` array element, that the wrapper's `$i`/`$@` are present
+  literally, and that the rendered manifest is valid JSON. Also assert `files_json` container paths
   outside `^/work/[A-Za-z0-9._-]+$` are rejected.
 - **Cross-workflow serialization:** assert all three lock-taking workflows carry the **same**
   concurrency `group` **and** `cancel-in-progress: false` **and** `queue: max` (§C.1) — the group alone
