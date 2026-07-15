@@ -168,8 +168,11 @@ a future `infra/k8s/*.yaml` glob to sweep in:
   re-entering the wait loop.
 - **`activeDeadlineSeconds`** — per-workflow, operator-overridable, and set **generously above the
   largest legitimate load** so it only ever fires on a truly-abandoned Job (not as a load SLA):
-  boundary default **`5400`** (90 min; observed worst case is a ~15-min scoped refresh with wide
-  margin), PBF default **`21600`** (6 h; the PBF path allows up to a 6 GB pre-filter extract,
+  boundary default **`18000`** (5 h — a fractal-coastline country like Chile produces ~72k boundary
+  cells and its city-parenting membership step is genuinely slow; a 90-min deadline killed it
+  mid-refresh. Loads are serialized by `queue: max`, so a generous backstop is safe; a faster
+  `_CITY_PARENT_SQL` is a tracked follow-up), PBF default **`21600`** (6 h; the PBF path allows up to a
+  6 GB pre-filter extract,
   `osm-import-pbf.yml:44`, and a full `refresh_all_memberships`, `merge.py:152/521`). The terminal-wait
   loop reports a deadline kill as `::error::job exceeded activeDeadlineSeconds (Nn) — raise the input
   or investigate`, **distinct** from a loader crash.
@@ -206,7 +209,7 @@ final "Run … in backend pod" step is replaced by a call to `run-loader-job`, p
 - **`osm-boundary-load.yml`** → `job_name: boundary-load`, `files_json:
   [{local:$OUT, container:/work/boundary.geojsonl}]`, `argv_json: ["python","-m",
   "app.imports.boundary_cli","--path","/work/boundary.geojsonl","--overture-release-id",<rel>,
-  "--scope-id",<scope>, …dry]`, `active_deadline_seconds: 5400`.
+  "--scope-id",<scope>, …dry]`, `active_deadline_seconds: 18000`.
 - **`osm-import-pbf.yml`** → `job_name: osm-pbf-import`, two files
   (`import.geojson→/work/osm-import.geojson`, `scope.wkt→/work/osm-scope.wkt`), the equivalent
   `python -m app.imports.cli …` argv (including `--label` as one JSON element),
