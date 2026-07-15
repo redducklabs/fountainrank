@@ -6,8 +6,9 @@ name: OSM Import (PBF)
 # runbook: docs/runbooks/osm-fountain-import.md). Downloads a Geofabrik regional extract, coarse-
 # filters it with osmium, exports GeoJSON, normalizes the osmium `-u type_id` ids, derives a
 # MANDATORY PostGIS-validated scope_bounds polygon from the extract `.poly`, then streams both into
-# the running backend pod and runs the already-deployed importer CLI there (same pod-exec pattern as
-# osm-import.yml). dry_run defaults TRUE. Use this for state/country scales; the Overpass
+# an isolated one-shot Kubernetes Job (via `.github/actions/run-loader-job`) and runs the
+# already-deployed importer CLI there (same isolated-Job pattern as osm-import.yml, so a cancelled run
+# can't orphan the loader). dry_run defaults TRUE. Use this for state/country scales; the Overpass
 # osm-import.yml stays for new metros not yet covered by a PBF scope.
 
 on:

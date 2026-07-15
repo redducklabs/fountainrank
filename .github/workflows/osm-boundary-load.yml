@@ -6,8 +6,9 @@ name: Boundary Load (Overture division_area)
 # data-load path for boundaries — the single write rule (spec §11.3): validate the dispatched scope
 # against the boundary-source registry BEFORE any remote read, fetch the pinned release from
 # anonymous public S3 with DuckDB (country + class='land' predicate pushdown — MB-scale, no PBF/
-# planet download), then stream the GeoJSON into the running backend pod and run the already-deployed
-# `app.imports.boundary_cli` there (same pod-exec pattern as osm-import-pbf.yml). The loader
+# planet download), then stream the GeoJSON into an isolated one-shot Kubernetes Job (via
+# `.github/actions/run-loader-job`) and run the already-deployed `app.imports.boundary_cli` there
+# (same isolated-Job pattern as osm-import-pbf.yml, so a cancelled run can't orphan the loader). The loader
 # PostGIS-validates every geometry (ST_MakeValid -> ST_Multi -> reject non-MultiPolygon) inside its
 # write transaction. dry_run defaults TRUE.
 

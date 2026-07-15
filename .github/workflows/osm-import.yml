@@ -2,9 +2,10 @@ name: OSM Import
 
 # Operator-triggered OSM drinking-water import (spec: docs/specs/2026-06-21-osm-fountain-ingestion-design.md,
 # runbook: docs/runbooks/osm-fountain-import.md). Fetches an Overpass extract for a bbox, converts
-# it to the importer's GeoJSON shape, streams it into the running backend pod, and runs the
-# already-deployed importer CLI there (the pod holds the prod DATABASE_URL — same pattern as the
-# deploy's migration step). dry_run defaults TRUE: nothing is written to `fountains` unless an
+# it to the importer's GeoJSON shape, streams it into an isolated one-shot Kubernetes Job (via
+# `.github/actions/run-loader-job`), and runs the already-deployed importer CLI there (the Job holds
+# the prod DATABASE_URL; a cancelled run can't orphan the loader). dry_run defaults TRUE: nothing is
+# written to `fountains` unless an
 # operator explicitly unticks it. Bounded bbox + Overpass is fine for cities/regions; switch to a
 # Geofabrik/PBF source for production-scale (US/world) extents.
 

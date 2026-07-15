@@ -101,13 +101,27 @@ runs:
         done
         [ -n "$POD" ] || { echo "::error::loader pod was never created"; exit 1; }
         echo "loader pod: $POD"
-        if ! kubectl -n "$NS" wait --for=jsonpath='{.status.phase}'=Running \
-             "pod/$POD" --timeout=180s; then
-          echo "::error::loader pod $POD did not reach Running (image pull / unschedulable / crashloop?)"
-          kubectl -n "$NS" get "pod/$POD" \
-            -o jsonpath='{range .status.containerStatuses[*]}{.state}{"\n"}{end}' || true
-          exit 1
-        fi
+
+        # Poll for Running, failing FAST on un-runnable states (image pull / unschedulable /
+        # config error) instead of blocking the whole timeout.
+        deadline=$((SECONDS + 180))
+        while true; do
+          phase="$(kubectl -n "$NS" get "pod/$POD" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+          [ "$phase" = "Running" ] && break
+          reason="$(kubectl -n "$NS" get "pod/$POD" -o jsonpath='{.status.containerStatuses[0].state.waiting.reason}' 2>/dev/null || true)"
+          case "$reason" in
+            ImagePullBackOff|ErrImagePull|InvalidImageName|CreateContainerConfigError|CreateContainerError)
+              echo "::error::loader pod $POD cannot start (container waiting: $reason)"; exit 1 ;;
+          esac
+          sched="$(kubectl -n "$NS" get "pod/$POD" -o jsonpath='{.status.conditions[?(@.type=="PodScheduled")].reason}' 2>/dev/null || true)"
+          [ "$sched" = "Unschedulable" ] && { echo "::error::loader pod $POD is Unschedulable (node capacity?)"; exit 1; }
+          if [ "$phase" = "Failed" ] || [ "$phase" = "Succeeded" ]; then
+            echo "::error::loader pod $POD reached terminal phase '$phase' before streaming inputs"; exit 1
+          fi
+          [ "$SECONDS" -ge "$deadline" ] && { echo "::error::loader pod $POD did not reach Running within 180s"; exit 1; }
+          sleep 3
+        done
+        echo "loader pod $POD is Running"
 
         # 5) Stream each input file (fields extracted with python — no delimiter fragility),
         #    verifying the local file exists and the streamed copy is non-empty, then arm .ready.

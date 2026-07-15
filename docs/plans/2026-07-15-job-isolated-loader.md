@@ -562,10 +562,13 @@ runs:
         done
 ```
 
-- [ ] **Step 2: Lint the action**
+- [ ] **Step 2: Validate the action metadata**
 
-Run (WSL): `wsl.exe -e ./temp/actionlint/actionlint .github/actions/run-loader-job/action.yml`
-Expected: no errors (this file uses no `queue` key).
+`actionlint` lints **workflows**, not composite-action metadata (it would parse `action.yml` as a
+workflow and error on missing `on`/`jobs`). Validate the action file as YAML + schema shape instead;
+it is exercised for real via the calling workflows' actionlint in Tasks 4-7:
+`python -c "import yaml; d=yaml.safe_load(open('.github/actions/run-loader-job/action.yml')); assert d['runs']['using']=='composite'"`
+Expected: exits 0.
 
 - [ ] **Step 3: Commit**
 
@@ -831,8 +834,8 @@ Expected: PASS.
 
 - [ ] **Step 4: Full workflow lint**
 
-Run: `wsl.exe -e ./temp/actionlint/actionlint -ignore 'unexpected key "queue" for "concurrency" section' .github/workflows/osm-boundary-load.yml .github/workflows/osm-import-pbf.yml .github/workflows/osm-import.yml .github/actions/run-loader-job/action.yml`
-Expected: no errors.
+Run: `wsl.exe -e ./temp/actionlint/actionlint -ignore 'unexpected key "queue" for "concurrency" section' .github/workflows/osm-boundary-load.yml .github/workflows/osm-import-pbf.yml .github/workflows/osm-import.yml`
+Expected: no errors. (Do NOT pass the composite `action.yml` — actionlint lints workflows, not action metadata.)
 
 ---
 
