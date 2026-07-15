@@ -42,10 +42,11 @@ jobs:
       - name: Install workspace deps
         run: pnpm install --frozen-lockfile
       - name: pnpm audit (GATE — fail on high/critical)
-        # pnpm 11.7.0's audit command can hang indefinitely against this lockfile.
-        # Keep the same high/critical gate, but run the bounded audit via pnpm 10.
-        # Revisit in #95 once the repo-pinned pnpm version can audit reliably.
-        run: timeout 120 corepack pnpm@10.23.0 audit --audit-level high
+        # npm retired the legacy quick-audit endpoint (HTTP 410), which pnpm 10.x still calls —
+        # so the old `pnpm@10.23.0 audit` pin now fails for everyone. pnpm 11 (PR pnpm/pnpm#11268)
+        # rewired `audit` to npm's `/-/npm/v1/security/advisories/bulk` endpoint, so run the audit
+        # on the repo-pinned pnpm 11. Same high/critical gate; `timeout` keeps it bounded.
+        run: timeout 120 corepack pnpm@11.13.0 audit --audit-level high
 
   trivy-fs:
     runs-on: redducklabs-runners
