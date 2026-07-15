@@ -31,9 +31,12 @@ on:
         default: true
 
 concurrency:
-  # Share the group with osm-import.yml — both mutate the same production DB; never run concurrently.
-  group: osm-import-production
+  # ALL operator workflows that take ADD_FOUNTAIN_LOCK during their membership refresh share this
+  # group so they never contend on the lock; queue: max lets a bulk fan-out enqueue every dispatch
+  # FIFO instead of the default single-pending behavior that cancels older pending runs.
+  group: db-membership-write-production
   cancel-in-progress: false
+  queue: max
 
 permissions:
   contents: read
@@ -199,7 +202,8 @@ jobs:
       - name: Save kubeconfig
         run: doctl kubernetes cluster kubeconfig save "$CLUSTER_NAME"
 
-      - name: Run importer in backend pod
+      - name: Build loader inputs
+        id: loader
         env:
           SCOPE_ID: ${{ github.event.inputs.scope_id }}
           DATASET: ${{ github.event.inputs.dataset }}
@@ -207,25 +211,36 @@ jobs:
           DRY_RUN: ${{ github.event.inputs.dry_run }}
         run: |
           set -euo pipefail
-          POD="$(kubectl -n "$NAMESPACE" get pod -l app=fountainrank-backend \
-            --field-selector=status.phase=Running \
-            -o jsonpath='{.items[0].metadata.name}')"
-          if [ -z "$POD" ]; then echo "::error::no Running backend pod found"; exit 1; fi
-          echo "backend pod: $POD"
-          # Stream the normalized GeoJSON + the mandatory scope-bounds WKT into the pod.
-          kubectl -n "$NAMESPACE" exec -i "$POD" -- sh -c 'cat > /tmp/osm-import.geojson' \
-            < "$WORKDIR/import.geojson"
-          kubectl -n "$NAMESPACE" exec -i "$POD" -- sh -c 'cat > /tmp/osm-scope.wkt' \
-            < "$WORKDIR/scope.wkt"
-          if ! kubectl -n "$NAMESPACE" exec "$POD" -- test -s /tmp/osm-scope.wkt; then
-            echo "::error::scope bounds WKT missing/empty in pod"; exit 1
-          fi
-          DRY=""
-          if [ "$DRY_RUN" = "true" ]; then DRY="--dry-run"; fi
-          echo "::group::importer (dry_run=$DRY_RUN, build_id=$BUILD_ID)"
-          kubectl -n "$NAMESPACE" exec "$POD" -- \
-            python -m app.imports.cli --path /tmp/osm-import.geojson \
-            --scope-id "$SCOPE_ID" --dataset "$DATASET" --build-id "$BUILD_ID" \
-            --label "$LABEL" --scope-bounds-wkt-file /tmp/osm-scope.wkt --require-scope-bounds $DRY
-          echo "::endgroup::"
-          kubectl -n "$NAMESPACE" exec "$POD" -- rm -f /tmp/osm-import.geojson /tmp/osm-scope.wkt
+          # WORKDIR + BUILD_ID exported earlier via GITHUB_ENV. json.dumps makes LABEL (free text)
+          # exactly one argv element even with quotes/backslashes/newlines, and emits single-line
+          # JSON safe for $GITHUB_OUTPUT.
+          python3 - >> "$GITHUB_OUTPUT" <<'PY'
+          import json
+          import os
+
+          argv = ["python", "-m", "app.imports.cli", "--path", "/work/osm-import.geojson",
+                  "--scope-id", os.environ["SCOPE_ID"], "--dataset", os.environ["DATASET"],
+                  "--build-id", os.environ["BUILD_ID"], "--label", os.environ["LABEL"],
+                  "--scope-bounds-wkt-file", "/work/osm-scope.wkt", "--require-scope-bounds"]
+          if os.environ["DRY_RUN"] == "true":
+              argv.append("--dry-run")
+          wd = os.environ["WORKDIR"]
+          files = [{"local": wd + "/import.geojson", "container": "/work/osm-import.geojson"},
+                   {"local": wd + "/scope.wkt", "container": "/work/osm-scope.wkt"}]
+          print("argv_json=" + json.dumps(argv))
+          print("files_json=" + json.dumps(files))
+          PY
+
+      - name: Run PBF importer (isolated Job)
+        uses: ./.github/actions/run-loader-job
+        with:
+          job_name: osm-pbf-import
+          namespace: ${{ env.NAMESPACE }}
+          active_deadline_seconds: "21600"
+          ready_timeout_seconds: "1800"
+          argv_json: ${{ steps.loader.outputs.argv_json }}
+          files_json: ${{ steps.loader.outputs.files_json }}
+
+      - name: Delete loader Job (guaranteed teardown)
+        if: always()
+        run: kubectl -n "$NAMESPACE" delete job osm-pbf-import --ignore-not-found --wait --timeout=60s
