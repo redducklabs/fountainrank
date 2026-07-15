@@ -11,8 +11,8 @@ BASE = dict(
     image="registry.example/fountainrank-backend:abc123",
     namespace="fountainrank",
     files=[{"local": "/tmp/x.geojsonl", "container": "/work/boundary.geojsonl"}],
-    mem_request="768Mi",
-    mem_limit="3Gi",
+    mem_request="256Mi",
+    mem_limit="1Gi",
     cpu_request="100m",
     cpu_limit="1",
     active_deadline_seconds=5400,
@@ -62,8 +62,8 @@ def test_security_and_backstop_fields():
     c = _container(m)
     assert c["securityContext"]["readOnlyRootFilesystem"] is True
     assert c["securityContext"]["capabilities"]["drop"] == ["ALL"]
-    assert c["resources"]["requests"]["memory"] == "768Mi"
-    assert c["resources"]["limits"]["memory"] == "3Gi"
+    assert c["resources"]["requests"]["memory"] == "256Mi"
+    assert c["resources"]["limits"]["memory"] == "1Gi"
     envs = {e["name"]: e for e in c["env"]}
     assert envs["DATABASE_URL"]["valueFrom"]["secretKeyRef"]["key"] == "database-url"
     assert envs["DB_SSL_ROOT_CERT"]["value"].endswith("/database-ca.crt")

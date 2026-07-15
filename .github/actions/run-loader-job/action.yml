@@ -19,12 +19,17 @@ inputs:
   ready_timeout_seconds:
     required: true
     description: "Upper bound the entrypoint waits for streamed inputs."
+  # The loader pod's real footprint is modest — the heavy PostGIS work runs in the MANAGED
+  # Postgres, not the pod. The boundary loader streams its input in batches; the OSM importer
+  # json-loads its PBF/bbox-filtered (much-smaller-than-the-extract) payload. Sized to fit the
+  # s-2vcpu-4gb node, which has only ~700Mi of memory-request headroom alongside the serving
+  # stack (a 768Mi request was Unschedulable). Override mem_limit per call for a large import.
   mem_request:
     required: false
-    default: "768Mi"
+    default: "256Mi"
   mem_limit:
     required: false
-    default: "3Gi"
+    default: "1Gi"
   namespace:
     required: false
     default: "fountainrank"
