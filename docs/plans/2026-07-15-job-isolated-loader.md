@@ -109,6 +109,11 @@ def test_rejects_empty_argv():
         render_job(argv=[], **BASE)
 
 
+def test_rejects_empty_files():
+    with pytest.raises(ValueError):
+        render_job(argv=["python"], **{**BASE, "files": []})
+
+
 def test_cli_main_emits_valid_json():
     out = subprocess.check_output(
         [sys.executable, "-m", "app.imports.loader_job_render",
@@ -174,6 +179,8 @@ def render_job(
 ) -> dict:
     if not argv or not all(isinstance(a, str) for a in argv):
         raise ValueError("argv must be a non-empty list of strings")
+    if not files:
+        raise ValueError("files must be non-empty (the Job waits on /work/.ready)")
     for f in files:
         cp = f.get("container", "")
         if not _CONTAINER_PATH_RE.match(cp):
@@ -449,8 +456,13 @@ runs:
       run: |
         set -euo pipefail
 
-        # 0) Confirm the target cluster before any cluster op.
-        echo "kube context: $(kubectl config current-context)"
+        # 0) Assert we are on the production cluster before any cluster op.
+        CTX="$(kubectl config current-context)"
+        echo "kube context: $CTX"
+        case "$CTX" in
+          *fountainrank-production-cluster*) ;;
+          *) echo "::error::refusing to run: unexpected kube context '$CTX'"; exit 1 ;;
+        esac
 
         # 1) Discover the DEPLOYED backend image (by container name) so the Job runs prod code.
         IMAGE="$(kubectl -n "$NS" get deployment fountainrank-backend \
@@ -789,6 +801,20 @@ python3 backend/app/imports/loader_job_render.py \
   | kubeconform -strict -summary -kubernetes-version 1.34.0 -
 ```
 Expected: `Summary: 1 resource ... 0 errors`.
+
+- [ ] **Step 1b: Render-safety end-to-end (hostile label → one argv element → valid JSON)**
+
+This exercises the same `json.dumps → argv_json → renderer` chain the workflows use, proving a hostile `--label` survives (`json.dumps` emits single-line JSON, so it is also safe for `$GITHUB_OUTPUT`):
+```bash
+HOSTILE='a "b" $(id) ; ${X}'
+python3 backend/app/imports/loader_job_render.py \
+  --job-name osm-import --image img:1 --namespace fountainrank \
+  --argv-json "$(python3 -c "import json,os;print(json.dumps(['python','-m','app.imports.cli','--label',os.environ['HOSTILE']]))" )" \
+  --files-json '[{"local":"/t","container":"/work/osm-import.geojson"}]' \
+  --active-deadline-seconds 10800 --ready-timeout-seconds 900 \
+  | HOSTILE="$HOSTILE" python3 -c 'import json,os,sys; m=json.load(sys.stdin); c=m["spec"]["template"]["spec"]["containers"][0]["command"]; assert c[-1]==os.environ["HOSTILE"], c[-1]; print("hostile --label preserved as one element: OK")'
+```
+Expected: `hostile --label preserved as one element: OK`.
 
 - [ ] **Step 2: Deploy-guard assertion**
 
