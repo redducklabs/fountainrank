@@ -19,14 +19,14 @@
 Files:
 
 - Modify `backend/app/models.py`.
-- Create `backend/migrations/versions/0027_place_boundary_country_kind_index.py`.
+- Create `backend/migrations/versions/0027_boundary_country_kind_idx.py`.
 - Modify `backend/tests/test_place_boundaries_migration.py`.
 
 Steps:
 
 - [ ] Add `Index("ix_place_boundaries_country_kind", "country_code", "place_kind")` to
   `PlaceBoundary.__table_args__`.
-- [ ] Add migration `0027_place_boundary_country_kind_index`, revising
+- [ ] Add migration `0027_boundary_country_kind_idx`, revising
   `0026_index_all_countries` (the current head).
 - [ ] In `upgrade()`, create the non-unique index with `op.create_index`.
 - [ ] In `downgrade()`, drop that index by its exact name.
