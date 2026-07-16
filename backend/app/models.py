@@ -873,6 +873,7 @@ class PlaceBoundary(Base):
 
     __tablename__ = "place_boundaries"
     __table_args__ = (
+        Index("ix_place_boundaries_country_kind", "country_code", "place_kind"),
         # Public-namespace uniqueness v2: regions own /[country]/[region] by country slug, while
         # cities own /[country]/[city] in 2-level countries or /[country]/[region]/[city] in
         # region-tier countries. Countries are never canonical; is_canonical governs only region
