@@ -3,11 +3,35 @@ packages:
   - "mobile"
   - "packages/*"
 overrides:
-  # Force expo-asset's transitive expo-constants up to the coordinated SDK-56.0.14 patch
-  # (~56.0.20 per expo@56.0.14) so pnpm keeps a single copy. Without this, pnpm preserves
-  # expo-asset's older 56.0.19 resolution and expo-doctor fails the duplicate-native-module
+  # Force expo-asset's transitive expo-constants up to the coordinated SDK-56.0.16 patch
+  # (~56.0.21 per expo@56.0.16) so pnpm keeps a single copy. Without this, pnpm preserves
+  # expo-asset's older compatible resolution and expo-doctor fails the duplicate-native-module
   # check. Revisit/remove on the next Expo SDK bump.
-  'expo-asset>expo-constants': '56.0.20'
+  'expo-asset>expo-constants': '56.0.21'
 allowBuilds:
   sharp: true
   unrs-resolver: true
+# Owner-authorized exception to unblock the coordinated Expo SDK 56 patch refresh. Keep this list
+# exact and remove it once every listed release satisfies the runner-level minimum-release-age gate.
+minimumReleaseAgeExclude:
+  - '@expo/cli@56.1.20'
+  - '@expo/config-plugins@56.0.13'
+  - '@expo/config@56.0.12'
+  - '@expo/fingerprint@0.19.8'
+  - '@expo/image-utils@0.10.3'
+  - '@expo/inline-modules@0.0.14'
+  - '@expo/local-build-cache-provider@56.0.10'
+  - '@expo/metro-config@56.0.17'
+  - '@expo/prebuild-config@56.0.20'
+  - '@expo/require-utils@56.1.5'
+  - 'expo-asset@56.0.20'
+  - 'expo-constants@56.0.21'
+  - 'expo-image-picker@56.0.21'
+  - 'expo-location@56.0.21'
+  - 'expo-modules-autolinking@56.0.20'
+  - 'expo-modules-core@56.0.21'
+  - 'expo-router@56.2.15'
+  - 'expo-splash-screen@56.0.13'
+  - 'expo@56.0.16'
+  - '@expo/metro-runtime@56.0.17'
+  - '@expo/ui@56.0.22'
