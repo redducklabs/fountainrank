@@ -1,8 +1,12 @@
+import type { components } from "@fountainrank/api-client";
+
 import { ApiError, ApiTimeoutError } from "../api";
 import { isAuthSessionError, type AuthStatus } from "../auth/state";
 import { normalizeFountainId } from "../detail/id";
 import { clampToBound, nudgePoint, type Bound, type LngLat } from "./placement";
 import type { AwardedPoints } from "@fountainrank/contributions";
+
+type FountainDetail = components["schemas"]["FountainDetail"];
 
 export type AddFountainError =
   "unauthenticated" | "validation" | "needs_name" | "network" | "server" | "timeout";
@@ -11,7 +15,9 @@ export type AddFountainResult =
   // pointsAwarded (#204): the SERVER's award, which includes the conditional first_fountain /
   // first_in_area bonuses the client cannot predict. The add flow used to celebrate its own
   // client-side preview total instead.
-  | { ok: true; fountainId: string; pointsAwarded: AwardedPoints }
+  // detail: the full FountainDetail the POST already returned — carried so `onSuccess` can seed
+  // the detail + map-pin caches without a second round-trip (spec §3).
+  | { ok: true; fountainId: string; pointsAwarded: AwardedPoints; detail: FountainDetail }
   | { ok: false; error: "duplicate"; fountainId: string }
   | { ok: false; error: AddFountainError };
 

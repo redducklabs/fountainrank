@@ -59,9 +59,15 @@ import {
 } from "../../lib/add-fountain/state";
 import { logEvent } from "../../lib/log";
 import { isMapConfigured } from "../../lib/config";
+import { handleAddSuccess } from "../../lib/add-fountain/seed";
 import { isAtCap, normalizeBounds, type RawBounds, shouldLoadPins } from "../../lib/map/bounds";
 import { buildClusterIndex, clustersForViewport } from "../../lib/map/cluster";
-import { DEFAULT_ZOOM, INITIAL_USER_ZOOM, PLACE_MIN_ZOOM } from "../../lib/map/constants";
+import {
+  BBOX_STALE_TIME_MS,
+  DEFAULT_ZOOM,
+  INITIAL_USER_ZOOM,
+  PLACE_MIN_ZOOM,
+} from "../../lib/map/constants";
 import {
   buildBboxQuery,
   DEFAULT_FILTERS,
@@ -168,6 +174,9 @@ export default function MapScreen() {
     queryKey: params ? fountainsQueryKey(params, filters) : ["fountains", "bbox", "idle"],
     enabled,
     placeholderData: keepPreviousData,
+    // Scoped to this query (global defaults unchanged): skip a redundant refetch on pan-back to
+    // a fresh, non-invalidated viewport. The post-add invalidation still overrides this (spec §4).
+    staleTime: BBOX_STALE_TIME_MS,
     queryFn: async (): Promise<BboxResult> => {
       const result = await client.GET("/api/v1/fountains/bbox", {
         params: { query: buildBboxQuery(params!, filters) },
@@ -215,6 +224,9 @@ export default function MapScreen() {
           ok: true,
           fountainId: result.data.id,
           pointsAwarded: awardedPoints(result.data),
+          // The POST already returned the full FountainDetail — carry it so onSuccess can seed
+          // the detail + map-pin caches with no second round-trip (spec §3).
+          detail: result.data,
         };
       }
       if (result.response.status === 409) {
@@ -229,13 +241,9 @@ export default function MapScreen() {
       if (result.response.status === 422) throw new ApiError(422);
       throw new ApiError(result.response.status);
     },
-    onSuccess: (result) => {
-      void queryClient.invalidateQueries({ queryKey: ["fountains", "bbox"] });
-      void queryClient.invalidateQueries({ queryKey: ["me", "contributions"] });
-      if (result.ok) {
-        void queryClient.invalidateQueries({ queryKey: ["fountain", result.fountainId] });
-      }
-    },
+    // Seed the detail + map-pin caches from the create response, THEN invalidate (spec §3), so
+    // the new fountain renders instantly and cannot vanish on a failed refetch.
+    onSuccess: (result) => handleAddSuccess(queryClient, result),
   });
 
   const showToast = useCallback((tone: "err" | "ok", text: string) => {
