@@ -6,10 +6,22 @@ Conventional Commits, one commit per task with the subject given below; never co
 `temp/codex-reviews/` artifacts.
 
 **Local completion rule (host-specific, per `local-dev.md`)**: a task is *locally complete* when
-its node-safe tests, `tsc --noEmit`, and Prettier pass locally; jsdom/QueryClient/render suites
-are **CI-gated** on this host (duplicate-React), as is the stricter mobile React-Compiler lint —
-final task completion is contingent on CI `workspace-js`. Never claim a local green for a
-CI-gated suite.
+its node-safe tests, `tsc --noEmit`, and Prettier pass locally; the stricter mobile
+React-Compiler lint is CI-gated — final task completion is contingent on CI `workspace-js`.
+Never claim a local green for a CI-gated suite.
+
+**Test-strategy amendment (discovered during implementation)**: this plan originally called for
+jsdom component-render tests in Tasks 4/6/7. Those are impossible in this repo: the mobile
+Vitest toolchain (rolldown/oxc, no Babel/Flow pipeline) cannot import `react-native` at all
+(`RolldownError: Flow is not supported` — in CI too), and no RN renderer
+(`@testing-library/react-native` / `react-test-renderer`) is resolved anywhere in the lockfile;
+adding that infrastructure was previously evaluated and rejected as out of scope (see the header
+of `mobile/components/nav/ProfileTabIcon.cache.test.ts`, the established precedent). Every
+behavior those tests targeted is instead verified at a node-safe seam: QueryClient/QueryObserver
+level for cache behavior (the exact mechanics `useQuery` wraps), a pure mutation-decision seam
+for the reconciliation regression, and a pure overlay-state descriptor whose props `MapOverlay`
+spreads directly for the banner. The four interaction-level checks remain in the post-merge
+owner on-device verification.
 
 **Cross-spec merge gate (enforced, not informational)**: the reconciliation behavior in Task 4
 relies on the backend advisory-lock/duplicate-probe invariant. The #242 PR containing its
@@ -66,13 +78,12 @@ MUST be merged to `main` before this PR merges. Task 8 verifies mechanically (se
   CURRENT state machine — do NOT change its phase model): `submitError` → `phase === "error"`,
   `error === "timeout"`, `pin` and `isWorking` preserved; `submitStart` transitions the error
   state back to submitting.
-- CI-gated render/interaction tests (jsdom/QueryClient — component-owned state lives in
-  `useState`, not the reducer, so it is verified here): ratings/attributes/comments/
-  expanded-details preserved across the timeout; the details form remains visible in the error
-  phase; a retry press submits a request body **deep-equal** to the first attempt with exactly
-  equal latitude/longitude and no intervening draft mutation (deep equality of the mutation
-  payload — not a wire-byte claim); attempt 1 timing out after a mocked server commit →
-  unchanged retry → typed 409 → duplicate state carries the returned fountain id.
+- Behavior-seam tests (per the test-strategy amendment above — RN component render is not
+  possible; component-owned `useState` draft preservation is covered by the on-device checklist):
+  the reconciliation regression runs against the extracted pure mutation-decision seam +
+  QueryClient — attempt 1 timing out after a mocked server commit → unchanged retry (deep-equal
+  payload, exactly equal latitude/longitude, no intervening draft mutation — not a wire-byte
+  claim) → typed 409 → duplicate state carries the returned fountain id.
 - Implement: the helper, then the `onSubmit` catch-branch wiring in
   `mobile/app/(tabs)/index.tsx` calling it.
 
@@ -87,7 +98,8 @@ MUST be merged to `main` before this PR merges. Task 8 verifies mechanically (se
 
 ## Task 6 — `onSuccess` cache seeding + `staleTime` — `feat(mobile): seed caches from create response`
 
-- CI-gated tests (jsdom/QueryClient): seed → invalidate → failed refetch → seeded pin retained +
+- QueryClient/QueryObserver-level tests (node-safe, per the amendment — the exact cache
+  mechanics `useQuery` wraps): seed → invalidate → failed refetch → seeded pin retained +
   `isError`; new-key failure → no substituted placeholder; detail seeded at
   `["fountain", id, true, "public"]` gives instant data for non-admin, admin still fetches; **the
   cached detail is the exact server response value (deep-equality/identity assertion at the
@@ -99,12 +111,14 @@ MUST be merged to `main` before this PR merges. Task 8 verifies mechanically (se
 
 ## Task 7 — stale-pins banner (`MapOverlay`) — `feat(mobile): stale-pins banner`
 
-- CI-gated tests (jsdom render): `isError && data != null` → banner with the persistent
-  stale-data copy ("Couldn't refresh fountains — showing saved data"), an actionable retry
-  affordance, `accessibilityRole="alert"` **and** the live-region announcement
-  (`accessibilityLiveRegion` — a separate RN property from the role; both asserted, per the
-  spec, so a visually present but non-announced banner cannot pass); `isError && data == null`
-  → existing error state; retry calls `refetch`.
+- Pure overlay-state descriptor tests (node-safe, per the amendment): the descriptor for
+  `isError && data != null` carries the persistent stale-data copy ("Couldn't refresh fountains
+  — showing saved data"), an actionable retry affordance, `accessibilityRole: "alert"` **and**
+  the live-region announcement (`accessibilityLiveRegion` — a separate RN property from the
+  role; both asserted, per the spec, so a visually present but non-announced banner cannot
+  pass); `isError && data == null` → the existing error state; retry invokes `refetch`.
+  `MapOverlay` consumes the descriptor by direct prop spread, so the descriptor tests pin the
+  mounted props; the visual confirmation is in the on-device checklist.
 - Implement both accessibility properties; document the state in `docs/style-guide.md` (same
   commit).
 
@@ -112,12 +126,13 @@ MUST be merged to `main` before this PR merges. Task 8 verifies mechanically (se
 file change (then `docs(mobile): document add-flow resilience verification`); never an empty
 commit
 
-- Local verification, enumerated honestly: node-safe Vitest files from Tasks 1–5,
-  `tsc --noEmit`, Prettier, and whatever baseline ESLint runs on this host. Explicitly deferred
-  to CI: jsdom/QueryClient/render suites (Tasks 4/6/7), the full mobile Vitest suite, the
-  React-Compiler mobile lint, and isolated-linker `expo-doctor` (`mobile-doctor` job — the local
-  hoisted-linker result is not evidence). Run `./run.ps1 check` and record which steps were
-  host-limited rather than claiming a full local green.
+- Local verification, enumerated honestly: node-safe Vitest files from all tasks (per the
+  amendment, every suite in this plan is node-safe), `tsc --noEmit`, Prettier, and whatever
+  baseline ESLint runs on this host. Explicitly deferred to CI: the authoritative
+  `workspace-js` run (React-Compiler mobile lint + full suite on the isolated linker) and
+  isolated-linker `expo-doctor` (`mobile-doctor` job — the local hoisted-linker result is not
+  evidence). Run `./run.ps1 check` and record which steps were host-limited rather than
+  claiming a full local green.
 - **Gate check (mechanical, reproducible)**: resolve and record the exact #242 PR number and its
   squash-merge commit (`gh pr view`); run `git fetch origin main` immediately before the checks;
   verify that commit is reachable from `origin/main`; grep the identical-coordinate two-session
