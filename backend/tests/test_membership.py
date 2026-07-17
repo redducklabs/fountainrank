@@ -1525,11 +1525,14 @@ async def test_refresh_country_memberships_is_idempotent(session):
 
 @pytest.mark.asyncio
 async def test_compute_then_publish_full_matches_refresh_all(session):
-    """The extracted seam (compute_boundary_derivation → publish_membership_state, back-to-back in
-    the caller's txn with the advisory lock first) produces exactly the same state as the
-    single-function refresh_all_memberships — a pure live-SQL extraction, no behavior change."""
-    from app.locks import acquire_add_fountain_lock
-    from app.membership import compute_boundary_derivation, publish_membership_state
+    """The staged seam (compute_boundary_derivation stages the new generation; then
+    publish_membership_state acquires the lock and applies it) produces exactly the same state as
+    the composition refresh_all_memberships."""
+    from app.membership import (
+        RefreshScope,
+        compute_boundary_derivation,
+        publish_membership_state,
+    )
 
     await _enable_region_tier(session)
     await _add_boundary(
@@ -1574,7 +1577,7 @@ async def test_compute_then_publish_full_matches_refresh_all(session):
     oracle = await refresh_all_memberships(session)
     oracle_snapshot = await _membership_snapshot(session)
 
-    # Wipe derived state, then run the seam directly (advisory lock first).
+    # Wipe derived state, then run the seam directly (publish acquires the lock).
     await session.execute(
         text(
             "UPDATE fountains SET country_place_id = NULL, region_place_id = NULL, "
@@ -1587,9 +1590,9 @@ async def test_compute_then_publish_full_matches_refresh_all(session):
             "is_canonical = false, fountain_count = 0"
         )
     )
-    await acquire_add_fountain_lock(session, context="seam-test")
-    await compute_boundary_derivation(session, country_code=None, rebuild_cells=True)
-    seam = await publish_membership_state(session, country_code=None)
+    scope = RefreshScope(rebuild_cells=True)
+    await compute_boundary_derivation(session, scope)
+    seam = await publish_membership_state(session, scope)
 
     assert seam == oracle
     assert await _membership_snapshot(session) == oracle_snapshot
@@ -1598,8 +1601,11 @@ async def test_compute_then_publish_full_matches_refresh_all(session):
 @pytest.mark.asyncio
 async def test_compute_then_publish_country_matches_refresh_country(session):
     """The scoped seam matches refresh_country_memberships exactly."""
-    from app.locks import acquire_add_fountain_lock
-    from app.membership import compute_boundary_derivation, publish_membership_state
+    from app.membership import (
+        RefreshScope,
+        compute_boundary_derivation,
+        publish_membership_state,
+    )
 
     await _reset_scoped_fixture(session)
     await _setup_first_load_b(session)
@@ -1608,9 +1614,305 @@ async def test_compute_then_publish_country_matches_refresh_country(session):
 
     await _reset_scoped_fixture(session)
     await _setup_first_load_b(session)
-    await acquire_add_fountain_lock(session, context="seam-test")
-    await compute_boundary_derivation(session, country_code="bb", rebuild_cells=True)
-    seam = await publish_membership_state(session, country_code="bb")
+    scope = RefreshScope(country_code="bb")
+    await compute_boundary_derivation(session, scope)
+    seam = await publish_membership_state(session, scope)
 
     assert seam == oracle
     assert await _membership_snapshot(session) == oracle_snapshot
+
+
+@pytest.mark.asyncio
+async def test_staged_refresh_is_generation_closed_adversarial(session):
+    """Adversarial generation change — the canonical-region winner flips AND a region drops out of
+    the region tier. A staged refresh started from the PREVIOUS generation's live state must equal
+    the legacy single-transaction backfill run on the NEW generation, proving compute reads only the
+    STAGED (new-generation) place_kind / is_canonical, never live residue."""
+    await _enable_region_tier(session)
+    await _add_boundary(
+        session,
+        overture_id="us",
+        subtype="country",
+        country_code="us",
+        name="US",
+        slug="united-states",
+        wkt=_sq(0, 0, 20, 20),
+    )
+    # Two regions share slug 'dup'; alpha is larger in gen1 (canonical), beta is smaller.
+    alpha = await _add_boundary(
+        session,
+        overture_id="alpha",
+        subtype="region",
+        country_code="us",
+        name="Dup",
+        slug="dup",
+        wkt=_sq(0, 0, 20, 20),
+    )
+    beta = await _add_boundary(
+        session,
+        overture_id="beta",
+        subtype="region",
+        country_code="us",
+        name="Dup",
+        slug="dup",
+        wkt=_sq(1, 1, 3, 3),
+    )
+    # gamma qualifies as a region in gen1, then is demoted to a county in gen2.
+    gamma = await _add_boundary(
+        session,
+        overture_id="gamma",
+        subtype="region",
+        country_code="us",
+        name="Gamma",
+        slug="gamma",
+        wkt=_sq(10, 10, 15, 15),
+    )
+    await _add_boundary(
+        session,
+        overture_id="town",
+        subtype="locality",
+        country_code="us",
+        name="Town",
+        slug="town",
+        wkt=_sq(1, 1, 2, 2),
+    )
+    await _add_fountain(session, lat=1.5, lng=1.5)
+    await _add_fountain(session, lat=12.0, lng=12.0)  # inside gamma
+
+    # Generation 1 refresh — live tables now carry gen-1 place_kind / canonical / parent.
+    await refresh_all_memberships(session)
+    assert await _is_canonical(session, alpha) is True  # larger area wins in gen1
+    assert await _is_canonical(session, beta) is False
+
+    # Mutate boundaries to generation 2: flip the winner (beta now larger) + demote gamma.
+    await session.execute(
+        text(
+            "UPDATE place_boundaries SET boundary = "
+            "ST_Multi(ST_GeomFromText(:wkt, 4326))::geography WHERE id = :id"
+        ),
+        {"wkt": _sq(0, 0, 2, 2), "id": alpha},
+    )
+    await session.execute(
+        text(
+            "UPDATE place_boundaries SET boundary = "
+            "ST_Multi(ST_GeomFromText(:wkt, 4326))::geography WHERE id = :id"
+        ),
+        {"wkt": _sq(0, 0, 20, 20), "id": beta},
+    )
+    await session.execute(
+        text("UPDATE place_boundaries SET subtype = 'county' WHERE id = :id"), {"id": gamma}
+    )
+
+    # Staged refresh from the gen-1 residue.
+    await refresh_all_memberships(session)
+    staged = await _membership_snapshot(session)
+
+    # Legacy single-transaction oracle on the SAME gen-2 boundary rows from a clean slate.
+    await session.execute(
+        text(
+            "UPDATE fountains SET country_place_id = NULL, region_place_id = NULL, "
+            "city_place_id = NULL"
+        )
+    )
+    await session.execute(
+        text(
+            "UPDATE place_boundaries SET place_kind = NULL, parent_id = NULL, "
+            "is_canonical = false, fountain_count = 0"
+        )
+    )
+    await rebuild_place_boundary_cells(session)
+    sql = (BACKEND / "migrations/sql/0025_backfill.sql").read_text(encoding="utf-8")
+    for statement in sql.split(";"):
+        if statement.strip():
+            await session.execute(text(statement))
+    legacy = await _membership_snapshot(session)
+
+    assert staged == legacy
+    # And the generation actually changed: beta is now canonical, gamma is no longer a region.
+    assert await _is_canonical(session, beta) is True
+    assert await _is_canonical(session, alpha) is False
+
+
+@pytest.mark.asyncio
+async def test_reset_first_publish_reparents_shared_slug_cities(session):
+    """Two previous-generation canonical cities that share a slug get re-parented under ONE new
+    parent (and a region drops out of the tier). The reset-first publish order must clear the old
+    canonical flags BEFORE applying the new parent, so the apply never collides on
+    uq_place_boundaries_city_canonical; the refresh converges to exactly one canonical winner."""
+    await _enable_region_tier(session)
+    us = await _add_boundary(
+        session,
+        overture_id="us",
+        subtype="country",
+        country_code="us",
+        name="US",
+        slug="united-states",
+        wkt=_sq(0, 0, 20, 20),
+    )
+    oregon = await _add_boundary(
+        session,
+        overture_id="oregon",
+        subtype="region",
+        country_code="us",
+        name="Oregon",
+        slug="oregon",
+        wkt=_sq(0, 0, 10, 10),
+    )
+    maine = await _add_boundary(
+        session,
+        overture_id="maine",
+        subtype="region",
+        country_code="us",
+        name="Maine",
+        slug="maine",
+        wkt=_sq(10, 10, 20, 20),
+    )
+    p_or = await _add_boundary(
+        session,
+        overture_id="portland-or",
+        subtype="locality",
+        country_code="us",
+        name="Portland",
+        slug="portland",
+        wkt=_sq(1, 1, 2, 2),
+    )
+    p_me = await _add_boundary(
+        session,
+        overture_id="portland-me",
+        subtype="locality",
+        country_code="us",
+        name="Portland",
+        slug="portland",
+        wkt=_sq(11, 11, 12, 12),
+    )
+    await _add_fountain(session, lat=1.5, lng=1.5)
+    await _add_fountain(session, lat=11.5, lng=11.5)
+
+    # Gen 1: two Portlands, canonical under DIFFERENT parents (Oregon, Maine).
+    await refresh_all_memberships(session)
+    assert await _parent(session, p_or) == oregon
+    assert await _parent(session, p_me) == maine
+    assert await _is_canonical(session, p_or) is True
+    assert await _is_canonical(session, p_me) is True
+
+    # Gen 2: Oregon expands over both Portlands; Maine drops out of the region tier (subtype
+    # transition → partial-index participation change). Both Portlands re-parent under Oregon.
+    await session.execute(
+        text(
+            "UPDATE place_boundaries SET boundary = "
+            "ST_Multi(ST_GeomFromText(:wkt, 4326))::geography WHERE id = :id"
+        ),
+        {"wkt": _sq(0, 0, 20, 20), "id": oregon},
+    )
+    await session.execute(
+        text("UPDATE place_boundaries SET subtype = 'county' WHERE id = :id"), {"id": maine}
+    )
+
+    # Must publish without hitting uq_place_boundaries_city_canonical, converging to one winner.
+    await refresh_all_memberships(session)
+    assert await _parent(session, p_or) == oregon
+    assert await _parent(session, p_me) == oregon
+    canonical = int(await _is_canonical(session, p_or)) + int(await _is_canonical(session, p_me))
+    assert canonical == 1  # exactly one canonical Portland under the shared parent
+    assert us is not None
+
+
+@pytest.mark.asyncio
+async def test_add_committed_between_stages_gets_correct_membership(session):
+    """A fountain added AFTER compute stages the derivation but BEFORE publish is still assigned
+    correct membership — publish's assign covers every fountain, including mid-refresh adds."""
+    from app.membership import (
+        RefreshScope,
+        compute_boundary_derivation,
+        publish_membership_state,
+    )
+
+    us = await _add_boundary(
+        session,
+        overture_id="us",
+        subtype="country",
+        country_code="us",
+        name="US",
+        slug="united-states",
+        wkt=_sq(0, 0, 10, 10),
+    )
+    city = await _add_boundary(
+        session,
+        overture_id="us-city",
+        subtype="locality",
+        country_code="us",
+        name="San Diego",
+        slug="san-diego",
+        wkt=_sq(1, 1, 2, 2),
+    )
+    scope = RefreshScope(rebuild_cells=True)
+    await compute_boundary_derivation(session, scope)  # stage the boundary derivation
+
+    fid = await _add_fountain(session, lat=1.5, lng=1.5)  # add lands between the stages
+
+    await publish_membership_state(session, scope)  # assign covers ALL fountains
+    m = await _membership(session, fid)
+    assert m.country_place_id == us
+    assert m.city_place_id == city
+    assert await _count(session, city) == 1
+
+
+@pytest.mark.asyncio
+async def test_staged_city_parent_uses_gist_index_not_seqscan(session):
+    """Plan-shape guard (spec Verification 4): staged city parenting must probe the staging-cell
+    GiST index, never sequentially scan the cells — output equivalence alone can't catch a
+    catastrophic plan regression (the #239-class failure)."""
+    from app.membership import (
+        _STAGED_CITY_PARENT_SQL,
+        RefreshScope,
+        compute_boundary_derivation,
+    )
+
+    await _enable_region_tier(session)
+    await _add_boundary(
+        session,
+        overture_id="us",
+        subtype="country",
+        country_code="us",
+        name="US",
+        slug="united-states",
+        wkt=_sq(-10, -10, 10, 10),
+    )
+    # A high-vertex region so ST_Subdivide produces MANY staged cells — enough that the planner
+    # must prefer the GiST index over a sequential scan for the point-in-polygon probe.
+    await session.execute(
+        text(
+            """
+            INSERT INTO place_boundaries
+                (id, overture_id, subtype, class, name, country_code, slug,
+                 is_canonical, fountain_count, boundary, created_at, updated_at)
+            VALUES (gen_random_uuid(), 'big-region', 'region', 'land', 'Big', 'us', 'big',
+                    false, 0,
+                    ST_Multi(ST_Buffer(ST_SetSRID(ST_MakePoint(0, 0), 4326), 5,
+                                       'quad_segs=2048'))::geography,
+                    now(), now())
+            """
+        )
+    )
+    await _add_boundary(
+        session,
+        overture_id="big-city",
+        subtype="locality",
+        country_code="us",
+        name="Center",
+        slug="center",
+        wkt=_sq(-1, -1, 1, 1),
+    )
+    scope = RefreshScope(rebuild_cells=True)
+    await compute_boundary_derivation(session, scope)  # stages cells + GiST index + ANALYZE
+
+    cells = (
+        await session.execute(text("SELECT count(*) FROM _staged_place_boundary_cells"))
+    ).scalar_one()
+    assert cells > 50  # a genuinely large cell table, so the index choice is meaningful
+
+    plan_rows = (await session.execute(text("EXPLAIN " + _STAGED_CITY_PARENT_SQL.text))).all()
+    plan = "\n".join(r[0] for r in plan_rows)
+    assert "_staged_place_boundary_cells" in plan  # the staged cells are the probed relation
+    assert "Seq Scan on _staged_place_boundary_cells" not in plan
+    assert any(marker in plan for marker in ("Index Scan", "Bitmap Index Scan", "Index Only Scan"))

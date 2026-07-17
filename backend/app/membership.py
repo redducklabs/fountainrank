@@ -25,11 +25,12 @@ Two entry points share the ladder SQL:
 - :func:`recompute_place_counts` — count-only variant for the admin **delete** path (the fountain
   row is already gone, so there is nothing to re-assign): recomputes + re-canonicalizes exactly the
   given places' groups.
-- :func:`refresh_all_memberships` — the whole DB (boundary load + backfill). Optionally rebuilds
-  the ``place_boundary_cells`` point-in-polygon index (see below), then re-assigns every fountain,
-  recomputes ``fountain_count`` (all places), ``is_canonical`` (uses the fresh counts), and
-  ``parent_id`` (city -> country by matching ``country_code``). Set-based; one transaction (the
-  caller commits).
+- :func:`refresh_all_memberships` — the whole DB (boundary load + backfill). A thin composition of
+  the staged :func:`compute_boundary_derivation` (the expensive boundary geometry, into temp tables,
+  UNlocked) then :func:`publish_membership_state` (acquire the lock, apply the staged generation,
+  re-assign every fountain, recompute ``fountain_count`` / ``is_canonical`` / ``parent_id``). One
+  transaction (the caller commits); spec 2026-07-17 §2 stages compute so an interactive add never
+  waits behind the geometry.
 
 Point-in-polygon at country scale runs against :class:`~app.models.PlaceBoundaryCell` — every
 boundary broken into small ``ST_Subdivide`` cells — not the whole polygon: probing the ~136k-vertex
@@ -44,11 +45,13 @@ reads the already-built cells (a user add does not change boundaries).
 re-selects the canonical owner for exactly the affected ``(country_code, slug)`` group(s) — the
 public URL never resolves to a stale winner between full refreshes.
 
-**Concurrency:** every count/canonical write is serialized on the ``ADD_FOUNTAIN_LOCK`` advisory
-lock (shared with POST /fountains and the OSM import). :func:`refresh_all_memberships` takes it
-itself (its CLI callers hold no other lock); the single-fountain / count-only helpers assume the
-caller already holds it — every request path that calls them (add, admin patch/delete) takes it
-first, and the re-entrant lock in ``merge``/``rollback`` covers the import path.
+**Concurrency:** every live count/canonical write is serialized on the ``ADD_FOUNTAIN_LOCK``
+advisory lock (shared with POST /fountains and the OSM import). :func:`publish_membership_state`
+takes it (its CLI callers hold no other lock); :func:`compute_boundary_derivation` deliberately does
+NOT (it writes only temp staging, takes no live-table lock). The single-fountain / count-only
+helpers assume the caller already holds it — every request path that calls them (add, admin
+patch/delete) takes it first, and the re-entrant lock in ``merge``/``rollback`` covers the import
+path.
 """
 
 from __future__ import annotations
@@ -119,85 +122,6 @@ _DELETE_COUNTRY_CELLS_SQL = text(
     USING place_boundaries pb
     WHERE pb.id = cell.place_id
       AND pb.country_code = :cc
-    """
-)
-_REBUILD_COUNTRY_CELLS_SQL = text(
-    """
-    INSERT INTO place_boundary_cells (id, place_id, geom)
-    SELECT gen_random_uuid(), pb.id, sub.geom
-    FROM place_boundaries pb
-    CROSS JOIN LATERAL ST_Subdivide(pb.boundary::geometry, 128) AS sub(geom)
-    WHERE pb.country_code = :cc
-    """
-)
-
-# Derive URL tier from subtype + per-country scope configuration.
-_PLACE_KIND_SQL = text(
-    f"""
-    UPDATE place_boundaries pb
-    SET place_kind = CASE
-        WHEN pb.subtype = 'country' THEN 'country'
-        WHEN pb.subtype = ANY(
-            COALESCE(cfg.eligible_region_subtypes, {_DEFAULT_REGION_ELIGIBLE_SQL})
-        )
-            THEN 'region'
-        WHEN pb.subtype = ANY(COALESCE(cfg.eligible_city_subtypes, {_DEFAULT_ELIGIBLE_SQL}))
-            THEN 'city'
-        ELSE NULL
-    END
-    FROM place_boundaries src
-    LEFT JOIN place_scope_config cfg ON cfg.country_code = src.country_code
-    WHERE pb.id = src.id
-      AND pb.place_kind IS DISTINCT FROM CASE
-        WHEN src.subtype = 'country' THEN 'country'
-        WHEN src.subtype = ANY(
-            COALESCE(cfg.eligible_region_subtypes, {_DEFAULT_REGION_ELIGIBLE_SQL})
-        )
-            THEN 'region'
-        WHEN src.subtype = ANY(COALESCE(cfg.eligible_city_subtypes, {_DEFAULT_ELIGIBLE_SQL}))
-            THEN 'city'
-        ELSE NULL
-    END
-    """
-)
-_PLACE_KIND_COUNTRY_SQL = text(
-    f"""
-    UPDATE place_boundaries pb
-    SET place_kind = CASE
-        WHEN pb.subtype = 'country' THEN 'country'
-        WHEN pb.subtype = ANY(
-            COALESCE(cfg.eligible_region_subtypes, {_DEFAULT_REGION_ELIGIBLE_SQL})
-        )
-            THEN 'region'
-        WHEN pb.subtype = ANY(COALESCE(cfg.eligible_city_subtypes, {_DEFAULT_ELIGIBLE_SQL}))
-            THEN 'city'
-        ELSE NULL
-    END
-    FROM place_boundaries src
-    LEFT JOIN place_scope_config cfg ON cfg.country_code = src.country_code
-    WHERE pb.id = src.id
-      AND src.country_code = :cc
-      AND pb.place_kind IS DISTINCT FROM CASE
-        WHEN src.subtype = 'country' THEN 'country'
-        WHEN src.subtype = ANY(
-            COALESCE(cfg.eligible_region_subtypes, {_DEFAULT_REGION_ELIGIBLE_SQL})
-        )
-            THEN 'region'
-        WHEN src.subtype = ANY(COALESCE(cfg.eligible_city_subtypes, {_DEFAULT_ELIGIBLE_SQL}))
-            THEN 'city'
-        ELSE NULL
-    END
-    """
-)
-
-_PLACE_KIND_SUMMARY_SQL = text(
-    """
-    SELECT
-        count(*) FILTER (WHERE place_kind = 'country') AS countries,
-        count(*) FILTER (WHERE place_kind = 'region') AS regions,
-        count(*) FILTER (WHERE place_kind = 'city') AS cities,
-        count(*) FILTER (WHERE place_kind IS NULL) AS none
-    FROM place_boundaries
     """
 )
 
@@ -366,35 +290,6 @@ _CANONICAL_RESET_SQL = text("UPDATE place_boundaries SET is_canonical = false WH
 _CANONICAL_RESET_COUNTRY_SQL = text(
     "UPDATE place_boundaries SET is_canonical = false WHERE country_code = :cc AND is_canonical"
 )
-_CANONICAL_REGIONS_SQL = text(
-    """
-    WITH ranked AS (
-        SELECT id, ROW_NUMBER() OVER (
-            PARTITION BY country_code, slug
-            ORDER BY ST_Area(boundary) DESC, overture_id ASC
-        ) AS rn
-        FROM place_boundaries
-        WHERE place_kind = 'region'
-    )
-    UPDATE place_boundaries SET is_canonical = true
-    WHERE id IN (SELECT id FROM ranked WHERE rn = 1)
-    """
-)
-_CANONICAL_REGIONS_COUNTRY_SQL = text(
-    """
-    WITH ranked AS (
-        SELECT id, ROW_NUMBER() OVER (
-            PARTITION BY country_code, slug
-            ORDER BY ST_Area(boundary) DESC, overture_id ASC
-        ) AS rn
-        FROM place_boundaries
-        WHERE place_kind = 'region'
-          AND country_code = :cc
-    )
-    UPDATE place_boundaries SET is_canonical = true
-    WHERE id IN (SELECT id FROM ranked WHERE rn = 1)
-    """
-)
 _CANONICAL_CITIES_SQL = text(
     f"""
     WITH eligible AS (
@@ -461,156 +356,6 @@ _RECANON_SET_SQL = text(
     )
     UPDATE place_boundaries SET is_canonical = true
     WHERE id IN (SELECT id FROM ranked WHERE rn = 1)
-    """
-)
-
-_PARENT_RESET_SQL = text(
-    "UPDATE place_boundaries SET parent_id = NULL WHERE place_kind IS DISTINCT FROM 'region'"
-)
-_PARENT_RESET_COUNTRY_SQL = text(
-    """
-    UPDATE place_boundaries
-    SET parent_id = NULL
-    WHERE country_code = :cc
-      AND place_kind IS DISTINCT FROM 'region'
-      AND parent_id IS NOT NULL
-    """
-)
-_REGION_PARENT_SQL = text(
-    """
-    UPDATE place_boundaries child
-    SET parent_id = p.country_id
-    FROM (
-        SELECT c.id AS child_id, ctry.id AS country_id
-        FROM place_boundaries c
-        LEFT JOIN LATERAL (
-            SELECT pb.id
-            FROM place_boundaries pb
-            WHERE pb.place_kind = 'country'
-              AND pb.country_code = c.country_code
-            ORDER BY pb.overture_id ASC
-            LIMIT 1
-        ) ctry ON TRUE
-        WHERE c.place_kind = 'region'
-    ) p
-    WHERE child.id = p.child_id
-      AND child.parent_id IS DISTINCT FROM p.country_id
-    """
-)
-_REGION_PARENT_COUNTRY_SQL = text(
-    """
-    UPDATE place_boundaries child
-    SET parent_id = p.country_id
-    FROM (
-        SELECT c.id AS child_id, ctry.id AS country_id
-        FROM place_boundaries c
-        LEFT JOIN LATERAL (
-            SELECT pb.id
-            FROM place_boundaries pb
-            WHERE pb.place_kind = 'country'
-              AND pb.country_code = c.country_code
-            ORDER BY pb.overture_id ASC
-            LIMIT 1
-        ) ctry ON TRUE
-        WHERE c.place_kind = 'region'
-          AND c.country_code = :cc
-    ) p
-    WHERE child.id = p.child_id
-      AND child.parent_id IS DISTINCT FROM p.country_id
-    """
-)
-
-# Parent each city to the smallest-area canonical region covering its representative point (spec
-# §5 step 6). ``ST_PointOnSurface`` on a full city MULTIPOLYGON is expensive, so it is materialized
-# ONCE per city in ``city_pt`` (``AS MATERIALIZED`` blocks CTE inlining that would otherwise push
-# the call back inside the region LATERAL and recompute it per candidate cell — observed to turn a
-# US+DE refresh into a >35-min single statement). With the point precomputed, ``ST_Covers(cell.geom,
-# cp.pt)`` is a clean constant-vs-column GiST probe against the cell index.
-_CITY_PARENT_SQL = text(
-    """
-    WITH city_pt AS MATERIALIZED (
-        SELECT c.id, c.country_code,
-               ST_PointOnSurface(c.boundary::geometry) AS pt
-        FROM place_boundaries c
-        WHERE c.place_kind = 'city'
-    )
-    UPDATE place_boundaries city
-    SET parent_id = p.parent_id
-    FROM (
-        SELECT cp.id AS city_id,
-               CASE
-                   WHEN COALESCE(cardinality(cfg.eligible_region_subtypes), 1) = 0
-                       THEN country.id
-                   ELSE region.id
-               END AS parent_id
-        FROM city_pt cp
-        LEFT JOIN place_scope_config cfg ON cfg.country_code = cp.country_code
-        LEFT JOIN LATERAL (
-            SELECT pb.id
-            FROM place_boundaries pb
-            WHERE pb.place_kind = 'country'
-              AND pb.country_code = cp.country_code
-            ORDER BY pb.overture_id ASC
-            LIMIT 1
-        ) country ON TRUE
-        LEFT JOIN LATERAL (
-            SELECT pb.id
-            FROM place_boundary_cells cell
-            JOIN place_boundaries pb ON pb.id = cell.place_id
-            WHERE pb.place_kind = 'region'
-              AND pb.is_canonical = true
-              AND pb.country_code = cp.country_code
-              AND ST_Covers(cell.geom, cp.pt)
-            ORDER BY ST_Area(pb.boundary) ASC, pb.overture_id ASC
-            LIMIT 1
-        ) region ON TRUE
-    ) p
-    WHERE city.id = p.city_id
-      AND city.parent_id IS DISTINCT FROM p.parent_id
-    """
-)
-_CITY_PARENT_COUNTRY_SQL = text(
-    """
-    WITH city_pt AS MATERIALIZED (
-        SELECT c.id, c.country_code,
-               ST_PointOnSurface(c.boundary::geometry) AS pt
-        FROM place_boundaries c
-        WHERE c.place_kind = 'city'
-          AND c.country_code = :cc
-    )
-    UPDATE place_boundaries city
-    SET parent_id = p.parent_id
-    FROM (
-        SELECT cp.id AS city_id,
-               CASE
-                   WHEN COALESCE(cardinality(cfg.eligible_region_subtypes), 1) = 0
-                       THEN country.id
-                   ELSE region.id
-               END AS parent_id
-        FROM city_pt cp
-        LEFT JOIN place_scope_config cfg ON cfg.country_code = cp.country_code
-        LEFT JOIN LATERAL (
-            SELECT pb.id
-            FROM place_boundaries pb
-            WHERE pb.place_kind = 'country'
-              AND pb.country_code = cp.country_code
-            ORDER BY pb.overture_id ASC
-            LIMIT 1
-        ) country ON TRUE
-        LEFT JOIN LATERAL (
-            SELECT pb.id
-            FROM place_boundary_cells cell
-            JOIN place_boundaries pb ON pb.id = cell.place_id
-            WHERE pb.place_kind = 'region'
-              AND pb.is_canonical = true
-              AND pb.country_code = cp.country_code
-              AND ST_Covers(cell.geom, cp.pt)
-            ORDER BY ST_Area(pb.boundary) ASC, pb.overture_id ASC
-            LIMIT 1
-        ) region ON TRUE
-    ) p
-    WHERE city.id = p.city_id
-      AND city.parent_id IS DISTINCT FROM p.parent_id
     """
 )
 
@@ -901,14 +646,362 @@ _SELECT_FINAL_CHANGED_PLACE_IDS_SQL = text(
 )
 _COUNT_COUNTRY_CANDIDATES_SQL = text("SELECT count(*) FROM membership_candidate_fountains")
 _COUNT_AFFECTED_PLACES_SQL = text("SELECT count(*) FROM membership_affected_places")
-_COUNT_COUNTRY_CELLS_SQL = text(
+# --- Staged (generation-closed) boundary derivation (spec 2026-07-17 §2) ----------------------
+# compute_boundary_derivation writes the new generation into these connection-scoped TEMP tables
+# WITHOUT taking the advisory lock or touching any live table, so the dominant city-parenting
+# geometry runs BEFORE the lock. publish_membership_state then applies them atomically under the
+# lock. The tables are NOT ``ON COMMIT DROP`` (they must survive the compute-commit in the CLI's
+# two-transaction layout on one pinned connection); compute starts with an unconditional DROP +
+# CREATE so stale staging can never leak between runs on a reused pooled connection.
+#
+# _staged_boundary_derivation: one row per in-scope boundary carrying the NEW place_kind / parent_id
+#   / region is_canonical (city canonical stays count-dependent → the publish fountain tail).
+# _staged_place_boundary_cells: the new subdivided cells + the live table's GiST/place_id index +
+#   ANALYZE performance contract, so staged city parenting probes the index (not a seq scan).
+_DROP_STAGED_DERIVATION_SQL = text("DROP TABLE IF EXISTS _staged_boundary_derivation")
+_CREATE_STAGED_DERIVATION_SQL = text(
     """
-    SELECT count(*)
-    FROM place_boundary_cells cell
-    JOIN place_boundaries pb ON pb.id = cell.place_id
+    CREATE TEMP TABLE _staged_boundary_derivation (
+        place_id uuid PRIMARY KEY,
+        place_kind text,
+        parent_id uuid,
+        is_canonical boolean NOT NULL DEFAULT false
+    )
+    """
+)
+_DROP_STAGED_CELLS_SQL = text("DROP TABLE IF EXISTS _staged_place_boundary_cells")
+_CREATE_STAGED_CELLS_SQL = text(
+    """
+    CREATE TEMP TABLE _staged_place_boundary_cells (
+        id uuid,
+        place_id uuid,
+        geom geometry
+    )
+    """
+)
+_CREATE_STAGED_CELLS_GEOM_IDX_SQL = text(
+    "CREATE INDEX ON _staged_place_boundary_cells USING GIST (geom)"
+)
+_CREATE_STAGED_CELLS_PLACE_IDX_SQL = text("CREATE INDEX ON _staged_place_boundary_cells (place_id)")
+_ANALYZE_STAGED_CELLS_SQL = text("ANALYZE _staged_place_boundary_cells")
+
+
+def _place_kind_case(subtype_col: str) -> str:
+    """The place_kind derivation CASE (subtype + per-country scope config), reused by the live and
+    staged place-kind statements. Values are fixed internal identifiers, never user input."""
+    return f"""CASE
+        WHEN {subtype_col} = 'country' THEN 'country'
+        WHEN {subtype_col} = ANY(
+            COALESCE(cfg.eligible_region_subtypes, {_DEFAULT_REGION_ELIGIBLE_SQL})
+        )
+            THEN 'region'
+        WHEN {subtype_col} = ANY(COALESCE(cfg.eligible_city_subtypes, {_DEFAULT_ELIGIBLE_SQL}))
+            THEN 'city'
+        ELSE NULL
+    END"""
+
+
+# Stage place_kind for every in-scope boundary from the LIVE identity columns (subtype + config —
+# which do not change during a refresh); never reads the live place_kind (generation-closed).
+_STAGED_PLACE_KIND_SQL = text(
+    f"""
+    INSERT INTO _staged_boundary_derivation (place_id, place_kind)
+    SELECT pb.id, {_place_kind_case("pb.subtype")}
+    FROM place_boundaries pb
+    LEFT JOIN place_scope_config cfg ON cfg.country_code = pb.country_code
+    """
+)
+_STAGED_PLACE_KIND_COUNTRY_SQL = text(
+    f"""
+    INSERT INTO _staged_boundary_derivation (place_id, place_kind)
+    SELECT pb.id, {_place_kind_case("pb.subtype")}
+    FROM place_boundaries pb
+    LEFT JOIN place_scope_config cfg ON cfg.country_code = pb.country_code
     WHERE pb.country_code = :cc
     """
 )
+
+# Stage the canonical-region winners with the EXACT live ordering (partition (country_code, slug),
+# ST_Area(boundary) DESC, overture_id ASC) but reading the staged place_kind — publish sets the live
+# region flags to precisely these winners, so the staged city parents match the published winners.
+_STAGED_CANONICAL_REGIONS_SQL = text(
+    """
+    WITH ranked AS (
+        SELECT sbd.place_id, ROW_NUMBER() OVER (
+            PARTITION BY pb.country_code, pb.slug
+            ORDER BY ST_Area(pb.boundary) DESC, pb.overture_id ASC
+        ) AS rn
+        FROM _staged_boundary_derivation sbd
+        JOIN place_boundaries pb ON pb.id = sbd.place_id
+        WHERE sbd.place_kind = 'region'
+    )
+    UPDATE _staged_boundary_derivation sbd
+    SET is_canonical = true
+    FROM ranked
+    WHERE sbd.place_id = ranked.place_id AND ranked.rn = 1
+    """
+)
+_STAGED_CANONICAL_REGIONS_COUNTRY_SQL = text(
+    """
+    WITH ranked AS (
+        SELECT sbd.place_id, ROW_NUMBER() OVER (
+            PARTITION BY pb.country_code, pb.slug
+            ORDER BY ST_Area(pb.boundary) DESC, pb.overture_id ASC
+        ) AS rn
+        FROM _staged_boundary_derivation sbd
+        JOIN place_boundaries pb ON pb.id = sbd.place_id
+        WHERE sbd.place_kind = 'region'
+          AND pb.country_code = :cc
+    )
+    UPDATE _staged_boundary_derivation sbd
+    SET is_canonical = true
+    FROM ranked
+    WHERE sbd.place_id = ranked.place_id AND ranked.rn = 1
+    """
+)
+
+# Stage region -> country parents (matched by country_code); country is identified by STAGED
+# place_kind = 'country'.
+_STAGED_REGION_PARENT_SQL = text(
+    """
+    UPDATE _staged_boundary_derivation child
+    SET parent_id = p.country_id
+    FROM (
+        SELECT sbd.place_id AS child_id, ctry.id AS country_id
+        FROM _staged_boundary_derivation sbd
+        JOIN place_boundaries c ON c.id = sbd.place_id
+        LEFT JOIN LATERAL (
+            SELECT pb.id
+            FROM place_boundaries pb
+            JOIN _staged_boundary_derivation s2 ON s2.place_id = pb.id
+            WHERE s2.place_kind = 'country'
+              AND pb.country_code = c.country_code
+            ORDER BY pb.overture_id ASC
+            LIMIT 1
+        ) ctry ON TRUE
+        WHERE sbd.place_kind = 'region'
+    ) p
+    WHERE child.place_id = p.child_id
+    """
+)
+_STAGED_REGION_PARENT_COUNTRY_SQL = text(
+    """
+    UPDATE _staged_boundary_derivation child
+    SET parent_id = p.country_id
+    FROM (
+        SELECT sbd.place_id AS child_id, ctry.id AS country_id
+        FROM _staged_boundary_derivation sbd
+        JOIN place_boundaries c ON c.id = sbd.place_id
+        LEFT JOIN LATERAL (
+            SELECT pb.id
+            FROM place_boundaries pb
+            JOIN _staged_boundary_derivation s2 ON s2.place_id = pb.id
+            WHERE s2.place_kind = 'country'
+              AND pb.country_code = c.country_code
+            ORDER BY pb.overture_id ASC
+            LIMIT 1
+        ) ctry ON TRUE
+        WHERE sbd.place_kind = 'region'
+          AND c.country_code = :cc
+    ) p
+    WHERE child.place_id = p.child_id
+    """
+)
+
+# Stage the subdivided cells (mirrors the live rebuild; publish copies them into the live table).
+_STAGED_CELLS_INSERT_SQL = text(
+    """
+    INSERT INTO _staged_place_boundary_cells (id, place_id, geom)
+    SELECT gen_random_uuid(), pb.id, sub.geom
+    FROM place_boundaries pb
+    CROSS JOIN LATERAL ST_Subdivide(pb.boundary::geometry, 128) AS sub(geom)
+    """
+)
+_STAGED_CELLS_INSERT_COUNTRY_SQL = text(
+    """
+    INSERT INTO _staged_place_boundary_cells (id, place_id, geom)
+    SELECT gen_random_uuid(), pb.id, sub.geom
+    FROM place_boundaries pb
+    CROSS JOIN LATERAL ST_Subdivide(pb.boundary::geometry, 128) AS sub(geom)
+    WHERE pb.country_code = :cc
+    """
+)
+
+
+def _staged_city_parent_sql(cell_table: str, *, scoped: bool):
+    """Stage each city's parent = the smallest STAGED-canonical region covering the city's
+    representative point (else the country when the scope has no region tier). Reads the staged
+    cells (or, when boundaries did not change and cells were not re-staged, the live cells) via the
+    constant-vs-indexed ``ST_Covers(cell.geom, cp.pt)`` GiST probe, and the staged place_kind /
+    canonical relation. ``cell_table`` is one of two internal constants — never user input."""
+    where_city = "AND c.country_code = :cc" if scoped else ""
+    return text(
+        f"""
+        WITH city_pt AS MATERIALIZED (
+            SELECT c.id, c.country_code, ST_PointOnSurface(c.boundary::geometry) AS pt
+            FROM place_boundaries c
+            JOIN _staged_boundary_derivation sbd ON sbd.place_id = c.id
+            WHERE sbd.place_kind = 'city'
+              {where_city}
+        )
+        UPDATE _staged_boundary_derivation city
+        SET parent_id = p.parent_id
+        FROM (
+            SELECT cp.id AS city_id,
+                   CASE
+                       WHEN COALESCE(cardinality(cfg.eligible_region_subtypes), 1) = 0
+                           THEN country.id
+                       ELSE region.id
+                   END AS parent_id
+            FROM city_pt cp
+            LEFT JOIN place_scope_config cfg ON cfg.country_code = cp.country_code
+            LEFT JOIN LATERAL (
+                SELECT pb.id
+                FROM place_boundaries pb
+                JOIN _staged_boundary_derivation s2 ON s2.place_id = pb.id
+                WHERE s2.place_kind = 'country'
+                  AND pb.country_code = cp.country_code
+                ORDER BY pb.overture_id ASC
+                LIMIT 1
+            ) country ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT pb.id
+                FROM {cell_table} cell
+                JOIN place_boundaries pb ON pb.id = cell.place_id
+                JOIN _staged_boundary_derivation s3 ON s3.place_id = pb.id
+                WHERE s3.place_kind = 'region'
+                  AND s3.is_canonical = true
+                  AND pb.country_code = cp.country_code
+                  AND ST_Covers(cell.geom, cp.pt)
+                ORDER BY ST_Area(pb.boundary) ASC, pb.overture_id ASC
+                LIMIT 1
+            ) region ON TRUE
+        ) p
+        WHERE city.place_id = p.city_id
+        """
+    )
+
+
+_STAGED_CITY_PARENT_SQL = _staged_city_parent_sql("_staged_place_boundary_cells", scoped=False)
+_STAGED_CITY_PARENT_LIVE_CELLS_SQL = _staged_city_parent_sql("place_boundary_cells", scoped=False)
+_STAGED_CITY_PARENT_COUNTRY_SQL = _staged_city_parent_sql(
+    "_staged_place_boundary_cells", scoped=True
+)
+
+# --- Publish: apply the staged generation to the live tables (under the advisory lock) ---------
+# Copy the staged cells into the freshly-cleared live table (scope-bounded); the staged table holds
+# exactly the scope's cells, so no WHERE is needed on the SELECT.
+_PUBLISH_CELLS_INSERT_SQL = text(
+    """
+    INSERT INTO place_boundary_cells (id, place_id, geom)
+    SELECT id, place_id, geom FROM _staged_place_boundary_cells
+    """
+)
+# Apply staged place_kind + parent_id to the live boundaries (IS DISTINCT FROM skips no-op writes).
+_APPLY_STAGED_DERIVATION_SQL = text(
+    """
+    UPDATE place_boundaries pb
+    SET place_kind = sbd.place_kind, parent_id = sbd.parent_id
+    FROM _staged_boundary_derivation sbd
+    WHERE pb.id = sbd.place_id
+      AND (pb.place_kind IS DISTINCT FROM sbd.place_kind
+           OR pb.parent_id IS DISTINCT FROM sbd.parent_id)
+    """
+)
+_APPLY_STAGED_DERIVATION_COUNTRY_SQL = text(
+    """
+    UPDATE place_boundaries pb
+    SET place_kind = sbd.place_kind, parent_id = sbd.parent_id
+    FROM _staged_boundary_derivation sbd
+    WHERE pb.id = sbd.place_id
+      AND pb.country_code = :cc
+      AND (pb.place_kind IS DISTINCT FROM sbd.place_kind
+           OR pb.parent_id IS DISTINCT FROM sbd.parent_id)
+    """
+)
+# Set the live REGION canonical flags to exactly the staged winners (reset-first publish order has
+# already cleared the old flags, so this is collision-free on uq_place_boundaries_region_canonical).
+_PUBLISH_REGION_CANONICAL_SQL = text(
+    """
+    UPDATE place_boundaries pb
+    SET is_canonical = true
+    FROM _staged_boundary_derivation sbd
+    WHERE pb.id = sbd.place_id
+      AND sbd.is_canonical = true
+      AND sbd.place_kind = 'region'
+    """
+)
+_PUBLISH_REGION_CANONICAL_COUNTRY_SQL = text(
+    """
+    UPDATE place_boundaries pb
+    SET is_canonical = true
+    FROM _staged_boundary_derivation sbd
+    WHERE pb.id = sbd.place_id
+      AND pb.country_code = :cc
+      AND sbd.is_canonical = true
+      AND sbd.place_kind = 'region'
+    """
+)
+
+# Staged-table summaries for the compute phase (report the NEW generation being computed — the live
+# tables are still the previous generation until publish).
+_STAGED_PLACE_KIND_SUMMARY_SQL = text(
+    """
+    SELECT
+        count(*) FILTER (WHERE place_kind = 'country') AS countries,
+        count(*) FILTER (WHERE place_kind = 'region') AS regions,
+        count(*) FILTER (WHERE place_kind = 'city') AS cities,
+        count(*) FILTER (WHERE place_kind IS NULL) AS none
+    FROM _staged_boundary_derivation
+    """
+)
+_STAGED_REGION_CANONICAL_SUMMARY_SQL = text(
+    """
+    SELECT
+        count(*) FILTER (WHERE place_kind = 'region' AND is_canonical) AS regions,
+        (SELECT count(*) FROM (
+            SELECT pb.country_code, pb.slug
+            FROM _staged_boundary_derivation sbd
+            JOIN place_boundaries pb ON pb.id = sbd.place_id
+            WHERE sbd.place_kind = 'region'
+            GROUP BY pb.country_code, pb.slug HAVING count(*) > 1
+        ) x) AS duplicate_region_slugs
+    FROM _staged_boundary_derivation
+    """
+)
+_STAGED_CITY_PARENT_SUMMARY_SQL = text(
+    """
+    SELECT
+        count(*) FILTER (WHERE place_kind = 'city' AND parent_id IS NOT NULL) AS parented,
+        count(*) FILTER (WHERE place_kind = 'city' AND parent_id IS NULL) AS null_parent
+    FROM _staged_boundary_derivation
+    """
+)
+
+
+@dataclass(frozen=True)
+class RefreshScope:
+    """Which boundaries a membership refresh covers + whether it re-derives the point-in-polygon
+    cells. ``country_code=None`` is the whole DB; a code scopes every phase to that country (which
+    always re-stages its own cells). ``rebuild_cells`` governs the full-scope cell stage/replace:
+    ``True`` for a boundary load / backfill (boundaries changed), ``False`` for an OSM merge /
+    rollback (only fountains changed — the live cells are already current)."""
+
+    country_code: str | None = None
+    rebuild_cells: bool = True
+
+    @property
+    def cc(self) -> str | None:
+        return self.country_code.lower() if self.country_code is not None else None
+
+    @property
+    def scoped(self) -> bool:
+        return self.country_code is not None
+
+    @property
+    def stage_cells(self) -> bool:
+        # Country scope always re-stages its cells; full scope only when boundaries changed.
+        return self.scoped or self.rebuild_cells
 
 
 @dataclass
@@ -956,23 +1049,6 @@ async def _prepare_scoped_refresh_temp_tables(session: AsyncSession) -> None:
     await session.execute(_CLEAR_AFFECTED_PLACES_TEMP_SQL)
     await session.execute(_CLEAR_RAW_CITY_MEMBERSHIP_TEMP_SQL)
     await session.execute(_CLEAR_FINAL_CHANGED_PLACES_TEMP_SQL)
-
-
-async def rebuild_country_boundary_cells(session: AsyncSession, country_code: str) -> int:
-    """Replace ``place_boundary_cells`` only for one country's boundaries.
-
-    Mirrors :func:`rebuild_place_boundary_cells`, but deletes and re-subdivides only the loaded
-    country's boundaries. The caller owns the transaction and must hold ``ADD_FOUNTAIN_LOCK``.
-    """
-    cc = country_code.lower()
-    await session.execute(_DELETE_COUNTRY_CELLS_SQL, {"cc": cc})
-    await session.execute(_REBUILD_COUNTRY_CELLS_SQL, {"cc": cc})
-    await session.execute(_ANALYZE_CELLS_SQL)
-    cells = (await session.execute(_COUNT_COUNTRY_CELLS_SQL, {"cc": cc})).scalar_one()
-    log.info(
-        "place_boundary_cells_rebuilt", extra={"cells": cells, "country": cc, "scope": "country"}
-    )
-    return cells
 
 
 async def recompute_place_counts(session: AsyncSession, place_ids) -> None:
@@ -1073,43 +1149,6 @@ async def recompute_fountain_membership(session: AsyncSession, fountain_id) -> N
     )
 
 
-async def _log_place_kind_summary(session: AsyncSession, extra: dict | None = None) -> None:
-    row = (await session.execute(_PLACE_KIND_SUMMARY_SQL)).one()
-    log.info(
-        "place_kind_derived",
-        extra={
-            **(extra or {}),
-            "countries": row.countries,
-            "regions": row.regions,
-            "cities": row.cities,
-            "none": row.none,
-        },
-    )
-
-
-async def _log_city_parent_summary(session: AsyncSession, extra: dict | None = None) -> None:
-    row = (
-        await session.execute(
-            text(
-                """
-                SELECT
-                    count(*) FILTER (WHERE place_kind = 'city' AND parent_id IS NOT NULL)
-                        AS parented,
-                    count(*) FILTER (WHERE place_kind = 'city' AND parent_id IS NULL)
-                        AS null_parent
-                FROM place_boundaries
-                """
-            )
-        )
-    ).one()
-    level = logging.WARNING if row.null_parent else logging.INFO
-    log.log(
-        level,
-        "city_parented",
-        extra={**(extra or {}), "parented": row.parented, "null_parent": row.null_parent},
-    )
-
-
 async def _log_assignment_summary(session: AsyncSession, extra: dict | None = None) -> None:
     row = (await session.execute(_SUMMARY_SQL)).one()
     log.info(
@@ -1159,77 +1198,174 @@ async def _log_canonical_summary(
     )
 
 
-async def compute_boundary_derivation(
-    session: AsyncSession, *, country_code: str | None, rebuild_cells: bool = True
+async def _log_staged_place_kind_summary(session: AsyncSession, extra: dict | None = None) -> None:
+    row = (await session.execute(_STAGED_PLACE_KIND_SUMMARY_SQL)).one()
+    log.info(
+        "place_kind_derived",
+        extra={
+            **(extra or {}),
+            "countries": row.countries,
+            "regions": row.regions,
+            "cities": row.cities,
+            "none": row.none,
+        },
+    )
+
+
+async def _log_staged_region_canonical_summary(
+    session: AsyncSession, extra: dict | None = None
 ) -> None:
-    """Boundary-derivation phases, reading/writing ONLY ``place_boundaries`` +
-    ``place_boundary_cells`` (never fountains): (rebuild cells ->) ``place_kind`` -> region ->
-    country parenting -> canonical regions -> city parenting. ``country_code=None`` is the whole-DB
-    scope; a country code scopes every phase to that country.
+    row = (await session.execute(_STAGED_REGION_CANONICAL_SUMMARY_SQL)).one()
+    level = logging.WARNING if row.duplicate_region_slugs else logging.INFO
+    log.log(
+        level,
+        "region_canonical_selected",
+        extra={
+            **(extra or {}),
+            "regions": row.regions,
+            # city canonical is count-dependent → selected in the publish fountain tail
+            "cities": 0,
+            "duplicate_region_slugs": row.duplicate_region_slugs,
+        },
+    )
 
-    Runs the SAME phases the fountain-dependent :func:`publish_membership_state` consumes; the two
-    are called back-to-back by the thin refresh compositions (advisory lock acquired first). This is
-    the live-SQL seam (spec 2026-07-17 §2) — it mutates ``place_boundaries`` in place, so it runs in
-    the same locked transaction as publish; Slice C Task 5 restages it against temp tables so the
-    expensive geometry can run BEFORE the lock. The caller owns the transaction and MUST hold the
-    ``ADD_FOUNTAIN_LOCK`` advisory lock.
 
-    Canonical regions are selected here because city parenting reads ``place_kind = 'region' AND
-    is_canonical`` — publish resets and re-selects the live canonical flags against fresh counts.
+async def _log_staged_city_parent_summary(session: AsyncSession, extra: dict | None = None) -> None:
+    row = (await session.execute(_STAGED_CITY_PARENT_SUMMARY_SQL)).one()
+    level = logging.WARNING if row.null_parent else logging.INFO
+    log.log(
+        level,
+        "city_parented",
+        extra={**(extra or {}), "parented": row.parented, "null_parent": row.null_parent},
+    )
+
+
+async def compute_boundary_derivation(session: AsyncSession, scope: RefreshScope) -> None:
+    """Stage the new boundary derivation into connection-scoped TEMP tables, taking NO advisory lock
+    and mutating NOTHING live (spec 2026-07-17 §2). The expensive geometry — the ``ST_Subdivide``
+    cells and the dominant city-parenting probe — runs here, BEFORE the lock, so an interactive add
+    is never blocked by it.
+
+    Generation-closed dataflow (never reads the live ``place_kind`` / ``is_canonical``, which stay
+    previous-generation throughout): staged ``place_kind`` -> staged canonical-region winners ->
+    staged region parents -> (stage cells + GiST/place_id index + ANALYZE) -> staged city parents,
+    reading the staged cells and the staged canonical relation. City canonical stays count-dependent
+    and is selected by :func:`publish_membership_state`'s fountain tail.
+
+    The caller owns the transaction; it need NOT hold the advisory lock (compute takes no live-table
+    locks). When ``scope.rebuild_cells`` is False (an OSM merge / rollback — boundaries unchanged),
+    cells are not re-staged and staged city parenting reads the already-current live cells.
     """
-    if country_code is None:
-        if rebuild_cells:
-            await rebuild_place_boundary_cells(session)
-        await session.execute(_PLACE_KIND_SQL)
-        await _log_place_kind_summary(session)
-        await session.execute(_PARENT_RESET_SQL)
-        await session.execute(_REGION_PARENT_SQL)
-        log.info("region_parented")
-        await session.execute(_CANONICAL_RESET_SQL)
-        await session.execute(_CANONICAL_REGIONS_SQL)
-        await _log_canonical_summary(session, "region_canonical_selected")
-        await session.execute(_CITY_PARENT_SQL)
-        await _log_city_parent_summary(session)
-        return
+    cc = scope.cc
+    log_extra = {"country": cc, "scope": "country"} if scope.scoped else None
+    # Unconditional drop+create: stale staging can never leak on a reused pooled connection, and the
+    # tables are NOT ON COMMIT DROP so they survive the compute-commit in the CLI two-transaction
+    # layout (they drop with the connection).
+    await session.execute(_DROP_STAGED_DERIVATION_SQL)
+    await session.execute(_CREATE_STAGED_DERIVATION_SQL)
+    await session.execute(_DROP_STAGED_CELLS_SQL)
+    await session.execute(_CREATE_STAGED_CELLS_SQL)
 
-    cc = country_code.lower()
-    log_extra = {"country": cc, "scope": "country"}
-    await rebuild_country_boundary_cells(session, cc)
-    await session.execute(_PLACE_KIND_COUNTRY_SQL, {"cc": cc})
-    await _log_place_kind_summary(session, log_extra)
-    await session.execute(_PARENT_RESET_COUNTRY_SQL, {"cc": cc})
-    await session.execute(_REGION_PARENT_COUNTRY_SQL, {"cc": cc})
+    if scope.scoped:
+        await session.execute(_STAGED_PLACE_KIND_COUNTRY_SQL, {"cc": cc})
+    else:
+        await session.execute(_STAGED_PLACE_KIND_SQL)
+    await _log_staged_place_kind_summary(session, log_extra)
+
+    if scope.scoped:
+        await session.execute(_STAGED_CANONICAL_REGIONS_COUNTRY_SQL, {"cc": cc})
+    else:
+        await session.execute(_STAGED_CANONICAL_REGIONS_SQL)
+    await _log_staged_region_canonical_summary(session, log_extra)
+
+    if scope.scoped:
+        await session.execute(_STAGED_REGION_PARENT_COUNTRY_SQL, {"cc": cc})
+    else:
+        await session.execute(_STAGED_REGION_PARENT_SQL)
     log.info("region_parented", extra=log_extra)
-    await session.execute(_CANONICAL_RESET_COUNTRY_SQL, {"cc": cc})
-    await session.execute(_CANONICAL_REGIONS_COUNTRY_SQL, {"cc": cc})
-    await _log_canonical_summary(session, "region_canonical_selected", log_extra)
-    await session.execute(_CITY_PARENT_COUNTRY_SQL, {"cc": cc})
-    await _log_city_parent_summary(session, log_extra)
+
+    if scope.stage_cells:
+        if scope.scoped:
+            await session.execute(_STAGED_CELLS_INSERT_COUNTRY_SQL, {"cc": cc})
+        else:
+            await session.execute(_STAGED_CELLS_INSERT_SQL)
+        # Same GiST + place_id index + ANALYZE contract as the live table, so staged city parenting
+        # probes the index rather than seq-scanning (the #239-class failure).
+        await session.execute(_CREATE_STAGED_CELLS_GEOM_IDX_SQL)
+        await session.execute(_CREATE_STAGED_CELLS_PLACE_IDX_SQL)
+        await session.execute(_ANALYZE_STAGED_CELLS_SQL)
+
+    if scope.scoped:
+        await session.execute(_STAGED_CITY_PARENT_COUNTRY_SQL, {"cc": cc})
+    elif scope.stage_cells:
+        await session.execute(_STAGED_CITY_PARENT_SQL)
+    else:
+        await session.execute(_STAGED_CITY_PARENT_LIVE_CELLS_SQL)
+    await _log_staged_city_parent_summary(session, log_extra)
 
 
 async def publish_membership_state(
-    session: AsyncSession, *, country_code: str | None
+    session: AsyncSession, scope: RefreshScope
 ) -> MembershipRefreshSummary:
-    """Fountain-dependent tail that consumes what :func:`compute_boundary_derivation` produced:
-    assign membership -> recount -> select canonical cities (count-dependent) -> remap fountains to
-    the canonical city -> recount. ``country_code=None`` runs the whole-DB pipeline; a country code
-    runs the scoped candidate/affected-place pipeline.
+    """Acquire the advisory lock and atomically apply the staged generation to the live tables, then
+    run the fountain-dependent tail (spec 2026-07-17 §2). One transaction; the caller commits.
 
-    The caller owns the transaction and MUST hold the ``ADD_FOUNTAIN_LOCK`` advisory lock. Returns
-    the :class:`MembershipRefreshSummary` and emits ``membership_refresh_complete``.
+    Reset-first publish order (the partial unique indexes are enforced per-statement, not at
+    commit): (1) reset the live canonical flags while rows still carry their old hierarchy;
+    (2) replace the live cells from staging (when boundaries changed) and apply the staged
+    place_kind / parent_id; (3) set the live REGION canonical flags to exactly the staged winners;
+    (4) the existing fountain-dependent tail (assign, recount, count-dependent CITY canonical,
+    remap, recount).
+
+    On any exception the caller rolls back and the previous generation is intact (the staged writes
+    were temp-only; the live apply is atomic in this transaction). Returns the summary and emits
+    ``membership_refresh_complete``.
     """
-    if country_code is None:
-        return await _publish_full(session)
-    return await _publish_country(session, country_code.lower())
+    cc = scope.cc
+    ctx = (
+        f"publish_membership_state:country:{cc}" if scope.scoped else "publish_membership_state:all"
+    )
+    await acquire_add_fountain_lock(session, context=ctx)
+
+    # (1) reset canonical on the OLD hierarchy.
+    if scope.scoped:
+        await session.execute(_CANONICAL_RESET_COUNTRY_SQL, {"cc": cc})
+    else:
+        await session.execute(_CANONICAL_RESET_SQL)
+
+    # (2) replace the live cells from staging (only when boundaries changed) + apply staged
+    # place_kind / parent to the live boundaries.
+    if scope.stage_cells:
+        if scope.scoped:
+            await session.execute(_DELETE_COUNTRY_CELLS_SQL, {"cc": cc})
+        else:
+            await session.execute(_TRUNCATE_CELLS_SQL)
+        await session.execute(_PUBLISH_CELLS_INSERT_SQL)
+        await session.execute(_ANALYZE_CELLS_SQL)
+    if scope.scoped:
+        await session.execute(_APPLY_STAGED_DERIVATION_COUNTRY_SQL, {"cc": cc})
+    else:
+        await session.execute(_APPLY_STAGED_DERIVATION_SQL)
+
+    # (3) set the live REGION canonical flags to exactly the staged winners.
+    if scope.scoped:
+        await session.execute(_PUBLISH_REGION_CANONICAL_COUNTRY_SQL, {"cc": cc})
+    else:
+        await session.execute(_PUBLISH_REGION_CANONICAL_SQL)
+
+    # (4) the existing fountain-dependent tail per scope.
+    if scope.scoped:
+        return await _publish_country_tail(session, cc)
+    return await _publish_full_tail(session)
 
 
-async def _publish_full(session: AsyncSession) -> MembershipRefreshSummary:
+async def _publish_full_tail(session: AsyncSession) -> MembershipRefreshSummary:
     await session.execute(_ASSIGN_SQL, {"fountain_id": None})
     await _log_assignment_summary(session)
     await session.execute(_RECOUNT_ALL_SQL)
     log.info("membership_recounted", extra={"scope": "all", "phase": "pre_city_canonical"})
-    await session.execute(_CANONICAL_RESET_SQL)
-    await session.execute(_CANONICAL_REGIONS_SQL)
+    # Region canonical is already set from staging (publish step 3); select only the count-dependent
+    # CITY winners. Cities are all-false after the reset-first step, so no reset is needed here.
     await session.execute(_CANONICAL_CITIES_SQL)
     await _log_canonical_summary(session, "city_canonical_selected")
     await session.execute(_REMAP_CITY_SQL, {"fountain_id": None})
@@ -1242,7 +1378,7 @@ async def _publish_full(session: AsyncSession) -> MembershipRefreshSummary:
     return summary
 
 
-async def _publish_country(session: AsyncSession, cc: str) -> MembershipRefreshSummary:
+async def _publish_country_tail(session: AsyncSession, cc: str) -> MembershipRefreshSummary:
     log_extra = {"country": cc, "scope": "country"}
     await _prepare_scoped_refresh_temp_tables(session)
     await session.execute(_CAPTURE_COUNTRY_CANDIDATES_SQL, {"cc": cc})
@@ -1337,14 +1473,14 @@ async def refresh_country_memberships(
 ) -> MembershipRefreshSummary:
     """Re-derive membership after loading one country's boundaries (thin composition).
 
-    Boundary-derived state is scoped to ``country_code``. Fountain assignment remains global for a
-    stable candidate set, then the existing affected-place count/canonical/remap pipeline is reused
-    for the old/new touched places. Compute + publish run back-to-back in the caller's single
-    transaction with the advisory lock acquired first — the merge-path all-or-nothing semantics.
+    Runs :func:`compute_boundary_derivation` (staged) then :func:`publish_membership_state` (which
+    acquires the advisory lock) back-to-back in the caller's single transaction — the merge-path
+    all-or-nothing layout. On the merge path the caller already holds the lock before compute, so no
+    add can wait on live-table locks mid-merge; publish's acquire is then a re-entrant no-op.
     """
-    await acquire_add_fountain_lock(session, context="refresh_country_memberships")
-    await compute_boundary_derivation(session, country_code=country_code)
-    return await publish_membership_state(session, country_code=country_code)
+    scope = RefreshScope(country_code=country_code)
+    await compute_boundary_derivation(session, scope)
+    return await publish_membership_state(session, scope)
 
 
 async def refresh_all_memberships(
@@ -1352,24 +1488,22 @@ async def refresh_all_memberships(
 ) -> MembershipRefreshSummary:
     """Re-derive the whole membership state: assignment, counts, canonical, parent (spec §11.5).
 
-    Thin composition of :func:`compute_boundary_derivation` (boundary phases: rebuild cells, derive
-    ``place_kind``, parent regions to countries, select canonical regions, parent cities) then
-    :func:`publish_membership_state` (assign raw country/region/city membership, recount, select
-    canonical cities, remap to canonical city rows, recount) — back-to-back in one transaction; the
-    caller commits. Run on every boundary load and by the backfill CLI.
+    Thin composition of :func:`compute_boundary_derivation` (staged boundary phases: stage cells,
+    derive ``place_kind``, canonical regions, region + city parents into temp tables) then
+    :func:`publish_membership_state` (acquire the lock, apply the staged generation, then assign,
+    recount, select canonical cities, remap, recount) — back-to-back in one transaction; the caller
+    commits. Run on every boundary load and by the backfill CLI.
 
-    ``rebuild_cells`` (default ``True``) controls whether ``place_boundary_cells`` is re-derived
-    first. Rebuild when the boundaries themselves changed (boundary load) or for the one-time
-    backfill (cells may be empty/stale). A plain OSM import / rollback does NOT change boundaries —
-    only which fountains fall where — so those callers pass ``rebuild_cells=False`` to skip the
-    ~200s subdivide and just re-assign against the already-current cells.
+    ``rebuild_cells`` (default ``True``) controls whether ``place_boundary_cells`` is re-derived.
+    Rebuild when the boundaries themselves changed (boundary load) or for the one-time backfill
+    (cells may be empty/stale). A plain OSM import / rollback does NOT change boundaries — only
+    which fountains fall where — so those callers pass ``rebuild_cells=False`` to skip the ~200s
+    subdivide and re-derive against the already-current cells.
 
-    Takes the ``ADD_FOUNTAIN_LOCK`` advisory lock so a whole-DB refresh (boundary load / backfill /
-    rollback) is serialized with concurrent adds + imports — otherwise a refresh could recount from
-    a snapshot missing an in-flight add and commit a stale ``fountain_count`` over it. The lock is
-    re-entrant, so callers that already hold it (``merge``/``rollback``) are unaffected; the same
-    lock also serializes the cell rebuild + PIP against those callers' cell reads.
+    :func:`publish_membership_state` acquires the ``ADD_FOUNTAIN_LOCK`` advisory lock so the apply +
+    fountain recompute is serialized with concurrent adds + imports. The lock is re-entrant, so the
+    merge / rollback callers that already hold it are unaffected.
     """
-    await acquire_add_fountain_lock(session, context="refresh_all_memberships")
-    await compute_boundary_derivation(session, country_code=None, rebuild_cells=rebuild_cells)
-    return await publish_membership_state(session, country_code=None)
+    scope = RefreshScope(rebuild_cells=rebuild_cells)
+    await compute_boundary_derivation(session, scope)
+    return await publish_membership_state(session, scope)
