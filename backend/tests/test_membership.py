@@ -1520,106 +1520,338 @@ async def test_refresh_country_memberships_is_idempotent(session):
     assert await _membership_snapshot(session) == once
 
 
-# --- compute/publish seam (Slice C Task 4: pure extraction) -----------------------------------
+# --- compute/publish seam runs the behavior suite on BOTH compositions (Codex PR#245 finding 2) --
+#
+# The refresh runs two ways that differ ONLY in transaction layout, so both must produce the same
+# membership. `full_refresh` / `country_refresh` are parametrized over them; the tests assert the
+# EXPECTED assignments / counts / canonical winners on each fixture (the oracle is the expected
+# value, never one composition compared against the other — that would be circular now that
+# `refresh_all_memberships` IS compute+publish):
+#   - "single_txn": the caller-owned single transaction (`refresh_all_memberships` /
+#     `refresh_country_memberships`) — the OSM merge-path layout.
+#   - "staged_pinned": `run_staged_membership_refresh` — TWO transactions (compute→commit→
+#     publish→commit) on one pinned connection (the loader/CLI layout). The fixtures are committed
+#     first (a separate connection can't see the test session's open transaction) and the session's
+#     view is refreshed after, so a transaction-boundary-specific difference would surface.
+
+
+@pytest.fixture(params=["single_txn", "staged_pinned"])
+def full_refresh(request, session, engine):
+    from app.membership import RefreshScope, run_staged_membership_refresh
+
+    async def _run():
+        if request.param == "single_txn":
+            return await refresh_all_memberships(session)
+        await session.commit()  # commit the fixtures so the pinned connection sees them
+        summary = await run_staged_membership_refresh(engine, RefreshScope(rebuild_cells=True))
+        await session.rollback()  # drop the stale snapshot; reads below see the committed result
+        return summary
+
+    return _run
+
+
+@pytest.fixture(params=["single_txn", "staged_pinned"])
+def country_refresh(request, session, engine):
+    from app.membership import RefreshScope, run_staged_membership_refresh
+
+    async def _run(cc: str):
+        if request.param == "single_txn":
+            return await refresh_country_memberships(session, cc)
+        await session.commit()
+        summary = await run_staged_membership_refresh(engine, RefreshScope(country_code=cc))
+        await session.rollback()
+        return summary
+
+    return _run
 
 
 @pytest.mark.asyncio
-async def test_compute_then_publish_full_matches_refresh_all(session):
-    """The staged seam (compute_boundary_derivation stages the new generation; then
-    publish_membership_state acquires the lock and applies it) produces exactly the same state as
-    the composition refresh_all_memberships."""
-    from app.membership import (
-        RefreshScope,
-        compute_boundary_derivation,
-        publish_membership_state,
-    )
-
-    await _enable_region_tier(session)
-    await _add_boundary(
+async def test_ladder_county_not_a_city_both_compositions(session, full_refresh):
+    us = await _add_boundary(
         session,
         overture_id="us",
         subtype="country",
         country_code="us",
         name="United States",
         slug="united-states",
-        wkt=_sq(0, 0, 20, 20),
+        wkt=_sq(0, 0, 10, 10),
     )
-    await _add_boundary(
+    county = await _add_boundary(
         session,
-        overture_id="region",
-        subtype="region",
+        overture_id="us-county",
+        subtype="county",
         country_code="us",
-        name="Region",
-        slug="region",
-        wkt=_sq(0, 0, 20, 20),
+        name="County",
+        slug="county",
+        wkt=_sq(0, 0, 5, 5),
     )
-    await _add_boundary(
+    city = await _add_boundary(
         session,
-        overture_id="city-a",
+        overture_id="us-city",
         subtype="locality",
         country_code="us",
-        name="City",
-        slug="city",
+        name="San Diego",
+        slug="san-diego",
         wkt=_sq(1, 1, 2, 2),
     )
-    await _add_boundary(
-        session,
-        overture_id="city-b",
-        subtype="localadmin",
-        country_code="us",
-        name="City",
-        slug="city",
-        wkt=_sq(1, 1, 3, 3),
-    )
-    await _add_fountain(session, lat=1.5, lng=1.5)
-
-    # Oracle: the composition.
-    oracle = await refresh_all_memberships(session)
-    oracle_snapshot = await _membership_snapshot(session)
-
-    # Wipe derived state, then run the seam directly (publish acquires the lock).
-    await session.execute(
-        text(
-            "UPDATE fountains SET country_place_id = NULL, region_place_id = NULL, "
-            "city_place_id = NULL"
-        )
-    )
-    await session.execute(
-        text(
-            "UPDATE place_boundaries SET place_kind = NULL, parent_id = NULL, "
-            "is_canonical = false, fountain_count = 0"
-        )
-    )
-    scope = RefreshScope(rebuild_cells=True)
-    await compute_boundary_derivation(session, scope)
-    seam = await publish_membership_state(session, scope)
-
-    assert seam == oracle
-    assert await _membership_snapshot(session) == oracle_snapshot
+    fid = await _add_fountain(session, lat=1.5, lng=1.5)
+    await full_refresh()
+    m = await _membership(session, fid)
+    assert m.country_place_id == us
+    assert m.city_place_id == city
+    assert await _count(session, city) == 1
+    assert await _count(session, us) == 1
+    assert await _count(session, county) == 0
 
 
 @pytest.mark.asyncio
-async def test_compute_then_publish_country_matches_refresh_country(session):
-    """The scoped seam matches refresh_country_memberships exactly."""
-    from app.membership import (
-        RefreshScope,
-        compute_boundary_derivation,
-        publish_membership_state,
+async def test_smallest_area_breaks_tie_both_compositions(session, full_refresh):
+    await _add_boundary(
+        session,
+        overture_id="us",
+        subtype="country",
+        country_code="us",
+        name="US",
+        slug="united-states",
+        wkt=_sq(0, 0, 10, 10),
     )
+    big = await _add_boundary(
+        session,
+        overture_id="big",
+        subtype="locality",
+        country_code="us",
+        name="Big",
+        slug="big",
+        wkt=_sq(0, 0, 5, 5),
+    )
+    small = await _add_boundary(
+        session,
+        overture_id="small",
+        subtype="locality",
+        country_code="us",
+        name="Small",
+        slug="small",
+        wkt=_sq(1, 1, 2, 2),
+    )
+    fid = await _add_fountain(session, lat=1.5, lng=1.5)  # inside both localities
+    await full_refresh()
+    assert (await _membership(session, fid)).city_place_id == small
+    assert await _count(session, small) == 1
+    assert await _count(session, big) == 0
 
+
+@pytest.mark.asyncio
+async def test_canonical_slug_collision_both_compositions(session, full_refresh):
+    await _add_boundary(
+        session,
+        overture_id="us",
+        subtype="country",
+        country_code="us",
+        name="US",
+        slug="united-states",
+        wkt=_sq(0, 0, 40, 40),
+    )
+    loc = await _add_boundary(
+        session,
+        overture_id="riv-loc",
+        subtype="locality",
+        country_code="us",
+        name="Riverside",
+        slug="riverside",
+        wkt=_sq(1, 1, 2, 2),
+    )
+    la = await _add_boundary(
+        session,
+        overture_id="riv-la",
+        subtype="localadmin",
+        country_code="us",
+        name="Riverside",
+        slug="riverside",
+        wkt=_sq(10, 10, 11, 11),
+    )
+    spring_big = await _add_boundary(
+        session,
+        overture_id="spring-big",
+        subtype="locality",
+        country_code="us",
+        name="Springfield",
+        slug="springfield",
+        wkt=_sq(20, 20, 21, 21),
+    )
+    spring_small = await _add_boundary(
+        session,
+        overture_id="spring-small",
+        subtype="locality",
+        country_code="us",
+        name="Springfield",
+        slug="springfield",
+        wkt=_sq(30, 30, 31, 31),
+    )
+    await _add_fountain(session, lat=20.5, lng=20.5)
+    await _add_fountain(session, lat=20.5, lng=20.7)
+    await _add_fountain(session, lat=30.5, lng=30.5)
+    await full_refresh()
+    assert await _is_canonical(session, loc) is True  # subtype priority beats localadmin
+    assert await _is_canonical(session, la) is False
+    # larger count wins the same-subtype tie
+    assert await _is_canonical(session, spring_big) is True
+    assert await _is_canonical(session, spring_small) is False
+
+
+@pytest.mark.asyncio
+async def test_hidden_excluded_from_counts_both_compositions(session, full_refresh):
+    us = await _add_boundary(
+        session,
+        overture_id="us",
+        subtype="country",
+        country_code="us",
+        name="US",
+        slug="united-states",
+        wkt=_sq(0, 0, 10, 10),
+    )
+    city = await _add_boundary(
+        session,
+        overture_id="us-city",
+        subtype="locality",
+        country_code="us",
+        name="San Diego",
+        slug="san-diego",
+        wkt=_sq(1, 1, 2, 2),
+    )
+    await _add_fountain(session, lat=1.5, lng=1.5)
+    await _add_fountain(session, lat=1.6, lng=1.6, hidden=True)
+    await full_refresh()
+    assert await _count(session, city) == 1
+    assert await _count(session, us) == 1
+
+
+@pytest.mark.asyncio
+async def test_unmatched_country_only_both_compositions(session, full_refresh):
+    us = await _add_boundary(
+        session,
+        overture_id="us",
+        subtype="country",
+        country_code="us",
+        name="US",
+        slug="united-states",
+        wkt=_sq(0, 0, 10, 10),
+    )
+    await _add_boundary(
+        session,
+        overture_id="us-city",
+        subtype="locality",
+        country_code="us",
+        name="San Diego",
+        slug="san-diego",
+        wkt=_sq(1, 1, 2, 2),
+    )
+    country_only = await _add_fountain(session, lat=8.0, lng=8.0)  # in US, no city
+    nowhere = await _add_fountain(session, lat=50.0, lng=50.0)  # no boundary at all
+    summary = await full_refresh()
+    assert (await _membership(session, country_only)).country_place_id == us
+    assert (await _membership(session, country_only)).city_place_id is None
+    assert (await _membership(session, nowhere)).country_place_id is None
+    assert summary.matched_country == 1
+    assert summary.country_only == 1
+    assert summary.unmatched == 1
+
+
+@pytest.mark.asyncio
+async def test_region_tier_both_compositions(session, full_refresh):
+    await _enable_region_tier(session)
+    us = await _add_boundary(
+        session,
+        overture_id="us",
+        subtype="country",
+        country_code="us",
+        name="US",
+        slug="united-states",
+        wkt=_sq(0, 0, 20, 20),
+    )
+    oregon = await _add_boundary(
+        session,
+        overture_id="region-or",
+        subtype="region",
+        country_code="us",
+        name="Oregon",
+        slug="oregon",
+        wkt=_sq(0, 0, 8, 8),
+    )
+    maine = await _add_boundary(
+        session,
+        overture_id="region-me",
+        subtype="region",
+        country_code="us",
+        name="Maine",
+        slug="maine",
+        wkt=_sq(10, 10, 18, 18),
+    )
+    portland_or = await _add_boundary(
+        session,
+        overture_id="portland-or",
+        subtype="locality",
+        country_code="us",
+        name="Portland",
+        slug="portland",
+        wkt=_sq(1, 1, 2, 2),
+    )
+    portland_me = await _add_boundary(
+        session,
+        overture_id="portland-me",
+        subtype="locality",
+        country_code="us",
+        name="Portland",
+        slug="portland",
+        wkt=_sq(11, 11, 12, 12),
+    )
+    for lat, lng in ((1.5, 1.5), (11.5, 11.5)):
+        await _add_fountain(session, lat=lat, lng=lng)
+    await full_refresh()
+    assert await _parent(session, portland_or) == oregon
+    assert await _parent(session, portland_me) == maine
+    assert await _is_canonical(session, portland_or) is True
+    assert await _is_canonical(session, portland_me) is True  # same slug, different parents
+    assert await _count(session, us) == 2
+    assert await _count(session, oregon) == 1
+    assert await _count(session, maine) == 1
+
+
+@pytest.mark.asyncio
+async def test_country_scope_first_load_both_compositions(session, country_refresh):
+    """Scoped refresh of country 'bb' after loading its boundaries assigns + canonicalizes exactly
+    that country's places, on both the single-transaction and pinned-connection compositions."""
     await _reset_scoped_fixture(session)
     await _setup_first_load_b(session)
-    oracle = await refresh_country_memberships(session, "bb")
-    oracle_snapshot = await _membership_snapshot(session)
+    await country_refresh("bb")
+    b_city = _stable_uuid("boundary:b-city")
+    b_country = _stable_uuid("boundary:b-country")
+    fid = _stable_uuid("fountain:b-new")
+    m = await _membership(session, fid)
+    assert m.country_place_id == b_country
+    assert m.city_place_id == b_city
+    assert await _count(session, b_city) == 1
+    assert await _is_canonical(session, b_city) is True
 
+
+@pytest.mark.asyncio
+async def test_country_scope_matches_expected_after_mutation_both_compositions(
+    session, country_refresh
+):
+    """A boundary shrink (B recedes, a fountain crosses into A) re-derives correctly under a scoped
+    refresh of 'bb' on both compositions — the expected final assignment is the oracle."""
     await _reset_scoped_fixture(session)
-    await _setup_first_load_b(session)
-    scope = RefreshScope(country_code="bb")
-    await compute_boundary_derivation(session, scope)
-    seam = await publish_membership_state(session, scope)
-
-    assert seam == oracle
-    assert await _membership_snapshot(session) == oracle_snapshot
+    await _seed_two_country_scoped_base(session)
+    await _add_scoped_fountain(session, "cross-to-a", lat=2, lng=10.5)
+    await refresh_all_memberships(session)
+    await _set_scoped_boundary_wkt(session, "b-country", _sq(11, 0, 20, 10))
+    await _set_scoped_boundary_wkt(session, "b-region", _sq(11, 0, 20, 10))
+    await _set_scoped_boundary_wkt(session, "b-city", _sq(11.25, 1, 19, 9))
+    await country_refresh("bb")
+    # The fountain at lng=10.5 is now outside B (which starts at lng=11) → it belongs to A's city.
+    fid = _stable_uuid("fountain:cross-to-a")
+    a_city = _stable_uuid("boundary:a-city")
+    assert (await _membership(session, fid)).city_place_id == a_city
+    await _assert_same_group_cities_do_not_overlap(session)
 
 
 @pytest.mark.asyncio
@@ -2045,69 +2277,100 @@ async def test_staged_compute_reused_connection_no_stale_leak(session, engine):
 
 @pytest.mark.asyncio
 async def test_staged_wrapper_publish_failure_preserves_previous_generation(
-    session, engine, monkeypatch
+    session, engine, test_user, monkeypatch
 ):
-    """A forced publish failure rolls back atomically: the previous generation's DERIVED state
-    stays live (no cleared canonicals), an add after the failure computes from that coherent
-    previous generation, the wrapper raises (loader Job fails visibly), and a rerun converges."""
+    """A forced publish failure rolls back atomically, so the PUBLIC place/SEO reads AND a
+    post-failure add through the REAL route still see the coherent PREVIOUS generation (Codex PR#245
+    finding 1): verified through GET /api/v1/places, GET /api/v1/fountains/{id}/place, and
+    POST /api/v1/fountains — never by inspecting derived rows. The wrapper raises (loader Job fails
+    visibly), and a rerun converges."""
     import app.membership as m
+    from app.auth import get_current_user
     from app.db import get_engine
-    from app.locks import acquire_add_fountain_lock
-    from app.membership import (
-        RefreshScope,
-        recompute_fountain_membership,
-        run_staged_membership_refresh,
+    from app.membership import RefreshScope, run_staged_membership_refresh
+
+    # A public client with the thin-content gate pinned (K=3) + the write-auth seam bound to a user.
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        seo_place_min_fountains=3, dev_auth_enabled=True
     )
+    app.dependency_overrides[get_current_user] = lambda: test_user
+    transport = ASGITransport(app=app)
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as api:
+            # Seed an INDEXABLE public city: US country + a locality with 3 (working) fountains.
+            await _add_boundary(
+                session,
+                overture_id="us",
+                subtype="country",
+                country_code="us",
+                name="US",
+                slug="united-states",
+                wkt=_sq(0, 0, 10, 10),
+            )
+            city = await _add_boundary(
+                session,
+                overture_id="us-city",
+                subtype="locality",
+                country_code="us",
+                name="San Diego",
+                slug="san-diego",
+                wkt=_sq(1, 1, 2, 2),
+            )
+            fid = await _add_fountain(session, lat=1.2, lng=1.2)
+            await _add_fountain(session, lat=1.4, lng=1.4)
+            await _add_fountain(session, lat=1.6, lng=1.6)
+            await session.commit()
+            # Generation 1 refresh (via the pinned-connection wrapper).
+            await run_staged_membership_refresh(get_engine(), RefreshScope(rebuild_cells=True))
 
-    _, city, _ = await _seed_country_city_committed(session)
-    # Generation 1 (via the wrapper) — city is a canonical city with one fountain.
-    await run_staged_membership_refresh(get_engine(), RefreshScope(rebuild_cells=True))
-    await session.rollback()
-    assert await _is_canonical(session, city) is True
-    assert await _count(session, city) == 1
+            # Public reads BEFORE the failure: the city is listed (SEO thin-content gate) + the
+            # fountain's place resolves and is indexable.
+            listed = (await api.get("/api/v1/places", params={"country": "us"})).json()
+            assert any(p["slug"] == "san-diego" for p in listed)
+            place = (await api.get(f"/api/v1/fountains/{fid}/place")).json()
+            assert place["city"]["slug"] == "san-diego"
+            assert place["indexable"] is True
 
-    # The loader commits a boundary identity change (gen 2), then the derived refresh will fail.
-    await session.execute(
-        text("UPDATE place_boundaries SET subtype = 'neighborhood' WHERE id = :id"), {"id": city}
-    )
-    await session.commit()
+            # The loader commits a gen-2 boundary identity change; the derived refresh then fails.
+            await session.execute(
+                text("UPDATE place_boundaries SET subtype = 'neighborhood' WHERE id = :id"),
+                {"id": city},
+            )
+            await session.commit()
 
-    async def _boom(*_args, **_kwargs):
-        raise RuntimeError("forced publish failure")
+            async def _boom(*_args, **_kwargs):
+                raise RuntimeError("forced publish failure")
 
-    monkeypatch.setattr(m, "_build_summary", _boom)
-    with pytest.raises(RuntimeError):
-        await run_staged_membership_refresh(get_engine(), RefreshScope(rebuild_cells=True))
+            monkeypatch.setattr(m, "_build_summary", _boom)
+            with pytest.raises(RuntimeError):
+                await run_staged_membership_refresh(get_engine(), RefreshScope(rebuild_cells=True))
 
-    # Previous generation's DERIVED state intact (publish rolled back atomically).
-    await session.rollback()
-    assert await _is_canonical(session, city) is True
-    assert await _count(session, city) == 1
-    kind = (
-        await session.execute(
-            text("SELECT place_kind FROM place_boundaries WHERE id = :id"), {"id": city}
-        )
-    ).scalar_one()
-    assert kind == "city"
+            # Public reads AFTER the failure STILL serve the coherent previous generation.
+            listed2 = (await api.get("/api/v1/places", params={"country": "us"})).json()
+            assert any(p["slug"] == "san-diego" for p in listed2)
+            place2 = (await api.get(f"/api/v1/fountains/{fid}/place")).json()
+            assert place2["city"]["slug"] == "san-diego"
+            assert place2["indexable"] is True
 
-    # An add AFTER the failure computes membership from the coherent previous generation.
-    await acquire_add_fountain_lock(session, context="test-add-after-failure")
-    fid2 = await _add_fountain(session, lat=1.6, lng=1.6)
-    await recompute_fountain_membership(session, fid2)
-    await session.commit()
-    assert (await _membership(session, fid2)).city_place_id == city
+            # A post-failure add through the REAL route lands in the previous generation's city.
+            add = await api.post(
+                "/api/v1/fountains",
+                json={"location": {"latitude": 1.5, "longitude": 1.5}, "is_working": True},
+            )
+            assert add.status_code == 201
+            new_fid = add.json()["id"]
+            new_place = (await api.get(f"/api/v1/fountains/{new_fid}/place")).json()
+            assert new_place["city"]["slug"] == "san-diego"
 
-    # A rerun (the forced failure removed) converges to generation 2.
-    monkeypatch.undo()
-    await run_staged_membership_refresh(get_engine(), RefreshScope(rebuild_cells=True))
-    await session.rollback()
-    kind2 = (
-        await session.execute(
-            text("SELECT place_kind FROM place_boundaries WHERE id = :id"), {"id": city}
-        )
-    ).scalar_one()
-    assert kind2 is None  # 'neighborhood' is not an eligible city subtype
-    assert await _is_canonical(session, city) is False
+            # A rerun (the forced failure removed) converges to generation 2 — the now-neighborhood
+            # place is no longer an indexable city, so the public list drops it.
+            monkeypatch.undo()
+            await run_staged_membership_refresh(get_engine(), RefreshScope(rebuild_cells=True))
+            listed3 = (await api.get("/api/v1/places", params={"country": "us"})).json()
+            assert not any(p["slug"] == "san-diego" for p in listed3)
+    finally:
+        app.dependency_overrides.pop(get_settings, None)
+        app.dependency_overrides.pop(get_current_user, None)
 
 
 @pytest.mark.asyncio
@@ -2168,3 +2431,32 @@ async def test_staged_wrapper_publish_failed_log_has_no_driver_internals(
     assert "forced-secret-detail" not in leaked  # the exception string is not in the stage event
     assert "RuntimeError" not in leaked
     assert "set_config" not in leaked.lower()
+
+
+@pytest.mark.asyncio
+async def test_membership_cli_main_exits_nonzero_on_publish_failure(session, monkeypatch):
+    """The CLI entrypoint (`membership_cli.main`) must never convert a publish failure into a
+    successful exit (Codex PR#245 finding 3) — the raised staged refresh propagates out of `main()`
+    (nonzero process exit + traceback), so the loader Job fails visibly. Exercises the REAL publish
+    failure through the actual entrypoint, run in a worker thread so `main()`'s `asyncio.run` gets
+    its own event loop."""
+    import asyncio
+
+    import app.db as _db
+    import app.membership as m
+    from app.imports import membership_cli
+
+    await _seed_country_city_committed(session)  # committed boundaries + fountain
+
+    async def _boom(*_args, **_kwargs):
+        raise RuntimeError("forced publish failure")
+
+    monkeypatch.setattr(m, "_build_summary", _boom)
+    try:
+        with pytest.raises(RuntimeError):
+            await asyncio.to_thread(membership_cli.main, [])
+    finally:
+        # main() created the app engine on the worker thread's (now-closed) loop; drop the globals
+        # so the autouse teardown never disposes across loops and the next test rebuilds cleanly.
+        _db._engine = None
+        _db._sessionmaker = None
