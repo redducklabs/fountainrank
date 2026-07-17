@@ -93,49 +93,55 @@ describe("foregroundLocationReducer", () => {
   });
 });
 
-describe("fetchForegroundPosition", () => {
-  it("returns fresh coords when permission is granted (the locate-button refresh path, spec §3.4)", async () => {
-    const requestPermission = vi.fn().mockResolvedValue({ status: "granted" });
-    const getCurrentPosition = vi.fn().mockResolvedValue({
-      coords: { latitude: 10, longitude: 20, accuracy: 3 },
-    });
+describe("fetchForegroundPosition (rich outcomes, spec §3)", () => {
+  it("returns the granted RawPosition (with timestamp) when permission is granted", async () => {
+    const position = { coords: { latitude: 10, longitude: 20, accuracy: 3 }, timestamp: 42 };
+    const requestPermission = vi.fn().mockResolvedValue({ status: "granted", canAskAgain: true });
+    const getCurrentPosition = vi.fn().mockResolvedValue(position);
 
     const outcome = await fetchForegroundPosition(requestPermission, getCurrentPosition);
 
-    expect(outcome).toEqual({
-      kind: "granted",
-      coords: { latitude: 10, longitude: 20, accuracy: 3 },
-    });
+    expect(outcome).toEqual({ kind: "granted", position });
     expect(requestPermission).toHaveBeenCalledTimes(1);
     expect(getCurrentPosition).toHaveBeenCalledTimes(1);
   });
 
-  it("returns denied and never fetches a position when permission is not granted", async () => {
-    const requestPermission = vi.fn().mockResolvedValue({ status: "denied" });
+  it("returns denied WITH canAskAgain (re-promptable) and never fetches a position", async () => {
+    const requestPermission = vi.fn().mockResolvedValue({ status: "denied", canAskAgain: true });
     const getCurrentPosition = vi.fn();
 
     const outcome = await fetchForegroundPosition(requestPermission, getCurrentPosition);
 
-    expect(outcome).toEqual({ kind: "denied" });
+    expect(outcome).toEqual({ kind: "denied", canAskAgain: true });
     expect(getCurrentPosition).not.toHaveBeenCalled();
   });
 
-  it("returns failed (never throws) when the permission request rejects", async () => {
+  it("propagates canAskAgain === false (OS will not re-prompt → the Settings path)", async () => {
+    const requestPermission = vi.fn().mockResolvedValue({ status: "denied", canAskAgain: false });
+    const getCurrentPosition = vi.fn();
+
+    await expect(fetchForegroundPosition(requestPermission, getCurrentPosition)).resolves.toEqual({
+      kind: "denied",
+      canAskAgain: false,
+    });
+  });
+
+  it("returns unavailable (never throws) when the permission request rejects — a system failure, not a denial", async () => {
     const requestPermission = vi.fn().mockRejectedValue(new Error("boom"));
     const getCurrentPosition = vi.fn();
 
     await expect(fetchForegroundPosition(requestPermission, getCurrentPosition)).resolves.toEqual({
-      kind: "failed",
+      kind: "unavailable",
     });
     expect(getCurrentPosition).not.toHaveBeenCalled();
   });
 
-  it("returns failed (never throws) when fetching the position rejects", async () => {
-    const requestPermission = vi.fn().mockResolvedValue({ status: "granted" });
+  it("returns unavailable (never throws) when fetching the position rejects", async () => {
+    const requestPermission = vi.fn().mockResolvedValue({ status: "granted", canAskAgain: true });
     const getCurrentPosition = vi.fn().mockRejectedValue(new Error("gps timeout"));
 
     await expect(fetchForegroundPosition(requestPermission, getCurrentPosition)).resolves.toEqual({
-      kind: "failed",
+      kind: "unavailable",
     });
   });
 
@@ -145,7 +151,7 @@ describe("fetchForegroundPosition", () => {
       vi.spyOn(console, "warn").mockImplementation(() => {}),
       vi.spyOn(console, "error").mockImplementation(() => {}),
     ];
-    const requestPermission = vi.fn().mockResolvedValue({ status: "granted" });
+    const requestPermission = vi.fn().mockResolvedValue({ status: "granted", canAskAgain: true });
     const getCurrentPosition = vi.fn().mockResolvedValue(RAW_POSITION);
 
     await fetchForegroundPosition(requestPermission, getCurrentPosition);
@@ -154,6 +160,34 @@ describe("fetchForegroundPosition", () => {
       expect(spy).not.toHaveBeenCalled();
       spy.mockRestore();
     }
+  });
+});
+
+describe("foregroundLocationReducer — retry + unavailable transitions (spec §3)", () => {
+  it("retry-denied: a denied retry from a granted state clears coords and marks denied", () => {
+    const granted: ForegroundLocationState = { status: "granted", coords: COORDS };
+    expect(foregroundLocationReducer(granted, { type: "permissionDenied" })).toEqual({
+      status: "denied",
+      coords: null,
+    });
+  });
+
+  it("retry-granted: a granted retry from a denied state restores coords", () => {
+    const denied: ForegroundLocationState = { status: "denied", coords: null };
+    expect(foregroundLocationReducer(denied, { type: "positionResolved", coords: COORDS })).toEqual(
+      { status: "granted", coords: COORDS },
+    );
+  });
+
+  it("unavailable-without-known-coords: 'failed' clears coords and marks unavailable", () => {
+    const granted: ForegroundLocationState = { status: "granted", coords: COORDS };
+    expect(foregroundLocationReducer(granted, { type: "failed" })).toEqual({
+      status: "unavailable",
+      coords: null,
+    });
+    // The hook/session's keep-known-good policy (NOT dispatching 'failed' when coords are known)
+    // is what preserves coords on a transient unavailable; that decision is verified at the
+    // session seam (Task 6), since a no-dispatch is not itself a reducer transition.
   });
 });
 

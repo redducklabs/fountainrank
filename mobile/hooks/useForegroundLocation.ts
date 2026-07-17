@@ -5,6 +5,7 @@ import {
   fetchForegroundPosition,
   foregroundLocationReducer,
   initialForegroundLocationState,
+  pickCoords,
   type Coords,
   type LocationStatus,
 } from "../lib/location";
@@ -50,7 +51,7 @@ export function useForegroundLocation(): ForegroundLocation {
     fetchForegroundPosition(requestPermission, getCurrentPosition).then((outcome) => {
       if (cancelled) return;
       if (outcome.kind === "granted") {
-        dispatch({ type: "positionResolved", coords: outcome.coords });
+        dispatch({ type: "positionResolved", coords: pickCoords(outcome.position) });
       } else if (outcome.kind === "denied") {
         dispatch({ type: "permissionDenied" });
       } else {
@@ -69,8 +70,9 @@ export function useForegroundLocation(): ForegroundLocation {
     try {
       const outcome = await fetchForegroundPosition(requestPermission, getCurrentPosition);
       if (outcome.kind !== "granted") return null;
-      dispatch({ type: "positionResolved", coords: outcome.coords });
-      return outcome.coords;
+      const coords = pickCoords(outcome.position);
+      dispatch({ type: "positionResolved", coords });
+      return coords;
     } finally {
       refreshingRef.current = false;
       setRefreshing(false);

@@ -71,7 +71,13 @@ export function pickCoords(pos: RawPosition): Coords {
   };
 }
 
-export type PermissionResult = { status: string };
+/**
+ * A foreground-permission request result. `canAskAgain` is `false` once the OS will not re-prompt
+ * (the user must change it in Settings) - expo already returns it; we used to discard it, which is
+ * why the denied flow could not distinguish "OS won't re-prompt" from a transient GPS timeout
+ * (spec §3).
+ */
+export type PermissionResult = { status: string; canAskAgain: boolean };
 export type RequestPermission = () => Promise<PermissionResult>;
 export type GetCurrentPosition = () => Promise<RawPosition>;
 /** Last-known fix lookup - resolves `null` when the platform has no cached fix. */
@@ -194,28 +200,45 @@ export const publishFix = fixStore.publishFix;
 export const latestFix = fixStore.latestFix;
 export const resetLatestFix = fixStore.resetLatestFix;
 
+/**
+ * The rich outcome of a foreground position request (spec §3). `denied` carries `canAskAgain` so
+ * the locate flow can offer an "Open settings" action only when the OS will not re-prompt;
+ * `unavailable` is a transient GPS/system failure distinct from a denial (it must not clear a
+ * known-good fix). `granted` carries the full `RawPosition` (with its native timestamp) so callers
+ * can both `pickCoords` it and publish it to the freshness store.
+ */
 export type FetchOutcome =
-  { kind: "granted"; coords: Coords } | { kind: "denied" } | { kind: "failed" };
+  | { kind: "granted"; position: RawPosition }
+  | { kind: "denied"; canAskAgain: boolean }
+  | { kind: "unavailable" };
 
 /**
  * Requests foreground permission (if needed) and fetches the current position.
  * Dependency-injected so it's unit-testable without expo-location or React (see
  * location.test.ts) - `useForegroundLocation` wires in the real expo-location
  * calls. Used by BOTH the mount-time initial fix and the locate-button refresh
- * (spec §3.4), so they can never drift out of sync. Never throws: a
- * rejected/erroring dependency resolves to `{ kind: "failed" }`. Never logs
- * coordinates.
+ * (spec §3), so they can never drift out of sync. Never throws: a not-granted
+ * permission resolves to `{ kind: "denied", canAskAgain }`, while any rejected/erroring
+ * dependency (a permission-request error or a GPS failure) resolves to
+ * `{ kind: "unavailable" }` - a system failure, NOT a user denial. Never logs coordinates.
  */
 export async function fetchForegroundPosition(
   requestPermission: RequestPermission,
   getCurrentPosition: GetCurrentPosition,
 ): Promise<FetchOutcome> {
+  let permission: PermissionResult;
   try {
-    const { status } = await requestPermission();
-    if (status !== "granted") return { kind: "denied" };
-    const pos = await getCurrentPosition();
-    return { kind: "granted", coords: pickCoords(pos) };
+    permission = await requestPermission();
   } catch {
-    return { kind: "failed" };
+    return { kind: "unavailable" };
+  }
+  if (permission.status !== "granted") {
+    return { kind: "denied", canAskAgain: permission.canAskAgain };
+  }
+  try {
+    const position = await getCurrentPosition();
+    return { kind: "granted", position };
+  } catch {
+    return { kind: "unavailable" };
   }
 }

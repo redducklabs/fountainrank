@@ -3,8 +3,10 @@ import * as Location from "expo-location";
 import {
   CURRENT_POSITION_TIMEOUT_MS,
   fetchForegroundPosition,
+  pickCoords,
   resolveCurrentPosition,
   type Coords,
+  type PermissionResult,
   type RawPosition,
 } from "./location";
 
@@ -12,8 +14,11 @@ import {
 // expo-location import and remains loadable under the node-based Vitest. The hook and the
 // on-demand contribution submit path (proximity guard, #3) both consume `requestCurrentCoords`.
 
-function requestPermission() {
-  return Location.requestForegroundPermissionsAsync();
+// Maps expo's permission response onto our minimal `PermissionResult`, keeping `canAskAgain` so the
+// denied flow can distinguish "OS won't re-prompt" (offer Settings) from a re-promptable denial.
+async function requestPermission(): Promise<PermissionResult> {
+  const response = await Location.requestForegroundPermissionsAsync();
+  return { status: response.status, canAskAgain: response.canAskAgain };
 }
 
 // `getCurrentPositionAsync` has no timeout and can stall (Expo docs); bound it and fall back to the
@@ -36,5 +41,5 @@ export { requestPermission };
  */
 export async function requestCurrentCoords(): Promise<Coords | null> {
   const outcome = await fetchForegroundPosition(requestPermission, getCurrentPosition);
-  return outcome.kind === "granted" ? outcome.coords : null;
+  return outcome.kind === "granted" ? pickCoords(outcome.position) : null;
 }
