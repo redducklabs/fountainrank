@@ -1159,19 +1159,40 @@ async def _log_canonical_summary(
     )
 
 
-async def refresh_country_memberships(
-    session: AsyncSession, country_code: str
-) -> MembershipRefreshSummary:
-    """Re-derive membership after loading one country's boundaries.
+async def compute_boundary_derivation(
+    session: AsyncSession, *, country_code: str | None, rebuild_cells: bool = True
+) -> None:
+    """Boundary-derivation phases, reading/writing ONLY ``place_boundaries`` +
+    ``place_boundary_cells`` (never fountains): (rebuild cells ->) ``place_kind`` -> region ->
+    country parenting -> canonical regions -> city parenting. ``country_code=None`` is the whole-DB
+    scope; a country code scopes every phase to that country.
 
-    Boundary-derived state is scoped to ``country_code``. Fountain assignment remains global for a
-    stable candidate set, then the existing affected-place count/canonical/remap pipeline is reused
-    for the old/new touched places.
+    Runs the SAME phases the fountain-dependent :func:`publish_membership_state` consumes; the two
+    are called back-to-back by the thin refresh compositions (advisory lock acquired first). This is
+    the live-SQL seam (spec 2026-07-17 §2) — it mutates ``place_boundaries`` in place, so it runs in
+    the same locked transaction as publish; Slice C Task 5 restages it against temp tables so the
+    expensive geometry can run BEFORE the lock. The caller owns the transaction and MUST hold the
+    ``ADD_FOUNTAIN_LOCK`` advisory lock.
+
+    Canonical regions are selected here because city parenting reads ``place_kind = 'region' AND
+    is_canonical`` — publish resets and re-selects the live canonical flags against fresh counts.
     """
-    cc = country_code.lower()
-    await acquire_add_fountain_lock(session, context="refresh_country_memberships")
-    await _prepare_scoped_refresh_temp_tables(session)
+    if country_code is None:
+        if rebuild_cells:
+            await rebuild_place_boundary_cells(session)
+        await session.execute(_PLACE_KIND_SQL)
+        await _log_place_kind_summary(session)
+        await session.execute(_PARENT_RESET_SQL)
+        await session.execute(_REGION_PARENT_SQL)
+        log.info("region_parented")
+        await session.execute(_CANONICAL_RESET_SQL)
+        await session.execute(_CANONICAL_REGIONS_SQL)
+        await _log_canonical_summary(session, "region_canonical_selected")
+        await session.execute(_CITY_PARENT_SQL)
+        await _log_city_parent_summary(session)
+        return
 
+    cc = country_code.lower()
     log_extra = {"country": cc, "scope": "country"}
     await rebuild_country_boundary_cells(session, cc)
     await session.execute(_PLACE_KIND_COUNTRY_SQL, {"cc": cc})
@@ -1179,7 +1200,51 @@ async def refresh_country_memberships(
     await session.execute(_PARENT_RESET_COUNTRY_SQL, {"cc": cc})
     await session.execute(_REGION_PARENT_COUNTRY_SQL, {"cc": cc})
     log.info("region_parented", extra=log_extra)
+    await session.execute(_CANONICAL_RESET_COUNTRY_SQL, {"cc": cc})
+    await session.execute(_CANONICAL_REGIONS_COUNTRY_SQL, {"cc": cc})
+    await _log_canonical_summary(session, "region_canonical_selected", log_extra)
+    await session.execute(_CITY_PARENT_COUNTRY_SQL, {"cc": cc})
+    await _log_city_parent_summary(session, log_extra)
 
+
+async def publish_membership_state(
+    session: AsyncSession, *, country_code: str | None
+) -> MembershipRefreshSummary:
+    """Fountain-dependent tail that consumes what :func:`compute_boundary_derivation` produced:
+    assign membership -> recount -> select canonical cities (count-dependent) -> remap fountains to
+    the canonical city -> recount. ``country_code=None`` runs the whole-DB pipeline; a country code
+    runs the scoped candidate/affected-place pipeline.
+
+    The caller owns the transaction and MUST hold the ``ADD_FOUNTAIN_LOCK`` advisory lock. Returns
+    the :class:`MembershipRefreshSummary` and emits ``membership_refresh_complete``.
+    """
+    if country_code is None:
+        return await _publish_full(session)
+    return await _publish_country(session, country_code.lower())
+
+
+async def _publish_full(session: AsyncSession) -> MembershipRefreshSummary:
+    await session.execute(_ASSIGN_SQL, {"fountain_id": None})
+    await _log_assignment_summary(session)
+    await session.execute(_RECOUNT_ALL_SQL)
+    log.info("membership_recounted", extra={"scope": "all", "phase": "pre_city_canonical"})
+    await session.execute(_CANONICAL_RESET_SQL)
+    await session.execute(_CANONICAL_REGIONS_SQL)
+    await session.execute(_CANONICAL_CITIES_SQL)
+    await _log_canonical_summary(session, "city_canonical_selected")
+    await session.execute(_REMAP_CITY_SQL, {"fountain_id": None})
+    log.info("city_remapped", extra={"scope": "all"})
+    await session.execute(_RECOUNT_ALL_SQL)
+    log.info("membership_recounted", extra={"scope": "all", "phase": "post_city_remap"})
+
+    summary = await _build_summary(session)
+    _log_refresh_complete(summary)
+    return summary
+
+
+async def _publish_country(session: AsyncSession, cc: str) -> MembershipRefreshSummary:
+    log_extra = {"country": cc, "scope": "country"}
+    await _prepare_scoped_refresh_temp_tables(session)
     await session.execute(_CAPTURE_COUNTRY_CANDIDATES_SQL, {"cc": cc})
     candidate_count = (await session.execute(_COUNT_COUNTRY_CANDIDATES_SQL)).scalar_one()
     await session.execute(_ADD_CANDIDATE_PLACES_TO_AFFECTED_SQL)
@@ -1188,12 +1253,6 @@ async def refresh_country_memberships(
     await session.execute(_ADD_CANDIDATE_PLACES_TO_AFFECTED_SQL)
     await session.execute(_ADD_COUNTRY_PLACES_TO_AFFECTED_SQL, {"cc": cc})
     await _log_assignment_summary(session, log_extra)
-
-    await session.execute(_CANONICAL_RESET_COUNTRY_SQL, {"cc": cc})
-    await session.execute(_CANONICAL_REGIONS_COUNTRY_SQL, {"cc": cc})
-    await _log_canonical_summary(session, "region_canonical_selected", log_extra)
-    await session.execute(_CITY_PARENT_COUNTRY_SQL, {"cc": cc})
-    await _log_city_parent_summary(session, log_extra)
 
     affected_ids = [row.id for row in (await session.execute(_SELECT_AFFECTED_PLACE_IDS_SQL)).all()]
     await recompute_place_counts(session, affected_ids)
@@ -1221,8 +1280,22 @@ async def refresh_country_memberships(
         },
     )
 
+    summary = await _build_summary(session)
+    _log_refresh_complete(
+        summary,
+        extra={
+            "country": cc,
+            "scope": "country",
+            "candidate_fountains": candidate_count,
+            "affected_places": affected_count,
+        },
+    )
+    return summary
+
+
+async def _build_summary(session: AsyncSession) -> MembershipRefreshSummary:
     row = (await session.execute(_SUMMARY_SQL)).one()
-    summary = MembershipRefreshSummary(
+    return MembershipRefreshSummary(
         fountains_total=row.fountains_total,
         matched_country=row.matched_country,
         matched_region=row.matched_region,
@@ -1233,6 +1306,9 @@ async def refresh_country_memberships(
         null_parent_cities=row.null_parent_cities,
         duplicate_region_slugs=row.duplicate_region_slugs,
     )
+
+
+def _log_refresh_complete(summary: MembershipRefreshSummary, extra: dict | None = None) -> None:
     level = (
         logging.WARNING
         if summary.null_parent_cities or summary.duplicate_region_slugs
@@ -1242,10 +1318,7 @@ async def refresh_country_memberships(
         level,
         "membership_refresh_complete",
         extra={
-            "country": cc,
-            "scope": "country",
-            "candidate_fountains": candidate_count,
-            "affected_places": affected_count,
+            **(extra or {}),
             "fountains_total": summary.fountains_total,
             "matched_country": summary.matched_country,
             "matched_region": summary.matched_region,
@@ -1257,7 +1330,21 @@ async def refresh_country_memberships(
             "duplicate_region_slugs": summary.duplicate_region_slugs,
         },
     )
-    return summary
+
+
+async def refresh_country_memberships(
+    session: AsyncSession, country_code: str
+) -> MembershipRefreshSummary:
+    """Re-derive membership after loading one country's boundaries (thin composition).
+
+    Boundary-derived state is scoped to ``country_code``. Fountain assignment remains global for a
+    stable candidate set, then the existing affected-place count/canonical/remap pipeline is reused
+    for the old/new touched places. Compute + publish run back-to-back in the caller's single
+    transaction with the advisory lock acquired first — the merge-path all-or-nothing semantics.
+    """
+    await acquire_add_fountain_lock(session, context="refresh_country_memberships")
+    await compute_boundary_derivation(session, country_code=country_code)
+    return await publish_membership_state(session, country_code=country_code)
 
 
 async def refresh_all_memberships(
@@ -1265,12 +1352,11 @@ async def refresh_all_memberships(
 ) -> MembershipRefreshSummary:
     """Re-derive the whole membership state: assignment, counts, canonical, parent (spec §11.5).
 
-    Ordered so each step sees the previous one's output: (rebuild point-in-polygon cells ->) derive
-    place_kind -> parent regions to countries -> assign raw country/region/city membership -> select
-    canonical regions -> parent cities -> recount -> select canonical cities -> remap city
-    membership to canonical city rows -> recount again. Set-based; one transaction — the caller
-    commits.
-    Run on every boundary load and by the backfill CLI.
+    Thin composition of :func:`compute_boundary_derivation` (boundary phases: rebuild cells, derive
+    ``place_kind``, parent regions to countries, select canonical regions, parent cities) then
+    :func:`publish_membership_state` (assign raw country/region/city membership, recount, select
+    canonical cities, remap to canonical city rows, recount) — back-to-back in one transaction; the
+    caller commits. Run on every boundary load and by the backfill CLI.
 
     ``rebuild_cells`` (default ``True``) controls whether ``place_boundary_cells`` is re-derived
     first. Rebuild when the boundaries themselves changed (boundary load) or for the one-time
@@ -1285,61 +1371,5 @@ async def refresh_all_memberships(
     lock also serializes the cell rebuild + PIP against those callers' cell reads.
     """
     await acquire_add_fountain_lock(session, context="refresh_all_memberships")
-    if rebuild_cells:
-        await rebuild_place_boundary_cells(session)
-    await session.execute(_PLACE_KIND_SQL)
-    await _log_place_kind_summary(session)
-    await session.execute(_PARENT_RESET_SQL)
-    await session.execute(_REGION_PARENT_SQL)
-    log.info("region_parented")
-    await session.execute(_ASSIGN_SQL, {"fountain_id": None})
-    await _log_assignment_summary(session)
-    await session.execute(_CANONICAL_RESET_SQL)
-    await session.execute(_CANONICAL_REGIONS_SQL)
-    await _log_canonical_summary(session, "region_canonical_selected")
-    await session.execute(_CITY_PARENT_SQL)
-    await _log_city_parent_summary(session)
-    await session.execute(_RECOUNT_ALL_SQL)
-    log.info("membership_recounted", extra={"scope": "all", "phase": "pre_city_canonical"})
-    await session.execute(_CANONICAL_RESET_SQL)
-    await session.execute(_CANONICAL_REGIONS_SQL)
-    await session.execute(_CANONICAL_CITIES_SQL)
-    await _log_canonical_summary(session, "city_canonical_selected")
-    await session.execute(_REMAP_CITY_SQL, {"fountain_id": None})
-    log.info("city_remapped", extra={"scope": "all"})
-    await session.execute(_RECOUNT_ALL_SQL)
-    log.info("membership_recounted", extra={"scope": "all", "phase": "post_city_remap"})
-
-    row = (await session.execute(_SUMMARY_SQL)).one()
-    summary = MembershipRefreshSummary(
-        fountains_total=row.fountains_total,
-        matched_country=row.matched_country,
-        matched_region=row.matched_region,
-        matched_city=row.matched_city,
-        country_only=row.country_only,
-        unmatched=row.unmatched,
-        canonical_places=row.canonical_places,
-        null_parent_cities=row.null_parent_cities,
-        duplicate_region_slugs=row.duplicate_region_slugs,
-    )
-    level = (
-        logging.WARNING
-        if summary.null_parent_cities or summary.duplicate_region_slugs
-        else logging.INFO
-    )
-    log.log(
-        level,
-        "membership_refresh_complete",
-        extra={
-            "fountains_total": summary.fountains_total,
-            "matched_country": summary.matched_country,
-            "matched_region": summary.matched_region,
-            "matched_city": summary.matched_city,
-            "country_only": summary.country_only,
-            "unmatched": summary.unmatched,
-            "canonical_places": summary.canonical_places,
-            "null_parent_cities": summary.null_parent_cities,
-            "duplicate_region_slugs": summary.duplicate_region_slugs,
-        },
-    )
-    return summary
+    await compute_boundary_derivation(session, country_code=None, rebuild_cells=rebuild_cells)
+    return await publish_membership_state(session, country_code=None)

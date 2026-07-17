@@ -1518,3 +1518,99 @@ async def test_refresh_country_memberships_is_idempotent(session):
     once = await _membership_snapshot(session)
     await refresh_country_memberships(session, "bb")
     assert await _membership_snapshot(session) == once
+
+
+# --- compute/publish seam (Slice C Task 4: pure extraction) -----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_compute_then_publish_full_matches_refresh_all(session):
+    """The extracted seam (compute_boundary_derivation → publish_membership_state, back-to-back in
+    the caller's txn with the advisory lock first) produces exactly the same state as the
+    single-function refresh_all_memberships — a pure live-SQL extraction, no behavior change."""
+    from app.locks import acquire_add_fountain_lock
+    from app.membership import compute_boundary_derivation, publish_membership_state
+
+    await _enable_region_tier(session)
+    await _add_boundary(
+        session,
+        overture_id="us",
+        subtype="country",
+        country_code="us",
+        name="United States",
+        slug="united-states",
+        wkt=_sq(0, 0, 20, 20),
+    )
+    await _add_boundary(
+        session,
+        overture_id="region",
+        subtype="region",
+        country_code="us",
+        name="Region",
+        slug="region",
+        wkt=_sq(0, 0, 20, 20),
+    )
+    await _add_boundary(
+        session,
+        overture_id="city-a",
+        subtype="locality",
+        country_code="us",
+        name="City",
+        slug="city",
+        wkt=_sq(1, 1, 2, 2),
+    )
+    await _add_boundary(
+        session,
+        overture_id="city-b",
+        subtype="localadmin",
+        country_code="us",
+        name="City",
+        slug="city",
+        wkt=_sq(1, 1, 3, 3),
+    )
+    await _add_fountain(session, lat=1.5, lng=1.5)
+
+    # Oracle: the composition.
+    oracle = await refresh_all_memberships(session)
+    oracle_snapshot = await _membership_snapshot(session)
+
+    # Wipe derived state, then run the seam directly (advisory lock first).
+    await session.execute(
+        text(
+            "UPDATE fountains SET country_place_id = NULL, region_place_id = NULL, "
+            "city_place_id = NULL"
+        )
+    )
+    await session.execute(
+        text(
+            "UPDATE place_boundaries SET place_kind = NULL, parent_id = NULL, "
+            "is_canonical = false, fountain_count = 0"
+        )
+    )
+    await acquire_add_fountain_lock(session, context="seam-test")
+    await compute_boundary_derivation(session, country_code=None, rebuild_cells=True)
+    seam = await publish_membership_state(session, country_code=None)
+
+    assert seam == oracle
+    assert await _membership_snapshot(session) == oracle_snapshot
+
+
+@pytest.mark.asyncio
+async def test_compute_then_publish_country_matches_refresh_country(session):
+    """The scoped seam matches refresh_country_memberships exactly."""
+    from app.locks import acquire_add_fountain_lock
+    from app.membership import compute_boundary_derivation, publish_membership_state
+
+    await _reset_scoped_fixture(session)
+    await _setup_first_load_b(session)
+    oracle = await refresh_country_memberships(session, "bb")
+    oracle_snapshot = await _membership_snapshot(session)
+
+    await _reset_scoped_fixture(session)
+    await _setup_first_load_b(session)
+    await acquire_add_fountain_lock(session, context="seam-test")
+    await compute_boundary_derivation(session, country_code="bb", rebuild_cells=True)
+    seam = await publish_membership_state(session, country_code="bb")
+
+    assert seam == oracle
+    assert await _membership_snapshot(session) == oracle_snapshot
