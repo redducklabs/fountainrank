@@ -2460,3 +2460,224 @@ async def test_membership_cli_main_exits_nonzero_on_publish_failure(session, mon
         # so the autouse teardown never disposes across loops and the next test rebuilds cleanly.
         _db._engine = None
         _db._sessionmaker = None
+
+
+# --- capture-query parity (spec 2026-07-17 candidate-capture design, Verification 1) ----------
+# The country candidate capture was rewritten from a per-fountain `OR EXISTS` scan to a set-based
+# UNION (the OR shape was O(all fountains) and ran unbounded in production). The OLD query text is
+# kept verbatim below as the oracle: both queries must produce identical ID sets over identical
+# data, and the targeted fixtures pin each UNION branch independently.
+
+_OLD_CAPTURE_SQL = text(
+    """
+    INSERT INTO membership_candidate_fountains (id)
+    SELECT DISTINCT f.id
+    FROM fountains f
+    WHERE EXISTS (
+        SELECT 1
+        FROM place_boundary_cells cell
+        JOIN place_boundaries pb ON pb.id = cell.place_id
+        WHERE pb.country_code = :cc
+          AND ST_Covers(cell.geom, f.location::geometry)
+    )
+    OR EXISTS (
+        SELECT 1
+        FROM place_boundaries pb
+        WHERE pb.country_code = :cc
+          AND pb.id IN (f.country_place_id, f.region_place_id, f.city_place_id)
+    )
+    ON CONFLICT DO NOTHING
+    """
+)
+
+
+async def _seed_capture_parity_fixture(session) -> dict:
+    """Two countries (disjoint squares) with refreshed cells/membership, then adversarial
+    assignment states created by direct UPDATEs so location and assignments disagree."""
+    await _add_boundary(
+        session,
+        overture_id="cap-us",
+        subtype="country",
+        country_code="us",
+        name="United States",
+        slug="united-states",
+        wkt=_sq(0, 0, 10, 10),
+    )
+    us_city = await _add_boundary(
+        session,
+        overture_id="cap-us-city",
+        subtype="locality",
+        country_code="us",
+        name="San Diego",
+        slug="san-diego",
+        wkt=_sq(1, 1, 3, 3),
+    )
+    lu = await _add_boundary(
+        session,
+        overture_id="cap-lu",
+        subtype="country",
+        country_code="lu",
+        name="Luxembourg",
+        slug="luxembourg",
+        wkt=_sq(20, 0, 30, 10),
+    )
+    lu_city = await _add_boundary(
+        session,
+        overture_id="cap-lu-city",
+        subtype="locality",
+        country_code="lu",
+        name="Vianden",
+        slug="vianden",
+        wkt=_sq(21, 1, 23, 3),
+    )
+    f_us_both = await _add_fountain(session, lat=2.0, lng=2.0)  # in us_city, assigned us
+    f_lu = await _add_fountain(session, lat=2.0, lng=22.0)  # in lu_city, assigned lu
+    f_cross_spatial = await _add_fountain(session, lat=2.5, lng=2.5)  # in us, will point at lu
+    f_assign_only = await _add_fountain(session, lat=50.0, lng=50.0)  # outside, will point at us
+    f_mixed = await _add_fountain(session, lat=52.0, lng=52.0)  # outside, us city + two lu refs
+    f_none = await _add_fountain(session, lat=60.0, lng=60.0)  # outside, unassigned
+    f_spatial_only = await _add_fountain(session, lat=4.0, lng=4.0)  # in us, will be NULLed
+    await refresh_all_memberships(session)
+
+    async def _set(fid, country_id, region_id, city_id):
+        await session.execute(
+            text(
+                "UPDATE fountains SET country_place_id = :c, region_place_id = :r, "
+                "city_place_id = :ci WHERE id = :fid"
+            ),
+            {"c": country_id, "r": region_id, "ci": city_id, "fid": fid},
+        )
+
+    await _set(f_cross_spatial, lu, None, lu_city)  # spatially us, assigned entirely lu
+    await _set(f_assign_only, None, None, us_city)  # spatially nowhere, one us assignment
+    await _set(f_mixed, lu, lu_city, us_city)  # one us assignment, two lu references
+    await _set(f_spatial_only, None, None, None)  # spatially us, no assignments
+    return {
+        "f_us_both": f_us_both,
+        "f_lu": f_lu,
+        "f_cross_spatial": f_cross_spatial,
+        "f_assign_only": f_assign_only,
+        "f_mixed": f_mixed,
+        "f_none": f_none,
+        "f_spatial_only": f_spatial_only,
+    }
+
+
+async def _capture_ids(conn, sql, cc: str) -> set:
+    await conn.execute(sql, {"cc": cc})
+    rows = await conn.execute(text("SELECT id FROM membership_candidate_fountains"))
+    ids = {row.id for row in rows}
+    await conn.execute(text("TRUNCATE membership_candidate_fountains"))
+    return ids
+
+
+@pytest.mark.asyncio
+async def test_capture_rewrite_same_snapshot_equivalence_and_branches(session, engine):
+    from app.membership import _CAPTURE_COUNTRY_CANDIDATES_SQL
+
+    ids = await _seed_capture_parity_fixture(session)
+    await session.commit()  # the equivalence connection below must see the fixture
+
+    async with engine.connect() as conn:
+        # One genuine snapshot for both query texts: REPEATABLE READ set before any other
+        # statement (default READ COMMITTED re-snapshots per statement).
+        await conn.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ"))
+        assert (
+            await conn.execute(text("SHOW transaction_isolation"))
+        ).scalar_one() == "repeatable read"
+        await conn.execute(
+            text(
+                "CREATE TEMP TABLE membership_candidate_fountains "
+                "(id uuid PRIMARY KEY) ON COMMIT DROP"
+            )
+        )
+        for cc in ("us", "lu"):
+            old_ids = await _capture_ids(conn, _OLD_CAPTURE_SQL, cc)
+            new_ids = await _capture_ids(conn, _CAPTURE_COUNTRY_CANDIDATES_SQL, cc)
+            assert new_ids == old_ids, f"capture divergence for {cc}"
+            if cc == "us":
+                assert new_ids == {
+                    ids["f_us_both"],  # spatial + assigned: dedupes to one row
+                    ids["f_cross_spatial"],  # spatial branch only (assigned lu)
+                    ids["f_assign_only"],  # city-assignment branch only
+                    ids["f_mixed"],  # city-assignment branch (us city ref)
+                    ids["f_spatial_only"],  # spatial branch only (no assignments)
+                }
+            else:
+                assert new_ids == {
+                    ids["f_lu"],  # spatial + assigned lu
+                    ids["f_cross_spatial"],  # country/city-assignment branches (lu refs)
+                    ids["f_mixed"],  # country + region branches (lu refs)
+                }
+        await conn.rollback()
+
+
+@pytest.mark.asyncio
+async def test_country_refresh_recounts_foreign_places_for_cross_country_candidate(session, engine):
+    from app.membership import RefreshScope, run_staged_membership_refresh
+
+    us = await _add_boundary(
+        session,
+        overture_id="xc-us",
+        subtype="country",
+        country_code="us",
+        name="United States",
+        slug="united-states",
+        wkt=_sq(0, 0, 10, 10),
+    )
+    us_city = await _add_boundary(
+        session,
+        overture_id="xc-us-city",
+        subtype="locality",
+        country_code="us",
+        name="San Diego",
+        slug="san-diego",
+        wkt=_sq(1, 1, 3, 3),
+    )
+    lu = await _add_boundary(
+        session,
+        overture_id="xc-lu",
+        subtype="country",
+        country_code="lu",
+        name="Luxembourg",
+        slug="luxembourg",
+        wkt=_sq(20, 0, 30, 10),
+    )
+    lu_city = await _add_boundary(
+        session,
+        overture_id="xc-lu-city",
+        subtype="locality",
+        country_code="lu",
+        name="Vianden",
+        slug="vianden",
+        wkt=_sq(21, 1, 23, 3),
+    )
+    fid = await _add_fountain(session, lat=2.0, lng=22.0)  # starts in lu_city
+    await refresh_all_memberships(session)
+    assert await _count(session, lu_city) == 1
+    assert await _count(session, lu) == 1
+    assert await _count(session, us_city) == 0
+
+    # The fountain moves into the us city while its assignments still say lu — the classic
+    # cross-country candidate: the us-scoped refresh must capture it spatially, reassign it,
+    # AND recount the FOREIGN (lu) places it left.
+    await session.execute(
+        text(
+            "UPDATE fountains SET location = "
+            "ST_SetSRID(ST_MakePoint(2.0, 2.0), 4326)::geography WHERE id = :fid"
+        ),
+        {"fid": fid},
+    )
+    await session.commit()
+
+    await run_staged_membership_refresh(engine, RefreshScope(country_code="us"))
+    await session.rollback()  # drop the stale snapshot; reads below see the committed result
+
+    m = await _membership(session, fid)
+    assert m.country_place_id == us
+    assert m.city_place_id == us_city
+    assert await _count(session, us_city) == 1
+    assert await _count(session, us) == 1
+    assert await _count(session, lu_city) == 0
+    assert await _count(session, lu) == 0
+    assert await _is_canonical(session, us_city) is True

@@ -550,24 +550,39 @@ _CLEAR_CANDIDATE_FOUNTAINS_TEMP_SQL = text("TRUNCATE membership_candidate_founta
 _CLEAR_AFFECTED_PLACES_TEMP_SQL = text("TRUNCATE membership_affected_places")
 _CLEAR_RAW_CITY_MEMBERSHIP_TEMP_SQL = text("TRUNCATE membership_raw_city_membership")
 _CLEAR_FINAL_CHANGED_PLACES_TEMP_SQL = text("TRUNCATE membership_final_changed_places")
+# Set-based union, NOT per-fountain `OR EXISTS` (spec 2026-07-17 candidate-capture design §1):
+# the OR across two correlated EXISTS blocks forces the planner to walk ALL fountains with a
+# spatial subplan each — O(world) with an unbounded worst case (Spain's capture ran 37+ hours in
+# production). The union computes the same set from index-driven branches: the spatial branch
+# drives from the country's cells into the fountain geometry GiST; the three assignment branches
+# unnest `pb.id IN (country, region, city)` per column so each uses its btree (inner joins —
+# NULL columns simply don't match). UNION dedupes (replacing SELECT DISTINCT); production plans:
+# 85 s -> 14-41 s on the largest countries, and bounded by country size, not world size.
 _CAPTURE_COUNTRY_CANDIDATES_SQL = text(
     """
     INSERT INTO membership_candidate_fountains (id)
-    SELECT DISTINCT f.id
-    FROM fountains f
-    WHERE EXISTS (
-        SELECT 1
-        FROM place_boundary_cells cell
-        JOIN place_boundaries pb ON pb.id = cell.place_id
-        WHERE pb.country_code = :cc
-          AND ST_Covers(cell.geom, f.location::geometry)
-    )
-    OR EXISTS (
-        SELECT 1
+    SELECT id FROM (
+        SELECT f.id
         FROM place_boundaries pb
+        JOIN place_boundary_cells cell ON cell.place_id = pb.id
+        JOIN fountains f ON ST_Covers(cell.geom, f.location::geometry)
         WHERE pb.country_code = :cc
-          AND pb.id IN (f.country_place_id, f.region_place_id, f.city_place_id)
-    )
+        UNION
+        SELECT f.id
+        FROM place_boundaries pb
+        JOIN fountains f ON f.country_place_id = pb.id
+        WHERE pb.country_code = :cc
+        UNION
+        SELECT f.id
+        FROM place_boundaries pb
+        JOIN fountains f ON f.region_place_id = pb.id
+        WHERE pb.country_code = :cc
+        UNION
+        SELECT f.id
+        FROM place_boundaries pb
+        JOIN fountains f ON f.city_place_id = pb.id
+        WHERE pb.country_code = :cc
+    ) candidates
     ON CONFLICT DO NOTHING
     """
 )
