@@ -1,11 +1,11 @@
-import { ApiError } from "../api";
+import { ApiError, ApiTimeoutError } from "../api";
 import { isAuthSessionError, type AuthStatus } from "../auth/state";
 import { normalizeFountainId } from "../detail/id";
 import { clampToBound, nudgePoint, type Bound, type LngLat } from "./placement";
 import type { AwardedPoints } from "@fountainrank/contributions";
 
 export type AddFountainError =
-  "unauthenticated" | "validation" | "needs_name" | "network" | "server";
+  "unauthenticated" | "validation" | "needs_name" | "network" | "server" | "timeout";
 export type DuplicateConflict = { fountain_id?: unknown };
 export type AddFountainResult =
   // pointsAwarded (#204): the SERVER's award, which includes the conditional first_fountain /
@@ -95,7 +95,12 @@ export function mapAddFountainError(error: unknown): AddFountainError {
     if (error.status === 422) return "validation";
     return "server";
   }
-  if (error instanceof TypeError) return "network";
+  // A create that timed out (ApiTimeoutError) OR dropped mid-flight (TypeError) is
+  // OUTCOME-UNKNOWN — the server may already have committed it. Both classify as
+  // "timeout" so the flow recovers by reconciliation (unchanged retry → 409 → route to
+  // the created fountain), not by treating it as a definitive failure (spec §2).
+  if (error instanceof ApiTimeoutError) return "timeout";
+  if (error instanceof TypeError) return "timeout";
   if (error instanceof Error) return "server";
   return "network";
 }
@@ -130,6 +135,11 @@ export function addFountainErrorText(error: AddFountainError): string {
       return "Check your connection and try again.";
     case "server":
       return "Couldn't add the fountain. Please try again.";
+    case "timeout":
+      // Outcome-unknown: state the ambiguity AND the reconciliation. An unchanged retry
+      // posts identical coordinates; if the first attempt already committed, the backend
+      // returns the typed 409 and the flow routes the user to that fountain (spec §2).
+      return "We couldn't confirm your fountain was saved. Leave the pin where it is and try again — if it was already saved, we'll take you to it.";
   }
 }
 

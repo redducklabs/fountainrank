@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ApiError } from "../api";
+import { ApiError, ApiTimeoutError } from "../api";
 import { AuthSessionError } from "../auth/state";
 import {
   addFountainErrorText,
@@ -57,8 +57,16 @@ describe("mapAddFountainError", () => {
     expect(mapAddFountainError(new ApiError(500))).toBe("server");
   });
 
-  it("distinguishes network from internal errors", () => {
-    expect(mapAddFountainError(new TypeError("Network request failed"))).toBe("network");
+  it("classifies both a request timeout and a mid-flight network drop as outcome-unknown 'timeout'", () => {
+    // The create may still have committed server-side, so both recover by reconciliation
+    // (unchanged retry → 409 → route to the created fountain), not a plain network retry.
+    expect(mapAddFountainError(new ApiTimeoutError("POST", "/api/v1/fountains", 30_000))).toBe(
+      "timeout",
+    );
+    expect(mapAddFountainError(new TypeError("Network request failed"))).toBe("timeout");
+  });
+
+  it("maps a non-network internal Error to server", () => {
     expect(mapAddFountainError(new Error("missing location"))).toBe("server");
   });
 });
@@ -98,6 +106,13 @@ describe("addFountainErrorText", () => {
     expect(addFountainErrorText("needs_name")).toMatch(/display name/i);
     expect(addFountainErrorText("network")).toMatch(/connection/i);
     expect(addFountainErrorText("server")).toMatch(/try again/i);
+  });
+
+  it("the timeout copy states the outcome-unknown ambiguity and the reconciliation retry", () => {
+    const copy = addFountainErrorText("timeout");
+    expect(copy).toMatch(/couldn't confirm/i);
+    expect(copy).toMatch(/try again/i);
+    expect(copy).toMatch(/take you to it/i);
   });
 });
 
