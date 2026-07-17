@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { FetchOutcome, RawPosition } from "./location";
 import {
   createLocationSession,
+  openSettingsEffect,
   type LocationDiagnostics,
   type LocationSessionInputs,
 } from "./location-session";
@@ -70,13 +71,14 @@ function makeSession() {
   const { timer, count, fireAll } = makeFakeTimer();
   const publishFix = vi.fn();
   const resetStore = vi.fn();
+  const openSettings = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
   const dispatch = vi.fn();
   const watchSink = vi.fn();
   const onAppActiveChange = vi.fn();
   const fetchOutcome = vi.fn<() => Promise<FetchOutcome>>();
   const diagnostics: LocationDiagnostics = { watchSink, onAppActiveChange };
   const session = createLocationSession(
-    { startWatch, fetchOutcome, publishFix, resetStore, diagnostics, timer },
+    { startWatch, fetchOutcome, publishFix, resetStore, openSettings, diagnostics, timer },
     { dispatch },
   );
   const sinkTypes = () => watchSink.mock.calls.map(([e]) => e.type);
@@ -87,6 +89,7 @@ function makeSession() {
     fetchOutcome,
     publishFix,
     resetStore,
+    openSettings,
     dispatch,
     dispatchTypes,
     onAppActiveChange,
@@ -223,5 +226,124 @@ describe("createLocationSession — dispose", () => {
 
     h.session.setInputs(focusedActiveGranted); // disposed → inert
     expect(h.starts).toHaveLength(1);
+  });
+});
+
+const DENIED_REPROMPTABLE: FetchOutcome = { kind: "denied", canAskAgain: true };
+const DENIED_PERMANENT: FetchOutcome = { kind: "denied", canAskAgain: false };
+const UNAVAILABLE: FetchOutcome = { kind: "unavailable" };
+
+describe("createLocationSession — denied-clearing across ALL producers (spec §3)", () => {
+  it("initial denial (mount): permissionDenied, store reset, watch not desired, no coordinate logged", async () => {
+    const spies = [
+      vi.spyOn(console, "log").mockImplementation(() => {}),
+      vi.spyOn(console, "warn").mockImplementation(() => {}),
+      vi.spyOn(console, "error").mockImplementation(() => {}),
+    ];
+    const h = makeSession();
+    h.fetchOutcome.mockResolvedValue(DENIED_REPROMPTABLE);
+    await h.session.acquireInitialFix();
+
+    expect(h.dispatchTypes()).toEqual(["started", "permissionDenied"]);
+    expect(h.resetStore).toHaveBeenCalledTimes(1);
+    // Even if inputs later say granted, a denied status keeps desired false via the input flow;
+    // here the session itself never started a watch.
+    expect(h.starts).toHaveLength(0);
+    for (const spy of spies) {
+      expect(spy).not.toHaveBeenCalled();
+      spy.mockRestore();
+    }
+  });
+
+  it("refresh denial returns the rich outcome (both canAskAgain values) and clears the store", async () => {
+    for (const outcome of [DENIED_REPROMPTABLE, DENIED_PERMANENT]) {
+      const h = makeSession();
+      h.fetchOutcome.mockResolvedValue(outcome);
+      const result = await h.session.refresh();
+      expect(result).toEqual({ kind: "denied", canAskAgain: outcome.canAskAgain });
+      expect(h.dispatchTypes()).toEqual(["permissionDenied"]);
+      expect(h.resetStore).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("denial after a prior granted fix clears the store and STOPS the live watch", async () => {
+    const h = makeSession();
+    // Establish a running watch + a known fix.
+    h.session.setInputs(focusedActiveGranted);
+    h.starts[0].resolve();
+    await flush();
+    h.starts[0].onFix(POS);
+    expect(h.publishFix).toHaveBeenCalledTimes(1);
+
+    h.fetchOutcome.mockResolvedValue(DENIED_REPROMPTABLE);
+    await h.session.refresh();
+
+    expect(h.resetStore).toHaveBeenCalledTimes(1);
+    expect(h.starts[0].removed).toBe(1); // controller.setDesired(false) removed the live subscription
+    expect(h.sinkTypes()).toContain("watch_stopped");
+  });
+});
+
+describe("createLocationSession — unavailable keeps a known-good fix (spec §3)", () => {
+  it("a refresh unavailable AFTER a known fix does not dispatch failed or reset the store", async () => {
+    const h = makeSession();
+    h.fetchOutcome.mockResolvedValue(GRANTED);
+    await h.session.acquireInitialFix(); // knownCoords now set
+    h.dispatch.mockClear();
+
+    h.fetchOutcome.mockResolvedValue(UNAVAILABLE);
+    const result = await h.session.refresh();
+
+    expect(result).toEqual({ kind: "unavailable" });
+    expect(h.dispatch).not.toHaveBeenCalled(); // no 'failed' — the known-good fix is preserved
+    expect(h.resetStore).not.toHaveBeenCalled();
+  });
+
+  it("a refresh unavailable with NO known fix dispatches failed", async () => {
+    const h = makeSession();
+    h.fetchOutcome.mockResolvedValue(UNAVAILABLE);
+    const result = await h.session.refresh();
+    expect(result).toEqual({ kind: "unavailable" });
+    expect(h.dispatchTypes()).toEqual(["failed"]);
+  });
+});
+
+describe("createLocationSession — publish sources (spec §3)", () => {
+  it("mount, refresh, and watch fixes all publish to the store", async () => {
+    const h = makeSession();
+    h.fetchOutcome.mockResolvedValue(GRANTED);
+    await h.session.acquireInitialFix(); // mount publish
+    await h.session.refresh(); // refresh publish
+    h.session.setInputs(focusedActiveGranted);
+    h.starts[0].resolve();
+    await flush();
+    h.starts[0].onFix(POS); // watch publish
+    expect(h.publishFix).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("openSettingsEffect + session.openSettings (spec §3)", () => {
+  it("resolves opened when the platform open() succeeds", async () => {
+    await expect(openSettingsEffect(async () => undefined)).resolves.toEqual({ kind: "opened" });
+  });
+
+  it("maps a rejection to failed (never throws) — the plain-replacement-toast decision", async () => {
+    await expect(
+      openSettingsEffect(async () => {
+        throw new Error("cannot open settings");
+      }),
+    ).resolves.toEqual({ kind: "failed" });
+  });
+
+  it("session.openSettings delegates to the injected platform adapter", async () => {
+    const h = makeSession();
+    await expect(h.session.openSettings()).resolves.toEqual({ kind: "opened" });
+    expect(h.openSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it("session.openSettings maps an adapter rejection to failed", async () => {
+    const h = makeSession();
+    h.openSettings.mockRejectedValue(new Error("boom"));
+    await expect(h.session.openSettings()).resolves.toEqual({ kind: "failed" });
   });
 });

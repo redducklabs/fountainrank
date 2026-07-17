@@ -10,7 +10,11 @@ vi.mock("expo-location", () => ({
   getCurrentPositionAsync: vi.fn(),
   getLastKnownPositionAsync: vi.fn(),
 }));
+vi.mock("expo-linking", () => ({
+  openSettings: vi.fn().mockResolvedValue(undefined),
+}));
 
+import * as Linking from "expo-linking";
 import * as Location from "expo-location";
 
 import { FRESH_FIX_MAX_AGE_MS, latestFix, resetLatestFix } from "./location";
@@ -63,6 +67,12 @@ describe("createForegroundLocationSessionDeps — real adapter assembly", () => 
     expect(latestFix(FRESH_FIX_MAX_AGE_MS)).toEqual(POS.coords);
     deps.resetStore();
     expect(latestFix(FRESH_FIX_MAX_AGE_MS)).toBeNull();
+  });
+
+  it("assembles the real Linking.openSettings adapter", async () => {
+    const deps = createForegroundLocationSessionDeps();
+    await deps.openSettings();
+    expect(Linking.openSettings).toHaveBeenCalledTimes(1);
   });
 });
 

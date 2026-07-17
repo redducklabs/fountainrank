@@ -3,7 +3,11 @@ import { useCallback, useEffect, useReducer, useRef, useState, useSyncExternalSt
 import { AppState } from "react-native";
 
 import { createForegroundLocationSessionDeps } from "../lib/location-deps";
-import { createLocationSession } from "../lib/location-session";
+import {
+  createLocationSession,
+  type RefreshOutcome,
+  type SettingsOpenResult,
+} from "../lib/location-session";
 import {
   foregroundLocationReducer,
   initialForegroundLocationState,
@@ -12,6 +16,9 @@ import {
 } from "../lib/location";
 
 export type { LocationStatus } from "../lib/location";
+export type { RefreshOutcome, SettingsOpenResult } from "../lib/location-session";
+
+const REFRESH_IN_FLIGHT: RefreshOutcome = { kind: "unavailable" };
 
 export type ForegroundLocation = {
   status: LocationStatus;
@@ -19,12 +26,20 @@ export type ForegroundLocation = {
   /** True while a `refresh()` call is in flight (spec §3 - guards overlapping presses). */
   refreshing: boolean;
   /**
-   * Re-fetches the CURRENT position on demand (the locate button, spec §3). Requests permission
-   * again first (a no-op if already granted). Resolves the fresh coords, or `null` on
-   * denial/unavailability/error - never throws, never logs coordinates, stays non-blocking. A
-   * refresh already in flight makes any concurrent call a no-op that resolves `null` immediately.
+   * `false` once the OS will not re-prompt for foreground location (mirrored from the last denied
+   * outcome). Drives the locate button's Settings hint and the denied toast's action (spec §3).
    */
-  refresh: () => Promise<Coords | null>;
+  canAskAgain: boolean;
+  /**
+   * Re-fetches the CURRENT position on demand (the locate button, spec §3), returning the RICH
+   * outcome so the press handler branches on THIS call's result (never separately-scheduled React
+   * state). Requests permission again first (a no-op if already granted). Never throws, never logs
+   * coordinates, stays non-blocking. A refresh already in flight makes any concurrent call a no-op
+   * that resolves `unavailable` immediately.
+   */
+  refresh: () => Promise<RefreshOutcome>;
+  /** Opens the OS settings for this app (the denied-permanently path); rejection maps to `failed`. */
+  openSettings: () => Promise<SettingsOpenResult>;
 };
 
 // The AppState → useSyncExternalStore adapter (spec §1). `useSyncExternalStore` requires `subscribe`
@@ -52,6 +67,7 @@ function getAppActiveSnapshot(): boolean {
 export function useForegroundLocation(): ForegroundLocation {
   const [state, dispatch] = useReducer(foregroundLocationReducer, initialForegroundLocationState);
   const [refreshing, setRefreshing] = useState(false);
+  const [canAskAgain, setCanAskAgain] = useState(true);
   const refreshingRef = useRef(false);
 
   const focused = useIsFocused();
@@ -65,11 +81,21 @@ export function useForegroundLocation(): ForegroundLocation {
     createLocationSession(createForegroundLocationSessionDeps(), { dispatch }),
   );
 
-  // Mount fetch once; dispose the session (and any live watch/retry) on unmount.
+  // Derive the denied hint from a resolved outcome: a denial mirrors its re-promptability; a grant
+  // resets it (permission is moot); a transient unavailable leaves the prior hint unchanged. Stable
+  // (setState is stable), so the effects/callbacks that use it stay dependency-exhaustive.
+  const mirrorCanAskAgain = useCallback((outcome: RefreshOutcome): void => {
+    if (outcome.kind === "denied") setCanAskAgain(outcome.canAskAgain);
+    else if (outcome.kind === "granted") setCanAskAgain(true);
+  }, []);
+
+  // Mount fetch once; dispose the session (and any live watch/retry) on unmount. The mount outcome's
+  // `canAskAgain` is mirrored in an async callback (not synchronously in the effect body - the
+  // established `PointsChip` pattern, React-Compiler-safe).
   useEffect(() => {
-    void session.acquireInitialFix();
+    void session.acquireInitialFix().then(mirrorCanAskAgain);
     return () => session.dispose();
-  }, [session]);
+  }, [session, mirrorCanAskAgain]);
 
   // Feed the session the derived inputs; it (re)computes the desired watch state and drives the
   // controller. This effect reacts to shouldWatch sources changing - it never sets React state.
@@ -77,18 +103,28 @@ export function useForegroundLocation(): ForegroundLocation {
     session.setInputs({ focused, appActive, status: state.status });
   }, [session, focused, appActive, state.status]);
 
-  const refresh = useCallback(async (): Promise<Coords | null> => {
-    if (refreshingRef.current) return null;
+  const refresh = useCallback(async (): Promise<RefreshOutcome> => {
+    if (refreshingRef.current) return REFRESH_IN_FLIGHT;
     refreshingRef.current = true;
     setRefreshing(true);
     try {
       const outcome = await session.refresh();
-      return outcome.kind === "granted" ? outcome.coords : null;
+      mirrorCanAskAgain(outcome);
+      return outcome;
     } finally {
       refreshingRef.current = false;
       setRefreshing(false);
     }
-  }, [session]);
+  }, [session, mirrorCanAskAgain]);
 
-  return { status: state.status, coords: state.coords, refreshing, refresh };
+  const openSettings = useCallback(() => session.openSettings(), [session]);
+
+  return {
+    status: state.status,
+    coords: state.coords,
+    refreshing,
+    canAskAgain,
+    refresh,
+    openSettings,
+  };
 }

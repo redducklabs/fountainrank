@@ -585,9 +585,13 @@ export default function MapScreen() {
                 zoom: INITIAL_USER_ZOOM,
               });
             }
-            const c = await location.refresh();
-            if (c) {
-              setFlyTo({ center: { lng: c.longitude, lat: c.latitude }, zoom: INITIAL_USER_ZOOM });
+            // Branch on the SAME call's rich outcome (spec §3), never separately-scheduled state.
+            const outcome = await location.refresh();
+            if (outcome.kind === "granted") {
+              setFlyTo({
+                center: { lng: outcome.coords.longitude, lat: outcome.coords.latitude },
+                zoom: INITIAL_USER_ZOOM,
+              });
             }
           }}
           style={[styles.locate, { bottom: insets.bottom + spacing.lg + 56 }]}

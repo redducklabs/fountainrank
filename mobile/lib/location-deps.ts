@@ -4,6 +4,8 @@
 // channel the watch controller gets. This module is importable and node-tested (unlike the hook),
 // so the production/verification diagnostics split is proven, not merely asserted by review.
 
+import * as Linking from "expo-linking";
+
 import { fetchForegroundPosition, publishFix, resetLatestFix } from "./location";
 import { getCurrentPosition, requestPermission, watchForegroundPosition } from "./location-request";
 import type { LocationDiagnostics, LocationSessionPlatformDeps } from "./location-session";
@@ -88,6 +90,7 @@ export function createForegroundLocationSessionDeps(): LocationSessionPlatformDe
     fetchOutcome: () => fetchForegroundPosition(requestPermission, getCurrentPosition),
     publishFix,
     resetStore: resetLatestFix,
+    openSettings: () => Linking.openSettings(),
     diagnostics: isDevBuild() ? createDevDiagnostics() : createProductionDiagnostics(),
     timer: realTimer,
   };

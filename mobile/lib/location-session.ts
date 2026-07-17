@@ -32,6 +32,25 @@ export type RefreshOutcome =
   | { kind: "denied"; canAskAgain: boolean }
   | { kind: "unavailable" };
 
+/** The result of the "Open settings" effect - `failed` drives a plain replacement toast (spec §3). */
+export type SettingsOpenResult = { kind: "opened" } | { kind: "failed" };
+
+/**
+ * The pure settings-open effect decision (spec §3): run the injected platform `open()` and map its
+ * promise rejection to a `failed` result (which the UI turns into a plain replacement toast) - never
+ * throwing, never logging anything beyond the outcome. The platform `Linking.openSettings` adapter
+ * is supplied by `location-deps.ts`; this failure branch cannot be induced reliably on-device, so it
+ * lives here and is Node-tested.
+ */
+export async function openSettingsEffect(open: () => Promise<void>): Promise<SettingsOpenResult> {
+  try {
+    await open();
+    return { kind: "opened" };
+  } catch {
+    return { kind: "failed" };
+  }
+}
+
 /**
  * Diagnostics consumed by the session. `watchSink` is handed to the controller (watch lifecycle +
  * the coordinate-free fix counter); `onAppActiveChange` is called on every AppState active↔inactive
@@ -49,6 +68,8 @@ export type LocationSessionPlatformDeps = {
   fetchOutcome: () => Promise<FetchOutcome>;
   publishFix: (pos: RawPosition) => void;
   resetStore: () => void;
+  /** The platform "Open settings" adapter (`Linking.openSettings`); its rejection is handled. */
+  openSettings: () => Promise<void>;
   diagnostics: LocationDiagnostics;
   timer: WatchTimer;
 };
@@ -61,10 +82,15 @@ export type LocationSessionReactDeps = {
 export type LocationSession = {
   /** Called on every input change; recomputes desired watch state and notifies AppState transitions. */
   setInputs: (inputs: LocationSessionInputs) => void;
-  /** The mount fetch: dispatches `started`, then the resolved outcome (mount clears coords on failure). */
-  acquireInitialFix: () => Promise<void>;
+  /**
+   * The mount fetch: dispatches `started`, then the resolved outcome (mount clears coords on
+   * failure). Returns the rich outcome so the hook can mirror `canAskAgain` for the denied hint.
+   */
+  acquireInitialFix: () => Promise<RefreshOutcome>;
   /** The locate-button refresh: returns the rich outcome; publishes + reconciles the watch on success. */
   refresh: () => Promise<RefreshOutcome>;
+  /** Runs the "Open settings" effect (spec §3); a rejection maps to `{ kind: "failed" }`. */
+  openSettings: () => Promise<SettingsOpenResult>;
   /** Permanent teardown (hook unmount): disposes the controller; any in-flight fetch becomes a no-op. */
   dispose: () => void;
 };
@@ -141,16 +167,20 @@ export function createLocationSession(
     controller.setDesired(desired);
   }
 
-  async function acquireInitialFix(): Promise<void> {
-    if (disposed) return;
+  async function acquireInitialFix(): Promise<RefreshOutcome> {
+    if (disposed) return { kind: "unavailable" };
     react.dispatch({ type: "started" });
     const outcome = await platform.fetchOutcome();
-    consumeOutcome(outcome, true);
+    return consumeOutcome(outcome, true);
   }
 
   async function refresh(): Promise<RefreshOutcome> {
     const outcome = await platform.fetchOutcome();
     return consumeOutcome(outcome, false);
+  }
+
+  function openSettings(): Promise<SettingsOpenResult> {
+    return openSettingsEffect(platform.openSettings);
   }
 
   function dispose(): void {
@@ -159,5 +189,5 @@ export function createLocationSession(
     controller.dispose();
   }
 
-  return { setInputs, acquireInitialFix, refresh, dispose };
+  return { setInputs, acquireInitialFix, refresh, openSettings, dispose };
 }
