@@ -370,6 +370,19 @@ describe("createFixStore — freshness + ordering (spec §2)", () => {
     expect(store.latestFix(FRESH_FIX_MAX_AGE_MS)).toBeNull();
   });
 
+  it("latestStoredCoords returns the ordering-newest coords IGNORING freshness (null only when empty)", () => {
+    const clock = makeClock(1_000);
+    const store = createFixStore(clock);
+    expect(store.latestStoredCoords()).toBeNull();
+    store.publishFix(fixAt(1_000));
+    // Well past the freshness window: latestFix is null, but latestStoredCoords still has the coords.
+    clock.set(1_000 + FRESH_FIX_MAX_AGE_MS + 5_000);
+    expect(store.latestFix(FRESH_FIX_MAX_AGE_MS)).toBeNull();
+    expect(store.latestStoredCoords()).toEqual(COORDS);
+    store.resetLatestFix();
+    expect(store.latestStoredCoords()).toBeNull();
+  });
+
   it("never logs coordinates", () => {
     const spies = [
       vi.spyOn(console, "log").mockImplementation(() => {}),

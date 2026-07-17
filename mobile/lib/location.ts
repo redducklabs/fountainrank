@@ -183,11 +183,19 @@ export function createFixStore(now: () => number) {
     return latest.coords;
   }
 
+  // The ordering-newest stored coords, IGNORING freshness (unlike `latestFix`). Used to reconcile a
+  // consumer's own view with the store after a publish: when a fix is rejected (an older-effective
+  // fix losing to a newer stored one), the caller should reflect the store's newest, not the stale
+  // fix it just published. Returns null only when nothing has ever been stored.
+  function latestStoredCoords(): Coords | null {
+    return latest ? latest.coords : null;
+  }
+
   function resetLatestFix(): void {
     latest = null;
   }
 
-  return { publishFix, latestFix, resetLatestFix };
+  return { publishFix, latestFix, latestStoredCoords, resetLatestFix };
 }
 
 /**
@@ -198,6 +206,7 @@ export function createFixStore(now: () => number) {
 const fixStore = createFixStore(() => Date.now());
 export const publishFix = fixStore.publishFix;
 export const latestFix = fixStore.latestFix;
+export const latestStoredCoords = fixStore.latestStoredCoords;
 export const resetLatestFix = fixStore.resetLatestFix;
 
 /**

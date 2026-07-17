@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createFixStore, type FetchOutcome, type RawPosition } from "./location";
+import { createFixStore, type Coords, type FetchOutcome, type RawPosition } from "./location";
 import {
   createLocationSession,
   openSettingsEffect,
@@ -69,9 +69,10 @@ function makeFakeTimer() {
 function makeSession() {
   const { startWatch, starts } = makeStartHarness();
   const { timer, count, fireAll } = makeFakeTimer();
-  // Default: the store accepts the fix (returns true). Ordering-sensitive tests override this or use
-  // a real `createFixStore`.
+  // Default: the store accepts the fix and has no prior stored coords, so the session dispatches the
+  // fix's own coords. Ordering/cross-session tests use a real `createFixStore` instead.
   const publishFix = vi.fn<(pos: RawPosition) => boolean>().mockReturnValue(true);
+  const latestStoredCoords = vi.fn<() => Coords | null>().mockReturnValue(null);
   const resetStore = vi.fn();
   const openSettings = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
   const dispatch = vi.fn();
@@ -80,7 +81,16 @@ function makeSession() {
   const fetchOutcome = vi.fn<() => Promise<FetchOutcome>>();
   const diagnostics: LocationDiagnostics = { watchSink, onAppActiveChange };
   const session = createLocationSession(
-    { startWatch, fetchOutcome, publishFix, resetStore, openSettings, diagnostics, timer },
+    {
+      startWatch,
+      fetchOutcome,
+      publishFix,
+      latestStoredCoords,
+      resetStore,
+      openSettings,
+      diagnostics,
+      timer,
+    },
     { dispatch },
   );
   const sinkTypes = () => watchSink.mock.calls.map(([e]) => e.type);
@@ -360,56 +370,111 @@ function makeClock(start = 0) {
   return clock;
 }
 
-describe("createLocationSession — respects store acceptance (no split-brain, spec §2/§3)", () => {
-  it("an older-effective refresh settling after a newer watch fix does NOT regress the reducer or knownCoords", async () => {
-    // Use the REAL fix store so acceptance is genuine; a vi.fn cannot expose the ordering bug.
+const NEW_COORDS: Coords = { latitude: 10, longitude: 20, accuracy: 1 };
+const OLD_COORDS: Coords = { latitude: 30, longitude: 40, accuracy: 1 };
+
+/** A session wired to a REAL fix store so acceptance/ordering is genuine (a vi.fn cannot expose the
+ *  split-brain). Returns the store + a `dispatch` spy + a controllable `fetchOutcome`. */
+function makeStoreBackedSession(store: ReturnType<typeof createFixStore>) {
+  const dispatch = vi.fn();
+  const { startWatch, starts } = makeStartHarness();
+  const { timer } = makeFakeTimer();
+  const fetchOutcome = vi.fn<() => Promise<FetchOutcome>>();
+  const diagnostics: LocationDiagnostics = { watchSink: vi.fn(), onAppActiveChange: vi.fn() };
+  const session = createLocationSession(
+    {
+      startWatch,
+      fetchOutcome,
+      publishFix: store.publishFix,
+      latestStoredCoords: store.latestStoredCoords,
+      resetStore: store.resetLatestFix,
+      openSettings: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+      diagnostics,
+      timer,
+    },
+    { dispatch },
+  );
+  const dispatchedLatitudes = () =>
+    dispatch.mock.calls
+      .filter(([e]) => e.type === "positionResolved")
+      .map(([e]) => ("coords" in e ? (e.coords as Coords).latitude : undefined));
+  return {
+    session,
+    starts,
+    fetchOutcome,
+    dispatch,
+    dispatchTypes: () => dispatch.mock.calls.map(([e]) => e.type),
+    dispatchedLatitudes,
+  };
+}
+
+describe("createLocationSession — reducer stays consistent with the store (no split-brain, spec §2/§3)", () => {
+  it("an older-effective refresh settling after a newer watch fix does NOT regress the reducer", async () => {
     const clock = makeClock();
     const store = createFixStore(clock);
-    const dispatch = vi.fn();
-    const { startWatch, starts } = makeStartHarness();
-    const { timer } = makeFakeTimer();
-    const fetchOutcome = vi.fn<() => Promise<FetchOutcome>>();
-    const diagnostics: LocationDiagnostics = { watchSink: vi.fn(), onAppActiveChange: vi.fn() };
-    const session = createLocationSession(
-      {
-        startWatch,
-        fetchOutcome,
-        publishFix: store.publishFix,
-        resetStore: store.resetLatestFix,
-        openSettings: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
-        diagnostics,
-        timer,
-      },
-      { dispatch },
-    );
-
-    const NEW_COORDS = { latitude: 10, longitude: 20, accuracy: 1 };
-    const OLD_COORDS = { latitude: 30, longitude: 40, accuracy: 1 };
+    const h = makeStoreBackedSession(store);
 
     // A newer watch fix (source 2000) arrives and is accepted → dispatched.
     clock.set(2_000);
-    session.setInputs(focusedActiveGranted);
-    starts[0].resolve();
+    h.session.setInputs(focusedActiveGranted);
+    h.starts[0].resolve();
     await flush();
-    starts[0].onFix({ coords: NEW_COORDS, timestamp: 2_000 });
-    expect(dispatch).toHaveBeenCalledWith({ type: "positionResolved", coords: NEW_COORDS });
+    h.starts[0].onFix({ coords: NEW_COORDS, timestamp: 2_000 });
+    expect(h.dispatch).toHaveBeenCalledWith({ type: "positionResolved", coords: NEW_COORDS });
 
     // A slow refresh with an OLDER source (1000) settles second → the store rejects it.
     clock.set(3_000);
-    fetchOutcome.mockResolvedValue({
+    h.fetchOutcome.mockResolvedValue({
       kind: "granted",
       position: { coords: OLD_COORDS, timestamp: 1_000 },
     });
-    const outcome = await session.refresh();
+    const outcome = await h.session.refresh();
 
-    // No regression: the reducer was NEVER told the older coords, and the refresh returns the
-    // store-newest (accepted) fix, not the stale-ordered one.
-    expect(
-      dispatch.mock.calls.some(
-        ([e]) => e.type === "positionResolved" && "coords" in e && e.coords === OLD_COORDS,
-      ),
-    ).toBe(false);
+    // The reducer was NEVER told the older coords (checked by value), and the refresh returns the
+    // store-newest fix, not the stale-ordered one.
+    expect(h.dispatchedLatitudes()).not.toContain(OLD_COORDS.latitude);
     expect(outcome).toEqual({ kind: "granted", coords: NEW_COORDS });
+  });
+
+  it("cross-session: a fresh session whose OLDER initial fix is rejected still resolves to the store-newest and EXITS locating", async () => {
+    const clock = makeClock();
+    const store = createFixStore(clock);
+    // A prior (disposed) session left a NEWER fix in the process-wide store.
+    clock.set(2_000);
+    store.publishFix({ coords: NEW_COORDS, timestamp: 2_000 });
+
+    // A fresh session (knownCoords === null) whose initial fetch yields an OLDER fix.
+    const h = makeStoreBackedSession(store);
+    clock.set(3_000);
+    h.fetchOutcome.mockResolvedValue({
+      kind: "granted",
+      position: { coords: OLD_COORDS, timestamp: 1_000 },
+    });
+    const outcome = await h.session.acquireInitialFix();
+
+    // Acquisition MUST exit "locating": positionResolved dispatched with the store-newest coords,
+    // and the rich outcome returns those — never the stale older fix, never a stuck "locating".
+    expect(h.dispatchTypes()).toEqual(["started", "positionResolved"]);
+    expect(h.dispatch).toHaveBeenCalledWith({ type: "positionResolved", coords: NEW_COORDS });
+    expect(h.dispatchedLatitudes()).not.toContain(OLD_COORDS.latitude);
+    expect(outcome).toEqual({ kind: "granted", coords: NEW_COORDS });
+  });
+
+  it("a granted fix with a non-finite timestamp (store empty) still exits locating via the raw position", async () => {
+    const clock = makeClock(5_000);
+    const store = createFixStore(clock); // empty
+    const h = makeStoreBackedSession(store);
+    const RAW: Coords = { latitude: 47.6, longitude: -122.3, accuracy: 5 };
+    h.fetchOutcome.mockResolvedValue({
+      kind: "granted",
+      position: { coords: RAW, timestamp: Number.NaN },
+    });
+    const outcome = await h.session.acquireInitialFix();
+
+    // Unusable timestamp + empty store → fall back to the raw position, but STILL dispatch so the
+    // granted fix leaves "locating".
+    expect(h.dispatchTypes()).toEqual(["started", "positionResolved"]);
+    expect(outcome).toEqual({ kind: "granted", coords: RAW });
   });
 });
 

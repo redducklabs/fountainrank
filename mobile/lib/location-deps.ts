@@ -6,7 +6,12 @@
 
 import * as Linking from "expo-linking";
 
-import { fetchForegroundPosition, publishFix, resetLatestFix } from "./location";
+import {
+  fetchForegroundPosition,
+  latestStoredCoords,
+  publishFix,
+  resetLatestFix,
+} from "./location";
 import { getCurrentPosition, requestPermission, watchForegroundPosition } from "./location-request";
 import type { LocationDiagnostics, LocationSessionPlatformDeps } from "./location-session";
 import type { WatchSink, WatchTimer } from "./location-watch";
@@ -89,6 +94,7 @@ export function createForegroundLocationSessionDeps(): LocationSessionPlatformDe
     startWatch: watchForegroundPosition,
     fetchOutcome: () => fetchForegroundPosition(requestPermission, getCurrentPosition),
     publishFix,
+    latestStoredCoords,
     resetStore: resetLatestFix,
     openSettings: () => Linking.openSettings(),
     diagnostics: isDevBuild() ? createDevDiagnostics() : createProductionDiagnostics(),

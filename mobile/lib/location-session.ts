@@ -66,12 +66,17 @@ export type LocationDiagnostics = {
 export type LocationSessionPlatformDeps = {
   startWatch: StartWatch;
   fetchOutcome: () => Promise<FetchOutcome>;
-  /**
-   * Publishes a fix to the freshness store, returning whether it was ACCEPTED (newest-effective).
-   * The boolean is load-bearing: an older-effective fix (e.g. a slow refresh settling after a newer
-   * watch fix) is rejected, and the session must not then regress the reducer/UI to the stale fix.
-   */
+  /** Publishes a fix to the freshness store (ordering-aware). The session then reads the resulting
+   *  store-newest via `latestStoredCoords`, so an older-effective fix cannot regress the reducer/UI. */
   publishFix: (pos: RawPosition) => boolean;
+  /**
+   * The ordering-newest stored coords, ignoring freshness (or null when the store is empty). Read
+   * AFTER `publishFix` to resolve the coords the reducer should reflect: the store-newest — this fix
+   * when accepted, or a newer retained one when it loses ordering (a slow refresh after a newer
+   * watch fix, or a fresh session inheriting the process-wide store). This is what keeps the reducer
+   * consistent with the store and lets a granted-but-rejected fix still exit "locating".
+   */
+  latestStoredCoords: () => Coords | null;
   resetStore: () => void;
   /** The platform "Open settings" adapter (`Linking.openSettings`); its rejection is handled. */
   openSettings: () => Promise<void>;
@@ -123,18 +128,18 @@ export function createLocationSession(
     timer: platform.timer,
   });
 
-  // Publishes a fix and updates the reducer/knownCoords ONLY when the store accepts it. A rejected
-  // (older-effective) fix leaves the store's — and thus the reducer's — newer fix intact: no
-  // split-brain where the UI/placement bound regress behind the store. Returns acceptance.
-  function publishAndDispatch(pos: RawPosition): boolean {
-    if (disposed) return false;
-    const accepted = platform.publishFix(pos);
-    if (accepted) {
-      const coords = pickCoords(pos);
-      knownCoords = coords;
-      react.dispatch({ type: "positionResolved", coords });
-    }
-    return accepted;
+  // Publishes a fix, then dispatches the STORE-NEWEST coords (this fix if accepted; a newer retained
+  // fix if it lost ordering; the raw position only when the store is empty). ALWAYS dispatches for a
+  // real position so a granted fix exits "locating" and the reducer/UI/placement bound never lag
+  // behind the store — no split-brain, in-session OR across a fresh session inheriting the
+  // process-wide store. Returns the resolved coords for the caller's outcome.
+  function publishAndDispatch(pos: RawPosition): Coords {
+    if (disposed) return pickCoords(pos);
+    platform.publishFix(pos);
+    const coords = platform.latestStoredCoords() ?? pickCoords(pos);
+    knownCoords = coords;
+    react.dispatch({ type: "positionResolved", coords });
+    return coords;
   }
 
   // Applies a fetched/mount outcome to state + store + controller (spec §3). Denial clears the store
@@ -142,16 +147,13 @@ export function createLocationSession(
   function consumeOutcome(outcome: FetchOutcome, mountFallback: boolean): RefreshOutcome {
     if (disposed) return toRefreshOutcome(outcome);
     if (outcome.kind === "granted") {
-      const accepted = publishAndDispatch(outcome.position);
+      // Publish + resolve to the store-newest coords (this fix, or a newer retained/inherited one),
+      // dispatching positionResolved so acquisition always exits "locating". The rich outcome returns
+      // those same coords, so the caller recenters on the newest — never a stale-ordered fix.
+      const coords = publishAndDispatch(outcome.position);
       // A successful fetch proves the platform can deliver a fix; nudge the watch to (re)start even
       // when `status` did not string-change (so the shouldWatch effect would not re-fire).
       controller.reconcile();
-      // Permission WAS granted, so the outcome is `granted`. But if the store rejected this fix (an
-      // older refresh settling after a newer watch fix), it — and the reducer — already hold a newer
-      // fix (`knownCoords`); return THAT so the caller recenters on the newest, never the stale fix.
-      const coords = accepted
-        ? pickCoords(outcome.position)
-        : (knownCoords ?? pickCoords(outcome.position));
       return { kind: "granted", coords };
     }
     if (outcome.kind === "denied") {
