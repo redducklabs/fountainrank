@@ -61,13 +61,13 @@ import { logEvent } from "../../lib/log";
 import { isMapConfigured } from "../../lib/config";
 import { handleAddSuccess } from "../../lib/add-fountain/seed";
 import { isAtCap, normalizeBounds, type RawBounds, shouldLoadPins } from "../../lib/map/bounds";
-import { buildClusterIndex, clustersForViewport } from "../../lib/map/cluster";
 import {
-  BBOX_STALE_TIME_MS,
-  DEFAULT_ZOOM,
-  INITIAL_USER_ZOOM,
-  PLACE_MIN_ZOOM,
-} from "../../lib/map/constants";
+  initialCameraState,
+  nextCameraPolicy,
+  type CameraEvent,
+} from "../../lib/map/camera-policy";
+import { buildClusterIndex, clustersForViewport } from "../../lib/map/cluster";
+import { BBOX_STALE_TIME_MS, DEFAULT_ZOOM, PLACE_MIN_ZOOM } from "../../lib/map/constants";
 import {
   buildBboxQuery,
   DEFAULT_FILTERS,
@@ -127,7 +127,22 @@ export default function MapScreen() {
   // The screen owns all camera intent; FountainMap just executes the latest fly
   // command (see MapFlyTo). A fresh object re-issues the fly even to the same spot.
   const [flyTo, setFlyTo] = useState<MapFlyTo | null>(null);
-  const didInitialCenterRef = useRef(false);
+  // Camera policy state (spec §6). Refs, not render-read state: the one-shot is read only inside
+  // effects/callbacks (never during render), consistent with the React-Compiler rule. `locateActive`
+  // marks a locate gesture as owning the camera so the incoming refresh fix doesn't double-center.
+  const cameraStateRef = useRef(initialCameraState);
+  const locateActiveRef = useRef(false);
+  const runCamera = useCallback((event: CameraEvent) => {
+    const { state, command } = nextCameraPolicy(cameraStateRef.current, event);
+    cameraStateRef.current = state;
+    if (command) {
+      setFlyTo({
+        center: command.center,
+        zoom: command.zoom,
+        framedAboveSheet: command.framedAboveSheet,
+      });
+    }
+  }, []);
   const [addState, addDispatch] = useReducer(addFountainReducer, initialAddFountainState);
   const [ratings, setRatings] = useState<Record<number, number | undefined>>({});
   const [attributes, setAttributes] = useState<Record<number, string | undefined>>({});
@@ -282,17 +297,18 @@ export default function MapScreen() {
     };
   }, []);
 
-  // Center on the user the first time coords resolve (they arrive after first
-  // render, so initialViewState can't). Once only; location is fetched a single
-  // time and denial leaves the camera at the default world view.
+  // Center on the user the first time a fix resolves (spec §6). The camera policy centers exactly
+  // once; later live-watch fixes move the blue dot but not the camera. Skipped while a locate gesture
+  // owns the camera, so a locate press that yields the first fix moves the camera exactly once.
   useEffect(() => {
-    if (didInitialCenterRef.current || !location.coords) return;
-    didInitialCenterRef.current = true;
-    setFlyTo({
-      center: { lng: location.coords.longitude, lat: location.coords.latitude },
-      zoom: INITIAL_USER_ZOOM,
+    if (!location.coords) return;
+    if (locateActiveRef.current) return;
+    runCamera({
+      type: "fix",
+      source: "watch",
+      coords: { lng: location.coords.longitude, lat: location.coords.latitude },
     });
-  }, [location.coords]);
+  }, [location.coords, runCamera]);
 
   // Clustering runs in JS (native clustering is broken on this stack — see
   // lib/map/cluster.ts). The index is rebuilt only when the bbox query returns new
@@ -346,7 +362,7 @@ export default function MapScreen() {
           }
         : { ok: false };
       const target = placementEntryTarget(fix, region.bounds);
-      setFlyTo({ center: target, zoom: PLACE_MIN_ZOOM, framedAboveSheet: true });
+      runCamera({ type: "addModeEntry", target });
       addDispatch({ type: "dropPin", point: target });
     }
     if (!location.coords && (location.status === "denied" || location.status === "unavailable")) {
@@ -572,26 +588,31 @@ export default function MapScreen() {
           accessibilityRole="button"
           accessibilityLabel="Center on my location"
           onPress={async () => {
-            // Recenter on the best-known fix IMMEDIATELY so the button always
-            // responds. It regressed to a silent no-op in #144 when it became
-            // gated solely on `await location.refresh()` - a fresh GPS fetch that
-            // can be slow, stall, or fail. Then upgrade to the fresh fix if one
-            // resolves (#locate-stale / spec §3.4). `refresh()` is timeout-bounded
-            // in the hook, so it always settles and never bricks later presses.
-            const known = location.coords;
-            if (known) {
-              setFlyTo({
-                center: { lng: known.longitude, lat: known.latitude },
-                zoom: INITIAL_USER_ZOOM,
-              });
-            }
-            // Branch on the SAME call's rich outcome (spec §3), never separately-scheduled state.
-            const outcome = await location.refresh();
-            if (outcome.kind === "granted") {
-              setFlyTo({
-                center: { lng: outcome.coords.longitude, lat: outcome.coords.latitude },
-                zoom: INITIAL_USER_ZOOM,
-              });
+            // A locate gesture owns the camera for its duration (spec §6), so the fix effect skips
+            // the incoming refresh fix and the combined "press yields the first fix" case still moves
+            // the camera exactly once regardless of effect/microtask ordering.
+            locateActiveRef.current = true;
+            try {
+              // Recenter on the best-known fix IMMEDIATELY so the button always responds (#144). Then
+              // upgrade to the fresh fix if one resolves; `refresh()` is timeout-bounded in the hook,
+              // so it always settles and never bricks later presses.
+              const known = location.coords;
+              if (known) {
+                runCamera({
+                  type: "locatePress",
+                  coords: { lng: known.longitude, lat: known.latitude },
+                });
+              }
+              // Branch on the SAME call's rich outcome (spec §3), never separately-scheduled state.
+              const outcome = await location.refresh();
+              if (outcome.kind === "granted") {
+                runCamera({
+                  type: "locatePress",
+                  coords: { lng: outcome.coords.longitude, lat: outcome.coords.latitude },
+                });
+              }
+            } finally {
+              locateActiveRef.current = false;
             }
           }}
           style={[styles.locate, { bottom: insets.bottom + spacing.lg + 56 }]}
