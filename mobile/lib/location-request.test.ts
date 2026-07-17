@@ -1,18 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// The expo-location boundary is mocked (unlike react-native, expo modules are vi.mockable), so this
-// suite exercises the real adapters + the guarded `requestCurrentCoords` decision without RN render
-// infra. The fix store is the REAL singleton from location.ts — driven deterministically via
-// `vi.setSystemTime` so freshness is exact.
-vi.mock("expo-location", () => ({
-  Accuracy: { Balanced: 3 },
-  watchPositionAsync: vi.fn(),
-  getForegroundPermissionsAsync: vi.fn(),
-  requestForegroundPermissionsAsync: vi.fn(),
-  getCurrentPositionAsync: vi.fn(),
-  getLastKnownPositionAsync: vi.fn(),
-}));
-
 import * as Location from "expo-location";
 
 import { FRESH_FIX_MAX_AGE_MS, latestFix, publishFix, resetLatestFix } from "./location";
@@ -21,6 +8,20 @@ import {
   requestCurrentCoords,
   watchForegroundPosition,
 } from "./location-request";
+
+// The expo-location boundary is mocked (unlike react-native, expo modules are vi.mockable), so this
+// suite exercises the real adapters + the guarded `requestCurrentCoords` decision without RN render
+// infra. `vi.mock` is hoisted above the imports by vitest, so expo-location is mocked before
+// location-request loads it. The fix store is the REAL singleton from location.ts — driven
+// deterministically via `vi.setSystemTime` so freshness is exact.
+vi.mock("expo-location", () => ({
+  Accuracy: { Balanced: 3 },
+  watchPositionAsync: vi.fn(),
+  getForegroundPermissionsAsync: vi.fn(),
+  requestForegroundPermissionsAsync: vi.fn(),
+  getCurrentPositionAsync: vi.fn(),
+  getLastKnownPositionAsync: vi.fn(),
+}));
 
 const mocked = {
   watch: vi.mocked(Location.watchPositionAsync),

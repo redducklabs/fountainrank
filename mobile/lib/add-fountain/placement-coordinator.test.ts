@@ -144,7 +144,7 @@ describe("placementCoordinator — pre-bound (bound === null)", () => {
 
 describe("placementCoordinator + reducer agree via the single shared validator (spec §6)", () => {
   it("the coordinator dispatches iff the reducer would accept the same (bound, point)", () => {
-    const cases: Array<{ bound: Bound | null; point: LngLat }> = [
+    const cases: { bound: Bound | null; point: LngLat }[] = [
       { bound: null, point: OUT_OF_BOUND },
       { bound: circle, point: IN_BOUND },
       { bound: circle, point: OUT_OF_BOUND },

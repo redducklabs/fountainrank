@@ -44,7 +44,10 @@ import {
   type LngLat,
   type ViewportBounds,
 } from "../../lib/add-fountain/placement";
-import { createPlacementCoordinator } from "../../lib/add-fountain/placement-coordinator";
+import {
+  createPlacementCoordinator,
+  type PlacementCoordinator,
+} from "../../lib/add-fountain/placement-coordinator";
 import {
   addFountainErrorText,
   addFountainGate,
@@ -283,20 +286,20 @@ export default function MapScreen() {
 
   // The placement coordinator (spec §6): every placement callback binds DIRECTLY to one of its
   // methods. It shares the reducer's `evaluatePlacement` validator, so its immediate toast/camera
-  // effects and the reducer's authoritative transition can never diverge. Stable — its deps
-  // (addDispatch, setAddMessage, runCamera, showToast) are all stable.
-  const placementCoordinator = useMemo(
-    () =>
-      createPlacementCoordinator({
-        dispatch: addDispatch,
-        clearMessage: () => setAddMessage(null),
-        runCamera,
-        toastOutOfArea: () =>
-          showToast("err", "You can only add fountains near your current location."),
-        toastZoomIn: () => showToast("err", "Zoom in a little more to drop the pin here."),
-      }),
-    [runCamera, showToast],
-  );
+  // effects and the reducer's authoritative transition can never diverge. Constructed inside an
+  // effect (never during render) and held in a ref, because it captures `runCamera` (which reads the
+  // camera-state ref) - the same React-Compiler `react-hooks/refs`-safe pattern as `createGuardedSubmit`.
+  const placementCoordinatorRef = useRef<PlacementCoordinator | null>(null);
+  useEffect(() => {
+    placementCoordinatorRef.current = createPlacementCoordinator({
+      dispatch: addDispatch,
+      clearMessage: () => setAddMessage(null),
+      runCamera,
+      toastOutOfArea: () =>
+        showToast("err", "You can only add fountains near your current location."),
+      toastZoomIn: () => showToast("err", "Zoom in a little more to drop the pin here."),
+    });
+  }, [runCamera, showToast]);
 
   useEffect(() => {
     if (!addMode) return;
@@ -387,7 +390,7 @@ export default function MapScreen() {
       const target = placementEntryTarget(fix, region.bounds);
       // Pre-bound seed acceptance: the reset above cleared the bound, so the coordinator accepts and
       // recenters via the camera policy.
-      placementCoordinator.enterSeed(target);
+      placementCoordinatorRef.current?.enterSeed(target);
     }
     if (!location.coords && (location.status === "denied" || location.status === "unavailable")) {
       showToast(
@@ -395,7 +398,7 @@ export default function MapScreen() {
         "Location is unavailable — drop the pin on the map and adjust with the nudge buttons.",
       );
     }
-  }, [location.coords, location.status, region, resetAddDraft, showToast, placementCoordinator]);
+  }, [location.coords, location.status, region, resetAddDraft, showToast]);
 
   const handleAddTabRequest = useCallback(() => {
     if (gate.state === "ready") {
@@ -561,7 +564,8 @@ export default function MapScreen() {
         }}
         onMapPressForPlacement={
           gate.state === "ready" && addMode && addState.phase === "placing"
-            ? (point) => placementCoordinator.mapTap(point, addState.bound, region?.zoom ?? 0)
+            ? (point) =>
+                placementCoordinatorRef.current?.mapTap(point, addState.bound, region?.zoom ?? 0)
             : undefined
         }
       />
@@ -666,14 +670,17 @@ export default function MapScreen() {
               return;
             }
             const point = { lng: location.coords.longitude, lat: location.coords.latitude };
-            placementCoordinator.useCurrentLocation(point, addState.bound);
+            placementCoordinatorRef.current?.useCurrentLocation(point, addState.bound);
           }}
           onPlaceAtCenter={() => {
             if (!region) return;
-            placementCoordinator.placeAtCenter(centerOfViewport(region.bounds), addState.bound);
+            placementCoordinatorRef.current?.placeAtCenter(
+              centerOfViewport(region.bounds),
+              addState.bound,
+            );
           }}
           onNudge={(direction) =>
-            placementCoordinator.nudge(direction, addState.pin, addState.bound)
+            placementCoordinatorRef.current?.nudge(direction, addState.pin, addState.bound)
           }
           onNext={() => addDispatch({ type: "next" })}
           onBack={() => addDispatch({ type: "back" })}

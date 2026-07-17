@@ -1,7 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// location-deps.ts imports the expo adapters (via location-request.ts); mock the expo-location
-// boundary so the factory is importable and node-testable in BOTH __DEV__ configurations.
+import * as Linking from "expo-linking";
+import * as Location from "expo-location";
+
+import { FRESH_FIX_MAX_AGE_MS, latestFix, resetLatestFix } from "./location";
+import { createForegroundLocationSessionDeps } from "./location-deps";
+
+// location-deps.ts imports the expo adapters (via location-request.ts) + expo-linking; mock those
+// boundaries so the factory is importable and node-testable in BOTH __DEV__ configurations. `vi.mock`
+// is hoisted above the imports by vitest, so both modules are mocked before location-deps loads them.
 vi.mock("expo-location", () => ({
   Accuracy: { Balanced: 3 },
   watchPositionAsync: vi.fn(),
@@ -13,12 +20,6 @@ vi.mock("expo-location", () => ({
 vi.mock("expo-linking", () => ({
   openSettings: vi.fn().mockResolvedValue(undefined),
 }));
-
-import * as Linking from "expo-linking";
-import * as Location from "expo-location";
-
-import { FRESH_FIX_MAX_AGE_MS, latestFix, resetLatestFix } from "./location";
-import { createForegroundLocationSessionDeps } from "./location-deps";
 
 const POS = { coords: { latitude: 1, longitude: 2, accuracy: 3 }, timestamp: 1_000 };
 
