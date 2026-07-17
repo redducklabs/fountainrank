@@ -9,6 +9,7 @@ const base = {
   refetching: false,
   capped: false,
   stalePins: false,
+  locating: false,
 };
 
 describe("resolveMapOverlay — stale-pins banner (isError && data != null)", () => {
@@ -100,5 +101,34 @@ describe("resolveMapOverlay — non-stale states keep the existing behavior", ()
 
   it("is hidden when ready, not capped, not loading, not refetching", () => {
     expect(resolveMapOverlay(base)).toEqual({ kind: "hidden" });
+  });
+});
+
+describe("resolveMapOverlay — locating (first-fix) priority (spec §5)", () => {
+  it("shows 'Locating you…' above the below-zoom hint (not the misleading zoom message)", () => {
+    const model = resolveMapOverlay({ ...base, locating: true, belowZoom: true });
+    expect(model).toMatchObject({ message: "Locating you…", retryable: false });
+  });
+
+  it("ranks below the offline/error states — a real data error still wins", () => {
+    expect(resolveMapOverlay({ ...base, locating: true, viewState: "offline" })).toMatchObject({
+      message: "You appear to be offline",
+      retryable: true,
+    });
+    expect(resolveMapOverlay({ ...base, locating: true, viewState: "error" })).toMatchObject({
+      message: "Couldn't load fountains",
+      retryable: true,
+    });
+  });
+
+  it("the below-zoom hint RETURNS once locating ends (denial/failure)", () => {
+    // status is no longer "locating" (denied/unavailable) → locating false → below-zoom hint again.
+    const model = resolveMapOverlay({ ...base, locating: false, belowZoom: true });
+    expect(model).toMatchObject({ message: "Zoom in to see fountains" });
+  });
+
+  it("still shows 'Locating you…' with a loading spinner when pins are also loading", () => {
+    const model = resolveMapOverlay({ ...base, locating: true, viewState: "loading" });
+    expect(model).toMatchObject({ message: "Locating you…", spinner: "loading" });
   });
 });

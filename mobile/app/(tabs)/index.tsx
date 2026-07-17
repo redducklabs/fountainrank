@@ -66,6 +66,12 @@ import {
 } from "../../lib/map/camera-policy";
 import { buildClusterIndex, clustersForViewport } from "../../lib/map/cluster";
 import { BBOX_STALE_TIME_MS, DEFAULT_ZOOM, PLACE_MIN_ZOOM } from "../../lib/map/constants";
+import { locateButtonDescriptor, type LocateButtonDescriptor } from "../../lib/map/locate-button";
+import {
+  OPEN_SETTINGS_ACTION_LABEL,
+  SETTINGS_OPEN_FAILED_TEXT,
+  toastAutoDismissMs,
+} from "../../lib/map/toast";
 import {
   buildBboxQuery,
   DEFAULT_FILTERS,
@@ -95,6 +101,10 @@ type FountainPin = components["schemas"]["FountainPin"];
 type AttributeTypeOut = components["schemas"]["AttributeTypeOut"];
 type RatingTypeOut = components["schemas"]["RatingTypeOut"];
 type BboxResult = { pins: FountainPin[]; truncated: boolean };
+// An actionable toast (spec §3): the optional action renders a tappable label and extends the
+// auto-dismiss window; tapping it dismisses the toast and invokes the handler.
+type ToastAction = { label: string; onPress: () => void | Promise<void> };
+type ToastState = { tone: "err" | "ok"; text: string; nonce: number; action?: ToastAction };
 
 // Approx height of the top filter-chip bar; used to drop the native compass below
 // it so it isn't hidden behind the chips (#105).
@@ -148,9 +158,7 @@ export default function MapScreen() {
   const [showMoreDetails, setShowMoreDetails] = useState(false);
   const [addMessage, setAddMessage] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
   const [addMode, setAddMode] = useState(false);
-  const [toast, setToast] = useState<{ tone: "err" | "ok"; text: string; nonce: number } | null>(
-    null,
-  );
+  const [toast, setToast] = useState<ToastState | null>(null);
   const [celebrationKey, setCelebrationKey] = useState(0);
   const [celebrationPoints, setCelebrationPoints] = useState<number | null>(null);
   const regionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -260,8 +268,8 @@ export default function MapScreen() {
     onSuccess: (result) => handleAddSuccess(queryClient, result),
   });
 
-  const showToast = useCallback((tone: "err" | "ok", text: string) => {
-    setToast({ tone, text, nonce: Date.now() });
+  const showToast = useCallback((tone: "err" | "ok", text: string, action?: ToastAction) => {
+    setToast({ tone, text, nonce: Date.now(), action });
   }, []);
 
   const resetAddDraft = useCallback(() => {
@@ -582,43 +590,53 @@ export default function MapScreen() {
         <MapFilters filters={filters} onChange={setFilters} />
       </View>
 
-      {location.coords ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Center on my location"
-          onPress={async () => {
-            // A locate gesture owns the camera for its duration (spec §6), so the fix effect skips
-            // the incoming refresh fix and the combined "press yields the first fix" case still moves
-            // the camera exactly once regardless of effect/microtask ordering.
-            locateActiveRef.current = true;
-            try {
-              // Recenter on the best-known fix IMMEDIATELY so the button always responds (#144). Then
-              // upgrade to the fresh fix if one resolves; `refresh()` is timeout-bounded in the hook,
-              // so it always settles and never bricks later presses.
-              const known = location.coords;
-              if (known) {
-                runCamera({
-                  type: "locatePress",
-                  coords: { lng: known.longitude, lat: known.latitude },
-                });
-              }
-              // Branch on the SAME call's rich outcome (spec §3), never separately-scheduled state.
-              const outcome = await location.refresh();
-              if (outcome.kind === "granted") {
-                runCamera({
-                  type: "locatePress",
-                  coords: { lng: outcome.coords.longitude, lat: outcome.coords.latitude },
-                });
-              }
-            } finally {
-              locateActiveRef.current = false;
+      <LocateButton
+        descriptor={locateButtonDescriptor({
+          status: location.status,
+          refreshing: location.refreshing,
+          canAskAgain: location.canAskAgain,
+        })}
+        bottom={insets.bottom + spacing.lg + 56}
+        onPress={async () => {
+          // A locate gesture owns the camera for its duration (spec §6), so the fix effect skips the
+          // incoming refresh fix and the combined "press yields the first fix" case still moves the
+          // camera exactly once regardless of effect/microtask ordering.
+          locateActiveRef.current = true;
+          try {
+            // Recenter on the best-known fix IMMEDIATELY so the button always responds (#144). Then
+            // upgrade to the fresh fix if one resolves; `refresh()` is timeout-bounded in the hook,
+            // so it always settles and never bricks later presses.
+            const known = location.coords;
+            if (known) {
+              runCamera({
+                type: "locatePress",
+                coords: { lng: known.longitude, lat: known.latitude },
+              });
             }
-          }}
-          style={[styles.locate, { bottom: insets.bottom + spacing.lg + 56 }]}
-        >
-          <Ionicons name="locate" color={colors.brandBlue} size={22} />
-        </Pressable>
-      ) : null}
+            // Branch on the SAME call's rich outcome (spec §3), never separately-scheduled state.
+            const outcome = await location.refresh();
+            if (outcome.kind === "granted") {
+              runCamera({
+                type: "locatePress",
+                coords: { lng: outcome.coords.longitude, lat: outcome.coords.latitude },
+              });
+            } else if (outcome.kind === "denied" && !outcome.canAskAgain) {
+              // The OS will not re-prompt: offer an explicit "Open settings" action (not an automatic
+              // redirect). On the SAME press (fresh outcome), and the open-failure falls back to a
+              // plain replacement toast (spec §3).
+              showToast("err", "Location access is off. Open Settings to enable it.", {
+                label: OPEN_SETTINGS_ACTION_LABEL,
+                onPress: async () => {
+                  const result = await location.openSettings();
+                  if (result.kind === "failed") showToast("err", SETTINGS_OPEN_FAILED_TEXT);
+                },
+              });
+            }
+          } finally {
+            locateActiveRef.current = false;
+          }
+        }}
+      />
 
       {gate.state === "ready" && addMode ? (
         <MapAddPanel
@@ -747,6 +765,9 @@ export default function MapScreen() {
           // isError with retained pins → the stale-pins banner keeps showing saved data (#244);
           // isError with no data (new-key failure) → the full offline/error overlay (spec §5).
           stalePins={pinsQuery.isError && pinsQuery.data != null}
+          // Spec §5: while acquiring the first fix, show "Locating you…" instead of the misleading
+          // below-zoom hint (a real offline/error still wins).
+          locating={location.status === "locating"}
           onRetry={() => void pinsQuery.refetch()}
         />
       )}
@@ -850,19 +871,15 @@ function PointsChip({ total, onPress }: { total: number; onPress: () => void }) 
   );
 }
 
-function MobileToast({
-  toast,
-  onDismiss,
-}: {
-  toast: { tone: "err" | "ok"; text: string; nonce: number } | null;
-  onDismiss: () => void;
-}) {
+function MobileToast({ toast, onDismiss }: { toast: ToastState | null; onDismiss: () => void }) {
+  const action = toast?.action;
   useEffect(() => {
     if (!toast) return;
-    const timer = setTimeout(onDismiss, 3200);
+    // An action present extends the dismiss window so the user can reach for it (spec §3).
+    const timer = setTimeout(onDismiss, toastAutoDismissMs(action != null));
     AccessibilityInfo.announceForAccessibility(toast.text);
     return () => clearTimeout(timer);
-  }, [onDismiss, toast]);
+  }, [onDismiss, toast, action]);
 
   if (!toast) return null;
   return (
@@ -871,7 +888,56 @@ function MobileToast({
       style={[styles.toast, toast.tone === "err" ? styles.toastErr : styles.toastOk]}
     >
       <Text style={styles.toastText}>{toast.text}</Text>
+      {toast.action ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={toast.action.label}
+          onPress={() => {
+            // Tapping the action dismisses the toast and invokes it (spec §3).
+            onDismiss();
+            void toast.action!.onPress();
+          }}
+          style={styles.toastAction}
+        >
+          <Text style={styles.toastActionText}>{toast.action.label}</Text>
+        </Pressable>
+      ) : null}
     </View>
+  );
+}
+
+function LocateButton({
+  descriptor,
+  bottom,
+  onPress,
+}: {
+  descriptor: LocateButtonDescriptor;
+  bottom: number;
+  onPress: () => void | Promise<void>;
+}) {
+  // The button is always mounted (no coords gate, spec §4). It consumes the descriptor's fields
+  // directly - the only screen-side mapping is the structural tone → theme color.
+  return (
+    <Pressable
+      accessibilityRole={descriptor.accessibilityRole}
+      accessibilityLabel={descriptor.accessibilityLabel}
+      accessibilityHint={descriptor.accessibilityHint}
+      accessibilityState={descriptor.accessibilityState}
+      onPress={() => {
+        void onPress();
+      }}
+      style={[styles.locate, { bottom }]}
+    >
+      {descriptor.visual.kind === "spinner" ? (
+        <ActivityIndicator size="small" color={colors.brandBlue} />
+      ) : (
+        <Ionicons
+          name="locate"
+          size={22}
+          color={descriptor.visual.tone === "brand" ? colors.brandBlue : colors.textMuted}
+        />
+      )}
+    </Pressable>
   );
 }
 
@@ -1202,6 +1268,7 @@ function MapOverlay(props: {
   refetching: boolean;
   capped: boolean;
   stalePins: boolean;
+  locating: boolean;
   onRetry: () => void;
 }) {
   // The overlay's copy + accessibility contract is a pure decision (`resolveMapOverlay`), unit
@@ -1405,6 +1472,15 @@ const styles = StyleSheet.create({
   toastErr: { backgroundColor: "#FEE2E2", borderColor: colors.danger },
   toastOk: { backgroundColor: "#D1FAE5", borderColor: "#047857" },
   toastText: { ...typography.body, color: colors.text, fontWeight: "700" },
+  toastAction: {
+    minHeight: 44,
+    minWidth: 44,
+    justifyContent: "center",
+    alignSelf: "flex-start",
+    marginTop: spacing.xs,
+    paddingHorizontal: spacing.sm,
+  },
+  toastActionText: { ...typography.body, color: colors.brandBlue, fontWeight: "800" },
   title: { ...typography.title, color: colors.brandBlue },
   note: { ...typography.body, color: colors.textMuted },
 });
