@@ -964,12 +964,27 @@ A short reward animation shown after successful contribution writes **that actua
 
 ### Mobile placement toast
 
-Used for add-fountain placement errors, especially out-of-area taps.
+Used for add-fountain placement errors (especially out-of-area taps) and, with an optional action,
+the location-denied-permanently prompt (spec §3).
 
 - Error toast: red-tinted surface (`#FEE2E2`) with danger border (`#B91C1C`), `8px` radius, bold
   readable body text.
 - Appears near the top of the map, auto-dismisses, and announces through accessibility APIs.
 - Use for actionable placement feedback; keep inline panel messages for form submission errors.
+
+**Actionable toast (optional `action`).** A toast may carry an `action: { label, onPress }` that
+renders a tappable label below the body:
+
+- The action label is `colors.brandBlue`, bold (`fontWeight: 800`), in a `Pressable` with a **≥44 pt**
+  touch target (`minHeight/minWidth: 44`) and `accessibilityRole="button"`.
+- Presence of an action **extends the auto-dismiss window** from 3.2 s to 6 s
+  (`toastAutoDismissMs` in `mobile/lib/map/toast.ts`, node-tested) so the user has time to reach it.
+- Tapping the action **dismisses the toast and invokes** `onPress`; a following toast replaces it
+  under the standard dismiss rules.
+- The one current use is the **"Open settings"** action on a denied-permanently locate press
+  (`canAskAgain === false`): it calls `Linking.openSettings()`; if that promise **rejects**, a plain
+  replacement toast (`SETTINGS_OPEN_FAILED_TEXT`, no action) is shown — the failure decision is the
+  Node-tested `openSettingsEffect` seam, since the OS can't reliably induce that failure on-device.
 
 **Variants** — controlled by a `variant: "hero" | "bar"` prop:
 
@@ -2566,15 +2581,29 @@ mapping, icon/pill selection, bounds, and filter→query logic are pure helpers 
   under the status bar. It uses brand blue with a gold bottom rule, the FountainRank name on the
   left, and the signed-in points chip on the right. The filter chips sit below this bar, and the
   native compass is offset below both pieces of top chrome.
-- **Locate button** — a 44×44 circular `surface` `Pressable` (◎ glyph,
-  brand-blue) at the bottom-right, shown only once foreground location is
-  granted; recenters the camera on the user. Denial hides it (non-blocking).
-- **Map overlay banner** — a centered pill at the bottom showing a single status
-  derived from `resolveViewState` plus map-specific notes: a spinner on first
-  load; "Zoom in to see fountains" below the fetch zoom; "You appear to be
-  offline" / "Couldn't load fountains" (both tap-to-retry); "No fountains in this
-  area"; or "Showing the first 500 — zoom in for more" when capped. Hidden when
-  idle/ready.
+- **Locate button** — a 44×44 circular `surface` `Pressable` at the bottom-right, **always mounted**
+  (no coords gate, spec §4). Its visual + accessibility contract is a pure descriptor
+  (`locateButtonDescriptor` in `mobile/lib/map/locate-button.ts`, node-tested), which the screen's
+  `LocateButton` consumes without reconstructing — the only screen-side mapping is the structural
+  tone → theme color. Four states:
+  - **granted / idle:** the brand-blue `locate` (◎) icon; label "Center on my location"; recenters
+    the camera on the user (and upgrades to a fresh fix via `refresh()`).
+  - **locating / refreshing:** a small brand-blue `ActivityIndicator` replaces the icon;
+    `accessibilityState={{ busy: true }}`; a press is a no-op (the hook single-flights) but the
+    control is **not** `disabled` (it announces busy, not unavailable); label "Finding your location".
+  - **denied / unavailable:** the `locate` icon in the **muted** text token; still actionable (a
+    press retries permission); label "Location unavailable — tap to retry"; `accessibilityHint`
+    mentions Settings only when the OS will not re-prompt (`canAskAgain === false`).
+  - On a denied-permanently press the button raises the **actionable toast** below with an
+    "Open settings" action (never an automatic redirect).
+- **Map overlay banner** — a centered pill at the bottom showing a single status derived from
+  `resolveViewState` plus map-specific notes (a pure decision in `mobile/lib/map/overlay.ts`,
+  node-tested). Priority: stale-pins > offline/error > **locating** > below-zoom > empty/capped. So:
+  a spinner on first load; **"Locating you…"** while acquiring the first fix (spec §5 — replaces the
+  misleading below-zoom hint, but a real offline/error still wins); "Zoom in to see fountains" below
+  the fetch zoom (it **returns** once the first fix resolves/denies); "You appear to be offline" /
+  "Couldn't load fountains" (both tap-to-retry); "No fountains in this area"; or "Showing the first
+  500 — zoom in for more" when capped. Hidden when idle/ready.
 
 ### Fountain detail (slice 6e-4)
 

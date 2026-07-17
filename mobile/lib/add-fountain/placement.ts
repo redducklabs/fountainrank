@@ -62,6 +62,18 @@ export function inBound(point: LngLat, bound: Bound): boolean {
   return point.lng >= west && point.lng <= east && point.lat >= south && point.lat <= north;
 }
 
+/**
+ * The SINGLE placement-transition validator (spec §6), shared by the add-fountain reducer (as its
+ * authoritative enforcement backstop) and the placement coordinator (to decide immediate effects) so
+ * the two can never disagree — no duplicated `inBound` logic. A point is placeable when there is no
+ * bound yet (`state.bound === null`, the sole pre-bound exception / today's semantics) or it falls
+ * within the CURRENT bound. A moving bound only gates NEW placement actions; it never invalidates an
+ * already-accepted pin (that decision is the reducer keeping the pin unchanged on a rejected action).
+ */
+export function evaluatePlacement(bound: Bound | null, point: LngLat): boolean {
+  return bound === null || inBound(point, bound);
+}
+
 export function viewportDiagonalMeters(bounds: ViewportBounds): number {
   return haversineMeters(
     { lng: bounds.west, lat: bounds.north },

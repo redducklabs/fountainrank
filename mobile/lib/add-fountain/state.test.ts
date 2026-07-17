@@ -51,6 +51,65 @@ describe("addFountainReducer", () => {
   });
 });
 
+describe("addFountainReducer — reducer-owned bound authority (spec §6)", () => {
+  const CENTER = { lng: -122.3321, lat: 47.6062 };
+  const OUT_OF_BOUND = { lng: -122.3, lat: 47.6062 }; // ~2.4 km east of the 150 m circle
+  const tinyCircle = { kind: "circle" as const, center: CENTER, radiusM: 1 };
+
+  it("accepts any placement before a bound exists (the sole pre-bound exception)", () => {
+    const state = addFountainReducer(initialAddFountainState, {
+      type: "dropPin",
+      point: OUT_OF_BOUND,
+    });
+    expect(state.pin).toEqual(OUT_OF_BOUND);
+  });
+
+  it("rejects an out-of-bound drop against the CURRENT bound (pin unchanged)", () => {
+    let state = addFountainReducer(initialAddFountainState, { type: "setBound", bound: circle });
+    state = addFountainReducer(state, { type: "dropPin", point: circle.center });
+    expect(state.pin).toEqual(circle.center);
+    // A drop that would replace the accepted pin with an out-of-bound point is rejected.
+    state = addFountainReducer(state, { type: "dropPin", point: OUT_OF_BOUND });
+    expect(state.pin).toEqual(circle.center);
+  });
+
+  it("rejects a nudge whose computed result leaves the current bound (accepted pin preserved)", () => {
+    let state = addFountainReducer(initialAddFountainState, {
+      type: "setBound",
+      bound: tinyCircle,
+    });
+    state = addFountainReducer(state, { type: "dropPin", point: CENTER });
+    expect(state.pin).toEqual(CENTER);
+    // A 5 m nudge out of a 1 m circle is rejected; the pin stays exactly where it was accepted.
+    state = addFountainReducer(state, { type: "nudge", direction: "n" });
+    expect(state.pin).toEqual(CENTER);
+  });
+
+  it("keeps an already-accepted pin when the bound later MOVES to exclude it (walked-away)", () => {
+    let state = addFountainReducer(initialAddFountainState, { type: "setBound", bound: circle });
+    state = addFountainReducer(state, { type: "dropPin", point: circle.center });
+    // The user walks away → the live bound moves far from the accepted pin.
+    const movedBound = {
+      kind: "circle" as const,
+      center: OUT_OF_BOUND,
+      radiusM: 150,
+    };
+    state = addFountainReducer(state, { type: "setBound", bound: movedBound });
+    expect(state.pin).toEqual(circle.center); // submittable pin survives the moved bound
+    // But a NEW placement is gated against the moved current bound.
+    const rejected = addFountainReducer(state, { type: "dropPin", point: circle.center });
+    expect(rejected.pin).toEqual(circle.center); // circle.center is now out of movedBound → unchanged
+  });
+
+  it("accepts an in-bound drop against the current bound", () => {
+    let state = addFountainReducer(initialAddFountainState, { type: "setBound", bound: circle });
+    state = addFountainReducer(state, { type: "dropPin", point: circle.center });
+    // A nudge that stays inside the 150 m circle is accepted.
+    state = addFountainReducer(state, { type: "nudge", direction: "n" });
+    expect(state.pin!.lat).toBeGreaterThan(circle.center.lat);
+  });
+});
+
 describe("mapAddFountainError", () => {
   it("maps auth and status errors", () => {
     expect(mapAddFountainError(new AuthSessionError("token_unavailable"))).toBe("unauthenticated");

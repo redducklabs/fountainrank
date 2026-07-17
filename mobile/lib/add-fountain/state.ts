@@ -3,7 +3,7 @@ import type { components } from "@fountainrank/api-client";
 import { ApiError, ApiTimeoutError } from "../api";
 import { isAuthSessionError, type AuthStatus } from "../auth/state";
 import { normalizeFountainId } from "../detail/id";
-import { clampToBound, nudgePoint, type Bound, type LngLat } from "./placement";
+import { evaluatePlacement, nudgePoint, type Bound, type LngLat } from "./placement";
 import type { AwardedPoints } from "@fountainrank/contributions";
 
 type FountainDetail = components["schemas"]["FountainDetail"];
@@ -64,16 +64,18 @@ export function addFountainReducer(
     case "reset":
       return initialAddFountainState;
     case "setBound":
+      // Moving the bound never invalidates an already-accepted pin (spec §6); it only gates
+      // subsequent placement/nudge actions, validated against this new current bound.
       return { ...state, bound: action.bound };
     case "dropPin":
-      return {
-        ...state,
-        pin: state.bound ? clampToBound(action.point, state.bound) : action.point,
-      };
+      // The reducer is the authoritative bound backstop: a placement carries only its point, and the
+      // pin enters state ONLY when it passes the shared validator against the CURRENT bound. An
+      // out-of-bound drop is rejected (state unchanged) - no caller can install an unvalidated pin.
+      return evaluatePlacement(state.bound, action.point) ? { ...state, pin: action.point } : state;
     case "nudge": {
       if (!state.pin) return state;
       const next = nudgePoint(state.pin, action.direction);
-      return { ...state, pin: state.bound ? clampToBound(next, state.bound) : next };
+      return evaluatePlacement(state.bound, next) ? { ...state, pin: next } : state;
     }
     case "next":
       return state.pin && state.phase === "placing" ? { ...state, phase: "details" } : state;

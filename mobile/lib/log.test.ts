@@ -147,3 +147,40 @@ describe("serializeEvent — add_fountain_outcome_unknown allowlist", () => {
     expect(Object.keys(parsed).sort()).toEqual(["area", "event", "level", "reason"].sort());
   });
 });
+
+describe("serializeEvent — watch_start_rejected allowlist (spec §1)", () => {
+  it("carries exactly {level, area: 'location', event} — the empty-payload rare-failure line", () => {
+    const parsed = JSON.parse(serializeEvent({ event: "watch_start_rejected" }));
+    expect(parsed).toEqual({
+      level: "warn",
+      area: "location",
+      event: "watch_start_rejected",
+    });
+    expect(Object.keys(parsed).sort()).toEqual(["area", "event", "level"].sort());
+  });
+
+  it("emits exactly one console.warn JSON line", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    logEvent({ event: "watch_start_rejected" });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]).toHaveLength(1);
+    expect(() => JSON.parse(warn.mock.calls[0][0] as string)).not.toThrow();
+  });
+
+  it("OMITS smuggled-in coordinates, raw errors, and timestamps", () => {
+    const line = serializeEvent({
+      event: "watch_start_rejected",
+      // Fields a leak would carry — none can reach the wire via the allowlist-by-construction seam.
+      coordinates: { lat: 47.6062, lng: -122.3321 },
+      error: "Error: watch failed at 47.6062,-122.3321",
+      timestamp: 1_700_000_000_000,
+      message: "Location request failed https://example.com",
+    } as never);
+    expect(line).not.toMatch(/47\.6062/);
+    expect(line).not.toMatch(/watch failed/i);
+    expect(line).not.toMatch(/1700000000000/);
+    expect(line).not.toMatch(/https?:\/\//i);
+    const parsed = JSON.parse(line);
+    expect(Object.keys(parsed).sort()).toEqual(["area", "event", "level"].sort());
+  });
+});

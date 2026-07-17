@@ -35,6 +35,13 @@ export type MapOverlayModel =
  * offline/error message, because the map is still showing usable (if slightly stale) data. The
  * NEW-key error shape (`isError && data == null`, so `stalePins` is false) keeps the existing full
  * offline/error overlay.
+ *
+ * `locating` is `status === "locating"` (the mount-time first fix, spec §5). It replaces the
+ * misleading below-zoom hint with "Locating you…" while the app is silently about to fly to the
+ * user. Priority: stale-pins > offline/error > locating > below-zoom > empty/capped — so a real
+ * offline/error state still wins, and the below-zoom hint returns once the first fix
+ * resolves/denies. (below-zoom and offline/error never actually co-occur: the bbox query is
+ * disabled below the pin-load zoom, so it can't be offline/error while below-zoom.)
  */
 export function resolveMapOverlay(input: {
   belowZoom: boolean;
@@ -42,6 +49,7 @@ export function resolveMapOverlay(input: {
   refetching: boolean;
   capped: boolean;
   stalePins: boolean;
+  locating: boolean;
 }): MapOverlayModel {
   const loading = input.viewState === "loading";
   const refetching = input.refetching && !loading;
@@ -60,9 +68,10 @@ export function resolveMapOverlay(input: {
 
   const retryable = input.viewState === "offline" || input.viewState === "error";
   let message: string | null = null;
-  if (input.belowZoom) message = "Zoom in to see fountains";
-  else if (input.viewState === "offline") message = "You appear to be offline";
+  if (input.viewState === "offline") message = "You appear to be offline";
   else if (input.viewState === "error") message = "Couldn't load fountains";
+  else if (input.locating) message = "Locating you…";
+  else if (input.belowZoom) message = "Zoom in to see fountains";
   else if (input.viewState === "empty") message = "No fountains in this area";
   else if (input.viewState === "ready" && input.capped)
     message = "Showing the first 500 — zoom in for more";
