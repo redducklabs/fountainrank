@@ -38,15 +38,13 @@ import {
 } from "../../lib/add-fountain/payloads";
 import {
   boundFromFix,
-  canPlace,
   centerOfViewport,
-  inBound,
-  nudgePoint,
   placementEntryTarget,
   type GpsFix,
   type LngLat,
   type ViewportBounds,
 } from "../../lib/add-fountain/placement";
+import { createPlacementCoordinator } from "../../lib/add-fountain/placement-coordinator";
 import {
   addFountainErrorText,
   addFountainGate,
@@ -275,6 +273,23 @@ export default function MapScreen() {
     setAddMessage(null);
   }, []);
 
+  // The placement coordinator (spec §6): every placement callback binds DIRECTLY to one of its
+  // methods. It shares the reducer's `evaluatePlacement` validator, so its immediate toast/camera
+  // effects and the reducer's authoritative transition can never diverge. Stable — its deps
+  // (addDispatch, setAddMessage, runCamera, showToast) are all stable.
+  const placementCoordinator = useMemo(
+    () =>
+      createPlacementCoordinator({
+        dispatch: addDispatch,
+        clearMessage: () => setAddMessage(null),
+        runCamera,
+        toastOutOfArea: () =>
+          showToast("err", "You can only add fountains near your current location."),
+        toastZoomIn: () => showToast("err", "Zoom in a little more to drop the pin here."),
+      }),
+    [runCamera, showToast],
+  );
+
   useEffect(() => {
     if (!addMode) return;
     if (!region) return;
@@ -362,8 +377,9 @@ export default function MapScreen() {
           }
         : { ok: false };
       const target = placementEntryTarget(fix, region.bounds);
-      runCamera({ type: "addModeEntry", target });
-      addDispatch({ type: "dropPin", point: target });
+      // Pre-bound seed acceptance: the reset above cleared the bound, so the coordinator accepts and
+      // recenters via the camera policy.
+      placementCoordinator.enterSeed(target);
     }
     if (!location.coords && (location.status === "denied" || location.status === "unavailable")) {
       showToast(
@@ -371,7 +387,7 @@ export default function MapScreen() {
         "Location is unavailable — drop the pin on the map and adjust with the nudge buttons.",
       );
     }
-  }, [location.coords, location.status, region, resetAddDraft, showToast]);
+  }, [location.coords, location.status, region, resetAddDraft, showToast, placementCoordinator]);
 
   const handleAddTabRequest = useCallback(() => {
     if (gate.state === "ready") {
@@ -501,10 +517,6 @@ export default function MapScreen() {
     isEmpty: pinsQuery.isSuccess && (pinsQuery.data?.pins.length ?? 0) === 0,
   });
 
-  const rejectOutOfArea = () => {
-    showToast("err", "You can only add fountains near your current location.");
-  };
-
   return (
     <View style={styles.fill}>
       <FountainMap
@@ -541,20 +553,7 @@ export default function MapScreen() {
         }}
         onMapPressForPlacement={
           gate.state === "ready" && addMode && addState.phase === "placing"
-            ? (point) => {
-                if (!canPlace(region?.zoom ?? 0, addState.bound)) {
-                  // #97: the usual cause is being below placement zoom — say that
-                  // instead of the misleading "near your current location" message.
-                  showToast("err", "Zoom in a little more to drop the pin here.");
-                  return;
-                }
-                if (addState.bound && !inBound(point, addState.bound)) {
-                  rejectOutOfArea();
-                  return;
-                }
-                setAddMessage(null);
-                addDispatch({ type: "dropPin", point });
-              }
+            ? (point) => placementCoordinator.mapTap(point, addState.bound, region?.zoom ?? 0)
             : undefined
         }
       />
@@ -648,33 +647,16 @@ export default function MapScreen() {
               );
               return;
             }
-            setAddMessage(null);
             const point = { lng: location.coords.longitude, lat: location.coords.latitude };
-            addDispatch({ type: "dropPin", point });
-            // #100: recenter the camera on the user (previously it didn't move) and
-            // frame the target above the add sheet.
-            setFlyTo({ center: point, zoom: PLACE_MIN_ZOOM, framedAboveSheet: true });
+            placementCoordinator.useCurrentLocation(point, addState.bound);
           }}
           onPlaceAtCenter={() => {
             if (!region) return;
-            const point = centerOfViewport(region.bounds);
-            if (addState.bound && !inBound(point, addState.bound)) {
-              rejectOutOfArea();
-              return;
-            }
-            setAddMessage(null);
-            addDispatch({ type: "dropPin", point });
+            placementCoordinator.placeAtCenter(centerOfViewport(region.bounds), addState.bound);
           }}
-          onNudge={(direction) => {
-            if (addState.pin && addState.bound) {
-              const next = nudgePoint(addState.pin, direction);
-              if (!inBound(next, addState.bound)) {
-                rejectOutOfArea();
-                return;
-              }
-            }
-            addDispatch({ type: "nudge", direction });
-          }}
+          onNudge={(direction) =>
+            placementCoordinator.nudge(direction, addState.pin, addState.bound)
+          }
           onNext={() => addDispatch({ type: "next" })}
           onBack={() => addDispatch({ type: "back" })}
           onSetWorking={(isWorking) => addDispatch({ type: "setWorking", isWorking })}
@@ -948,8 +930,6 @@ function MapAddPanel({
   onSubmit: () => Promise<void>;
   onViewDuplicate: (id: string) => void;
 }) {
-  const pinInBound = state.pin != null && state.bound != null && inBound(state.pin, state.bound);
-  const placeable = canPlace(region?.zoom ?? 0, state.bound) && pinInBound;
   const ratingsCount = buildRatingsFromStars(ratingTypes, ratings).length;
   const observationsCount = buildObservationsFromValues(attributeTypes, attributes).length;
   const preview = addFountainPointsPreview({
@@ -978,9 +958,7 @@ function MapAddPanel({
       <PanelHeader title="Add a fountain" onCancel={onCancel} />
       {state.phase === "placing" ? (
         <View style={styles.panelSection}>
-          <Text style={styles.note}>
-            {placementInstruction(placeable, region?.zoom, state.pin)}
-          </Text>
+          <Text style={styles.note}>{placementInstruction(region?.zoom, state.pin)}</Text>
           {state.pin ? (
             <Text
               style={styles.coord}
@@ -1010,7 +988,10 @@ function MapAddPanel({
           </View>
           <PrimaryAction
             label="Next"
-            disabled={!state.pin || !placeable || pending}
+            // Eligibility derives from an ACCEPTED pin (spec §6): a pin only enters state via a
+            // bound-validated action, so `state.pin != null` already means it was placeable when
+            // dropped. It stays submittable even if the live bound later moves away (walked-away).
+            disabled={!state.pin || pending}
             onPress={onNext}
           />
         </View>
@@ -1205,10 +1186,13 @@ function ChoiceAction({
   );
 }
 
-function placementInstruction(placeable: boolean, zoom: number | undefined, pin: LngLat | null) {
-  if ((zoom ?? 0) < PLACE_MIN_ZOOM) return "Zoom in, then tap the map or use a placement button.";
+function placementInstruction(zoom: number | undefined, pin: LngLat | null) {
+  // Once a pin is accepted it stays selected/submittable (spec §6) regardless of the live bound, so
+  // the guidance keys off the pin's existence, not a live in-bound recheck.
+  if (!pin && (zoom ?? 0) < PLACE_MIN_ZOOM) {
+    return "Zoom in, then tap the map or use a placement button.";
+  }
   if (!pin) return "Tap the map, use current location, or place at map center.";
-  if (!placeable) return "Move the pin inside the allowed placement area.";
   return "Location selected. You can nudge the pin before continuing.";
 }
 
