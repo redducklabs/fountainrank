@@ -24,6 +24,19 @@ class Settings(BaseSettings):
     # in production (env DB_SSL_ROOT_CERT). Unset locally -> plaintext, no SSL.
     db_ssl_root_cert: str | None = None
 
+    # Loader-session identity + fail-closed cancellation GUCs (spec 2026-07-17, candidate-capture
+    # + loader-cancellation design §2a). All default None so the serving backend and local dev are
+    # byte-identical; ONLY the isolated loader Job manifests set them (envs DB_APPLICATION_NAME,
+    # DB_CLIENT_CONNECTION_CHECK_INTERVAL_MS, DB_LOCK_TIMEOUT_MS). application_name is the
+    # run-scoped marker the teardown reaper matches exactly; the check interval makes a busy
+    # server-side statement notice its dead client and abort (a killed loader pod otherwise leaves
+    # its query running for hours holding ADD_FOUNTAIN_LOCK); lock_timeout bounds ONLY lock waits
+    # (never executing statements — unlike the rejected statement_timeout), so an orphaned/wedged
+    # holder fails the loader fast instead of burning the Job deadline.
+    db_application_name: str | None = None
+    db_client_connection_check_interval_ms: Annotated[int, Field(gt=0, le=600_000)] | None = None
+    db_lock_timeout_ms: Annotated[int, Field(gt=0, le=18_000_000)] | None = None
+
     # Logging (see app/logging_config.py + CLAUDE.md "Logging & Observability").
     # LOG_LEVEL: standard level name. LOG_FORMAT: "json" (structured, default) or
     # "console" (human-readable for local dev).

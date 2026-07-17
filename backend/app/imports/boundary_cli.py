@@ -23,7 +23,7 @@ import os
 import re
 from typing import TextIO
 
-from app.db import get_engine, get_sessionmaker
+from app.db import get_engine, get_sessionmaker, log_session_config
 from app.imports.boundaries import BoundaryFeature, parse_boundary_feature
 from app.imports.boundary_load import (
     BoundaryLoadSummary,
@@ -153,6 +153,9 @@ async def run_boundary_load(
 
 def main(argv: list[str] | None = None) -> int:
     configure_logging()
+    # Before any database work: record the armed fail-closed session config (marker + GUCs) so
+    # cancellation behavior is diagnosable from logs alone (spec 2026-07-17 §2a).
+    log_session_config()
     p = argparse.ArgumentParser(prog="app.imports.boundary_cli")
     p.add_argument("--path", required=True)
     p.add_argument("--overture-release-id", default=None)

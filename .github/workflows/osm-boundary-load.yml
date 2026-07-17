@@ -184,6 +184,7 @@ jobs:
         uses: ./.github/actions/run-loader-job
         with:
           job_name: boundary-load
+          run_id: ${{ github.run_id }}
           namespace: ${{ env.NAMESPACE }}
           # 5h backstop: fractal-coastline countries (e.g. Chile — 72k boundary cells) have a
           # genuinely slow city-parenting membership step that exceeded a 90min deadline. Loads are
@@ -194,6 +195,10 @@ jobs:
           argv_json: ${{ steps.loader.outputs.argv_json }}
           files_json: ${{ steps.loader.outputs.files_json }}
 
-      - name: Delete loader Job (guaranteed teardown)
+      - name: Teardown loader Job (guaranteed delete + session reap)
         if: always()
-        run: kubectl -n "$NAMESPACE" delete job boundary-load --ignore-not-found --wait --timeout=60s
+        uses: ./.github/actions/teardown-loader-job
+        with:
+          job_name: boundary-load
+          run_id: ${{ github.run_id }}
+          namespace: ${{ env.NAMESPACE }}
