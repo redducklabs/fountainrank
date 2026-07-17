@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { locateButtonDescriptor } from "./locate-button";
+import { isLocateBusy, locateButtonDescriptor } from "./locate-button";
 
 describe("locateButtonDescriptor — the four states (spec §4)", () => {
   it("granted: the brand locate icon, 'Center on my location', not busy", () => {
@@ -19,7 +19,10 @@ describe("locateButtonDescriptor — the four states (spec §4)", () => {
     expect(d.visual).toEqual({ kind: "icon", tone: "brand" });
   });
 
-  it("locating: a spinner with busy announced (a press is a no-op, never disabled)", () => {
+  it("locating: presentation is a spinner announced busy, and NOT disabled", () => {
+    // Presentation only: this asserts the descriptor's visual + busy announcement. The press-is-a-
+    // no-op BEHAVIOR is established separately by `isLocateBusy` below + the session single-flight
+    // test (`location-session.test.ts`), not by this descriptor.
     const d = locateButtonDescriptor({ status: "locating", refreshing: false, canAskAgain: true });
     expect(d.visual).toEqual({ kind: "spinner" });
     expect(d.accessibilityState).toEqual({ busy: true });
@@ -60,5 +63,24 @@ describe("locateButtonDescriptor — the four states (spec §4)", () => {
     const d = locateButtonDescriptor({ status: "denied", refreshing: true, canAskAgain: false });
     expect(d.visual).toEqual({ kind: "spinner" });
     expect(d.accessibilityState).toEqual({ busy: true });
+  });
+});
+
+describe("isLocateBusy — the shared press-gate predicate (spec §4)", () => {
+  it("is busy while acquiring the first fix (status 'locating') even when not refreshing", () => {
+    // This is the guard that makes a locating-state press a no-op (the gap the first PR review
+    // caught): mount acquisition is in flight while `refreshing` is still false.
+    expect(isLocateBusy("locating", false)).toBe(true);
+  });
+
+  it("is busy while a locate refresh is in flight", () => {
+    expect(isLocateBusy("granted", true)).toBe(true);
+  });
+
+  it("is NOT busy when granted/denied/unavailable/idle and no refresh is in flight", () => {
+    expect(isLocateBusy("granted", false)).toBe(false);
+    expect(isLocateBusy("denied", false)).toBe(false);
+    expect(isLocateBusy("unavailable", false)).toBe(false);
+    expect(isLocateBusy("idle", false)).toBe(false);
   });
 });

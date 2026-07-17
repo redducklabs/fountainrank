@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { FetchOutcome, RawPosition } from "./location";
+import { createFixStore, type FetchOutcome, type RawPosition } from "./location";
 import {
   createLocationSession,
   openSettingsEffect,
@@ -69,7 +69,9 @@ function makeFakeTimer() {
 function makeSession() {
   const { startWatch, starts } = makeStartHarness();
   const { timer, count, fireAll } = makeFakeTimer();
-  const publishFix = vi.fn();
+  // Default: the store accepts the fix (returns true). Ordering-sensitive tests override this or use
+  // a real `createFixStore`.
+  const publishFix = vi.fn<(pos: RawPosition) => boolean>().mockReturnValue(true);
   const resetStore = vi.fn();
   const openSettings = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
   const dispatch = vi.fn();
@@ -345,5 +347,100 @@ describe("openSettingsEffect + session.openSettings (spec §3)", () => {
     const h = makeSession();
     h.openSettings.mockRejectedValue(new Error("boom"));
     await expect(h.session.openSettings()).resolves.toEqual({ kind: "failed" });
+  });
+});
+
+/** A mutable injected clock so the real fix store's ordering is deterministic. */
+function makeClock(start = 0) {
+  let t = start;
+  const clock = () => t;
+  clock.set = (value: number) => {
+    t = value;
+  };
+  return clock;
+}
+
+describe("createLocationSession — respects store acceptance (no split-brain, spec §2/§3)", () => {
+  it("an older-effective refresh settling after a newer watch fix does NOT regress the reducer or knownCoords", async () => {
+    // Use the REAL fix store so acceptance is genuine; a vi.fn cannot expose the ordering bug.
+    const clock = makeClock();
+    const store = createFixStore(clock);
+    const dispatch = vi.fn();
+    const { startWatch, starts } = makeStartHarness();
+    const { timer } = makeFakeTimer();
+    const fetchOutcome = vi.fn<() => Promise<FetchOutcome>>();
+    const diagnostics: LocationDiagnostics = { watchSink: vi.fn(), onAppActiveChange: vi.fn() };
+    const session = createLocationSession(
+      {
+        startWatch,
+        fetchOutcome,
+        publishFix: store.publishFix,
+        resetStore: store.resetLatestFix,
+        openSettings: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+        diagnostics,
+        timer,
+      },
+      { dispatch },
+    );
+
+    const NEW_COORDS = { latitude: 10, longitude: 20, accuracy: 1 };
+    const OLD_COORDS = { latitude: 30, longitude: 40, accuracy: 1 };
+
+    // A newer watch fix (source 2000) arrives and is accepted → dispatched.
+    clock.set(2_000);
+    session.setInputs(focusedActiveGranted);
+    starts[0].resolve();
+    await flush();
+    starts[0].onFix({ coords: NEW_COORDS, timestamp: 2_000 });
+    expect(dispatch).toHaveBeenCalledWith({ type: "positionResolved", coords: NEW_COORDS });
+
+    // A slow refresh with an OLDER source (1000) settles second → the store rejects it.
+    clock.set(3_000);
+    fetchOutcome.mockResolvedValue({
+      kind: "granted",
+      position: { coords: OLD_COORDS, timestamp: 1_000 },
+    });
+    const outcome = await session.refresh();
+
+    // No regression: the reducer was NEVER told the older coords, and the refresh returns the
+    // store-newest (accepted) fix, not the stale-ordered one.
+    expect(
+      dispatch.mock.calls.some(
+        ([e]) => e.type === "positionResolved" && "coords" in e && e.coords === OLD_COORDS,
+      ),
+    ).toBe(false);
+    expect(outcome).toEqual({ kind: "granted", coords: NEW_COORDS });
+  });
+});
+
+describe("createLocationSession — single-flight across acquisition AND refresh (spec §3)", () => {
+  it("a refresh while the mount acquisition is in flight is a no-op (no second fetch)", async () => {
+    const h = makeSession();
+    let resolveAcquire!: (o: FetchOutcome) => void;
+    h.fetchOutcome.mockReturnValueOnce(new Promise<FetchOutcome>((r) => (resolveAcquire = r)));
+
+    const acquiring = h.session.acquireInitialFix(); // fetch in flight (status "locating")
+    const pressResult = await h.session.refresh(); // a locating-state press
+
+    expect(pressResult).toEqual({ kind: "unavailable" });
+    expect(h.fetchOutcome).toHaveBeenCalledTimes(1); // ONLY the acquisition fetch — no concurrent one
+
+    resolveAcquire(GRANTED);
+    await acquiring;
+  });
+
+  it("a refresh while another refresh is in flight is a no-op", async () => {
+    const h = makeSession();
+    let resolveFirst!: (o: FetchOutcome) => void;
+    h.fetchOutcome.mockReturnValueOnce(new Promise<FetchOutcome>((r) => (resolveFirst = r)));
+
+    const first = h.session.refresh();
+    const second = await h.session.refresh();
+
+    expect(second).toEqual({ kind: "unavailable" });
+    expect(h.fetchOutcome).toHaveBeenCalledTimes(1);
+
+    resolveFirst(GRANTED);
+    await first;
   });
 });

@@ -9,6 +9,17 @@ import type { LocationStatus } from "../location";
 /** The button visual: a spinner while acquiring a fix, or the locate icon in a brand/muted tone. */
 export type LocateButtonVisual = { kind: "spinner" } | { kind: "icon"; tone: "brand" | "muted" };
 
+/**
+ * The busy predicate shared by the descriptor and the locate-press gate (spec §4): a fix is being
+ * acquired (mount `status === "locating"`) OR a locate `refresh` is in flight. A busy press is a
+ * no-op — enforced authoritatively by the session's single-flight (covering BOTH acquisition and
+ * refresh) and short-circuited at the hook so it never even starts a second request. The button
+ * announces busy without being `disabled`.
+ */
+export function isLocateBusy(status: LocationStatus, refreshing: boolean): boolean {
+  return refreshing || status === "locating";
+}
+
 export type LocateButtonDescriptor = {
   visual: LocateButtonVisual;
   accessibilityRole: "button";
@@ -34,7 +45,7 @@ export function locateButtonDescriptor(input: {
   refreshing: boolean;
   canAskAgain: boolean;
 }): LocateButtonDescriptor {
-  if (input.refreshing || input.status === "locating") {
+  if (isLocateBusy(input.status, input.refreshing)) {
     return {
       visual: { kind: "spinner" },
       accessibilityRole: "button",

@@ -66,7 +66,12 @@ export type LocationDiagnostics = {
 export type LocationSessionPlatformDeps = {
   startWatch: StartWatch;
   fetchOutcome: () => Promise<FetchOutcome>;
-  publishFix: (pos: RawPosition) => void;
+  /**
+   * Publishes a fix to the freshness store, returning whether it was ACCEPTED (newest-effective).
+   * The boolean is load-bearing: an older-effective fix (e.g. a slow refresh settling after a newer
+   * watch fix) is rejected, and the session must not then regress the reducer/UI to the stale fix.
+   */
+  publishFix: (pos: RawPosition) => boolean;
   resetStore: () => void;
   /** The platform "Open settings" adapter (`Linking.openSettings`); its rejection is handled. */
   openSettings: () => Promise<void>;
@@ -100,6 +105,10 @@ export function createLocationSession(
   react: LocationSessionReactDeps,
 ): LocationSession {
   let disposed = false;
+  // Single-flight across BOTH producers (spec §3): true while the mount acquisition OR a locate
+  // refresh is fetching. A press while `status === "locating"` (acquisition in flight) or while
+  // another refresh is pending is a no-op, never a second concurrent permission/position request.
+  let fetchInFlight = false;
   // The session's own view of whether a usable fix is known (mirrors the reducer's coords). Used to
   // decide the unavailable branch (keep a known-good fix vs. mark unavailable) WITHOUT a React ref.
   let knownCoords: Coords | null = null;
@@ -114,12 +123,18 @@ export function createLocationSession(
     timer: platform.timer,
   });
 
-  function publishAndDispatch(pos: RawPosition): void {
-    if (disposed) return;
-    platform.publishFix(pos);
-    const coords = pickCoords(pos);
-    knownCoords = coords;
-    react.dispatch({ type: "positionResolved", coords });
+  // Publishes a fix and updates the reducer/knownCoords ONLY when the store accepts it. A rejected
+  // (older-effective) fix leaves the store's — and thus the reducer's — newer fix intact: no
+  // split-brain where the UI/placement bound regress behind the store. Returns acceptance.
+  function publishAndDispatch(pos: RawPosition): boolean {
+    if (disposed) return false;
+    const accepted = platform.publishFix(pos);
+    if (accepted) {
+      const coords = pickCoords(pos);
+      knownCoords = coords;
+      react.dispatch({ type: "positionResolved", coords });
+    }
+    return accepted;
   }
 
   // Applies a fetched/mount outcome to state + store + controller (spec §3). Denial clears the store
@@ -127,11 +142,17 @@ export function createLocationSession(
   function consumeOutcome(outcome: FetchOutcome, mountFallback: boolean): RefreshOutcome {
     if (disposed) return toRefreshOutcome(outcome);
     if (outcome.kind === "granted") {
-      publishAndDispatch(outcome.position);
+      const accepted = publishAndDispatch(outcome.position);
       // A successful fetch proves the platform can deliver a fix; nudge the watch to (re)start even
       // when `status` did not string-change (so the shouldWatch effect would not re-fire).
       controller.reconcile();
-      return { kind: "granted", coords: pickCoords(outcome.position) };
+      // Permission WAS granted, so the outcome is `granted`. But if the store rejected this fix (an
+      // older refresh settling after a newer watch fix), it — and the reducer — already hold a newer
+      // fix (`knownCoords`); return THAT so the caller recenters on the newest, never the stale fix.
+      const coords = accepted
+        ? pickCoords(outcome.position)
+        : (knownCoords ?? pickCoords(outcome.position));
+      return { kind: "granted", coords };
     }
     if (outcome.kind === "denied") {
       react.dispatch({ type: "permissionDenied" });
@@ -170,13 +191,26 @@ export function createLocationSession(
   async function acquireInitialFix(): Promise<RefreshOutcome> {
     if (disposed) return { kind: "unavailable" };
     react.dispatch({ type: "started" });
-    const outcome = await platform.fetchOutcome();
-    return consumeOutcome(outcome, true);
+    fetchInFlight = true;
+    try {
+      const outcome = await platform.fetchOutcome();
+      return consumeOutcome(outcome, true);
+    } finally {
+      fetchInFlight = false;
+    }
   }
 
   async function refresh(): Promise<RefreshOutcome> {
-    const outcome = await platform.fetchOutcome();
-    return consumeOutcome(outcome, false);
+    // Busy no-op: the mount acquisition (status "locating") or another refresh is already fetching,
+    // so a locate press must not launch a second concurrent request (spec §3-§4).
+    if (fetchInFlight) return { kind: "unavailable" };
+    fetchInFlight = true;
+    try {
+      const outcome = await platform.fetchOutcome();
+      return consumeOutcome(outcome, false);
+    } finally {
+      fetchInFlight = false;
+    }
   }
 
   function openSettings(): Promise<SettingsOpenResult> {

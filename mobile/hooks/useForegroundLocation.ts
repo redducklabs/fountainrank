@@ -8,6 +8,7 @@ import {
   type RefreshOutcome,
   type SettingsOpenResult,
 } from "../lib/location-session";
+import { isLocateBusy } from "../lib/map/locate-button";
 import {
   foregroundLocationReducer,
   initialForegroundLocationState,
@@ -104,7 +105,10 @@ export function useForegroundLocation(): ForegroundLocation {
   }, [session, focused, appActive, state.status]);
 
   const refresh = useCallback(async (): Promise<RefreshOutcome> => {
-    if (refreshingRef.current) return REFRESH_IN_FLIGHT;
+    // Busy no-op (spec §4): the shared predicate covers BOTH a refresh already in flight and the
+    // mount acquisition (`status === "locating"`), so a locating-state press never starts a second
+    // request. The session single-flights the same guard authoritatively as a backstop.
+    if (isLocateBusy(state.status, refreshingRef.current)) return REFRESH_IN_FLIGHT;
     refreshingRef.current = true;
     setRefreshing(true);
     try {
@@ -115,7 +119,7 @@ export function useForegroundLocation(): ForegroundLocation {
       refreshingRef.current = false;
       setRefreshing(false);
     }
-  }, [session, mirrorCanAskAgain]);
+  }, [session, mirrorCanAskAgain, state.status]);
 
   const openSettings = useCallback(() => session.openSettings(), [session]);
 
