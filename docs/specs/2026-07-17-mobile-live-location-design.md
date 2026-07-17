@@ -285,27 +285,29 @@ it has no dependency on the backend lock design.
    can be injected); an already-accepted pin survives a later `setBound`; an invalid nudge or
    replacement leaves the accepted pin unchanged.
 
-**CI-gated render/interaction tests (jsdom; CI `workspace-js` is the truth per `local-dev.md` —
-hook tests using `useIsFocused`/`useSyncExternalStore`-AppState need a render harness and are NOT
-pure logic):**
+**~~CI-gated render/interaction tests (jsdom)~~ — SUPERSEDED (historical; see the Amendment
+above — these render tests cannot exist in this repo's toolchain). Each item's verification now
+maps as follows (behavior requirements unchanged):**
 
-5. Hook lifecycle: grant → watch started; blur/background → stopped (controller NOT disposed —
-   refocus restarts it); refocus → restarted; unmount → `dispose()` cancels a pending retry
-   timer (tested with a scheduled retry outstanding); deferred start resolution after blur does
-   not leak; unmount during an in-flight `refresh()` does not set state after unmount.
-6. Locate button: all four visual/a11y states; press during refresh ignored; denied press with
-   `canAskAgain=false` surfaces the "Open settings" action; settings-open rejection tolerated.
-7. Overlay: initial `locating` shows "Locating you…"; denial/failure returns the below-zoom hint;
-   first fix resumes normal overlay logic; priority vs. error/offline states.
-8. Draft-pin policy: pin dropped in-bound, bound moves away → pin still submittable; nudge out of
-   the new bound rejected with the toast.
+5. Hook lifecycle — verified by the pure session-module tests (stop-vs-dispose, deferred-start,
+   retry-timer cancellation, post-dispose refresh suppression) + on-device checklist items for
+   blur/refocus restart, navigation-unmount disposal, and the diagnostics precondition.
+6. Locate button — verified by the pure descriptor tests (all four states, busy semantics,
+   settings hint) + the session-owned, Node-tested settings-open effect (including its
+   rejection → replacement-toast branch) + on-device checklist items for press-while-busy,
+   same-call outcome freshness, and settings-open tap.
+7. Overlay — verified by the pure overlay-descriptor/priority tests + the on-device check
+   against real offline/error states.
+8. Draft-pin policy — verified by the reducer accept/reject matrix + the shared
+   coordinator/reducer validator tests + on-device checks of all five placement paths.
 
-**On-device (owner, post-merge, tracked on #243/#215):** walking with the map open moves the
-app's placement/recenter target without pressing locate; locate press is instant when the watch
-is warm; deny-then-press shows the settings guidance; first launch shows "Locating you…";
-**backgrounding the app verifiably stops location callbacks on both platforms** (instrumented via
-the controller's lifecycle log events — the acceptance check for foreground-only, replacing any
-unfalsifiable battery claim).
+**On-device (owner, post-merge, tracked on #243/#215):** the implementation plan's enumerated
+checklist is the authoritative list; ALL applicable items must pass on both platforms before
+the next store release (privacy-critical background/focus items as an early hard gate), because
+with render tests impossible those checks are the sole behavioral verification of the binding
+layer. Background stop is made observable via the controller's coordinate-free
+`watch_fix_received` counter + `watch_stopped` lifecycle events plus an emulator fix injection
+while backgrounded (replacing any unfalsifiable battery claim).
 
 ## Rollout
 

@@ -42,12 +42,13 @@ The original plan's "jsdom render harness" tests are therefore impossible. Strat
   linker) and isolated-linker `expo-doctor` (`mobile-doctor`). An aggregate `./run.ps1 check`
   attempt is NOT evidence for those; record host-limited steps.
 - **Before Task 1**: `gh auth status`; `git fetch origin main` FIRST (a stale remote-tracking
-  ref silently omits Slice A); verify the Slice A squash-merge commit (PR #246) is reachable
-  from the fetched `origin/main` and inspect the overlapping map-screen diff; then
-  `git merge origin/main` into `feat/mobile-live-location`, resolving conflicts by preserving
-  both intents, never by resetting; re-check this plan's source-line assumptions afterward
-  (Slice A moved code in `index.tsx` and added `mobile/lib/log.ts` + descriptor modules this
-  plan builds on).
+  ref silently omits Slice A); resolve PR #246's squash commit to its immutable SHA via
+  `gh pr view 246 --json mergeCommit` (recorded at planning time: `2624ee8`) and verify with
+  `git merge-base --is-ancestor 2624ee8 origin/main`; inspect the overlapping map-screen diff;
+  then `git merge origin/main` into `feat/mobile-live-location`, resolving conflicts by
+  preserving both intents, never by resetting; re-check this plan's source-line assumptions
+  afterward (Slice A moved code in `index.tsx` and added `mobile/lib/log.ts` + descriptor
+  modules this plan builds on).
 
 ## Task 1 — fix store + timestamps — `feat(mobile): freshness-aware fix store`
 
@@ -83,8 +84,10 @@ The original plan's "jsdom render harness" tests are therefore impossible. Strat
   retries immediately + cancels the timer; blur/background cancels; repeated rejections don't
   spin/accumulate; `stop()` idempotent, distinct from `dispose()` (idempotent, cancels timers,
   invalidates pending, removes live); only the installed subscription publishes. Diagnostics:
-  the injected sink receives `watch_started`/`watch_stopped`/`watch_start_rejected`; the sink
-  API accepts event name + static fields only (no position can be captured); payloads asserted
+  the injected sink receives `watch_started`/`watch_stopped`/`watch_start_rejected` and a
+  coordinate-free `watch_fix_received` counter event (event name + static fields ONLY — the
+  sink API cannot accept a position, so no coordinate can be captured even by mistake; this
+  counter is what makes the background-stop check observable); payloads asserted
   coordinate-free.
 - Implement with injected `startWatch`, clock/timer, diagnostic sink.
 
@@ -107,8 +110,12 @@ The original plan's "jsdom render harness" tests are therefore impossible. Strat
 ## Task 5 — foreground-location session module + thin hook — `feat(mobile): session-driven watch lifecycle`
 
 - Files: new `mobile/lib/location-session.ts` + `mobile/lib/location-session.test.ts` (pure,
-  DI'd: controller, adapters, store, sink, dispatch); `mobile/hooks/useForegroundLocation.ts`
-  becomes a thin binder.
+  DI'd: controller, adapters, store, sink, dispatch); new `mobile/lib/location-deps.ts` +
+  `mobile/lib/location-deps.test.ts` (the production dependency factory — imports the expo
+  adapters and the Slice-A `mobile/lib/log.ts` seam; its test imports the exact exported
+  production constructor with expo mocked via `vi.mock`, verifies the real adapter/sink
+  identities and behavior, and proves the serialized diagnostic payload is coordinate-free);
+  `mobile/hooks/useForegroundLocation.ts` becomes a thin binder.
 - Session tests first (node-safe — this replaces the impossible hook render tests): given
   injected `(focused, appActive, status)` inputs, the session drives the controller's desired
   state; grant → started; blur/background → stopped NOT disposed; refocus → restarted;
@@ -141,9 +148,12 @@ The original plan's "jsdom render harness" tests are therefore impossible. Strat
   unavailable-with-known-fix retains state + store. **Publish sources** — mount, refresh, watch
   all publish; watch/refresh completing in either order leaves the newest-effective fix.
   **Rich `refresh()`** returns the discriminated outcome; the locate call site branches on the
-  returned value of the same call.
-- Implement: publication from all three paths; `refresh()` return change + the one call site in
-  this commit.
+  returned value of the same call. **Settings-open effect lives in the session/effects module**
+  (importable): the `Linking.openSettings()` call and its rejection → replacement-toast
+  decision are session-owned and Node-tested (rejection injected), because that failure branch
+  cannot be induced reliably on-device.
+- Implement: publication from all three paths; `refresh()` return change + the one call site;
+  the settings-open effect; in this commit.
 
 ## Task 7 — camera policy decision — `feat(mobile): one-time-center camera policy`
 (if the tests force no source change, the commit is `test(mobile): pin one-time-center camera
@@ -159,7 +169,10 @@ policy` instead)
 - Tests first: exactly one initial-center command for the first resolved fix regardless of
   initial-fetch/watch/refresh arrival order; subsequent watch fixes never produce a command;
   denial/`unavailable` before any fix produces no command and leaves the one-shot unconsumed;
-  explicit actions always produce their commands regardless of the one-shot state. On-device
+  explicit actions always produce their commands regardless of the one-shot state; **the
+  combined gesture** — a locate press whose refresh yields the FIRST granted fix — emits
+  exactly one effective camera command (not initial-center + locate) and consumes the
+  one-shot; an explicit press resolving without coordinates emits no command. On-device
   confirms the felt behavior.
 
 ## Task 8 — add-reducer bound authority — `feat(mobile): reducer-owned placement bounds`
@@ -174,12 +187,18 @@ policy` instead)
   (`mobile/lib/add-fountain/placement-coordinator.ts` + test) with injected `dispatch`, toast,
   and camera effects, exposing one method per path — `enterSeed`, `useCurrentLocation`,
   `placeAtCenter`, `mapTap`, `nudge`. The screen assigns each callback **directly to the
-  coordinator method** (thin binding, no inline logic). Node tests call the same coordinator
-  functions the screen binds: each path's in-bound acceptance (correct action dispatched,
-  camera/toast effects), each path's rejection (no pin replacement, toast effect invoked),
-  entry-before-bound exercising the sole pre-bound exception, nudge validating its computed
-  result. The screen→coordinator binding itself is covered by the on-device checklist, which
-  must exercise **all five paths for acceptance and rejection** (not only walked-away nudge).
+  coordinator method** (thin binding, no inline logic). **Single-validator rule**: a reducer
+  `dispatch` returns nothing, so the coordinator cannot learn acceptance from dispatching —
+  coordinator and reducer MUST share one exported pure placement-transition validator (the
+  reducer applies it as the authoritative enforcement backstop; the coordinator calls the same
+  function, given current state/bound, to decide immediate effects). No duplicated `inBound`
+  logic; a test proves the coordinator's effect decision and the reducer's transition agree on
+  the same inputs. Node tests call the same coordinator functions the screen binds: each
+  path's in-bound acceptance (correct action dispatched, camera/toast effects), each path's
+  rejection (no pin replacement, toast effect invoked), entry-before-bound exercising the sole
+  pre-bound exception, nudge validating its computed result. The screen→coordinator binding
+  itself is covered by the on-device checklist, which must exercise **all five paths for
+  acceptance and rejection** (not only walked-away nudge).
 - Implement: point/intent-only placement actions; reducer validates against `state.bound`;
   Next/submit from `state.pin != null` (`index.tsx:899-900, 1020-1024` rework); all call sites
   updated in this commit.
@@ -221,21 +240,39 @@ then `docs(mobile): document live-location verification`)
   `mergeable != CONFLICTING` before waiting on CI; CI green → Codex PR review loop → every PR
   comment (any commenter) addressed → **squash-merge only**. No AI attribution, no time
   estimates.
-- **On-device checklist (posted to #243/#215 post-merge; each item per platform where
-  applicable, with expected observations — these carry every binding the pure seams cannot
-  prove)**: (1) diagnostics precondition — real `watch_started`/`watch_stopped` events observed
-  in the device log (and `watch_start_rejected` via an induced failure if practical) BEFORE
-  trusting later checks; (2) backgrounding stops location callbacks (no watch events while
-  backgrounded); (3) blur to another tab then refocus restarts the watch (no disposal); (4) a
-  locate press after a failed watch start recovers tracking (reconcile); (5) first fix centers
-  the camera exactly once — later movement never chases the camera; (6) explicit locate,
-  "Use current location", and add-mode entry each still command the camera; (7) all five
+- **On-device checklist (posted to #243/#215 post-merge). RELEASE GATE: with render tests
+  impossible, these checks are the SOLE behavioral verification of the binding layer — ALL
+  applicable items must pass on BOTH platforms, with results recorded on the issues, before
+  the next store release ships this code. The privacy-critical items (1)–(3) are additionally
+  an early hard gate (exercise them first, on the emulator, before any other item is
+  trusted).** Items, each with expected observations:
+  (1) diagnostics precondition — real `watch_started`/`watch_stopped` events observed in the
+  device log (and `watch_start_rejected` via an induced failure if practical) BEFORE trusting
+  later checks; (2) background stop, made observable: while backgrounded, inject an emulator
+  fix (`adb emu geo fix`) — no coordinate-free `watch_fix_received` event fires during the
+  background interval, and on foregrounding neither the store-served coords nor the
+  placement/recenter target reflect the background movement (combined with the observed
+  `watch_stopped`); (3) blur to another tab then refocus restarts the watch (no disposal) —
+  and, distinctly, leaving the map screen entirely (navigation unmount) disposes: no watch
+  events until the screen is re-entered; (4) a locate press after a failed watch start
+  recovers tracking (reconcile); (5) pressing locate while already `locating`/`refreshing` is
+  ignored — no overlapping refresh, no second camera command; (6) first fix centers the camera
+  exactly once — later movement never chases the camera — including the combined case where a
+  locate press produces the first fix (exactly one camera move); (7) explicit locate,
+  "Use current location", and add-mode entry each still command the camera; (8) all five
   placement paths accept in-bound and reject out-of-bound with the toast (entry seed,
-  use-current-location, place-at-center, map tap, nudge); (8) walking with the map open moves
-  the placement/recenter target without a locate press, at plausible cadence per platform;
-  (9) the settings toast: action tap opens system settings, settings-open failure shows the
-  replacement toast, auto-dismiss extends with an action present; (10) locate-button states and
-  overlay copy ("Locating you…" priority, below-zoom return on denial); (11) accessibility
-  props verified by inspection (`uiautomator dump` per `local-dev.md` on Android / an
-  equivalent inspector on iOS), not visual-only. The privacy-critical items (1)–(3) must be
-  exercised before the next store release, even though tracking remains post-merge.
+  use-current-location, place-at-center, map tap, nudge); (9) walking/emulated movement with
+  the map open moves the placement/recenter target without a locate press, at plausible
+  cadence per platform; (10) permission matrix: deny with `canAskAgain` true → retry
+  re-prompts; deny with `canAskAgain` false → the settings toast appears on the SAME press
+  (not a stale prior outcome — flip the OS permission between presses to prove same-call
+  freshness) and its action tap opens system settings; a transient GPS failure with a known
+  fix preserves the button state and cached coords; (11) toast mechanics on-device: action tap
+  dismisses+invokes, auto-dismiss extends with an action present (the `Linking.openSettings()`
+  FAILURE replacement is NOT an on-device item — the OS cannot induce it reliably, so that
+  branch lives in the importable session/effects coordinator and is Node-tested, per Task 6);
+  (12) overlay priority checked against REAL offline/error states (airplane mode, forced fetch
+  error) — not only the locating/below-zoom copy — plus "Locating you…" priority and
+  below-zoom return on denial; (13) locate-button states visually + accessibility props
+  verified by inspection (`uiautomator dump` per `local-dev.md` on Android / an equivalent
+  inspector on iOS), not visual-only.
