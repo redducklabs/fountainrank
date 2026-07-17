@@ -2,7 +2,7 @@ import json
 from functools import lru_cache
 from typing import Annotated
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # Logto OSS (self-hosted, tenant id "default") always identifies its Management API by this
@@ -64,6 +64,14 @@ class Settings(BaseSettings):
     ranking_confidence_m: int = 5
     # Reject a new fountain if one already exists within this many meters (spec §7).
     duplicate_threshold_m: float = 10.0
+    # Bound (ms) on how long an interactive write (POST /fountains, admin patch/delete) may wait on
+    # ANY lock — the advisory add lock, or the row/table locks a concurrent membership refresh
+    # holds — before failing fast with 503 busy instead of an infinite spinner (spec 2026-07-17
+    # §1). The whole interactive write transaction runs under this as a transaction-wide
+    # `lock_timeout`; there is NO reset, so bulk/CLI paths (which don't set it) keep their
+    # deliberate unbounded wait. `0` would silently disable the timeout and an unbounded value
+    # defeats the design, so both are rejected. Env var: ADD_LOCK_TIMEOUT_MS.
+    add_lock_timeout_ms: Annotated[int, Field(gt=0, le=60_000)] = 8000
     # Map-read guardrails.
     nearby_default_radius_m: float = 1000.0
     nearby_max_radius_m: float = 50_000.0
