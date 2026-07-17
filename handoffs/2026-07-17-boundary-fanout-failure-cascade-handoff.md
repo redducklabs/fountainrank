@@ -1,5 +1,18 @@
 # Handoff — boundary fan-out failure cascade after city-parenting fix (2026-07-17)
 
+> **Continuation status (2026-07-17, later the same day):** the recovery in §6 steps 1–6 is
+> DONE — the in-progress + 35 pending old-image runs were cancelled, the 8-session orphan chain
+> (Spain's 37h `INSERT` + 7 advisory waiters) was positively re-identified and terminated, the
+> database shows zero stale/advisory sessions, and 19 countries have committed cells
+> (`ad al at au ba be bg bn by bz ch cy cz de dk ee lu mc us`). The fix for both defects is
+> specified in `docs/specs/2026-07-17-candidate-capture-and-loader-cancellation-design.md`
+> (Codex-approved) with plan `docs/plans/2026-07-17-candidate-capture-and-loader-cancellation.md`
+> (Codex-approved), implemented on branch `fix/candidate-capture-loader-cancellation`. Production
+> profiling evidence: the old capture ran 85 s on the SMALLEST country (ee) and unbounded under
+> Spain's conditions; the UNION rewrite ran 14–55 s across ee/de/us. Do not re-dispatch anything
+> until that PR is merged, deployed, and Spain has been proven end-to-end per the plan's
+> post-merge section.
+
 This handoff supersedes the operational/fan-out portion of
 `handoffs/2026-07-15-city-parenting-perf-optimization-handoff.md`. The city-parenting index work is
 shipped and proven, but the worldwide fan-out is currently broken by a **different slow query** plus
