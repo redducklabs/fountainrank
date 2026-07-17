@@ -31,6 +31,18 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
+/**
+ * A cached pin element the helper can safely read: a non-null object with a string `id` (the only
+ * field read from an EXISTING cached pin, in the same-id `findIndex`). Guards the successful-create
+ * path against a corrupt cache entry like `{ pins: [null] }` — a malformed element must leave the
+ * whole entry untouched, never throw from `onSuccess`.
+ */
+function isPinLike(value: unknown): value is FountainPin {
+  return (
+    value != null && typeof value === "object" && typeof (value as { id?: unknown }).id === "string"
+  );
+}
+
 /** A structurally valid bbox params object: exactly four FINITE numbers. */
 function asBboxParams(value: unknown): BboxParams | null {
   if (value == null || typeof value !== "object") return null;
@@ -66,11 +78,12 @@ function asFountainFilters(value: unknown): FountainFilters | null {
   return null;
 }
 
-/** A structurally valid cached bbox result. */
+/** A structurally valid cached bbox result — including EVERY pin element (a malformed one leaves the
+ *  entry untouched rather than crashing the same-id lookup). */
 function asBboxResult(value: unknown): BboxResult | null {
   if (value == null || typeof value !== "object") return null;
   const r = value as Record<string, unknown>;
-  if (Array.isArray(r.pins) && typeof r.truncated === "boolean") {
+  if (Array.isArray(r.pins) && typeof r.truncated === "boolean" && r.pins.every(isPinLike)) {
     return { pins: r.pins as FountainPin[], truncated: r.truncated };
   }
   return null;

@@ -143,6 +143,19 @@ describe("insertPinIntoBboxCaches", () => {
     expect(updates).toHaveLength(0);
   });
 
+  it("leaves an entry whose cached pins contain a malformed element untouched (never throws)", () => {
+    // A corrupt cache entry must not crash the same-id lookup on the successful-create path.
+    const key = fountainsQueryKey(PARAMS, DEFAULT_FILTERS);
+    const nullPin: [readonly unknown[], unknown] = [key, { pins: [null], truncated: false }];
+    const badId: [readonly unknown[], unknown] = [
+      key,
+      { pins: [{ location: { latitude: 47.5, longitude: -122.5 }, id: 5 }], truncated: false },
+    ];
+    expect(() => insertPinIntoBboxCaches([nullPin], makePin("new", 47.5, -122.5))).not.toThrow();
+    expect(insertPinIntoBboxCaches([nullPin], makePin("new", 47.5, -122.5))).toHaveLength(0);
+    expect(insertPinIntoBboxCaches([badId], makePin("new", 47.5, -122.5))).toHaveLength(0);
+  });
+
   it("is a global no-op for a non-finite pin coordinate", () => {
     const entry = bboxEntry(DEFAULT_FILTERS, { pins: [], truncated: false });
     expect(insertPinIntoBboxCaches([entry], makePin("nan", NaN, -122.5))).toHaveLength(0);
