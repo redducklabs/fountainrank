@@ -33,9 +33,17 @@ export type AddFountainOutcomeUnknownEvent = {
   event: "add_fountain_outcome_unknown";
 } & ({ reason: "deadline"; timeout_ms: number } | { reason: "network_failure" });
 
-export type LogEvent = ApiTimeoutEvent | AddFountainOutcomeUnknownEvent;
+/**
+ * A live-location watch failed to START (spec §1) - the ONLY production-logged watch event; the
+ * success/lifecycle events (`watch_started`/`watch_stopped`/`watch_fix_received`) are dev-only
+ * verification instrumentation and never reach this seam. The allowlist is empty beyond the
+ * envelope: no coordinate, no raw platform error, no timestamp can serialize.
+ */
+export type WatchStartRejectedEvent = { event: "watch_start_rejected" };
 
-type LogArea = "api" | "add_fountain";
+export type LogEvent = ApiTimeoutEvent | AddFountainOutcomeUnknownEvent | WatchStartRejectedEvent;
+
+type LogArea = "api" | "add_fountain" | "location";
 
 /** Build the single serialized JSON line for an event from its allowlist alone. */
 export function serializeEvent(event: LogEvent): string {
@@ -57,6 +65,10 @@ export function serializeEvent(event: LogEvent): string {
         event.reason === "deadline"
           ? { reason: event.reason, timeout_ms: event.timeout_ms }
           : { reason: event.reason };
+      break;
+    case "watch_start_rejected":
+      area = "location";
+      fields = {};
       break;
   }
   return JSON.stringify({ level: "warn", area, event: event.event, ...fields });
