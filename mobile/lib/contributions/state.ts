@@ -1,4 +1,4 @@
-import { ApiError } from "../api";
+import { ApiError, ApiTimeoutError } from "../api";
 import { isAuthSessionError, type AuthStatus } from "../auth/state";
 export {
   CONDITION_STATUSES,
@@ -44,6 +44,12 @@ export function mapContributionError(error: unknown): ContributionError {
     if (error.status === 409) return "needs_name";
     if (error.status === 429) return "rate_limited";
     return "server";
+  }
+  // A timed-out contribution write maps to the network bucket (existing retry copy):
+  // rating/condition/note writes are UPSERTs server-side, so an unchanged retry is safe
+  // and non-duplicating — no reconciliation branch is needed here (spec §2).
+  if (error instanceof ApiTimeoutError) {
+    return "network";
   }
   if (error instanceof TypeError) {
     return "network";

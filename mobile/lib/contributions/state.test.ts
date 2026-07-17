@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ApiError } from "../api";
+import { ApiError, ApiTimeoutError } from "../api";
 import { AuthSessionError } from "../auth/state";
 import {
   CONDITION_STATUSES,
@@ -59,6 +59,14 @@ describe("mapContributionError", () => {
 
   it("maps non-HTTP failures to network", () => {
     expect(mapContributionError(new TypeError("Network request failed"))).toBe("network");
+  });
+
+  it("maps a request timeout to the network bucket (upsert writes are retry-safe)", () => {
+    // Unlike the add flow, contribution writes are UPSERTs, so a timed-out write needs no
+    // reconciliation — the existing network copy + retry is correct (spec §2).
+    expect(
+      mapContributionError(new ApiTimeoutError("POST", "/api/v1/fountains/x/rate", 30_000)),
+    ).toBe("network");
   });
 
   it("does not label internal errors as connectivity problems", () => {
