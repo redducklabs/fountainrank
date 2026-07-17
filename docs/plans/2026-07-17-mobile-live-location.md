@@ -139,15 +139,33 @@ The original plan's "jsdom render harness" tests are therefore impossible. Strat
   leak; an in-flight `refresh()` resolving after `dispose()` performs no further
   dispatch/publish (the unmount-safety property, tested at the session seam); a successful
   `refresh()` invokes controller `reconcile()`.
-- **Diagnostics, stated honestly**: node tests prove (a) the controller/session event contract
-  (`watch_started`/`watch_stopped`/`watch_start_rejected`, static fields only, no coordinates —
-  asserted on the serialized `lib/log.ts` output, which exists after the Slice A merge and
-  emits one JSON warn line per event in production per its documented contract) and (b) via the
-  `location-deps.ts` factory tests, that the exact production deps object carries that sink.
-  What they cannot prove — that the hook passes the factory's deps rather than others — is
-  covered by `tsc` (the deps type), CI lint, and a **named on-device precondition** in Task 10:
-  observe real `watch_started`/`watch_stopped` events on-device (and `watch_start_rejected` via
-  an induced failure if practical) before trusting the background-stop check.
+- **Diagnostics, two unambiguous paths (no other transport permitted)**:
+  - *Production sink*: maps ONLY `watch_start_rejected` into the new `LogEvent` member and
+    passes it to `logEvent` (`lib/log.ts`, one JSON warn line — the logger's rare-failure
+    contract); `watch_started`/`watch_stopped`/`watch_fix_received` are **ignored** by the
+    production sink, and tests assert zero console output for them. `lib/log.ts` serialization
+    tests apply only to `watch_start_rejected`.
+  - *Dev verification channel* (a clearly named instrumentation in `location-deps.ts`,
+    `__DEV__`-selected): `watch_started`/`watch_stopped` emit through it; `watch_fix_received`
+    only increments the in-memory counter (tests assert NO per-fix console call); the
+    app-active transition emits one coordinate- and timestamp-free summary line. **Counter
+    interval semantics, exact**: on transition away from active, snapshot-and-reset the
+    counter and count callbacks until the next active transition; that transition emits
+    exactly one summary for the inactive interval, then resets — normal foreground fixes
+    before backgrounding can never make the background summary nonzero. Tests:
+    active→inactive→callbacks→active; consecutive cycles; blur without AppState background;
+    disposal mid-interval.
+  - *Build-time boundary, testable*: the production factory selects a
+    no-op-for-success-events sink WITHOUT allocating the fix counter or dev serializer —
+    `location-deps.test.ts` exercises both `__DEV__` configurations via the project's
+    supported mock mechanism and proves the production path makes no success/lifecycle console
+    calls (never relying on optimizer dead-code removal alone).
+  Node tests prove the contracts above and, via the factory tests, that the exact production
+  deps object carries the correct sink per configuration. What they cannot prove — that the
+  hook passes the factory's deps rather than others — is covered by `tsc` (the deps type), CI
+  lint, and the **named on-device precondition** in Task 10, which observes
+  `watch_started`/`watch_stopped` on the **dev verification channel** (never by re-adding them
+  to the production logger).
 - Hook: binds session state via the reducer + `useSyncExternalStore` AppState adapter (the
   spelled-out wrapper returning a cleanup function; module-scope-stable subscribe/snapshot) +
   `useIsFocused`; consumes `createForegroundLocationSessionDeps()` from `location-deps.ts`;
@@ -213,12 +231,15 @@ policy` instead)
   reducer applies it as the authoritative enforcement backstop; the coordinator calls the same
   function, given current state/bound, to decide immediate effects). No duplicated `inBound`
   logic; a test proves the coordinator's effect decision and the reducer's transition agree on
-  the same inputs. Node tests call the same coordinator functions the screen binds: each
-  path's in-bound acceptance (correct action dispatched, camera/toast effects), each path's
-  rejection (no pin replacement, toast effect invoked), entry-before-bound exercising the sole
-  pre-bound exception, nudge validating its computed result. The screen→coordinator binding
-  itself is covered by the on-device checklist, which must exercise **all five paths for
-  acceptance and rejection** (not only walked-away nudge).
+  the same inputs. Node tests call the same coordinator functions the screen binds — the
+  matrix is **identical to Task 10's reachable semantics**: `enterSeed` before a bound → the
+  accepted fallback/seed action and effects only (an entry rejection test exists only if the
+  implementation introduces a reachable bound-before-entry state); `useCurrentLocation`,
+  `placeAtCenter`, `mapTap`, `nudge` → both in-bound acceptance (correct action dispatched,
+  camera/toast effects) and rejection against the current state bound (no pin replacement,
+  toast effect invoked, prior accepted pin preserved); nudge validates its computed result.
+  The screen→coordinator binding itself is covered by the on-device checklist's item (8) —
+  the same reachable matrix, never an "all five reject" demand.
 - Implement: point/intent-only placement actions; reducer validates against `state.bound`;
   Next/submit from `state.pin != null` (`index.tsx:899-900, 1020-1024` rework); all call sites
   updated in this commit.
