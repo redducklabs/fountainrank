@@ -40,7 +40,7 @@ from app.filters import (
     fountain_indexable_predicate,
 )
 from app.geo import latitude_of, longitude_of, point_geography, within_radius
-from app.locks import ADD_FOUNTAIN_LOCK_KEY
+from app.locks import ADD_FOUNTAIN_LOCK_KEY, InteractiveWriteBusy, interactive_lock_timeout
 from app.membership import recompute_fountain_membership
 from app.models import (
     AttributeObservation,
@@ -97,6 +97,31 @@ RATE_LIMIT_RESPONSE = {
         }
     },
 }
+
+# 503 busy: the interactive write hit its bounded lock_timeout waiting on a lock a concurrent
+# boundary load / membership refresh holds (spec 2026-07-17 §1). A fixed retry hint — the refresh
+# window is not per-user rolling like the 429 budget. Exposes no lock names/SQLSTATE/internals.
+BUSY_RETRY_AFTER_SECONDS = 30
+BUSY_RESPONSE = {
+    "description": "A boundary load / membership refresh holds the write lock; retry after the "
+    "interval in `Retry-After`.",
+    "headers": {
+        "Retry-After": {
+            "description": "Seconds to wait before retrying the write.",
+            "schema": {"type": "integer"},
+        }
+    },
+}
+
+
+def busy_exception() -> HTTPException:
+    """Map :class:`InteractiveWriteBusy` → HTTP 503 ``{"detail": "busy"}`` with ``Retry-After``.
+    Shared by the three interactive write endpoints (POST /fountains + admin patch/delete)."""
+    return HTTPException(
+        status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="busy",
+        headers={"Retry-After": str(BUSY_RETRY_AFTER_SECONDS)},
+    )
 
 
 async def _reserve_contribution_write(
@@ -811,6 +836,7 @@ async def fountain_place(
             "model": DuplicateFountainConflict | DisplayNameRequiredConflict
         },
         status.HTTP_429_TOO_MANY_REQUESTS: RATE_LIMIT_RESPONSE,
+        status.HTTP_503_SERVICE_UNAVAILABLE: BUSY_RESPONSE,
     },
 )
 async def add_fountain(
@@ -821,129 +847,151 @@ async def add_fountain(
     reserve_write_attempt: WriteAttemptReserver = Depends(get_write_attempt_reserver),
 ) -> FountainDetail | JSONResponse:
     await _reserve_contribution_write(reserve_write_attempt, user, "fountain_create")
-    await _validate_rating_types(session, payload.ratings)
-    # Validate add-time attribute observations BEFORE creating the fountain — a bad
-    # observation 422s the whole add (the txn never commits).
-    if payload.observations:
-        await _validate_attribute_observations(session, payload.observations)
+    # Bound the WHOLE domain transaction so a concurrent boundary load / membership refresh can't
+    # make the add wait forever on the advisory add lock or a place-row lock (spec 2026-07-17 §1).
+    # Entered AFTER the reservation commit — which would otherwise clear the transaction-local
+    # lock_timeout and leave the domain transaction unbounded — so validation, the advisory
+    # acquisition, the mutation, and the domain commit are ALL bounded; a wait past the bound rolls
+    # back and raises InteractiveWriteBusy → 503 busy.
+    try:
+        async with interactive_lock_timeout(session, settings, context="add_fountain"):
+            await _validate_rating_types(session, payload.ratings)
+            # Validate add-time attribute observations BEFORE creating the fountain — a bad
+            # observation 422s the whole add (the txn never commits).
+            if payload.observations:
+                await _validate_attribute_observations(session, payload.observations)
 
-    # Serialize the proximity check + insert against concurrent adds (held until commit).
-    await session.execute(select(func.pg_advisory_xact_lock(ADD_FOUNTAIN_LOCK_KEY)))
+            # Serialize the proximity check + insert against concurrent adds (held until commit).
+            await session.execute(select(func.pg_advisory_xact_lock(ADD_FOUNTAIN_LOCK_KEY)))
 
-    point = point_geography(payload.location.latitude, payload.location.longitude)
-    # Ignore hidden rows so a hidden bad-import never blocks a real user add.
-    conflict = (
-        await session.execute(
-            select(Fountain.id)
-            .where(Fountain.is_hidden.is_(False))
-            .where(func.ST_DWithin(Fountain.location, point, settings.duplicate_threshold_m))
-            .limit(1)
-        )
-    ).scalar_one_or_none()
-    if conflict is not None:
-        # Typed body so clients can route the user to confirm/rate the existing fountain
-        # (the add->verify hook). Declared via responses= so it appears in the OpenAPI schema.
-        return JSONResponse(
-            status_code=status.HTTP_409_CONFLICT,
-            content=DuplicateFountainConflict(fountain_id=conflict).model_dump(mode="json"),
-        )
+            point = point_geography(payload.location.latitude, payload.location.longitude)
+            # Ignore hidden rows so a hidden bad-import never blocks a real user add.
+            conflict = (
+                await session.execute(
+                    select(Fountain.id)
+                    .where(Fountain.is_hidden.is_(False))
+                    .where(
+                        func.ST_DWithin(Fountain.location, point, settings.duplicate_threshold_m)
+                    )
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if conflict is not None:
+                # Typed body so clients can route the user to confirm/rate the existing fountain
+                # (the add->verify hook). Declared via responses= so it appears in the OpenAPI
+                # schema.
+                return JSONResponse(
+                    status_code=status.HTTP_409_CONFLICT,
+                    content=DuplicateFountainConflict(fountain_id=conflict).model_dump(mode="json"),
+                )
 
-    fountain = Fountain(
-        location=point,
-        is_working=payload.is_working,
-        comments=payload.comments,
-        placement_note=payload.placement_note,
-        added_by_user_id=user.id,
-    )
-    session.add(fountain)
-    await session.flush()
-
-    # Precomputed place membership (#127 Slice 1d): assign this fountain to its country + city
-    # place and bump the denormalized fountain_count. Runs inside the add's advisory-lock scope
-    # (held until commit), so the count recompute is race-safe against concurrent adds. The public
-    # place pages read this precomputed assignment — never a live ST_Covers.
-    await recompute_fountain_membership(session, fountain.id)
-
-    # Emit contribution events. add_fountain + first_fountain are idempotent via dedup keys.
-    specs = [
-        ContributionSpec(
-            user_id=user.id,
-            event_type="add_fountain",
-            dedup_key=dk_add_fountain(fountain.id),
-            fountain_id=fountain.id,
-            location=point,
-            target_type="fountain",
-            target_id=fountain.id,
-        ),
-        ContributionSpec(
-            user_id=user.id,
-            event_type="first_fountain_bonus",
-            dedup_key=dk_first_fountain(user.id),
-            fountain_id=fountain.id,
-            location=point,
-        ),
-    ]
-    # "First in area" requires the area to be genuinely unmapped — NO other non-hidden
-    # fountain (including imported ones) within first_in_area_radius_m. The add advisory
-    # lock (held until commit) serializes this precheck against concurrent adds.
-    others_nearby = (
-        await session.execute(
-            select(func.count())
-            .select_from(Fountain)
-            .where(
-                Fountain.id != fountain.id,
-                Fountain.is_hidden.is_(False),
-                func.ST_DWithin(Fountain.location, point, settings.first_in_area_radius_m),
-            )
-        )
-    ).scalar_one()
-    if others_nearby == 0:
-        specs.append(
-            ContributionSpec(
-                user_id=user.id,
-                event_type="first_in_area_bonus",
-                dedup_key=dk_first_in_area(fountain.id),
-                fountain_id=fountain.id,
+            fountain = Fountain(
                 location=point,
+                is_working=payload.is_working,
+                comments=payload.comments,
+                placement_note=payload.placement_note,
+                added_by_user_id=user.id,
             )
-        )
-    if payload.ratings:
-        # Inline ratings on add-fountain are not proximity-checked (the add flow does not assert the
-        # rater's GPS against the pin); is_proximate=False means "no location asserted" (spec §4.5).
-        rating_ids = await _upsert_ratings(
-            session,
-            fountain_id=fountain.id,
-            user_id=user.id,
-            ratings=payload.ratings,
-            is_proximate=False,
-        )
-        await recompute_fountain_ranking(session, fountain.id)
-        specs += _rating_contribution_specs(
-            user_id=user.id, fountain_id=fountain.id, location=point, rating_ids=rating_ids
-        )
-    if payload.observations:
-        obs_ids = await _upsert_attribute_observations(
-            session, fountain_id=fountain.id, user_id=user.id, observations=payload.observations
-        )
-        for attribute_type_id in obs_ids:
-            await recompute_attribute_consensus(session, fountain.id, attribute_type_id)
-        specs += [
-            ContributionSpec(
-                user_id=user.id,
-                event_type="observe_attribute",
-                dedup_key=dk_observe_attr(user.id, fountain.id, attribute_type_id),
-                fountain_id=fountain.id,
-                location=point,
-                target_type="attribute_observation",
-                target_id=observation_id,
-                event_metadata={"attribute_type_id": attribute_type_id},
-            )
-            for attribute_type_id, observation_id in obs_ids.items()
-        ]
-    result = await record_contributions(session, specs)
-    points_awarded = result.points_for(user.id)
+            session.add(fountain)
+            await session.flush()
 
-    await session.commit()
+            # Precomputed place membership (#127 Slice 1d): assign this fountain to its country +
+            # city place and bump the denormalized fountain_count. Runs inside the add's
+            # advisory-lock scope (held until commit), so the count recompute is race-safe against
+            # concurrent adds. The public place pages read this precomputed assignment — never a
+            # live ST_Covers.
+            await recompute_fountain_membership(session, fountain.id)
+
+            # Emit contribution events. add_fountain + first_fountain are idempotent via dedup keys.
+            specs = [
+                ContributionSpec(
+                    user_id=user.id,
+                    event_type="add_fountain",
+                    dedup_key=dk_add_fountain(fountain.id),
+                    fountain_id=fountain.id,
+                    location=point,
+                    target_type="fountain",
+                    target_id=fountain.id,
+                ),
+                ContributionSpec(
+                    user_id=user.id,
+                    event_type="first_fountain_bonus",
+                    dedup_key=dk_first_fountain(user.id),
+                    fountain_id=fountain.id,
+                    location=point,
+                ),
+            ]
+            # "First in area" requires the area to be genuinely unmapped — NO other non-hidden
+            # fountain (including imported ones) within first_in_area_radius_m. The add advisory
+            # lock (held until commit) serializes this precheck against concurrent adds.
+            others_nearby = (
+                await session.execute(
+                    select(func.count())
+                    .select_from(Fountain)
+                    .where(
+                        Fountain.id != fountain.id,
+                        Fountain.is_hidden.is_(False),
+                        func.ST_DWithin(Fountain.location, point, settings.first_in_area_radius_m),
+                    )
+                )
+            ).scalar_one()
+            if others_nearby == 0:
+                specs.append(
+                    ContributionSpec(
+                        user_id=user.id,
+                        event_type="first_in_area_bonus",
+                        dedup_key=dk_first_in_area(fountain.id),
+                        fountain_id=fountain.id,
+                        location=point,
+                    )
+                )
+            if payload.ratings:
+                # Inline ratings on add-fountain are not proximity-checked (the add flow does not
+                # assert the rater's GPS against the pin); is_proximate=False means "no location
+                # asserted" (spec §4.5).
+                rating_ids = await _upsert_ratings(
+                    session,
+                    fountain_id=fountain.id,
+                    user_id=user.id,
+                    ratings=payload.ratings,
+                    is_proximate=False,
+                )
+                await recompute_fountain_ranking(session, fountain.id)
+                specs += _rating_contribution_specs(
+                    user_id=user.id,
+                    fountain_id=fountain.id,
+                    location=point,
+                    rating_ids=rating_ids,
+                )
+            if payload.observations:
+                obs_ids = await _upsert_attribute_observations(
+                    session,
+                    fountain_id=fountain.id,
+                    user_id=user.id,
+                    observations=payload.observations,
+                )
+                for attribute_type_id in obs_ids:
+                    await recompute_attribute_consensus(session, fountain.id, attribute_type_id)
+                specs += [
+                    ContributionSpec(
+                        user_id=user.id,
+                        event_type="observe_attribute",
+                        dedup_key=dk_observe_attr(user.id, fountain.id, attribute_type_id),
+                        fountain_id=fountain.id,
+                        location=point,
+                        target_type="attribute_observation",
+                        target_id=observation_id,
+                        event_metadata={"attribute_type_id": attribute_type_id},
+                    )
+                    for attribute_type_id, observation_id in obs_ids.items()
+                ]
+            result = await record_contributions(session, specs)
+            points_awarded = result.points_for(user.id)
+
+            await session.commit()
+    except InteractiveWriteBusy as exc:
+        raise busy_exception() from exc
+
     await session.refresh(fountain)
     logger.info(
         "fountain added fountain=%s user=%s points_awarded=%d",

@@ -1993,6 +1993,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description A boundary load / membership refresh holds the write lock; retry after the interval in `Retry-After`. */
+            503: {
+                headers: {
+                    /** @description Seconds to wait before retrying the write. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     fountains_in_bbox_api_v1_fountains_bbox_get: {
@@ -2797,6 +2806,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description A boundary load / membership refresh holds the write lock; retry after the interval in `Retry-After`. */
+            503: {
+                headers: {
+                    /** @description Seconds to wait before retrying the write. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     admin_patch_fountain_api_v1_admin_fountains__fountain_id__patch: {
@@ -2836,6 +2854,15 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+            /** @description A boundary load / membership refresh holds the write lock; retry after the interval in `Retry-After`. */
+            503: {
+                headers: {
+                    /** @description Seconds to wait before retrying the write. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

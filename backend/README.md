@@ -79,7 +79,13 @@ Writes (require auth — see below):
   `rating_type_id` or out-of-range `stars` → `422`. Returns the created fountain
   detail (`201`). Adds and ratings emit contribution events (points); the
   `first_in_area_bonus` is awarded only when no other fountain exists within
-  `first_in_area_radius_m` (default 600 m) of the new point.
+  `first_in_area_radius_m` (default 600 m) of the new point. The whole write
+  transaction (and the admin patch/delete below) runs under a bounded
+  `lock_timeout` so an interactive write never queues indefinitely behind a
+  boundary load / membership refresh — on a timeout it returns `503`
+  `{ "detail": "busy" }` with `Retry-After: 30`. Bound via `ADD_LOCK_TIMEOUT_MS`
+  (default `8000` ms; must be `> 0` and `≤ 60000`; bulk/CLI paths keep their
+  deliberate unbounded wait). See `docs/specs/2026-07-17-scoped-add-fountain-lock-design.md`.
 - `POST /api/v1/fountains/{fountain_id}/ratings` — create/update this user's
   ratings for a fountain (atomic upsert on `(fountain, user, dimension)`). Body:
   `{ "ratings": [{ "rating_type_id", "stars" }] }` (non-empty). Unknown fountain
