@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { ApiError } from "../api";
+import { ApiError, ApiTimeoutError } from "../api";
 import { AuthSessionError } from "../auth/state";
+import { buildAddFountainPayload } from "./payloads";
 import {
   addFountainErrorText,
   addFountainGate,
   addFountainReducer,
   classifyAddConflict,
+  classifyAddSubmitFailure,
   duplicateFountainId,
   initialAddFountainState,
   mapAddFountainError,
@@ -57,9 +59,88 @@ describe("mapAddFountainError", () => {
     expect(mapAddFountainError(new ApiError(500))).toBe("server");
   });
 
-  it("distinguishes network from internal errors", () => {
-    expect(mapAddFountainError(new TypeError("Network request failed"))).toBe("network");
+  it("classifies both a request timeout and a mid-flight network drop as outcome-unknown 'timeout'", () => {
+    // The create may still have committed server-side, so both recover by reconciliation
+    // (unchanged retry → 409 → route to the created fountain), not a plain network retry.
+    expect(mapAddFountainError(new ApiTimeoutError("POST", "/api/v1/fountains", 30_000))).toBe(
+      "timeout",
+    );
+    expect(mapAddFountainError(new TypeError("Network request failed"))).toBe("timeout");
+  });
+
+  it("maps a non-network internal Error to server", () => {
     expect(mapAddFountainError(new Error("missing location"))).toBe("server");
+  });
+});
+
+describe("classifyAddSubmitFailure", () => {
+  it("ApiTimeoutError → 'timeout' + a deadline descriptor carrying timeout_ms", () => {
+    expect(
+      classifyAddSubmitFailure(new ApiTimeoutError("POST", "/api/v1/fountains", 30_000)),
+    ).toEqual({ error: "timeout", outcome: { reason: "deadline", timeout_ms: 30_000 } });
+  });
+
+  it("mid-flight TypeError → 'timeout' + a network_failure descriptor with NO timeout_ms", () => {
+    const result = classifyAddSubmitFailure(new TypeError("Network request failed"));
+    expect(result).toEqual({ error: "timeout", outcome: { reason: "network_failure" } });
+    expect(result.outcome && "timeout_ms" in result.outcome).toBe(false);
+  });
+
+  it("other errors keep their existing mapping and carry NO descriptor", () => {
+    expect(classifyAddSubmitFailure(new ApiError(500))).toEqual({ error: "server" });
+    expect(classifyAddSubmitFailure(new ApiError(422))).toEqual({ error: "validation" });
+    expect(classifyAddSubmitFailure(new ApiError(401))).toEqual({ error: "unauthenticated" });
+    expect(classifyAddSubmitFailure(new AuthSessionError("token_unavailable"))).toEqual({
+      error: "unauthenticated",
+    });
+  });
+});
+
+describe("addFountainReducer — outcome-unknown timeout preserves the draft for reconciliation", () => {
+  it("submitError('timeout') → error phase with pin + isWorking preserved", () => {
+    let state = addFountainReducer(initialAddFountainState, { type: "setBound", bound: circle });
+    state = addFountainReducer(state, { type: "dropPin", point: circle.center });
+    state = addFountainReducer(state, { type: "next" });
+    state = addFountainReducer(state, { type: "setWorking", isWorking: false });
+    state = addFountainReducer(state, { type: "submitStart" });
+    const pinBefore = state.pin;
+    state = addFountainReducer(state, { type: "submitError", error: "timeout" });
+    expect(state.phase).toBe("error");
+    expect(state.error).toBe("timeout");
+    // Unchanged pin is the whole point: an unchanged retry posts identical coordinates.
+    expect(state.pin).toEqual(pinBefore);
+    expect(state.isWorking).toBe(false);
+  });
+
+  it("submitStart transitions the error state back to submitting (the retry), draft intact", () => {
+    let state = addFountainReducer(initialAddFountainState, { type: "setBound", bound: circle });
+    state = addFountainReducer(state, { type: "dropPin", point: circle.center });
+    state = addFountainReducer(state, { type: "next" });
+    state = addFountainReducer(state, { type: "submitError", error: "timeout" });
+    expect(state.phase).toBe("error");
+    state = addFountainReducer(state, { type: "submitStart" });
+    expect(state.phase).toBe("submitting");
+    expect(state.error).toBeNull();
+    expect(state.pin).toEqual(circle.center);
+  });
+});
+
+describe("add-flow retry posts an identical body (reconciliation, spec §2)", () => {
+  it("buildAddFountainPayload is deterministic for an unchanged draft — exact lat/lng, deep-equal", () => {
+    // The submit-path draft (pin + is_working + comments + ratings + observations) is
+    // preserved across a timeout (reducer test above; the screen keeps the rest in useState
+    // and the catch branch never resets it), so the retry rebuilds a byte-identical body.
+    const draft = {
+      location: { latitude: 47.6062, longitude: -122.3321 },
+      is_working: true,
+      comments: "cold and clean",
+      ratings: [{ rating_type_id: 1, stars: 5 }],
+      observations: [{ attribute_type_id: 2, value: "yes" }],
+    };
+    const first = buildAddFountainPayload(draft);
+    const retry = buildAddFountainPayload(draft);
+    expect(retry).toEqual(first);
+    expect(first.ok && first.value.location).toEqual({ latitude: 47.6062, longitude: -122.3321 });
   });
 });
 
@@ -98,6 +179,13 @@ describe("addFountainErrorText", () => {
     expect(addFountainErrorText("needs_name")).toMatch(/display name/i);
     expect(addFountainErrorText("network")).toMatch(/connection/i);
     expect(addFountainErrorText("server")).toMatch(/try again/i);
+  });
+
+  it("the timeout copy states the outcome-unknown ambiguity and the reconciliation retry", () => {
+    const copy = addFountainErrorText("timeout");
+    expect(copy).toMatch(/couldn't confirm/i);
+    expect(copy).toMatch(/try again/i);
+    expect(copy).toMatch(/take you to it/i);
   });
 });
 

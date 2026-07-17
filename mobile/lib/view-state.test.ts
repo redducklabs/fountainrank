@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ApiError } from "./api";
+import { ApiError, ApiTimeoutError } from "./api";
 import { AuthSessionError } from "./auth/state";
 import { resolveViewState } from "./view-state";
 
@@ -11,6 +11,11 @@ describe("resolveViewState", () => {
 
   it("is offline for a network error with no HTTP status", () => {
     const err = new TypeError("Network request failed");
+    expect(resolveViewState({ isLoading: false, isError: true, error: err })).toBe("offline");
+  });
+
+  it("is offline for a client-side request timeout (ApiTimeoutError has no HTTP status)", () => {
+    const err = new ApiTimeoutError("POST", "/api/v1/fountains", 30_000);
     expect(resolveViewState({ isLoading: false, isError: true, error: err })).toBe("offline");
   });
 

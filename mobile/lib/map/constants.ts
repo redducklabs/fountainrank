@@ -3,6 +3,10 @@
 export const GOLD_THRESHOLD = 4; // ranking_score strictly greater -> gold (spec section 7.2)
 export const MAX_BBOX_RESULTS = 500; // pinned contract: mirrors backend settings.max_results
 export const MIN_ZOOM = 8; // below this we don't fetch pins
+// Scoped freshness for the bbox pins query (spec §4): suppresses a redundant refetch on
+// pan-back to a previously successful, non-invalidated viewport within this window. Does NOT
+// override an explicit invalidation (the post-add seed still wants server confirmation).
+export const BBOX_STALE_TIME_MS = 30_000;
 export const PILL_MIN_ZOOM = 13; // rating pill appears at/above this zoom
 export const NEIGHBORHOOD_ZOOM = 14; // fly-to zoom after locating the user
 export const INITIAL_USER_ZOOM = NEIGHBORHOOD_ZOOM;

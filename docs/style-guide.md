@@ -913,6 +913,18 @@ instantly with no restructuring.
   triggers doesn't flip `isLoading` — so `MapOverlay` shows a quiet corner `ActivityIndicator` while
   `pinsQuery.isFetching && !isLoading` (a `progressbar` with an "Updating fountains" label), never the
   full-screen loading state.
+- **Stale-pins banner (mobile `MapOverlay` — spec §5 / #244):** when the bbox pins query is in error
+  but still holds previously loaded pins (`pinsQuery.isError && pinsQuery.data != null` — e.g. a
+  post-add invalidation whose refetch failed on a flaky network), the map keeps rendering the saved
+  pins and the banner shows the persistent copy **"Couldn't refresh fountains — showing saved data"**
+  with a tappable **"— tap to retry"** affordance that calls `pinsQuery.refetch()`. Reuses the quiet
+  corner-banner styling, and carries **both** `accessibilityRole="alert"` **and**
+  `accessibilityLiveRegion="polite"` so a screen reader announces the stale state without
+  interrupting. This state takes precedence over the offline/error message. The **new-key** error
+  shape (`isError && data == null`, so no pins to keep) instead falls to the full "You appear to be
+  offline" / "Couldn't load fountains" overlay. The copy, spinner, retry, and accessibility contract
+  are a pure decision in `resolveMapOverlay` (`mobile/lib/map/overlay.ts`), unit-tested in
+  `overlay.test.ts`; the component is a thin renderer of that model.
 
 **Accessibility contract (both platforms):** the control carries `aria-busy` (web) /
 `accessibilityState.busy` (mobile) while pending, stays `disabled` (double-submit guard), and the

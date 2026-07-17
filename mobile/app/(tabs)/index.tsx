@@ -52,21 +52,29 @@ import {
   addFountainGate,
   addFountainReducer,
   classifyAddConflict,
+  classifyAddSubmitFailure,
   initialAddFountainState,
-  mapAddFountainError,
   type AddFountainResult,
   type AddFountainState,
 } from "../../lib/add-fountain/state";
+import { logEvent } from "../../lib/log";
 import { isMapConfigured } from "../../lib/config";
+import { handleAddSuccess } from "../../lib/add-fountain/seed";
 import { isAtCap, normalizeBounds, type RawBounds, shouldLoadPins } from "../../lib/map/bounds";
 import { buildClusterIndex, clustersForViewport } from "../../lib/map/cluster";
-import { DEFAULT_ZOOM, INITIAL_USER_ZOOM, PLACE_MIN_ZOOM } from "../../lib/map/constants";
+import {
+  BBOX_STALE_TIME_MS,
+  DEFAULT_ZOOM,
+  INITIAL_USER_ZOOM,
+  PLACE_MIN_ZOOM,
+} from "../../lib/map/constants";
 import {
   buildBboxQuery,
   DEFAULT_FILTERS,
   type FountainFilters,
   fountainsQueryKey,
 } from "../../lib/map/filters";
+import { resolveMapOverlay } from "../../lib/map/overlay";
 import { pinsToFeatureCollection } from "../../lib/map/pins";
 import { shouldClearSearchMarker } from "../../lib/map-search/marker";
 import {
@@ -167,6 +175,9 @@ export default function MapScreen() {
     queryKey: params ? fountainsQueryKey(params, filters) : ["fountains", "bbox", "idle"],
     enabled,
     placeholderData: keepPreviousData,
+    // Scoped to this query (global defaults unchanged): skip a redundant refetch on pan-back to
+    // a fresh, non-invalidated viewport. The post-add invalidation still overrides this (spec §4).
+    staleTime: BBOX_STALE_TIME_MS,
     queryFn: async (): Promise<BboxResult> => {
       const result = await client.GET("/api/v1/fountains/bbox", {
         params: { query: buildBboxQuery(params!, filters) },
@@ -214,6 +225,9 @@ export default function MapScreen() {
           ok: true,
           fountainId: result.data.id,
           pointsAwarded: awardedPoints(result.data),
+          // The POST already returned the full FountainDetail — carry it so onSuccess can seed
+          // the detail + map-pin caches with no second round-trip (spec §3).
+          detail: result.data,
         };
       }
       if (result.response.status === 409) {
@@ -228,13 +242,9 @@ export default function MapScreen() {
       if (result.response.status === 422) throw new ApiError(422);
       throw new ApiError(result.response.status);
     },
-    onSuccess: (result) => {
-      void queryClient.invalidateQueries({ queryKey: ["fountains", "bbox"] });
-      void queryClient.invalidateQueries({ queryKey: ["me", "contributions"] });
-      if (result.ok) {
-        void queryClient.invalidateQueries({ queryKey: ["fountain", result.fountainId] });
-      }
-    },
+    // Seed the detail + map-pin caches from the create response, THEN invalidate (spec §3), so
+    // the new fountain renders instantly and cannot vanish on a failed refetch.
+    onSuccess: (result) => handleAddSuccess(queryClient, result),
   });
 
   const showToast = useCallback((tone: "err" | "ok", text: string) => {
@@ -695,8 +705,22 @@ export default function MapScreen() {
               addDispatch({ type: "submitError", error: result.error });
               setAddMessage({ tone: "err", text: addFountainErrorText(result.error) });
             } catch (error) {
-              const mapped = mapAddFountainError(error);
+              const { error: mapped, outcome } = classifyAddSubmitFailure(error);
               if (mapped === "unauthenticated") auth.markReauthRequired();
+              // Mark the outcome-unknown branch distinctly from an ordinary failure so it is
+              // diagnosable from logs (spec §2). The draft is preserved by `submitError` (the
+              // panel stays on the details step), so an unchanged retry reconciles.
+              if (outcome) {
+                logEvent(
+                  outcome.reason === "deadline"
+                    ? {
+                        event: "add_fountain_outcome_unknown",
+                        reason: "deadline",
+                        timeout_ms: outcome.timeout_ms,
+                      }
+                    : { event: "add_fountain_outcome_unknown", reason: "network_failure" },
+                );
+              }
               addDispatch({ type: "submitError", error: mapped });
               setAddMessage({ tone: "err", text: addFountainErrorText(mapped) });
             }
@@ -713,6 +737,9 @@ export default function MapScreen() {
           viewState={viewState}
           refetching={enabled && pinsQuery.isFetching && !pinsQuery.isLoading}
           capped={capped}
+          // isError with retained pins → the stale-pins banner keeps showing saved data (#244);
+          // isError with no data (new-key failure) → the full offline/error overlay (spec §5).
+          stalePins={pinsQuery.isError && pinsQuery.data != null}
           onRetry={() => void pinsQuery.refetch()}
         />
       )}
@@ -1165,38 +1192,36 @@ function MapOverlay(props: {
   viewState: ViewState;
   refetching: boolean;
   capped: boolean;
+  stalePins: boolean;
   onRetry: () => void;
 }) {
-  const loading = props.viewState === "loading";
-  // A background refetch (a filter change or a pan after the first load) doesn't flip `isLoading`,
-  // so without this a filter tap that refetches pins gives no feedback (#212). Show the same quiet
-  // banner spinner — never the full-screen state — so the map keeps showing the current pins.
-  const refetching = props.refetching && !loading;
-  const retryable = props.viewState === "offline" || props.viewState === "error";
-
-  let message: string | null = null;
-  if (props.belowZoom) message = "Zoom in to see fountains";
-  else if (props.viewState === "offline") message = "You appear to be offline";
-  else if (props.viewState === "error") message = "Couldn't load fountains";
-  else if (props.viewState === "empty") message = "No fountains in this area";
-  else if (props.viewState === "ready" && props.capped)
-    message = "Showing the first 500 — zoom in for more";
-
-  if (!loading && !refetching && message == null) return null;
+  // The overlay's copy + accessibility contract is a pure decision (`resolveMapOverlay`), unit
+  // tested node-safe; this component is a thin renderer of that model. A background refetch (a
+  // filter change or a pan after the first load) doesn't flip `isLoading`, so it shows a quiet
+  // banner spinner (#212); a failed refetch with retained pins shows the stale-pins alert (#244).
+  const model = resolveMapOverlay(props);
+  if (model.kind === "hidden") return null;
 
   return (
-    <View style={styles.banner} pointerEvents="box-none">
-      {loading || refetching ? (
+    <View
+      style={styles.banner}
+      pointerEvents="box-none"
+      accessibilityRole={model.accessibilityRole}
+      accessibilityLiveRegion={model.accessibilityLiveRegion}
+    >
+      {model.spinner ? (
         <ActivityIndicator
           color={colors.brandBlue}
           accessibilityRole="progressbar"
-          accessibilityLabel={refetching ? "Updating fountains" : "Loading fountains"}
+          accessibilityLabel={
+            model.spinner === "updating" ? "Updating fountains" : "Loading fountains"
+          }
         />
       ) : null}
-      {message ? (
-        <Text style={styles.bannerText} onPress={retryable ? props.onRetry : undefined}>
-          {message}
-          {retryable ? " — tap to retry" : ""}
+      {model.message ? (
+        <Text style={styles.bannerText} onPress={model.retryable ? props.onRetry : undefined}>
+          {model.message}
+          {model.retryable ? " — tap to retry" : ""}
         </Text>
       ) : null}
     </View>
