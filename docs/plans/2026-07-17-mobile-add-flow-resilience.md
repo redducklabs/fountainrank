@@ -17,11 +17,12 @@ Vitest toolchain (rolldown/oxc, no Babel/Flow pipeline) cannot import `react-nat
 (`@testing-library/react-native` / `react-test-renderer`) is resolved anywhere in the lockfile;
 adding that infrastructure was previously evaluated and rejected as out of scope (see the header
 of `mobile/components/nav/ProfileTabIcon.cache.test.ts`, the established precedent). Every
-behavior those tests targeted is instead verified at a node-safe seam: QueryClient/QueryObserver
-level for cache behavior (the exact mechanics `useQuery` wraps), a pure mutation-decision seam
-for the reconciliation regression, and a pure overlay-state descriptor whose props `MapOverlay`
-spreads directly for the banner. The four interaction-level checks remain in the post-merge
-owner on-device verification.
+behavior those tests targeted is instead verified at a node-safe seam where one exists —
+QueryClient/QueryObserver level for cache behavior (the exact mechanics `useQuery` wraps), pure
+classification/reducer/payload units for the submit path, and a pure overlay-state descriptor
+for the banner's decision, copy, retryable flag, and accessibility values — while the renderer
+wiring itself was reviewed statically (not executed), and interaction-level behavior remains in
+the post-merge owner on-device verification.
 
 **Cross-spec merge gate (enforced, not informational)**: the reconciliation behavior in Task 4
 relies on the backend advisory-lock/duplicate-probe invariant. The #242 PR containing its
@@ -79,11 +80,16 @@ MUST be merged to `main` before this PR merges. Task 8 verifies mechanically (se
   `error === "timeout"`, `pin` and `isWorking` preserved; `submitStart` transitions the error
   state back to submitting.
 - Behavior-seam tests (per the test-strategy amendment above — RN component render is not
-  possible; component-owned `useState` draft preservation is covered by the on-device checklist):
-  the reconciliation regression runs against the extracted pure mutation-decision seam +
-  QueryClient — attempt 1 timing out after a mocked server commit → unchanged retry (deep-equal
-  payload, exactly equal latitude/longitude, no intervening draft mutation — not a wire-byte
-  claim) → typed 409 → duplicate state carries the returned fountain id.
+  possible; component-owned `useState` draft preservation is covered by the on-device
+  checklist). The reconciliation property is verified as **separated units**, not a composed
+  flow test: `classifyAddSubmitFailure` classification (timeout/network → `"timeout"` +
+  descriptor); reducer preservation of reducer-owned `pin`/`isWorking` across
+  `submitError`/`submitStart`; deterministic payload construction from the same supplied draft
+  (deep-equal payload, exactly equal latitude/longitude — not a wire-byte claim); and the
+  existing `classifyAddConflict`/duplicate-reducer units for the 409 → duplicate routing. The
+  end-to-end timeout → unchanged retry → 409 → "taken to your fountain" sequence is an
+  interaction-level property carried by the on-device checklist (and its server half by the
+  #242 concurrency test).
 - Implement: the helper, then the `onSubmit` catch-branch wiring in
   `mobile/app/(tabs)/index.tsx` calling it.
 
@@ -113,12 +119,13 @@ MUST be merged to `main` before this PR merges. Task 8 verifies mechanically (se
 
 - Pure overlay-state descriptor tests (node-safe, per the amendment): the descriptor for
   `isError && data != null` carries the persistent stale-data copy ("Couldn't refresh fountains
-  — showing saved data"), an actionable retry affordance, `accessibilityRole: "alert"` **and**
-  the live-region announcement (`accessibilityLiveRegion` — a separate RN property from the
-  role; both asserted, per the spec, so a visually present but non-announced banner cannot
-  pass); `isError && data == null` → the existing error state; retry invokes `refetch`.
-  `MapOverlay` consumes the descriptor by direct prop spread, so the descriptor tests pin the
-  mounted props; the visual confirmation is in the on-device checklist.
+  — showing saved data"), the retryable flag, the spinner state, `accessibilityRole: "alert"`
+  **and** the live-region value (`accessibilityLiveRegion` — a separate RN property from the
+  role; both asserted at the descriptor level); `isError && data == null` → the existing error
+  state. Coverage stated narrowly: the descriptor pins the decision/copy/flags/a11y **values**;
+  `MapOverlay`'s manual mapping of those values (and the retry `onPress` → `refetch` wiring)
+  was reviewed statically, not executed — the announcement behavior and retry interaction are
+  on-device checklist items.
 - Implement both accessibility properties; document the state in `docs/style-guide.md` (same
   commit).
 
