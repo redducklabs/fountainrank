@@ -22,9 +22,18 @@ The original plan's "jsdom render harness" tests are therefore impossible. Strat
 - **Production dependency assembly is itself importable and tested**: a factory module
   (`mobile/lib/location-deps.ts`, importing expo adapters — mockable with `vi.mock`, unlike
   `react-native` — and the Slice-A `lib/log.ts` seam) exports the exact deps object the hook
-  passes to the session. Node tests exercise that factory, so "the shipped app wires the real
-  sink/adapters" is proven at the factory seam; only the hook's focus/AppState value delivery
-  remains untestable.
+  passes to the session. Node tests prove **the exported production factory assembles the real
+  dependencies**; that the hook consumes this factory is established by typecheck/static review
+  plus the release-gate diagnostics precondition — not by the factory tests themselves. Only
+  the hook's focus/AppState value delivery remains untestable.
+- **Diagnostics are split production vs. verification** (the production logger is for rare
+  failure events at warn level — per-fix or routine lifecycle output through it is forbidden):
+  `watch_start_rejected` is the only production-logged watch event (allowlisted in
+  `lib/log.ts`); `watch_started`/`watch_stopped` and the coordinate-free `watch_fix_received`
+  counter are **verification instrumentation, active in dev builds only (`__DEV__`) and
+  compiled out of store builds** — the counter is in-memory and reported as a single dev-only
+  summary line on app-active transitions (no per-fix emission, no coordinates, no
+  movement-cadence reconstruction from production logs).
 - UI states (locate button, toast action, overlay priority) are pure **descriptor functions**
   whose props the components spread directly (Slice A's banner pattern) — descriptors are
   node-tested; visual/interaction confirmation is on-device.
@@ -86,9 +95,11 @@ The original plan's "jsdom render harness" tests are therefore impossible. Strat
   invalidates pending, removes live); only the installed subscription publishes. Diagnostics:
   the injected sink receives `watch_started`/`watch_stopped`/`watch_start_rejected` and a
   coordinate-free `watch_fix_received` counter event (event name + static fields ONLY — the
-  sink API cannot accept a position, so no coordinate can be captured even by mistake; this
-  counter is what makes the background-stop check observable); payloads asserted
-  coordinate-free.
+  sink API cannot accept a position, so no coordinate can be captured even by mistake; the
+  counter is what makes the background-stop check observable). The controller is
+  transport-agnostic: which sink it gets (production failure logger vs. dev-only verification
+  instrumentation) is decided by `location-deps.ts` per the header's production/verification
+  split; payloads asserted coordinate-free.
 - Implement with injected `startWatch`, clock/timer, diagnostic sink.
 
 ## Task 4 — expo adapters + guarded consumption — `feat(mobile): watch adapter + guarded coords`
@@ -112,10 +123,15 @@ The original plan's "jsdom render harness" tests are therefore impossible. Strat
 - Files: new `mobile/lib/location-session.ts` + `mobile/lib/location-session.test.ts` (pure,
   DI'd: controller, adapters, store, sink, dispatch); new `mobile/lib/location-deps.ts` +
   `mobile/lib/location-deps.test.ts` (the production dependency factory — imports the expo
-  adapters and the Slice-A `mobile/lib/log.ts` seam; its test imports the exact exported
-  production constructor with expo mocked via `vi.mock`, verifies the real adapter/sink
-  identities and behavior, and proves the serialized diagnostic payload is coordinate-free);
-  `mobile/hooks/useForegroundLocation.ts` becomes a thin binder.
+  adapters and the Slice-A `mobile/lib/log.ts` seam); **`mobile/lib/log.ts` +
+  `mobile/lib/log.test.ts` (modified — the closed `LogEvent` union and exhaustive serializer
+  gain exactly one new member, `watch_start_rejected`, with allowlist tests proving extra
+  fields — coordinates, raw errors, timestamps — cannot serialize)**;
+  `mobile/hooks/useForegroundLocation.ts` becomes a thin binder. Factory tests cover BOTH
+  configurations: the production config never emits successful-fix or routine lifecycle events
+  (only `watch_start_rejected` through the logger); the dev/verification config counts fixes
+  in memory without coordinates and reports only the app-active summary line; both proven with
+  expo mocked via `vi.mock` against the exact exported production constructor.
 - Session tests first (node-safe — this replaces the impossible hook render tests): given
   injected `(focused, appActive, status)` inputs, the session drives the controller's desired
   state; grant → started; blur/background → stopped NOT disposed; refocus → restarted;
@@ -148,12 +164,16 @@ The original plan's "jsdom render harness" tests are therefore impossible. Strat
   unavailable-with-known-fix retains state + store. **Publish sources** — mount, refresh, watch
   all publish; watch/refresh completing in either order leaves the newest-effective fix.
   **Rich `refresh()`** returns the discriminated outcome; the locate call site branches on the
-  returned value of the same call. **Settings-open effect lives in the session/effects module**
-  (importable): the `Linking.openSettings()` call and its rejection → replacement-toast
-  decision are session-owned and Node-tested (rejection injected), because that failure branch
-  cannot be induced reliably on-device.
+  returned value of the same call. **Settings-open effect boundary, exact**: the session owns a
+  pure effect decision `openSettingsEffect(open: () => Promise<void>)` (in
+  `location-session.ts`; rejection → replacement-toast descriptor decision), and the platform
+  call is an adapter — `location-deps.ts` supplies the real `Linking.openSettings` through the
+  same exported production factory the hook consumes (Node-tested with the Linking adapter
+  mocked and rejection injected — that failure branch cannot be induced reliably on-device).
+- Files add: `mobile/lib/location-session.ts`/`.test.ts` (effect decision),
+  `mobile/lib/location-deps.ts`/`.test.ts` (Linking adapter in the production factory).
 - Implement: publication from all three paths; `refresh()` return change + the one call site;
-  the settings-open effect; in this commit.
+  the settings-open effect + adapter; in this commit.
 
 ## Task 7 — camera policy decision — `feat(mobile): one-time-center camera policy`
 (if the tests force no source change, the commit is `test(mobile): pin one-time-center camera
@@ -246,22 +266,27 @@ then `docs(mobile): document live-location verification`)
   the next store release ships this code. The privacy-critical items (1)–(3) are additionally
   an early hard gate (exercise them first, on the emulator, before any other item is
   trusted).** Items, each with expected observations:
-  (1) diagnostics precondition — real `watch_started`/`watch_stopped` events observed in the
-  device log (and `watch_start_rejected` via an induced failure if practical) BEFORE trusting
-  later checks; (2) background stop, made observable: while backgrounded, inject an emulator
-  fix (`adb emu geo fix`) — no coordinate-free `watch_fix_received` event fires during the
-  background interval, and on foregrounding neither the store-served coords nor the
-  placement/recenter target reflect the background movement (combined with the observed
-  `watch_stopped`); (3) blur to another tab then refocus restarts the watch (no disposal) —
+  (1) diagnostics precondition — **on a dev build** (the verification instrumentation is
+  `__DEV__`-only and compiled out of store builds): real `watch_started`/`watch_stopped`
+  events observed (and `watch_start_rejected` via an induced failure if practical) BEFORE
+  trusting later checks; (2) background stop, made observable (dev build): while backgrounded,
+  inject an emulator fix (`adb emu geo fix`) — the in-memory `watch_fix_received` counter's
+  app-active summary shows zero fixes for the background interval, and on foregrounding
+  neither the store-served coords nor the placement/recenter target reflect the background
+  movement (combined with the observed `watch_stopped`); (3) blur to another tab then refocus restarts the watch (no disposal) —
   and, distinctly, leaving the map screen entirely (navigation unmount) disposes: no watch
   events until the screen is re-entered; (4) a locate press after a failed watch start
   recovers tracking (reconcile); (5) pressing locate while already `locating`/`refreshing` is
   ignored — no overlapping refresh, no second camera command; (6) first fix centers the camera
   exactly once — later movement never chases the camera — including the combined case where a
   locate press produces the first fix (exactly one camera move); (7) explicit locate,
-  "Use current location", and add-mode entry each still command the camera; (8) all five
-  placement paths accept in-bound and reject out-of-bound with the toast (entry seed,
-  use-current-location, place-at-center, map tap, nudge); (9) walking/emulated movement with
+  "Use current location", and add-mode entry each still command the camera; (8) placement
+  paths against reachable semantics (identical to Task 8's matrix): entry seed with no bound →
+  the documented pre-bound acceptance/fallback (an out-of-bound entry rejection is checked only
+  if implementation creates a reachable bound-before-entry state); use-current-location,
+  place-at-center, map tap, and nudge → both in-bound acceptance and out-of-bound rejection
+  with the toast against the current reducer-owned bound; every replacement/rejection preserves
+  the already-accepted pin; (9) walking/emulated movement with
   the map open moves the placement/recenter target without a locate press, at plausible
   cadence per platform; (10) permission matrix: deny with `canAskAgain` true → retry
   re-prompts; deny with `canAskAgain` false → the settings toast appears on the SAME press
