@@ -74,6 +74,7 @@ import {
   type FountainFilters,
   fountainsQueryKey,
 } from "../../lib/map/filters";
+import { resolveMapOverlay } from "../../lib/map/overlay";
 import { pinsToFeatureCollection } from "../../lib/map/pins";
 import { shouldClearSearchMarker } from "../../lib/map-search/marker";
 import {
@@ -736,6 +737,9 @@ export default function MapScreen() {
           viewState={viewState}
           refetching={enabled && pinsQuery.isFetching && !pinsQuery.isLoading}
           capped={capped}
+          // isError with retained pins → the stale-pins banner keeps showing saved data (#244);
+          // isError with no data (new-key failure) → the full offline/error overlay (spec §5).
+          stalePins={pinsQuery.isError && pinsQuery.data != null}
           onRetry={() => void pinsQuery.refetch()}
         />
       )}
@@ -1188,38 +1192,36 @@ function MapOverlay(props: {
   viewState: ViewState;
   refetching: boolean;
   capped: boolean;
+  stalePins: boolean;
   onRetry: () => void;
 }) {
-  const loading = props.viewState === "loading";
-  // A background refetch (a filter change or a pan after the first load) doesn't flip `isLoading`,
-  // so without this a filter tap that refetches pins gives no feedback (#212). Show the same quiet
-  // banner spinner — never the full-screen state — so the map keeps showing the current pins.
-  const refetching = props.refetching && !loading;
-  const retryable = props.viewState === "offline" || props.viewState === "error";
-
-  let message: string | null = null;
-  if (props.belowZoom) message = "Zoom in to see fountains";
-  else if (props.viewState === "offline") message = "You appear to be offline";
-  else if (props.viewState === "error") message = "Couldn't load fountains";
-  else if (props.viewState === "empty") message = "No fountains in this area";
-  else if (props.viewState === "ready" && props.capped)
-    message = "Showing the first 500 — zoom in for more";
-
-  if (!loading && !refetching && message == null) return null;
+  // The overlay's copy + accessibility contract is a pure decision (`resolveMapOverlay`), unit
+  // tested node-safe; this component is a thin renderer of that model. A background refetch (a
+  // filter change or a pan after the first load) doesn't flip `isLoading`, so it shows a quiet
+  // banner spinner (#212); a failed refetch with retained pins shows the stale-pins alert (#244).
+  const model = resolveMapOverlay(props);
+  if (model.kind === "hidden") return null;
 
   return (
-    <View style={styles.banner} pointerEvents="box-none">
-      {loading || refetching ? (
+    <View
+      style={styles.banner}
+      pointerEvents="box-none"
+      accessibilityRole={model.accessibilityRole}
+      accessibilityLiveRegion={model.accessibilityLiveRegion}
+    >
+      {model.spinner ? (
         <ActivityIndicator
           color={colors.brandBlue}
           accessibilityRole="progressbar"
-          accessibilityLabel={refetching ? "Updating fountains" : "Loading fountains"}
+          accessibilityLabel={
+            model.spinner === "updating" ? "Updating fountains" : "Loading fountains"
+          }
         />
       ) : null}
-      {message ? (
-        <Text style={styles.bannerText} onPress={retryable ? props.onRetry : undefined}>
-          {message}
-          {retryable ? " — tap to retry" : ""}
+      {model.message ? (
+        <Text style={styles.bannerText} onPress={model.retryable ? props.onRetry : undefined}>
+          {model.message}
+          {model.retryable ? " — tap to retry" : ""}
         </Text>
       ) : null}
     </View>
