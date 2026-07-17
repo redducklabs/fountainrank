@@ -54,6 +54,12 @@ export function foregroundLocationReducer(
 /** The minimal shape of an expo-location `LocationObject` this module depends on. */
 export type RawPosition = {
   coords: { latitude: number; longitude: number; accuracy: number | null };
+  /**
+   * Native `LocationObject.timestamp` (ms since epoch). Carried through so the fix store can
+   * bound a future-skewed source stamp by receipt time and order watch-vs-refresh races - a
+   * last-known fallback with an old fix can no longer masquerade as fresh (spec §2).
+   */
+  timestamp: number;
 };
 
 /** Maps an expo-location position into our `Coords` shape. */
@@ -112,6 +118,81 @@ export async function resolveCurrentPosition(
   if (lastKnown) return lastKnown;
   throw new Error("current position unavailable");
 }
+
+/** How long a stored fix stays fresh enough to reuse across screens (spec §2). */
+export const FRESH_FIX_MAX_AGE_MS = 15_000;
+
+/**
+ * A stored fix with the timestamps needed to reason about freshness and ordering (spec §2).
+ * `sourceTimestampMs` is the native `LocationObject.timestamp`; `receiptTimestampMs` is when this
+ * process received it; `effectiveTimestampMs = min(source, receipt)` bounds ANY future-skewed
+ * source stamp by receipt time so a skewed fix can never appear fresher (or newer) than it is.
+ */
+export type StoredFix = {
+  coords: Coords;
+  sourceTimestampMs: number;
+  receiptTimestampMs: number;
+  effectiveTimestampMs: number;
+};
+
+/**
+ * A freshness-aware, single-slot fix store (spec §2). Pure with an injected clock so ordering,
+ * skew clamping, and clock-rollback handling are all unit-testable. Never logs coordinates.
+ *
+ * - `publishFix` stores a fix only when its `effectiveTimestampMs` is newer than the current one
+ *   (tie broken by the newer `receiptTimestampMs`), so an out-of-order or skew-clamped fix can
+ *   never displace a genuinely newer one. A non-finite/absent source timestamp is unusable and is
+ *   not stored. Returns whether the fix became the stored one.
+ * - `latestFix(maxAgeMs)` returns the stored coords only when `now - effectiveTimestampMs` is in
+ *   `[0, maxAgeMs]`; a NEGATIVE age (the clock moved backward past the record) is treated as stale
+ *   so an unreliable clock fails safe to a real fetch rather than serving a bogus "fresh" fix.
+ */
+export function createFixStore(now: () => number) {
+  let latest: StoredFix | null = null;
+
+  function publishFix(pos: RawPosition): boolean {
+    const source = pos.timestamp;
+    if (!Number.isFinite(source)) return false;
+    const receipt = now();
+    const effective = Math.min(source, receipt);
+    if (latest) {
+      const isNewer =
+        effective > latest.effectiveTimestampMs ||
+        (effective === latest.effectiveTimestampMs && receipt > latest.receiptTimestampMs);
+      if (!isNewer) return false;
+    }
+    latest = {
+      coords: pickCoords(pos),
+      sourceTimestampMs: source,
+      receiptTimestampMs: receipt,
+      effectiveTimestampMs: effective,
+    };
+    return true;
+  }
+
+  function latestFix(maxAgeMs: number): Coords | null {
+    if (!latest) return null;
+    const age = now() - latest.effectiveTimestampMs;
+    if (age < 0 || age > maxAgeMs) return null;
+    return latest.coords;
+  }
+
+  function resetLatestFix(): void {
+    latest = null;
+  }
+
+  return { publishFix, latestFix, resetLatestFix };
+}
+
+/**
+ * The process-wide fix store shared by the live watch, the mount/locate fetches, and the
+ * permission-guarded `requestCurrentCoords` consumer (spec §2). Cross-screen reuse is bounded by
+ * `FRESH_FIX_MAX_AGE_MS` and re-verified against live permission at consumption time.
+ */
+const fixStore = createFixStore(() => Date.now());
+export const publishFix = fixStore.publishFix;
+export const latestFix = fixStore.latestFix;
+export const resetLatestFix = fixStore.resetLatestFix;
 
 export type FetchOutcome =
   { kind: "granted"; coords: Coords } | { kind: "denied" } | { kind: "failed" };

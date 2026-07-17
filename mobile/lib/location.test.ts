@@ -1,17 +1,40 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  createFixStore,
   fetchForegroundPosition,
   foregroundLocationReducer,
+  FRESH_FIX_MAX_AGE_MS,
   initialForegroundLocationState,
+  latestFix,
   pickCoords,
+  publishFix,
+  resetLatestFix,
   resolveCurrentPosition,
   type ForegroundLocationState,
+  type RawPosition,
 } from "./location";
 
 const COORDS = { latitude: 47.6062, longitude: -122.3321, accuracy: 5 };
-const RAW_POSITION = { coords: COORDS };
-const LAST_KNOWN = { coords: { latitude: 1, longitude: 2, accuracy: 9 } };
+const RAW_POSITION = { coords: COORDS, timestamp: 1_000 };
+const LAST_KNOWN = { coords: { latitude: 1, longitude: 2, accuracy: 9 }, timestamp: 1_000 };
+
+/** A mutable injected clock for deterministic fix-store tests. */
+function makeClock(start = 0) {
+  let t = start;
+  const clock = () => t;
+  clock.set = (value: number) => {
+    t = value;
+  };
+  clock.advance = (delta: number) => {
+    t += delta;
+  };
+  return clock;
+}
+
+function fixAt(source: number, coords = COORDS): RawPosition {
+  return { coords, timestamp: source };
+}
 
 describe("pickCoords", () => {
   it("maps a raw position into the Coords shape", () => {
@@ -27,7 +50,7 @@ describe("pickCoords", () => {
       vi.spyOn(console, "debug").mockImplementation(() => {}),
     ];
     pickCoords(RAW_POSITION);
-    pickCoords({ coords: { latitude: 1, longitude: 2, accuracy: null } });
+    pickCoords({ coords: { latitude: 1, longitude: 2, accuracy: null }, timestamp: 1_000 });
     for (const spy of spies) {
       expect(spy).not.toHaveBeenCalled();
       spy.mockRestore();
@@ -195,5 +218,154 @@ describe("resolveCurrentPosition", () => {
       expect(spy).not.toHaveBeenCalled();
       spy.mockRestore();
     }
+  });
+});
+
+describe("createFixStore — freshness + ordering (spec §2)", () => {
+  it("stores a fix and serves it while within the freshness window", () => {
+    const clock = makeClock(1_000);
+    const store = createFixStore(clock);
+    expect(store.publishFix(fixAt(1_000))).toBe(true);
+    expect(store.latestFix(FRESH_FIX_MAX_AGE_MS)).toEqual(COORDS);
+    clock.set(1_000 + FRESH_FIX_MAX_AGE_MS); // exactly at the boundary → still fresh
+    expect(store.latestFix(FRESH_FIX_MAX_AGE_MS)).toEqual(COORDS);
+    clock.advance(1); // one past the window → stale
+    expect(store.latestFix(FRESH_FIX_MAX_AGE_MS)).toBeNull();
+  });
+
+  it("bounds a future-skewed source stamp by receipt time (effective = min(source, receipt))", () => {
+    const clock = makeClock(1_000);
+    const store = createFixStore(clock);
+    // +59 s future skew: a receipt-clamped effective of 1_000, NOT 60_000.
+    store.publishFix(fixAt(1_000 + 59_000));
+    // 10 s after receipt: still fresh (age 10 s). If effective were the skewed source, age would
+    // be negative and this would be (wrongly) stale — this asserts the receipt clamp.
+    clock.set(1_000 + 10_000);
+    expect(store.latestFix(FRESH_FIX_MAX_AGE_MS)).toEqual(COORDS);
+    // 1 ms past the receipt-based window: stale (the +59 s skew bought no extra freshness).
+    clock.set(1_000 + FRESH_FIX_MAX_AGE_MS + 1);
+    expect(store.latestFix(FRESH_FIX_MAX_AGE_MS)).toBeNull();
+  });
+
+  it("clamps even a +1 ms future skew by receipt time", () => {
+    const clock = makeClock(5_000);
+    const store = createFixStore(clock);
+    store.publishFix(fixAt(5_001)); // 1 ms ahead of receipt (5_000)
+    clock.set(5_000 + FRESH_FIX_MAX_AGE_MS + 1); // window measured from receipt 5_000
+    expect(store.latestFix(FRESH_FIX_MAX_AGE_MS)).toBeNull();
+  });
+
+  it("newest effective wins under out-of-order publishes (older effective never overwrites)", () => {
+    const clock = makeClock();
+    const store = createFixStore(clock);
+    const NEW = { latitude: 10, longitude: 20, accuracy: 1 };
+    const OLD = { latitude: 30, longitude: 40, accuracy: 1 };
+    // Publish the newer-effective fix first, then an older one arrives late (slow refresh).
+    clock.set(2_000);
+    store.publishFix(fixAt(2_000, NEW));
+    clock.set(3_000);
+    expect(store.publishFix(fixAt(1_000, OLD))).toBe(false); // effective 1_000 < 2_000 → ignored
+    expect(store.latestFix(FRESH_FIX_MAX_AGE_MS)).toEqual(NEW);
+  });
+
+  it("applies the newer fix when the higher-effective one arrives second", () => {
+    const clock = makeClock();
+    const store = createFixStore(clock);
+    const NEW = { latitude: 10, longitude: 20, accuracy: 1 };
+    const OLD = { latitude: 30, longitude: 40, accuracy: 1 };
+    clock.set(1_000);
+    store.publishFix(fixAt(1_000, OLD));
+    clock.set(2_000);
+    expect(store.publishFix(fixAt(2_000, NEW))).toBe(true);
+    expect(store.latestFix(FRESH_FIX_MAX_AGE_MS)).toEqual(NEW);
+  });
+
+  it("breaks an effective-timestamp tie by the newer receipt timestamp", () => {
+    const first = { latitude: 10, longitude: 20, accuracy: 1 };
+    const second = { latitude: 30, longitude: 40, accuracy: 1 };
+    // Both effective = 1_000 (source 1_000; the second clamped by a later receipt of 2_000).
+    const a = makeClock();
+    const store = createFixStore(a);
+    a.set(1_000);
+    store.publishFix(fixAt(1_000, first)); // eff 1_000, receipt 1_000
+    a.set(2_000);
+    expect(store.publishFix(fixAt(1_000, second))).toBe(true); // eff 1_000, receipt 2_000 → wins
+    expect(store.latestFix(FRESH_FIX_MAX_AGE_MS)).toEqual(second);
+    // A fix with an IDENTICAL effective AND receipt (no newer edge on either) does not displace.
+    const b = makeClock(2_000);
+    const store2 = createFixStore(b);
+    store2.publishFix(fixAt(1_000, second)); // eff 1_000, receipt 2_000
+    expect(store2.publishFix({ coords: first, timestamp: 1_000 } as RawPosition)).toBe(false);
+    expect(store2.latestFix(FRESH_FIX_MAX_AGE_MS)).toEqual(second);
+  });
+
+  it("treats a clock rollback (negative age) as stale, not fresh", () => {
+    const clock = makeClock(5_000);
+    const store = createFixStore(clock);
+    store.publishFix(fixAt(5_000));
+    clock.set(4_000); // clock moved backward past the record
+    expect(store.latestFix(FRESH_FIX_MAX_AGE_MS)).toBeNull();
+  });
+
+  it("rejects non-finite or absent source timestamps (unusable, not stored)", () => {
+    const clock = makeClock(1_000);
+    const store = createFixStore(clock);
+    expect(store.publishFix(fixAt(NaN))).toBe(false);
+    expect(store.publishFix(fixAt(Infinity))).toBe(false);
+    expect(store.publishFix({ coords: COORDS } as unknown as RawPosition)).toBe(false); // absent
+    expect(store.latestFix(FRESH_FIX_MAX_AGE_MS)).toBeNull();
+  });
+
+  it("does not let a skew-clamped fix displace a genuinely newer fix", () => {
+    const clock = makeClock(10_000);
+    const store = createFixStore(clock);
+    const GENUINE = { latitude: 10, longitude: 20, accuracy: 1 };
+    store.publishFix(fixAt(10_000, GENUINE)); // eff 10_000
+    // A later-arriving fix with a wildly future source but an OLDER receipt clamps to eff 9_000.
+    clock.set(9_000);
+    expect(store.publishFix(fixAt(20_000))).toBe(false); // eff min(20_000, 9_000)=9_000 < 10_000
+    clock.set(10_000);
+    expect(store.latestFix(FRESH_FIX_MAX_AGE_MS)).toEqual(GENUINE);
+  });
+
+  it("resetLatestFix clears the store", () => {
+    const clock = makeClock(1_000);
+    const store = createFixStore(clock);
+    store.publishFix(fixAt(1_000));
+    store.resetLatestFix();
+    expect(store.latestFix(FRESH_FIX_MAX_AGE_MS)).toBeNull();
+  });
+
+  it("never logs coordinates", () => {
+    const spies = [
+      vi.spyOn(console, "log").mockImplementation(() => {}),
+      vi.spyOn(console, "warn").mockImplementation(() => {}),
+      vi.spyOn(console, "error").mockImplementation(() => {}),
+    ];
+    const store = createFixStore(makeClock(1_000));
+    store.publishFix(fixAt(1_000));
+    store.latestFix(FRESH_FIX_MAX_AGE_MS);
+    for (const spy of spies) {
+      expect(spy).not.toHaveBeenCalled();
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("fix-store singleton (Date.now-backed)", () => {
+  afterEach(() => {
+    resetLatestFix();
+    vi.useRealTimers();
+  });
+
+  it("publishes and serves through the exported singleton, bounded by the real clock", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(100_000));
+    expect(publishFix(fixAt(100_000))).toBe(true);
+    expect(latestFix(FRESH_FIX_MAX_AGE_MS)).toEqual(COORDS);
+    vi.setSystemTime(new Date(100_000 + FRESH_FIX_MAX_AGE_MS + 1));
+    expect(latestFix(FRESH_FIX_MAX_AGE_MS)).toBeNull();
+    resetLatestFix();
+    expect(latestFix(FRESH_FIX_MAX_AGE_MS)).toBeNull();
   });
 });
