@@ -1,0 +1,33 @@
+name: Teardown loader Job
+description: >-
+  Guaranteed teardown for an isolated loader Job (spec 2026-07-17 §2b): delete the Job, confirm
+  the pod is actually gone, reap the run's database sessions (run-scoped application_name marker),
+  and re-query to zero — via the tested state machine in backend/app/imports/loader_teardown.py,
+  under a hard 210 s deadline that fits GitHub's 5-minute post-cancellation grace window. Fails
+  loudly if ANY phase fails. Assumes kubeconfig is already configured.
+inputs:
+  job_name:
+    required: true
+    description: "The loader Job name (must be on the loader_session allow-list)."
+  run_id:
+    required: true
+    description: "The GitHub run id (decimal) — scopes the session marker to THIS run."
+  namespace:
+    required: false
+    default: "fountainrank"
+runs:
+  using: composite
+  steps:
+    - name: Teardown loader Job (delete + session reap)
+      shell: bash
+      # Inputs cross into the shell ONLY via env + double-quoted variables — never interpolate
+      # ${{ inputs.* }} into the script (the shell would parse metacharacters before Python's
+      # validation sees argv).
+      env:
+        JOB_NAME: ${{ inputs.job_name }}
+        RUN_ID: ${{ inputs.run_id }}
+        NS: ${{ inputs.namespace }}
+      run: |
+        set -euo pipefail
+        PYTHONPATH=backend python3 -m app.imports.loader_teardown \
+          --job-name "$JOB_NAME" --run-id "$RUN_ID" --namespace "$NS"
