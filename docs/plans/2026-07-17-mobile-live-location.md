@@ -7,20 +7,47 @@ Commits, one commit per task with the subject given below; never commit `temp/co
 task changing a shared API updates all existing consumers/tests in the same commit; a
 not-yet-consumed module ships with its own tests.
 
+**Test-strategy amendment (from Slice A / PR #246 implementation)**: this repo's mobile Vitest
+toolchain (rolldown/oxc, no Babel/Flow pipeline) **cannot import `react-native` at all**
+(`RolldownError: Flow is not supported`, in CI too), and no RN renderer is resolved anywhere;
+adding render infrastructure was previously evaluated and rejected (see
+`mobile/components/nav/ProfileTabIcon.cache.test.ts`'s header — the established precedent).
+The original plan's "jsdom render harness" tests are therefore impossible. Strategy instead —
+**maximize the pure surface, keep React bindings thin**:
+
+- All lifecycle/permission/store/refresh orchestration lives in a pure, dependency-injected
+  **foreground-location session module** (no React, no expo imports; adapters injected) that the
+  hook merely binds to React state. The session module is node-tested exhaustively; the hook
+  itself is a thin adapter verified by `tsc`, CI lint, and the on-device checklist.
+- **Production dependency assembly is itself importable and tested**: a factory module
+  (`mobile/lib/location-deps.ts`, importing expo adapters — mockable with `vi.mock`, unlike
+  `react-native` — and the Slice-A `lib/log.ts` seam) exports the exact deps object the hook
+  passes to the session. Node tests exercise that factory, so "the shipped app wires the real
+  sink/adapters" is proven at the factory seam; only the hook's focus/AppState value delivery
+  remains untestable.
+- UI states (locate button, toast action, overlay priority) are pure **descriptor functions**
+  whose props the components spread directly (Slice A's banner pattern) — descriptors are
+  node-tested; visual/interaction confirmation is on-device.
+- Camera policy and placement dispatch are pure decision functions, node-tested; the screen
+  wires them.
+- Interaction-level checks that genuinely need a running app move to the post-merge owner
+  on-device checklist (tracked on #243/#215).
+
 **Local completion rule (host-specific, per `local-dev.md`)** — exact commands, not vibes:
-- Locally runnable: the named pure-logic Vitest files below (run them by path, e.g.
+- Locally runnable: the named pure-logic Vitest files below (run by path, e.g.
   `pnpm --filter mobile exec vitest run lib/location.test.ts`), `pnpm --filter mobile exec tsc
   --noEmit`, `pnpm run format:check`, and baseline ESLint **if it runs in this environment** —
-  if it does not (known host limitation), record that exact limitation and defer mobile lint to
-  CI `workspace-js`.
-- CI-gated on this host: all jsdom render/interaction suites, the full mobile Vitest suite, the
-  React-Compiler mobile lint (`workspace-js`), and isolated-linker `expo-doctor`
-  (`mobile-doctor`). An aggregate `./run.ps1 check` attempt is NOT evidence for any of those;
-  record which steps were host-limited.
-- Every render test file has `// @vitest-environment jsdom` as line 1; pure files stay in the
-  Node environment.
-- **Before Task 1**: create/update `feat/mobile-live-location` from current `main`; resolve any
-  dirty-worktree/branch conflict by preserving user changes, never by resetting them.
+  otherwise record the limitation and defer mobile lint to CI `workspace-js`.
+- CI-gated: the authoritative `workspace-js` (React-Compiler lint + full suite, isolated
+  linker) and isolated-linker `expo-doctor` (`mobile-doctor`). An aggregate `./run.ps1 check`
+  attempt is NOT evidence for those; record host-limited steps.
+- **Before Task 1**: `gh auth status`; `git fetch origin main` FIRST (a stale remote-tracking
+  ref silently omits Slice A); verify the Slice A squash-merge commit (PR #246) is reachable
+  from the fetched `origin/main` and inspect the overlapping map-screen diff; then
+  `git merge origin/main` into `feat/mobile-live-location`, resolving conflicts by preserving
+  both intents, never by resetting; re-check this plan's source-line assumptions afterward
+  (Slice A moved code in `index.tsx` and added `mobile/lib/log.ts` + descriptor modules this
+  plan builds on).
 
 ## Task 1 — fix store + timestamps — `feat(mobile): freshness-aware fix store`
 
@@ -35,144 +62,180 @@ not-yet-consumed module ships with its own tests.
 
 ## Task 2 — permission outcomes — `feat(mobile): rich permission outcomes`
 
-- Files: `mobile/lib/location.ts` (+ its test), `mobile/lib/location-request.ts`,
+- Files: `mobile/lib/location.ts` (+ test), `mobile/lib/location-request.ts`,
   `mobile/hooks/useForegroundLocation.ts`.
 - Tests first: `PermissionResult` carries `canAskAgain`; `fetchForegroundPosition` returns
   `granted | denied(canAskAgain) | unavailable`; reducer transitions for retry-denied /
   retry-granted / unavailable-with-known-coords / unavailable-without.
-- **Compatibility boundary, explicit**: in this task `refresh()` continues to return
-  `Coords | null` (the rich return arrives in Task 6); the outcome type retains `canAskAgain`
-  internally (the hook consumes outcomes but does not yet expose them); reducer events
-  dispatched by the hook are unchanged except `failed` → the `unavailable` outcome mapping. All
-  existing consumers/tests updated in this commit; nothing is implemented twice later — Task 6
-  only changes the hook's return surface, not the outcome model.
+- Compatibility boundary: `refresh()` keeps returning `Coords | null` until Task 6; the outcome
+  type retains `canAskAgain` internally; reducer events unchanged except `failed` → the
+  `unavailable` outcome mapping. All consumers updated in this commit; Task 6 changes only the
+  return surface.
 
 ## Task 3 — watch controller (pure state machine) — `feat(mobile): watch lifecycle controller`
 
-- Files: controller + tests in `mobile/lib/location.ts` / `mobile/lib/location.test.ts` (or a
-  sibling `mobile/lib/location-watch.ts` + `.test.ts` if size warrants — one module, no expo
-  imports).
+- Files: `mobile/lib/location-watch.ts` + `mobile/lib/location-watch.test.ts` (new; pure, no
+  expo/react imports).
 - Tests first (deferred promises, both resolution orders, asserting native start/remove/live
-  handle **counts**): serialized starts (no second concurrent start while one is pending;
+  handle **counts**): serialized starts (no second concurrent start while one pending;
   false→true flap → settled subscription removed + exactly one replacement); stale-resolution
   removal; rejection → retryable with a single `WATCH_RETRY_DELAY_MS = 30_000` timer; reconcile
-  signals retry immediately + cancel the timer; blur/background cancels; repeated rejections
-  don't spin/accumulate; `stop()` idempotent and distinct from `dispose()` (idempotent, cancels
-  timers, invalidates pending, removes live — unmount only); only the installed subscription
-  publishes. Diagnostics: an injected sink receives `watch_started` / `watch_stopped` /
-  `watch_start_rejected`; payloads asserted to contain **no latitude/longitude/accuracy/raw
-  position** (no position captured in a closure either — the sink API accepts event name +
-  static fields only).
-- Implement the controller with injected `startWatch`, clock/timer, diagnostic sink.
+  retries immediately + cancels the timer; blur/background cancels; repeated rejections don't
+  spin/accumulate; `stop()` idempotent, distinct from `dispose()` (idempotent, cancels timers,
+  invalidates pending, removes live); only the installed subscription publishes. Diagnostics:
+  the injected sink receives `watch_started`/`watch_stopped`/`watch_start_rejected`; the sink
+  API accepts event name + static fields only (no position can be captured); payloads asserted
+  coordinate-free.
+- Implement with injected `startWatch`, clock/timer, diagnostic sink.
 
 ## Task 4 — expo adapters + guarded consumption — `feat(mobile): watch adapter + guarded coords`
 
-- Files: `mobile/lib/location-request.ts`, new tests `mobile/lib/location-request.test.ts`
-  (mocked expo-location boundary, separate from controller tests so failures identify the
-  layer).
+- Files: `mobile/lib/location-request.ts`, new `mobile/lib/location-request.test.ts` (mocked
+  expo-location boundary, separate from controller tests).
 - Tests first:
   - watch adapter: calls `Location.watchPositionAsync` with exactly `{ accuracy: Balanced,
-    timeInterval: 3000, distanceInterval: 10 }`; returns/propagates the
-    `Promise<LocationSubscription>` contract the serialized controller consumes; forwards fixes
-    with native timestamp intact; start rejection propagates; a runtime watch error mutates
-    nothing, publishes nothing, logs no coordinate.
+    timeInterval: 3000, distanceInterval: 10 }`; propagates the `Promise<LocationSubscription>`
+    contract; forwards fixes with native timestamp intact; start rejection propagates; a runtime
+    watch error mutates nothing, publishes nothing, logs no coordinate.
   - guarded consumption: `requestCurrentCoords` probes permission without prompting;
     not-granted → store cleared, falls through; probe rejection → cache ignored, never throws;
     granted + fresh → cache served (no fetch); granted + stale → bounded fetch; denial →
-    `null`; store cleared only on `denied` in this path (transient `unavailable` keeps a
-    granted entry).
-- Implement adapter + probe + cache-first `requestCurrentCoords`. The adapter ships here with
-  its tests; its consumer arrives in Task 5.
+    `null`; store cleared only on `denied` here (transient `unavailable` keeps a granted
+    entry).
+- Implement adapter + probe + cache-first `requestCurrentCoords`; consumer arrives in Task 5.
 
-## Task 5 — hook lifecycle/controller ownership — `feat(mobile): hook-owned watch lifecycle`
+## Task 5 — foreground-location session module + thin hook — `feat(mobile): session-driven watch lifecycle`
 
-- Files: `mobile/hooks/useForegroundLocation.ts`; new render-harness tests
-  `mobile/hooks/useForegroundLocation.test.tsx` (jsdom line-1 directive; CI-gated).
-- Tests first: grant → watch started; blur/background → stopped, NOT disposed; refocus →
-  restarted; unmount → `dispose()` with an outstanding retry timer; deferred start after blur
-  doesn't leak; unmount during in-flight `refresh()` sets no state; **the hook supplies the
-  production diagnostic sink** — a stable event-only function emitting through the app's
-  logging convention (`console.warn` structured line, event name + static fields, never
-  coordinates), asserted by test so the Task-10/on-device background-stop instrument actually
-  exists in the shipped app.
-- Implement: `useIsFocused` + the spelled-out `useSyncExternalStore` AppState adapter;
-  stop-vs-dispose split; controller wiring with the real `startWatch` adapter and the production
-  sink. `refresh()` surface unchanged in this task.
+- Files: new `mobile/lib/location-session.ts` + `mobile/lib/location-session.test.ts` (pure,
+  DI'd: controller, adapters, store, sink, dispatch); `mobile/hooks/useForegroundLocation.ts`
+  becomes a thin binder.
+- Session tests first (node-safe — this replaces the impossible hook render tests): given
+  injected `(focused, appActive, status)` inputs, the session drives the controller's desired
+  state; grant → started; blur/background → stopped NOT disposed; refocus → restarted;
+  `dispose()` cancels an outstanding retry timer; a deferred start resolving after blur doesn't
+  leak; an in-flight `refresh()` resolving after `dispose()` performs no further
+  dispatch/publish (the unmount-safety property, tested at the session seam); a successful
+  `refresh()` invokes controller `reconcile()`.
+- **Diagnostics, stated honestly**: node tests prove (a) the controller/session event contract
+  (`watch_started`/`watch_stopped`/`watch_start_rejected`, static fields only, no coordinates —
+  asserted on the serialized `lib/log.ts` output, which exists after the Slice A merge and
+  emits one JSON warn line per event in production per its documented contract) and (b) via the
+  `location-deps.ts` factory tests, that the exact production deps object carries that sink.
+  What they cannot prove — that the hook passes the factory's deps rather than others — is
+  covered by `tsc` (the deps type), CI lint, and a **named on-device precondition** in Task 10:
+  observe real `watch_started`/`watch_stopped` events on-device (and `watch_start_rejected` via
+  an induced failure if practical) before trusting the background-stop check.
+- Hook: binds session state via the reducer + `useSyncExternalStore` AppState adapter (the
+  spelled-out wrapper returning a cleanup function; module-scope-stable subscribe/snapshot) +
+  `useIsFocused`; consumes `createForegroundLocationSessionDeps()` from `location-deps.ts`;
+  contains no orchestration logic of its own. Verified by `tsc`, CI React-Compiler lint, and
+  the on-device checklist — stated honestly, not claimed as unit-tested.
 
-## Task 6 — hook permission/store integration + rich refresh — `feat(mobile): live coords publication and rich refresh`
+## Task 6 — session permission/store integration + rich refresh — `feat(mobile): live coords publication and rich refresh`
 
-- Files: `mobile/hooks/useForegroundLocation.ts` (+ its test), `mobile/app/(tabs)/index.tsx`
-  (the single `refresh()` call site).
-- Tests first (same render harness): **denied-clearing across ALL producers** — initial
-  denial, refresh denial (both `canAskAgain` values), denial after a prior granted/published
-  fix: hook state `denied`, `resetLatestFix()` called, controller desired false (stop), no
-  coordinate logged; unavailable-with-known-fix retains state + store. **Publish sources** —
-  mount, refresh, and watch all publish; watch/refresh completing in either order leaves the
-  newest-effective fix (hook-level race complement to Task 1). **Rich `refresh()`** returns the
-  discriminated outcome; the locate call site branches on the returned value (prior-outcome ≠
-  new-outcome case covered in Task 8's UI tests).
+- Files: `mobile/lib/location-session.ts` (+ test), `mobile/hooks/useForegroundLocation.ts`,
+  `mobile/app/(tabs)/index.tsx` (the single `refresh()` call site).
+- Session tests first (node-safe): **denied-clearing across ALL producers** — initial denial,
+  refresh denial (both `canAskAgain` values), denial after a prior granted/published fix: state
+  `denied`, `resetLatestFix()` called, controller desired false, no coordinate logged;
+  unavailable-with-known-fix retains state + store. **Publish sources** — mount, refresh, watch
+  all publish; watch/refresh completing in either order leaves the newest-effective fix.
+  **Rich `refresh()`** returns the discriminated outcome; the locate call site branches on the
+  returned value of the same call.
 - Implement: publication from all three paths; `refresh()` return change + the one call site in
-  the same commit.
+  this commit.
 
-## Task 7 — map-screen camera policy — `test(mobile): camera policy under continuous location`
-(use that subject only if the commit is genuinely test-only; if the tests force a source/behavior
-change, use a `fix(mobile):`/`feat(mobile):` subject describing that change)
+## Task 7 — camera policy decision — `feat(mobile): one-time-center camera policy`
+(if the tests force no source change, the commit is `test(mobile): pin one-time-center camera
+policy` instead)
 
-- Files: new `mobile/app/(tabs)/index.camera.test.tsx` (jsdom, CI-gated) + any minimal screen
-  change the tests force.
-- Tests first: the first resolved fix issues exactly one initial center; subsequent watch fixes
-  update exposed coords/bounds but never issue a camera command (no `setFlyTo`); a watch fix
-  arriving before/after the initial fetch keeps the one-time-center rule deterministic; explicit
-  locate / "Use current location" / add-mode entry still command the camera.
+- Files: new `mobile/lib/map/camera-policy.ts` + `camera-policy.test.ts` (node-safe); minimal
+  screen wiring in `mobile/app/(tabs)/index.tsx`.
+- **Explicit contract**: `nextCameraPolicy(state, event) → { state, command | null }` where
+  `state = { hasInitiallyCentered: boolean }` and events are fix arrivals (source: initial
+  fetch | watch | refresh) and explicit actions (locate press, use-current-location, add-mode
+  entry). The screen owns the state via its reducer/useState (never a `useRef.current` read in
+  render) and executes returned commands.
+- Tests first: exactly one initial-center command for the first resolved fix regardless of
+  initial-fetch/watch/refresh arrival order; subsequent watch fixes never produce a command;
+  denial/`unavailable` before any fix produces no command and leaves the one-shot unconsumed;
+  explicit actions always produce their commands regardless of the one-shot state. On-device
+  confirms the felt behavior.
 
 ## Task 8 — add-reducer bound authority — `feat(mobile): reducer-owned placement bounds`
 
-- Files: `mobile/lib/add-fountain/state.ts` + `state.test.ts`; `mobile/app/(tabs)/index.tsx`;
-  screen tests in the map-screen test file (jsdom, CI-gated).
-- Reducer tests first (node-safe): pre-bound placement accepted; after `setBound`, out-of-bound
-  drop/replacement/nudge rejected — no caller-supplied bound exists anywhere in the action API;
-  accepted pin survives a later `setBound`; invalid nudge/replacement leaves the accepted pin
-  unchanged.
-- **Per-placement-path matrix (CI-gated screen tests — the reducer being correct does not prove
-  the paths dispatch correctly)**, with the entry rows split to match reachable states (do not
-  manufacture an unreachable screen state to satisfy the table, and do not turn the entry
-  exception into a general bypass): normal add-mode entry seeds with `state.bound === null` and
-  is accepted under the documented sole pre-bound exception; only if implementation introduces
-  an atomic set-bound-then-seed (or another reachable entry-with-bound state) does entry get
-  in-bound-accept + excluding-bound-reject rows; every post-entry path ("Use current location",
-  place-at-center, map tap, nudge) is tested both for current-state-bound acceptance and for
-  rejection without replacing the accepted pin, surfacing the expected toast where the UI owns
-  that feedback; nudge validates its computed result; plus the walked-away scenario (pin
-  accepted → bound moves → Next/submit still enabled → out-of-bound nudge rejected).
+- Files: `mobile/lib/add-fountain/state.ts` + `state.test.ts`; `mobile/app/(tabs)/index.tsx`.
+- Reducer tests first (node-safe): pre-bound placement accepted (sole exception); after
+  `setBound`, out-of-bound drop/replacement/nudge rejected — no caller-supplied bound exists in
+  the action API (no stale/wider/null bound injectable); accepted pin survives a later
+  `setBound`; invalid nudge/replacement leaves the accepted pin unchanged.
+- Per-path coverage at a REAL seam (standalone action-creator tests cannot prove the
+  unimportable screen uses them): extract a pure **placement coordinator**
+  (`mobile/lib/add-fountain/placement-coordinator.ts` + test) with injected `dispatch`, toast,
+  and camera effects, exposing one method per path — `enterSeed`, `useCurrentLocation`,
+  `placeAtCenter`, `mapTap`, `nudge`. The screen assigns each callback **directly to the
+  coordinator method** (thin binding, no inline logic). Node tests call the same coordinator
+  functions the screen binds: each path's in-bound acceptance (correct action dispatched,
+  camera/toast effects), each path's rejection (no pin replacement, toast effect invoked),
+  entry-before-bound exercising the sole pre-bound exception, nudge validating its computed
+  result. The screen→coordinator binding itself is covered by the on-device checklist, which
+  must exercise **all five paths for acceptance and rejection** (not only walked-away nudge).
 - Implement: point/intent-only placement actions; reducer validates against `state.bound`;
-  Next/submit from `state.pin != null` (`index.tsx:899-900, 1020-1024` rework); all placement
-  call sites updated in this commit.
+  Next/submit from `state.pin != null` (`index.tsx:899-900, 1020-1024` rework); all call sites
+  updated in this commit.
 
-## Task 9 — locate button + toast action + overlay — `feat(mobile): stateful locate button and locating overlay`
+## Task 9 — locate button + toast action + overlay descriptors — `feat(mobile): stateful locate button and locating overlay`
 
-- Files: `mobile/app/(tabs)/index.tsx`; `MobileToast`/`MapOverlay` are currently local
-  functions inside that file — this task tests them through a named map-screen test file,
-  `mobile/app/(tabs)/index.location-ui.test.tsx` (jsdom line-1 directive, CI-gated), unless
-  extraction into named component modules (with exact `.test.tsx` siblings) proves necessary,
-  in which case the extraction is part of this task's single commit; `docs/style-guide.md`
+- Files: pure descriptor functions + tests (node-safe; e.g. `mobile/lib/map/overlay-state.ts`
+  pattern established by Slice A — extend/collocate as appropriate);
+  `mobile/app/(tabs)/index.tsx` (components spread the descriptors); `docs/style-guide.md`
   (same commit).
-- Tests first: four button states + a11y contract; press during refresh ignored; denied press
-  with `canAskAgain=false` → toast with "Open settings" action; settings-open rejection → plain
-  replacement toast; toast action tap dismisses+invokes; auto-dismiss extends to 6 s with an
-  action; overlay `locating` shows "Locating you…", priority vs error/offline, below-zoom hint
-  returns on denial/failure; a press whose just-resolved outcome differs from the prior one
-  shows the new outcome's action.
+- Descriptor tests first: locate-button descriptor for all four states (granted icon;
+  locating/refreshing → spinner + `accessibilityState.busy`, presses ignored but not disabled;
+  denied/unavailable → muted token, actionable, labels/hints incl. the `canAskAgain === false`
+  settings hint); toast-action contract (brandBlue bold label, ≥44 pt target,
+  `accessibilityRole: "button"`, auto-dismiss 3.2 s → 6 s with an action, tap
+  dismisses+invokes, settings-open rejection → plain replacement toast descriptor); overlay
+  priority (`locating` → "Locating you…" above `belowZoom`, below error/offline; below-zoom
+  hint returns on denial/failure); the just-resolved-outcome-differs case maps to the new
+  outcome's descriptor.
+- **Type-level wiring contract**: descriptor return types are exhaustive discriminated unions
+  whose fields use the relevant RN prop shapes via type-only imports (or local structural
+  types if a type import trips the toolchain); screen bindings consume descriptor fields
+  without reconstructing them, so `tsc` rejects missing/invalid required fields even though it
+  cannot prove runtime spreading; descriptors return data, not callbacks capturing screen
+  state (effect callbacks are owned/tested by the coordinator/session).
+- Implement descriptors + wiring + style-guide documentation. Coverage stated honestly:
+  descriptors pin the values; the component mapping is `tsc`-constrained and statically
+  reviewed; announcement/interaction behavior is on-device (with an accessibility inspection
+  method, not visual-only — see Task 10).
 
 ## Task 10 — verification + PR (no commit unless verification causes a documented file change;
 then `docs(mobile): document live-location verification`)
 
-- Local, exactly: the named node-safe Vitest files from Tasks 1–4 and 8 by path;
+- Local, exactly: the named node-safe Vitest files from Tasks 1–9 by path;
   `pnpm --filter mobile exec tsc --noEmit`; `pnpm run format:check`; baseline ESLint or the
-  recorded limitation. CI authorities: `workspace-js` (render suites + React-Compiler lint) and
-  `mobile-doctor`. An aggregate `./run.ps1 check` attempt is recorded but is not evidence for
-  the CI-gated steps.
+  recorded limitation. CI authorities: `workspace-js` and `mobile-doctor`. An aggregate
+  `./run.ps1 check` attempt is recorded but is not evidence for CI-gated steps.
 - PR: `gh auth status` preflight; `gh pr create` linking #243/#215 + the spec; confirm
   `mergeable != CONFLICTING` before waiting on CI; CI green → Codex PR review loop → every PR
-  comment (any commenter) addressed → **squash-merge only**. On-device follow-ups noted on
-  #243/#215: walking cadence per platform; background-stop verified via the Task 3/5 lifecycle
-  events. No AI attribution, no time estimates.
+  comment (any commenter) addressed → **squash-merge only**. No AI attribution, no time
+  estimates.
+- **On-device checklist (posted to #243/#215 post-merge; each item per platform where
+  applicable, with expected observations — these carry every binding the pure seams cannot
+  prove)**: (1) diagnostics precondition — real `watch_started`/`watch_stopped` events observed
+  in the device log (and `watch_start_rejected` via an induced failure if practical) BEFORE
+  trusting later checks; (2) backgrounding stops location callbacks (no watch events while
+  backgrounded); (3) blur to another tab then refocus restarts the watch (no disposal); (4) a
+  locate press after a failed watch start recovers tracking (reconcile); (5) first fix centers
+  the camera exactly once — later movement never chases the camera; (6) explicit locate,
+  "Use current location", and add-mode entry each still command the camera; (7) all five
+  placement paths accept in-bound and reject out-of-bound with the toast (entry seed,
+  use-current-location, place-at-center, map tap, nudge); (8) walking with the map open moves
+  the placement/recenter target without a locate press, at plausible cadence per platform;
+  (9) the settings toast: action tap opens system settings, settings-open failure shows the
+  replacement toast, auto-dismiss extends with an action present; (10) locate-button states and
+  overlay copy ("Locating you…" priority, below-zoom return on denial); (11) accessibility
+  props verified by inspection (`uiautomator dump` per `local-dev.md` on Android / an
+  equivalent inspector on iOS), not visual-only. The privacy-critical items (1)–(3) must be
+  exercised before the next store release, even though tracking remains post-merge.

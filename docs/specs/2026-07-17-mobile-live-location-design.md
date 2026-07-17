@@ -242,6 +242,18 @@ it has no dependency on the backend lock design.
 
 ## Verification
 
+> **Amendment (2026-07-17, from Slice A / PR #246)**: the "CI-gated render/interaction tests
+> (jsdom)" categories below are impossible in this repo — the mobile Vitest toolchain
+> (rolldown/oxc) cannot import `react-native` (`RolldownError: Flow is not supported`, in CI
+> too) and no RN renderer is resolved; adding render infrastructure was previously rejected
+> (`mobile/components/nav/ProfileTabIcon.cache.test.ts` header). The behaviors those items
+> targeted are verified instead per the implementation plan's amended strategy: a pure
+> dependency-injected session module + production-deps factory (hook = thin untested binder),
+> pure camera-policy and placement-coordinator seams, pure UI-state descriptors with type-level
+> wiring contracts, and an enumerated owner on-device checklist on #243/#215 for every binding
+> the pure seams cannot prove (including the privacy-critical background-stop checks, gated
+> before the next store release). Behavior decisions in this spec are unchanged.
+
 **Node-safe unit tests (local + CI `workspace-js`):**
 
 1. Controller races, with controlled deferred start promises in both resolution orders,
