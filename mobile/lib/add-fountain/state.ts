@@ -105,6 +105,38 @@ export function mapAddFountainError(error: unknown): AddFountainError {
   return "network";
 }
 
+/**
+ * The outcome-unknown diagnostic descriptor (spec §2). Carries ONLY the ambiguity reason
+ * (and, for a deadline, its duration) — never the raw error message (RN network errors can
+ * embed URLs) and never coordinates. Feeds the `add_fountain_outcome_unknown` log event.
+ */
+export type AddSubmitOutcomeEvent =
+  { reason: "deadline"; timeout_ms: number } | { reason: "network_failure" };
+
+export type AddSubmitFailure = {
+  error: AddFountainError;
+  /** Present only for the two outcome-unknown branches (timeout / mid-flight network drop). */
+  outcome?: AddSubmitOutcomeEvent;
+};
+
+/**
+ * Pure classification of an add-create failure (spec §2): the mapped `AddFountainError`
+ * plus, for the two OUTCOME-UNKNOWN branches, a diagnostic descriptor for the
+ * `add_fountain_outcome_unknown` event. Kept pure and node-safe so the submit-path decision
+ * is testable without rendering the screen; the catch branch calls this and forwards any
+ * descriptor to the log seam.
+ */
+export function classifyAddSubmitFailure(error: unknown): AddSubmitFailure {
+  const mapped = mapAddFountainError(error);
+  if (error instanceof ApiTimeoutError) {
+    return { error: mapped, outcome: { reason: "deadline", timeout_ms: error.timeoutMs } };
+  }
+  if (error instanceof TypeError) {
+    return { error: mapped, outcome: { reason: "network_failure" } };
+  }
+  return { error: mapped };
+}
+
 export function duplicateFountainId(error: DuplicateConflict | undefined): string | null {
   return normalizeFountainId(
     typeof error?.fountain_id === "string" ? error.fountain_id : undefined,

@@ -52,11 +52,12 @@ import {
   addFountainGate,
   addFountainReducer,
   classifyAddConflict,
+  classifyAddSubmitFailure,
   initialAddFountainState,
-  mapAddFountainError,
   type AddFountainResult,
   type AddFountainState,
 } from "../../lib/add-fountain/state";
+import { logEvent } from "../../lib/log";
 import { isMapConfigured } from "../../lib/config";
 import { isAtCap, normalizeBounds, type RawBounds, shouldLoadPins } from "../../lib/map/bounds";
 import { buildClusterIndex, clustersForViewport } from "../../lib/map/cluster";
@@ -695,8 +696,22 @@ export default function MapScreen() {
               addDispatch({ type: "submitError", error: result.error });
               setAddMessage({ tone: "err", text: addFountainErrorText(result.error) });
             } catch (error) {
-              const mapped = mapAddFountainError(error);
+              const { error: mapped, outcome } = classifyAddSubmitFailure(error);
               if (mapped === "unauthenticated") auth.markReauthRequired();
+              // Mark the outcome-unknown branch distinctly from an ordinary failure so it is
+              // diagnosable from logs (spec §2). The draft is preserved by `submitError` (the
+              // panel stays on the details step), so an unchanged retry reconciles.
+              if (outcome) {
+                logEvent(
+                  outcome.reason === "deadline"
+                    ? {
+                        event: "add_fountain_outcome_unknown",
+                        reason: "deadline",
+                        timeout_ms: outcome.timeout_ms,
+                      }
+                    : { event: "add_fountain_outcome_unknown", reason: "network_failure" },
+                );
+              }
               addDispatch({ type: "submitError", error: mapped });
               setAddMessage({ tone: "err", text: addFountainErrorText(mapped) });
             }

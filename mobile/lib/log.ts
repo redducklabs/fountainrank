@@ -64,6 +64,5 @@ export function serializeEvent(event: LogEvent): string {
 
 /** Emit one structured `warn` line for the event. The only console call the seam makes. */
 export function logEvent(event: LogEvent): void {
-  // eslint-disable-next-line no-console
   console.warn(serializeEvent(event));
 }
