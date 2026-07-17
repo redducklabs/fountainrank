@@ -28,21 +28,18 @@ import asyncio
 import json
 import logging
 
-from app.db import get_sessionmaker
+from app.db import get_engine
 from app.logging_config import configure_logging
-from app.membership import MembershipRefreshSummary, refresh_all_memberships
+from app.membership import MembershipRefreshSummary, RefreshScope, run_staged_membership_refresh
 
 log = logging.getLogger(__name__)
 
 
 async def run_membership_backfill() -> MembershipRefreshSummary:
-    """Run the full membership refresh in one transaction and commit. Opens its own session
-    (kubectl-exec entry), mirroring ``boundary_cli.run_boundary_load``."""
-    maker = get_sessionmaker()
-    async with maker() as session:
-        summary = await refresh_all_memberships(session)
-        await session.commit()
-    return summary
+    """Run the full membership refresh via the staged pinned-connection wrapper (compute unlocked →
+    commit → publish locked → commit). kubectl-exec entry, mirroring ``boundary_cli``. Raises on
+    publish failure so the loader Job fails visibly (nonzero exit)."""
+    return await run_staged_membership_refresh(get_engine(), RefreshScope(rebuild_cells=True))
 
 
 def main(argv: list[str] | None = None) -> int:

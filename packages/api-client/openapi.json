@@ -410,6 +410,17 @@
               }
             }
           },
+          "503": {
+            "description": "A boundary load / membership refresh holds the write lock; retry after the interval in `Retry-After`.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying the write.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -2485,6 +2496,17 @@
               }
             }
           },
+          "503": {
+            "description": "A boundary load / membership refresh holds the write lock; retry after the interval in `Retry-After`.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying the write.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -2582,6 +2604,17 @@
         "responses": {
           "204": {
             "description": "Successful Response"
+          },
+          "503": {
+            "description": "A boundary load / membership refresh holds the write lock; retry after the interval in `Retry-After`.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying the write.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
