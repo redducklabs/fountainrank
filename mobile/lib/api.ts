@@ -1,6 +1,15 @@
 import { makeClient, type ApiClient } from "@fountainrank/api-client";
 
 import { AuthSessionError } from "./auth/state";
+import { logEvent } from "./log";
+
+/**
+ * Per-request deadlines (spec §1). React Native's `fetch` has no default timeout, so a
+ * socket that stalls mid-flight (cell handoff while moving) leaves a request pending
+ * forever. Reads are bounded tighter than writes; both are exported for tests.
+ */
+export const READ_TIMEOUT_MS = 15_000;
+export const WRITE_TIMEOUT_MS = 30_000;
 
 /**
  * Build the auth headers for an authenticated mobile request.
@@ -32,6 +41,39 @@ export class ApiError extends Error {
     super(message ?? `Request failed with status ${status}`);
     this.name = "ApiError";
   }
+}
+
+/**
+ * A request that exceeded its client-side deadline (spec §1). Deliberately NOT an
+ * `ApiError` (it has no HTTP status): the server outcome is UNKNOWN, so the add flow
+ * recovers by reconciliation rather than treating it as a definitive failure, and
+ * `resolveViewState` maps it to the offline/network shape (no numeric `status`). Carries
+ * the method + URL path (never the query) + the elapsed deadline for diagnostics.
+ */
+export class ApiTimeoutError extends Error {
+  constructor(
+    public readonly method: string,
+    public readonly path: string,
+    public readonly timeoutMs: number,
+  ) {
+    super(`Request ${method} ${path} exceeded its ${timeoutMs}ms deadline`);
+    this.name = "ApiTimeoutError";
+  }
+}
+
+/**
+ * The reason an `AbortSignal` fired: the caller's own `reason` when present (preserving
+ * TanStack cancellation / screen-teardown semantics), else a synthesized `AbortError`
+ * (`signal.reason` is not guaranteed on every Hermes runtime).
+ */
+function abortReason(signal: AbortSignal): unknown {
+  const reason = (signal as { reason?: unknown }).reason;
+  if (reason !== undefined) {
+    return reason;
+  }
+  const error = new Error("The operation was aborted.");
+  error.name = "AbortError";
+  return error;
 }
 
 /**
@@ -196,24 +238,90 @@ export function createApiClient(
   } = options ?? {};
   const baseFetch = clientOptions.fetch ?? ((input: Request) => globalThis.fetch(input));
   const sanitizingFetch = async (input: Request): Promise<Response> => {
-    if (getAccessToken && shouldAttachAuth(input)) {
-      let token: string | null | undefined;
-      try {
-        token = await getAccessToken();
-      } catch (error) {
-        throw new AuthSessionError("token_unavailable", { cause: error });
-      }
-      const authHeaders = buildAuthHeaders(token);
-      for (const [key, value] of Object.entries(authHeaders)) {
-        input.headers.set(key, value);
-      }
+    // A Request always carries a signal (a default, never-aborting one when the caller
+    // passed none); when the caller DID pass one (TanStack cancellation / screen
+    // teardown), it is that signal.
+    const inbound: AbortSignal | null = input.signal ?? null;
+    // Pre-aborted inbound signal: reject immediately with the caller's reason and
+    // dispatch nothing (never build/send the request).
+    if (inbound?.aborted) {
+      throw abortReason(inbound);
     }
-    for (const key of [...input.headers.keys()]) {
-      if (key.toLowerCase().startsWith("x-dev")) {
-        input.headers.delete(key);
+
+    const method = input.method.toUpperCase();
+    const timeoutMs = method === "GET" ? READ_TIMEOUT_MS : WRITE_TIMEOUT_MS;
+    const path = requestPath(input);
+
+    // The composed controller: the deadline and an inbound abort both funnel into it, so
+    // the request actually dispatched is cancelled at the network layer either way.
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let onInboundAbort: (() => void) | undefined;
+    // Single-winner guard between the deadline and an inbound abort — gates the one-time
+    // `api_timeout` log and ensures exactly one terminal rejection identity.
+    let outcome: "pending" | "deadline" | "inbound" = "pending";
+
+    // Rejects on whichever ceiling fires first. This covers the WHOLE pipeline, including
+    // token acquisition, because `dispatch()` awaits the token before it is raced here.
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        if (outcome !== "pending") return;
+        outcome = "deadline";
+        controller.abort();
+        // Diagnostics: method + URL path only — never the query, headers, body, token, or
+        // coordinates (spec §1). Caller aborts are routine and are NOT logged.
+        logEvent({ event: "api_timeout", method, path, timeout_ms: timeoutMs, source: "deadline" });
+        reject(new ApiTimeoutError(method, path, timeoutMs));
+      }, timeoutMs);
+      if (inbound) {
+        onInboundAbort = () => {
+          if (outcome !== "pending") return;
+          outcome = "inbound";
+          controller.abort();
+          // Preserve the caller's cancellation reason — NEVER convert it to a timeout.
+          reject(abortReason(inbound));
+        };
+        inbound.addEventListener("abort", onInboundAbort);
       }
+    });
+
+    const dispatch = async (): Promise<Response> => {
+      // A signal cannot be retrofitted onto an existing Request, so the request actually
+      // sent is rebuilt from `input` + the composed controller signal; auth injection and
+      // the x-dev sanitizer below run against THIS request — the bytes on the wire.
+      const request = new Request(input, { signal: controller.signal });
+      if (getAccessToken && shouldAttachAuth(request)) {
+        let token: string | null | undefined;
+        try {
+          token = await getAccessToken();
+        } catch (error) {
+          throw new AuthSessionError("token_unavailable", { cause: error });
+        }
+        const authHeaders = buildAuthHeaders(token);
+        for (const [key, value] of Object.entries(authHeaders)) {
+          request.headers.set(key, value);
+        }
+      }
+      for (const key of [...request.headers.keys()]) {
+        if (key.toLowerCase().startsWith("x-dev")) {
+          request.headers.delete(key);
+        }
+      }
+      // The deadline (or an inbound abort) may have fired while the token was pending.
+      // Discard a late token and dispatch NOTHING — never a late or tokenless request.
+      // The `deadline` race has already produced the terminal rejection; mirror it.
+      if (controller.signal.aborted) {
+        return deadline;
+      }
+      return baseFetch(request);
+    };
+
+    try {
+      return await Promise.race([dispatch(), deadline]);
+    } finally {
+      if (timer) clearTimeout(timer);
+      if (inbound && onInboundAbort) inbound.removeEventListener("abort", onInboundAbort);
     }
-    return baseFetch(input);
   };
 
   const client = makeClient(baseUrl, { ...clientOptions, fetch: sanitizingFetch });
