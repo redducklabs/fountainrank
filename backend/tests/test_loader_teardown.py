@@ -59,6 +59,9 @@ class FakeEnv:
         if resp == "timeout":
             self.now += timeout_s
             raise TimeoutError("simulated subprocess timeout")
+        if isinstance(resp, BaseException):
+            self.now += self.call_cost_s
+            raise resp
         self.now += self.call_cost_s
         return resp
 
@@ -211,15 +214,63 @@ def test_no_secrets_in_report():
 def test_production_defaults_fit_platform_window():
     assert lt.GLOBAL_DEADLINE_SECONDS == 210.0
     assert lt.FINALIZATION_RESERVE_SECONDS == 10.0
+    # The FULL serial arithmetic — command timeouts AND inter-attempt sleeps (the absence loop
+    # does not sleep after its final attempt; the re-query loop sleeps before every attempt).
     serial_worst = (
         lt.DELETE_TIMEOUT_SECONDS
         + lt.ABSENCE_POLL_ATTEMPTS * lt.ABSENCE_POLL_INTERVAL_SECONDS
+        + (lt.ABSENCE_POLL_ATTEMPTS - 1) * lt.ABSENCE_POLL_INTERVAL_SECONDS
         + lt.REAPER_ATTEMPTS * lt.REAPER_TIMEOUT_SECONDS
         + (lt.REAPER_ATTEMPTS - 1) * lt.REAPER_BACKOFF_SECONDS
         + lt.REQUERY_ATTEMPTS * (lt.REQUERY_TIMEOUT_SECONDS + lt.REQUERY_INTERVAL_SECONDS)
     )
+    assert serial_worst == 185.0
     assert serial_worst <= lt.GLOBAL_DEADLINE_SECONDS - lt.FINALIZATION_RESERVE_SECONDS
     assert lt.GLOBAL_DEADLINE_SECONDS < 300  # GitHub's 5-minute post-cancellation window
+
+
+def test_absence_loop_does_not_sleep_after_final_attempt():
+    pod_present = CommandResult(0, "pod/x\n", "")
+    env = FakeEnv({"pods": [pod_present] * 10, "exec": [_ZERO_REAP]})
+    _teardown(env)
+    pods_calls = [k for k, _ in env.calls].count("pods")
+    assert pods_calls == lt.ABSENCE_POLL_ATTEMPTS
+    # Sleeps attributable to the absence phase: attempts - 1 (none after the last poll). The
+    # only other sleeps in this scenario would be reaper backoff (reap succeeds first try).
+    assert env.sleeps.count(lt.ABSENCE_POLL_INTERVAL_SECONDS) == lt.ABSENCE_POLL_ATTEMPTS - 1
+
+
+@pytest.mark.parametrize("failing_kind", ["delete", "pods", "exec"])
+def test_launch_error_is_contained_and_later_phases_still_run(failing_kind):
+    env = FakeEnv({failing_kind: [FileNotFoundError("kubectl not found")] * 10})
+    code, report = _teardown(env)
+    assert code == 1
+    kinds = [k for k, _ in env.calls]
+    # Every phase was still attempted — a launch failure never short-circuits containment.
+    assert "delete" in kinds and "pods" in kinds and "exec" in kinds
+    failing_phase = {"delete": "delete", "pods": "pod_absence", "exec": "reap"}[failing_kind]
+    assert report["phases"][failing_phase]["ok"] is False
+    assert "launch_error:FileNotFoundError" in report["phases"][failing_phase]["detail"]
+
+
+def test_launch_error_then_recovery_in_reaper():
+    env = FakeEnv({"exec": [PermissionError("denied"), _OK_REAP]})
+    code, report = _teardown(env)
+    assert code == 0
+    assert report["phases"]["reap"] == {
+        "ok": True,
+        "detail": "attempt=2",
+        "result": {"terminated": 1, "remaining": 0},
+    }
+
+
+def test_launch_error_in_requery_is_recorded():
+    first = CommandResult(0, '{"terminated": 1, "remaining": 1}\n', "")
+    env = FakeEnv({"exec": [first] + [OSError("exec plumbing")] * 10})
+    code, report = _teardown(env)
+    assert code == 1
+    assert report["phases"]["requery"]["ok"] is False
+    assert "launch_error:OSError" in report["phases"]["requery"]["detail"]
 
 
 def test_global_deadline_caps_attempt_timeouts_and_is_never_exceeded():

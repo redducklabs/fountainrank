@@ -35,6 +35,30 @@ def test_no_github_expressions_inside_run_scripts():
             )
 
 
+def test_env_backed_variables_are_always_double_quoted():
+    # A future edit changing "$JOB_NAME" to bare $JOB_NAME would reopen word-splitting/glob
+    # injection at the shell boundary; pin the quoting, not just the env-transport rule.
+    import re
+
+    for path in _ACTION_FILES:
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for step in doc["runs"]["steps"]:
+            script = step.get("run")
+            if script is None:
+                continue
+            for var in step.get("env", {}):
+                # Every reference must be double-quoted: either the exact "$VAR" token
+                # (stripped first — this also handles nested `"$( ... "$VAR" ... )"` forms), or
+                # embedded in a larger "...$VAR..." string (odd number of quotes before it).
+                for line in script.splitlines():
+                    stripped = line.replace(f'"${var}"', "")
+                    for m in re.finditer(rf"\${{?{re.escape(var)}\b", stripped):
+                        quotes_before = stripped[: m.start()].count('"')
+                        assert quotes_before % 2 == 1, (
+                            f"{path.name}: ${var} appears outside double quotes: {line.strip()}"
+                        )
+
+
 def test_marker_components_are_passed_not_composed():
     # The composed `loader:<job>:<run>` marker string must exist ONLY in
     # app/imports/loader_session.py — actions pass components.

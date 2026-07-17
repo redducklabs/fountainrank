@@ -58,6 +58,26 @@ _REMAINING_SQL = text(
 )
 
 
+def _log_reap_row(marker: str, row) -> None:
+    """One structured event per matched session — metadata only, NEVER
+    ``pg_stat_activity.query`` (raw-payload logging is forbidden). A successful termination is
+    ``loader_session_reaped`` (INFO); a false ``pg_terminate_backend`` return (e.g. the backend
+    exited between select and signal) is ``loader_session_reap_failed`` (WARNING) so alerting
+    never counts a failed termination as a success."""
+    extra = {
+        "marker": marker,
+        "pid": row.pid,
+        "session_state": row.state,
+        "wait_event_type": row.wait_event_type,
+        "wait_event": row.wait_event,
+        "xact_age_s": float(row.xact_age_s) if row.xact_age_s is not None else None,
+    }
+    if row.terminated:
+        log.info("loader_session_reaped", extra=extra)
+    else:
+        log.warning("loader_session_reap_failed", extra=extra)
+
+
 # pg_terminate_backend is asynchronous (it signals the backend); give the signalled backends a
 # short bounded grace to actually exit so the normal path reports remaining == 0 deterministically.
 # The teardown state machine's outer re-query loop owns the pathological case (spec §2b phase 4).
@@ -74,19 +94,7 @@ async def reap_sessions(marker: str) -> dict[str, int]:
         for row in rows:
             if row.terminated:
                 terminated += 1
-            # Metadata only — NEVER pg_stat_activity.query (raw-payload logging is forbidden).
-            log.info(
-                "loader_session_reaped",
-                extra={
-                    "marker": marker,
-                    "pid": row.pid,
-                    "session_state": row.state,
-                    "wait_event_type": row.wait_event_type,
-                    "wait_event": row.wait_event,
-                    "xact_age_s": float(row.xact_age_s) if row.xact_age_s is not None else None,
-                    "terminated": bool(row.terminated),
-                },
-            )
+            _log_reap_row(marker, row)
         deadline = asyncio.get_running_loop().time() + _REMAINING_GRACE_S
         while True:
             # pg_stat_activity is snapshot-cached for the rest of the transaction — without

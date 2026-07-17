@@ -189,13 +189,15 @@ worst-case orphan lifetime of ~15 minutes against today's infinity.
   aborts the remaining ones; nominal per-phase budgets, each additionally capped by the global
   deadline:
   1. `kubectl delete job` (`--ignore-not-found --wait --timeout=30s`), one attempt.
-  2. Verify **pod absence** for the Job selector: poll every 5 s, 6 attempts (~30 s ceiling).
+  2. Verify **pod absence** for the Job selector: 3 attempts, 5 s per-attempt command timeout,
+     5 s sleep between attempts and none after the last (~25 s ceiling).
   3. Run the reaper via `kubectl exec` into the serving backend Deployment: 3 attempts, 5 s
      backoff, 20 s per-attempt command timeout (~70 s ceiling). The reaper re-queries after
      terminating and reports `remaining`; its JSON result line is parsed (malformed output =
-     attempt failure).
-  4. If `remaining > 0`, re-run the reaper: 3 attempts, 5 s apart, 15 s per-attempt timeout
-     (~55 s ceiling — covers the terminate race and a straggler pooled connection).
+     attempt failure). Subprocess launch errors (`OSError`/`SubprocessError`) become structured
+     attempt failures in every phase — they never abort the remaining containment phases.
+  4. If `remaining > 0`, re-run the reaper: 3 attempts, 5 s sleep before each, 15 s per-attempt
+     timeout (~60 s ceiling — covers the terminate race and a straggler pooled connection).
   5. Exit **nonzero with structured diagnostics** (phase statuses, identifiers — no secrets) if
      any phase failed: Job delete failed, pods could not be confirmed absent, the reaper was
      unreachable or unparseable, matching sessions remain, or the global deadline curtailed any

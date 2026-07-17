@@ -43,7 +43,7 @@ from app.imports.loader_session import compose_session_marker
 GLOBAL_DEADLINE_SECONDS = 210.0
 FINALIZATION_RESERVE_SECONDS = 10.0
 DELETE_TIMEOUT_SECONDS = 30.0
-ABSENCE_POLL_ATTEMPTS = 6
+ABSENCE_POLL_ATTEMPTS = 3
 ABSENCE_POLL_INTERVAL_SECONDS = 5.0
 REAPER_ATTEMPTS = 3
 REAPER_TIMEOUT_SECONDS = 20.0
@@ -138,6 +138,11 @@ def run_teardown(
             return runner(args, timeout_s)
         except TimeoutError:
             return "timeout"
+        except (OSError, subprocess.SubprocessError) as exc:
+            # A launch failure (kubectl missing, permission, exec plumbing) must become a
+            # structured attempt result — never an exception that aborts the later containment
+            # phases. Deliberately narrow: a programming error still raises.
+            return f"launch_error:{type(exc).__name__}"
 
     # Phase 1 — delete the Job (one attempt; ignore-not-found makes it idempotent).
     kubectl_timeout = max(1, int(config.delete_timeout_s) - 2)
@@ -179,7 +184,8 @@ def run_teardown(
             break
         else:
             detail = f"rc={result.returncode} pods={bool(result.stdout.strip())}"
-        sleep(budget.sleep_for(config.absence_interval_s))
+        if attempt + 1 < config.absence_attempts:  # no sleep after the final attempt
+            sleep(budget.sleep_for(config.absence_interval_s))
     phases["pod_absence"] = {"ok": absent, "detail": detail}
 
     # Phase 3 — reap this run's DB sessions (retries; independent of phases 1-2).

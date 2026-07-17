@@ -2681,3 +2681,101 @@ async def test_country_refresh_recounts_foreign_places_for_cross_country_candida
     assert await _count(session, lu_city) == 0
     assert await _count(session, lu) == 0
     assert await _is_canonical(session, us_city) is True
+
+
+@pytest.mark.asyncio
+async def test_country_refresh_mixed_target_and_foreign_assignments(session, engine, caplog):
+    """Spec Verification 1 cross-country case 2, THROUGH the staged refresh: a fountain located
+    outside the refreshed country with ONE target-country assignment (city) and TWO foreign
+    references (country + region). The us-scoped refresh must capture it via the assignment
+    branch, re-derive its membership from scratch (spatially nowhere -> all NULL), and recount
+    BOTH foreign places it referenced — not just target-country ones."""
+    import logging as _logging
+
+    from app.membership import RefreshScope, run_staged_membership_refresh
+
+    us = await _add_boundary(
+        session,
+        overture_id="mx-us",
+        subtype="country",
+        country_code="us",
+        name="United States",
+        slug="united-states",
+        wkt=_sq(0, 0, 10, 10),
+    )
+    us_city = await _add_boundary(
+        session,
+        overture_id="mx-us-city",
+        subtype="locality",
+        country_code="us",
+        name="San Diego",
+        slug="san-diego",
+        wkt=_sq(1, 1, 3, 3),
+    )
+    lu = await _add_boundary(
+        session,
+        overture_id="mx-lu",
+        subtype="country",
+        country_code="lu",
+        name="Luxembourg",
+        slug="luxembourg",
+        wkt=_sq(20, 0, 30, 10),
+    )
+    lu_city = await _add_boundary(
+        session,
+        overture_id="mx-lu-city",
+        subtype="locality",
+        country_code="lu",
+        name="Vianden",
+        slug="vianden",
+        wkt=_sq(21, 1, 23, 3),
+    )
+    fid = await _add_fountain(session, lat=2.0, lng=22.0)  # starts in lu_city
+    await refresh_all_memberships(session)
+    assert await _count(session, lu) == 1
+    assert await _count(session, lu_city) == 1
+    # Baseline: a sole city with zero fountains (us_city) — used below to pin lu_city's
+    # canonical outcome once it too holds zero fountains.
+    baseline_zero_count_city_canonical = await _is_canonical(session, us_city)
+
+    # The mixed shape: located OUTSIDE every boundary, one us assignment (city), two foreign
+    # references (country=lu, region=lu_city).
+    await session.execute(
+        text(
+            "UPDATE fountains SET "
+            "location = ST_SetSRID(ST_MakePoint(50.0, 50.0), 4326)::geography, "
+            "country_place_id = :lu, region_place_id = :lu_city, city_place_id = :us_city "
+            "WHERE id = :fid"
+        ),
+        {"lu": lu, "lu_city": lu_city, "us_city": us_city, "fid": fid},
+    )
+    await session.commit()
+
+    with caplog.at_level(_logging.INFO, logger="app.membership"):
+        await run_staged_membership_refresh(engine, RefreshScope(country_code="us"))
+    await session.rollback()
+
+    # Captured exactly this one candidate; the affected set spans the us places AND both
+    # foreign references (4 places total here). Filter to the country-scoped remap event (the
+    # initial full refresh also emits a scope="all" city_remapped without candidate fields).
+    remaps = [
+        r
+        for r in caplog.records
+        if r.getMessage() == "city_remapped" and hasattr(r, "candidate_fountains")
+    ]
+    assert len(remaps) == 1
+    assert remaps[0].candidate_fountains == 1
+    assert remaps[0].affected_places >= 3
+
+    # Final membership re-derived from scratch: spatially nowhere -> all NULL.
+    m = await _membership(session, fid)
+    assert m.country_place_id is None
+    assert m.region_place_id is None
+    assert m.city_place_id is None
+    # Old/new counts: every referenced place — including the two FOREIGN ones — was recounted.
+    assert await _count(session, us) == 0
+    assert await _count(session, us_city) == 0
+    assert await _count(session, lu) == 0
+    assert await _count(session, lu_city) == 0
+    # Canonical remap: lu_city now matches the zero-fountain sole-city baseline.
+    assert await _is_canonical(session, lu_city) is baseline_zero_count_city_canonical

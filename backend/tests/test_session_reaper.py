@@ -78,7 +78,8 @@ async def test_reaper_terminates_exact_marker_only(caplog):
         reaped = [r for r in caplog.records if r.getMessage() == "loader_session_reaped"]
         assert len(reaped) == 1
         assert reaped[0].marker == _MARKER_A
-        assert reaped[0].terminated is True
+        # Failed terminations use a distinct WARNING event; none here.
+        assert not [r for r in caplog.records if r.getMessage() == "loader_session_reap_failed"]
         # Metadata only — never pg_stat_activity.query text.
         assert not hasattr(reaped[0], "query")
         assert "SELECT" not in repr(vars(reaped[0]))
@@ -94,6 +95,28 @@ async def test_reaper_terminates_exact_marker_only(caplog):
 async def test_reaper_zero_matches_is_success(capsys, monkeypatch):
     result = await reap_sessions("loader:osm-import:999999999")
     assert result == {"terminated": 0, "remaining": 0}
+
+
+def test_failed_termination_logs_warning_not_success_event(caplog):
+    from types import SimpleNamespace
+
+    from app.imports.session_reaper import _log_reap_row
+
+    row = SimpleNamespace(
+        pid=42,
+        state="active",
+        wait_event_type=None,
+        wait_event=None,
+        xact_age_s=1.5,
+        terminated=False,  # pg_terminate_backend returned false (backend already gone)
+    )
+    with caplog.at_level(logging.INFO, logger="app.imports.session_reaper"):
+        _log_reap_row(_MARKER_A, row)
+    assert not [r for r in caplog.records if r.getMessage() == "loader_session_reaped"]
+    [failed] = [r for r in caplog.records if r.getMessage() == "loader_session_reap_failed"]
+    assert failed.levelno == logging.WARNING
+    assert failed.pid == 42
+    assert not hasattr(failed, "query")
 
 
 def test_main_zero_match_exit_zero(capsys):
