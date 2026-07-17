@@ -60,7 +60,7 @@ import logging
 from dataclasses import dataclass
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from app.locks import acquire_add_fountain_lock
 
@@ -1325,7 +1325,12 @@ async def publish_membership_state(
     ctx = (
         f"publish_membership_state:country:{cc}" if scope.scoped else "publish_membership_state:all"
     )
+    scope_extra = {"scope": "country" if scope.scoped else "all", "country": cc}
+    # Stage-boundary markers bracketing the advisory acquisition: the add-blocking publish window
+    # opens once the lock is granted (spec 2026-07-17 §2 observability). Safe summary fields only.
+    log.info("publish_waiting", extra=scope_extra)
     await acquire_add_fountain_lock(session, context=ctx)
+    log.info("publish_started", extra=scope_extra)
 
     # (1) reset canonical on the OLD hierarchy.
     if scope.scoped:
@@ -1507,3 +1512,46 @@ async def refresh_all_memberships(
     scope = RefreshScope(rebuild_cells=rebuild_cells)
     await compute_boundary_derivation(session, scope)
     return await publish_membership_state(session, scope)
+
+
+async def run_staged_membership_refresh(
+    engine: AsyncEngine, scope: RefreshScope
+) -> MembershipRefreshSummary:
+    """Loader/CLI entry: run the refresh as TWO transactions on ONE pinned physical connection —
+    ``compute`` (UNlocked, temp-only) → commit → ``publish`` (locked apply) → commit (spec
+    2026-07-17 §2). The expensive geometry commits before the advisory lock is ever taken, so an
+    interactive add is never blocked by it.
+
+    Postgres temp tables belong to the physical connection, not to a pooled ``AsyncSession``, so the
+    staging created in compute would vanish across a normal session's post-commit connection swap.
+    We therefore pin ONE ``AsyncConnection`` for the whole operation and let a single bound
+    ``AsyncSession`` own the transaction lifecycle exclusively (autobegin / commit / rollback) — the
+    session and the connection can never fight over one transaction. A publish exception is rolled
+    back via the session BEFORE the ``async with`` exit, so the connection is returned with no open
+    or aborted transaction; the temp tables drop with the connection.
+
+    Raises on any failure (compute or publish). A publish failure leaves the coherent PREVIOUS
+    generation live (compute wrote only temp; the live apply is atomic and rolled back), and the
+    caller — the loader Job (``restartPolicy: Never`` / ``backoffLimit: 0``) — fails visibly with a
+    nonzero exit rather than silently retrying. Recovery is an explicit rerun.
+    """
+    scope_extra = {"scope": "country" if scope.scoped else "all", "country": scope.cc}
+    async with engine.connect() as connection:
+        session = AsyncSession(bind=connection, expire_on_commit=False)
+        log.info("compute_started", extra=scope_extra)
+        await compute_boundary_derivation(session, scope)
+        await session.commit()
+        log.info("compute_completed", extra=scope_extra)
+        try:
+            summary = await publish_membership_state(session, scope)
+            await session.commit()
+        except Exception:
+            # Roll back via the session BEFORE the connection is returned, so it carries no open or
+            # aborted transaction. Emit a safe stage marker (no payload/PII/SQL/driver internals) —
+            # the propagating exception's traceback carries the diagnostic detail to stderr.
+            await session.rollback()
+            log.error("publish_failed", extra=scope_extra)
+            raise
+        # Emitted only after the commit above is durable — never before.
+        log.info("publish_completed", extra=scope_extra)
+        return summary

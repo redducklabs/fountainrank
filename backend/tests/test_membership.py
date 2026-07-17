@@ -1916,3 +1916,255 @@ async def test_staged_city_parent_uses_gist_index_not_seqscan(session):
     assert "_staged_place_boundary_cells" in plan  # the staged cells are the probed relation
     assert "Seq Scan on _staged_place_boundary_cells" not in plan
     assert any(marker in plan for marker in ("Index Scan", "Bitmap Index Scan", "Index Only Scan"))
+
+
+# --- Staged pinned-connection wrapper (Slice C Task 6) ----------------------------------------
+
+
+async def _seed_country_city_committed(session):
+    """Commit a US country + one locality city + a fountain in the city, so the wrapper (which runs
+    on its own pinned connection) can see them. Returns (us_id, city_id, fountain_id)."""
+    us = await _add_boundary(
+        session,
+        overture_id="us",
+        subtype="country",
+        country_code="us",
+        name="US",
+        slug="united-states",
+        wkt=_sq(0, 0, 10, 10),
+    )
+    city = await _add_boundary(
+        session,
+        overture_id="us-city",
+        subtype="locality",
+        country_code="us",
+        name="San Diego",
+        slug="san-diego",
+        wkt=_sq(1, 1, 2, 2),
+    )
+    fid = await _add_fountain(session, lat=1.5, lng=1.5)
+    await session.commit()
+    return us, city, fid
+
+
+@pytest.mark.asyncio
+async def test_staged_wrapper_pins_one_connection_and_staging_survives_commit(session, engine):
+    """Both transactions run on ONE pinned physical connection (asserted via pg_backend_pid), and
+    the staging temp tables created in compute survive the compute-commit — the property the CLI's
+    two-transaction layout depends on."""
+    from sqlalchemy.ext.asyncio import AsyncSession as _AsyncSession
+
+    from app.membership import (
+        RefreshScope,
+        compute_boundary_derivation,
+        publish_membership_state,
+    )
+
+    _, city, _ = await _seed_country_city_committed(session)
+    scope = RefreshScope(rebuild_cells=True)
+    async with engine.connect() as connection:
+        s = _AsyncSession(bind=connection, expire_on_commit=False)
+        pid1 = (await s.execute(text("SELECT pg_backend_pid()"))).scalar_one()
+        await compute_boundary_derivation(s, scope)
+        await s.commit()
+        # Staging survives the compute-commit on this pinned connection (else this SELECT would
+        # raise UndefinedTable / return 0).
+        staged = (
+            await s.execute(text("SELECT count(*) FROM _staged_boundary_derivation"))
+        ).scalar_one()
+        assert staged >= 2
+        await publish_membership_state(s, scope)
+        await s.commit()
+        pid2 = (await s.execute(text("SELECT pg_backend_pid()"))).scalar_one()
+        assert pid1 == pid2  # one physical backend across both transactions
+
+    # The published membership is visible to a separate connection.
+    await session.rollback()
+    assert await _count(session, city) == 1
+
+
+@pytest.mark.asyncio
+async def test_staged_compute_reused_connection_no_stale_leak(session, engine):
+    """Consecutive computes on a REUSED pinned connection cannot leak stale staging — the
+    unconditional DROP + CREATE re-derives fresh each time (a bare reuse would PK-collide on the
+    prior generation's rows or retain them)."""
+    from sqlalchemy.ext.asyncio import AsyncSession as _AsyncSession
+
+    from app.membership import RefreshScope, compute_boundary_derivation
+
+    await _enable_region_tier(session)
+    await _add_boundary(
+        session,
+        overture_id="us",
+        subtype="country",
+        country_code="us",
+        name="US",
+        slug="united-states",
+        wkt=_sq(0, 0, 10, 10),
+    )
+    reg = await _add_boundary(
+        session,
+        overture_id="reg",
+        subtype="region",
+        country_code="us",
+        name="Region",
+        slug="reg",
+        wkt=_sq(0, 0, 8, 8),
+    )
+    await session.commit()
+
+    scope = RefreshScope(rebuild_cells=True)
+    async with engine.connect() as connection:
+        s = _AsyncSession(bind=connection, expire_on_commit=False)
+        await compute_boundary_derivation(s, scope)
+        await s.commit()
+        kind1 = (
+            await s.execute(
+                text("SELECT place_kind FROM _staged_boundary_derivation WHERE place_id = :id"),
+                {"id": reg},
+            )
+        ).scalar_one()
+        assert kind1 == "region"
+
+        # Mutate the boundary to a non-eligible subtype and commit, then re-run compute on the SAME
+        # connection WITHOUT any explicit drop.
+        await s.execute(
+            text("UPDATE place_boundaries SET subtype = 'county' WHERE id = :id"), {"id": reg}
+        )
+        await s.commit()
+        await compute_boundary_derivation(s, scope)
+        await s.commit()
+        kind2 = (
+            await s.execute(
+                text("SELECT place_kind FROM _staged_boundary_derivation WHERE place_id = :id"),
+                {"id": reg},
+            )
+        ).scalar_one()
+        assert kind2 is None  # fresh gen-2 staging, no gen-1 residue and no PK collision
+
+
+@pytest.mark.asyncio
+async def test_staged_wrapper_publish_failure_preserves_previous_generation(
+    session, engine, monkeypatch
+):
+    """A forced publish failure rolls back atomically: the previous generation's DERIVED state
+    stays live (no cleared canonicals), an add after the failure computes from that coherent
+    previous generation, the wrapper raises (loader Job fails visibly), and a rerun converges."""
+    import app.membership as m
+    from app.db import get_engine
+    from app.locks import acquire_add_fountain_lock
+    from app.membership import (
+        RefreshScope,
+        recompute_fountain_membership,
+        run_staged_membership_refresh,
+    )
+
+    _, city, _ = await _seed_country_city_committed(session)
+    # Generation 1 (via the wrapper) — city is a canonical city with one fountain.
+    await run_staged_membership_refresh(get_engine(), RefreshScope(rebuild_cells=True))
+    await session.rollback()
+    assert await _is_canonical(session, city) is True
+    assert await _count(session, city) == 1
+
+    # The loader commits a boundary identity change (gen 2), then the derived refresh will fail.
+    await session.execute(
+        text("UPDATE place_boundaries SET subtype = 'neighborhood' WHERE id = :id"), {"id": city}
+    )
+    await session.commit()
+
+    async def _boom(*_args, **_kwargs):
+        raise RuntimeError("forced publish failure")
+
+    monkeypatch.setattr(m, "_build_summary", _boom)
+    with pytest.raises(RuntimeError):
+        await run_staged_membership_refresh(get_engine(), RefreshScope(rebuild_cells=True))
+
+    # Previous generation's DERIVED state intact (publish rolled back atomically).
+    await session.rollback()
+    assert await _is_canonical(session, city) is True
+    assert await _count(session, city) == 1
+    kind = (
+        await session.execute(
+            text("SELECT place_kind FROM place_boundaries WHERE id = :id"), {"id": city}
+        )
+    ).scalar_one()
+    assert kind == "city"
+
+    # An add AFTER the failure computes membership from the coherent previous generation.
+    await acquire_add_fountain_lock(session, context="test-add-after-failure")
+    fid2 = await _add_fountain(session, lat=1.6, lng=1.6)
+    await recompute_fountain_membership(session, fid2)
+    await session.commit()
+    assert (await _membership(session, fid2)).city_place_id == city
+
+    # A rerun (the forced failure removed) converges to generation 2.
+    monkeypatch.undo()
+    await run_staged_membership_refresh(get_engine(), RefreshScope(rebuild_cells=True))
+    await session.rollback()
+    kind2 = (
+        await session.execute(
+            text("SELECT place_kind FROM place_boundaries WHERE id = :id"), {"id": city}
+        )
+    ).scalar_one()
+    assert kind2 is None  # 'neighborhood' is not an eligible city subtype
+    assert await _is_canonical(session, city) is False
+
+
+@pytest.mark.asyncio
+async def test_staged_wrapper_emits_stage_boundary_logs(session, caplog):
+    import logging
+
+    from app.db import get_engine
+    from app.membership import RefreshScope, run_staged_membership_refresh
+
+    await _seed_country_city_committed(session)
+    with caplog.at_level(logging.INFO, logger="app.membership"):
+        await run_staged_membership_refresh(get_engine(), RefreshScope(rebuild_cells=True))
+
+    events = [r.getMessage() for r in caplog.records if r.name == "app.membership"]
+    for ev in (
+        "compute_started",
+        "compute_completed",
+        "publish_waiting",
+        "publish_started",
+        "publish_completed",
+    ):
+        assert ev in events, ev
+    # compute_completed precedes publish_completed (the publish window opens after compute commits).
+    assert events.index("compute_completed") < events.index("publish_completed")
+    started = next(r for r in caplog.records if r.getMessage() == "compute_started")
+    assert getattr(started, "scope", None) == "all"
+    leaked = " ".join(
+        str(v) for r in caplog.records if r.name == "app.membership" for v in r.__dict__.values()
+    )
+    assert "set_config" not in leaked.lower()
+    assert "asyncpg" not in leaked.lower()
+
+
+@pytest.mark.asyncio
+async def test_staged_wrapper_publish_failed_log_has_no_driver_internals(
+    session, monkeypatch, caplog
+):
+    import logging
+
+    import app.membership as m
+    from app.db import get_engine
+    from app.membership import RefreshScope, run_staged_membership_refresh
+
+    await _seed_country_city_committed(session)
+
+    async def _boom(*_args, **_kwargs):
+        raise RuntimeError("forced-secret-detail")
+
+    monkeypatch.setattr(m, "_build_summary", _boom)
+    with caplog.at_level(logging.ERROR, logger="app.membership"):
+        with pytest.raises(RuntimeError):
+            await run_staged_membership_refresh(get_engine(), RefreshScope(rebuild_cells=True))
+
+    failed = [r for r in caplog.records if r.getMessage() == "publish_failed"]
+    assert len(failed) == 1
+    assert failed[0].levelno == logging.ERROR
+    leaked = " ".join(str(v) for v in failed[0].__dict__.values())
+    assert "forced-secret-detail" not in leaked  # the exception string is not in the stage event
+    assert "RuntimeError" not in leaked
+    assert "set_config" not in leaked.lower()
