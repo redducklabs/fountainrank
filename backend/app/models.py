@@ -939,6 +939,11 @@ class PlaceBoundary(Base):
     boundary: Mapped[WKBElement] = mapped_column(
         Geography(geometry_type="MULTIPOLYGON", srid=4326, spatial_index=True), nullable=False
     )
+    # Precomputed geodesic ST_Area(boundary, use_spheroid=true), set by the loader on write. Read in
+    # the membership "smallest/largest covering place" order-bys instead of recomputing ST_Area per
+    # candidate (the city-parent step recomputed it once per city over large region polygons — a
+    # per-load hotspot). Nullable: rows written before this column existed fall back via COALESCE.
+    boundary_area: Mapped[float | None] = mapped_column(Double, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
