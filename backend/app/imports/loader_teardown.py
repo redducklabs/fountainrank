@@ -43,7 +43,9 @@ from app.imports.loader_session import compose_session_marker
 GLOBAL_DEADLINE_SECONDS = 210.0
 FINALIZATION_RESERVE_SECONDS = 10.0
 DELETE_TIMEOUT_SECONDS = 30.0
-ABSENCE_POLL_ATTEMPTS = 3
+# 4 polls (~35 s ceiling incl. sleeps) comfortably covers the loader pod's 5 s termination grace
+# (#250: with 3 polls and the old 30 s grace, every cancelled run failed absence confirmation).
+ABSENCE_POLL_ATTEMPTS = 4
 ABSENCE_POLL_INTERVAL_SECONDS = 5.0
 REAPER_ATTEMPTS = 3
 REAPER_TIMEOUT_SECONDS = 20.0

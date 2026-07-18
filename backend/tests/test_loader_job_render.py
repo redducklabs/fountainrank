@@ -56,7 +56,9 @@ def test_security_and_backstop_fields():
     assert spec["activeDeadlineSeconds"] == 5400
     assert spec["ttlSecondsAfterFinished"] == 600
     assert pod["restartPolicy"] == "Never"
-    assert pod["terminationGracePeriodSeconds"] == 30
+    # 5 s grace: the loader has no graceful-shutdown work, and a longer grace makes teardown's
+    # pod-absence confirmation miss its poll budget on every cancellation (#250).
+    assert pod["terminationGracePeriodSeconds"] == 5
     assert pod["imagePullSecrets"] == [{"name": "regcred"}]
     assert pod["securityContext"]["fsGroup"] == 1000
     assert pod["securityContext"]["runAsNonRoot"] is True
