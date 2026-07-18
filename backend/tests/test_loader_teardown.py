@@ -224,9 +224,33 @@ def test_production_defaults_fit_platform_window():
         + (lt.REAPER_ATTEMPTS - 1) * lt.REAPER_BACKOFF_SECONDS
         + lt.REQUERY_ATTEMPTS * (lt.REQUERY_TIMEOUT_SECONDS + lt.REQUERY_INTERVAL_SECONDS)
     )
-    assert serial_worst == 185.0
+    assert serial_worst == 195.0
     assert serial_worst <= lt.GLOBAL_DEADLINE_SECONDS - lt.FINALIZATION_RESERVE_SECONDS
     assert lt.GLOBAL_DEADLINE_SECONDS < 300  # GitHub's 5-minute post-cancellation window
+    # The absence phase ceiling (polls + sleeps) must exceed the loader pod's termination grace,
+    # or every cancellation reports a spurious pod_absence failure (#250).
+    from app.imports.loader_job_render import render_job
+
+    manifest = render_job(
+        job_name="boundary-load",
+        image="img:1",
+        namespace="fountainrank",
+        session_marker="loader:boundary-load:1",
+        argv=["python"],
+        files=[{"local": "/t", "container": "/work/x"}],
+        mem_request="256Mi",
+        mem_limit="1Gi",
+        cpu_request="100m",
+        cpu_limit="1",
+        active_deadline_seconds=5400,
+        ready_timeout_seconds=600,
+    )
+    grace = manifest["spec"]["template"]["spec"]["terminationGracePeriodSeconds"]
+    absence_ceiling = (
+        lt.ABSENCE_POLL_ATTEMPTS * lt.ABSENCE_POLL_INTERVAL_SECONDS
+        + (lt.ABSENCE_POLL_ATTEMPTS - 1) * lt.ABSENCE_POLL_INTERVAL_SECONDS
+    )
+    assert absence_ceiling > grace + 10  # headroom for kubelet/API lag
 
 
 def test_absence_loop_does_not_sleep_after_final_attempt():

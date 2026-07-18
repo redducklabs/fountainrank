@@ -2767,6 +2767,22 @@ async def test_country_refresh_mixed_target_and_foreign_assignments(session, eng
     assert remaps[0].candidate_fountains == 1
     assert remaps[0].affected_places >= 3
 
+    # Publish-window observability (#249): every publish step emits a timed stage event, so a
+    # slow locked window is attributable to a specific step from logs alone.
+    by_msg = {r.getMessage(): r for r in caplog.records}
+    for event in (
+        "publish_cells_replaced",
+        "publish_derivation_applied",
+        "candidates_captured",
+        "candidates_assigned",
+        "place_counts_recomputed",
+    ):
+        assert event in by_msg, f"missing publish stage event {event}"
+        assert by_msg[event].elapsed_ms >= 0
+    assert by_msg["publish_cells_replaced"].cells > 0
+    assert by_msg["candidates_captured"].candidate_fountains == 1
+    assert by_msg["place_counts_recomputed"].affected_places >= 3
+
     # Final membership re-derived from scratch: spatially nowhere -> all NULL.
     m = await _membership(session, fid)
     assert m.country_place_id is None

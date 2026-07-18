@@ -51,7 +51,11 @@ def render_job(
     active_deadline_seconds: int,
     ready_timeout_seconds: int,
     ttl_seconds: int = 600,
-    grace_seconds: int = 30,
+    # 5 s, not the k8s default 30: the loader is a mid-transaction CLI with no graceful-shutdown
+    # work — SIGTERM kills it and the database-side rollback is handled by the fail-closed session
+    # config. A long grace only delays teardown's pod-absence confirmation past its poll budget,
+    # making every cancelled run report a spurious teardown failure (#250).
+    grace_seconds: int = 5,
 ) -> dict:
     if not argv or not all(isinstance(a, str) for a in argv):
         raise ValueError("argv must be a non-empty list of strings")

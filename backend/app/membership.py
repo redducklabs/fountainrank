@@ -57,6 +57,7 @@ path.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 
 from sqlalchemy import text
@@ -1354,14 +1355,27 @@ async def publish_membership_state(
         await session.execute(_CANONICAL_RESET_SQL)
 
     # (2) replace the live cells from staging (only when boundaries changed) + apply staged
-    # place_kind / parent to the live boundaries.
+    # place_kind / parent to the live boundaries. Each publish step logs its elapsed time —
+    # the locked window ran 75 minutes with no intermediate events on the first Spain load
+    # (#249), which is a Logging & Observability defect: a slow publish must be attributable
+    # to a specific step from logs alone.
     if scope.stage_cells:
+        started = time.monotonic()
         if scope.scoped:
             await session.execute(_DELETE_COUNTRY_CELLS_SQL, {"cc": cc})
         else:
             await session.execute(_TRUNCATE_CELLS_SQL)
-        await session.execute(_PUBLISH_CELLS_INSERT_SQL)
+        inserted = await session.execute(_PUBLISH_CELLS_INSERT_SQL)
         await session.execute(_ANALYZE_CELLS_SQL)
+        log.info(
+            "publish_cells_replaced",
+            extra={
+                **scope_extra,
+                "cells": inserted.rowcount,
+                "elapsed_ms": round((time.monotonic() - started) * 1000),
+            },
+        )
+    started = time.monotonic()
     if scope.scoped:
         await session.execute(_APPLY_STAGED_DERIVATION_COUNTRY_SQL, {"cc": cc})
     else:
@@ -1372,6 +1386,10 @@ async def publish_membership_state(
         await session.execute(_PUBLISH_REGION_CANONICAL_COUNTRY_SQL, {"cc": cc})
     else:
         await session.execute(_PUBLISH_REGION_CANONICAL_SQL)
+    log.info(
+        "publish_derivation_applied",
+        extra={**scope_extra, "elapsed_ms": round((time.monotonic() - started) * 1000)},
+    )
 
     # (4) the existing fountain-dependent tail per scope.
     if scope.scoped:
@@ -1401,17 +1419,41 @@ async def _publish_full_tail(session: AsyncSession) -> MembershipRefreshSummary:
 async def _publish_country_tail(session: AsyncSession, cc: str) -> MembershipRefreshSummary:
     log_extra = {"country": cc, "scope": "country"}
     await _prepare_scoped_refresh_temp_tables(session)
+    started = time.monotonic()
     await session.execute(_CAPTURE_COUNTRY_CANDIDATES_SQL, {"cc": cc})
     candidate_count = (await session.execute(_COUNT_COUNTRY_CANDIDATES_SQL)).scalar_one()
+    log.info(
+        "candidates_captured",
+        extra={
+            **log_extra,
+            "candidate_fountains": candidate_count,
+            "elapsed_ms": round((time.monotonic() - started) * 1000),
+        },
+    )
+    started = time.monotonic()
     await session.execute(_ADD_CANDIDATE_PLACES_TO_AFFECTED_SQL)
     await session.execute(_ASSIGN_CANDIDATE_SQL)
     await session.execute(_CAPTURE_RAW_CITY_MEMBERSHIP_SQL)
     await session.execute(_ADD_CANDIDATE_PLACES_TO_AFFECTED_SQL)
     await session.execute(_ADD_COUNTRY_PLACES_TO_AFFECTED_SQL, {"cc": cc})
+    log.info(
+        "candidates_assigned",
+        extra={**log_extra, "elapsed_ms": round((time.monotonic() - started) * 1000)},
+    )
     await _log_assignment_summary(session, log_extra)
 
     affected_ids = [row.id for row in (await session.execute(_SELECT_AFFECTED_PLACE_IDS_SQL)).all()]
+    started = time.monotonic()
     await recompute_place_counts(session, affected_ids)
+    log.info(
+        "place_counts_recomputed",
+        extra={
+            **log_extra,
+            "phase": "initial",
+            "affected_places": len(affected_ids),
+            "elapsed_ms": round((time.monotonic() - started) * 1000),
+        },
+    )
 
     await session.execute(_REMAP_CITY_CANDIDATE_SQL)
     await session.execute(_CAPTURE_FINAL_CHANGED_PLACES_SQL)
@@ -1423,7 +1465,17 @@ async def _publish_country_tail(session: AsyncSession, cc: str) -> MembershipRef
         affected_ids = [
             row.id for row in (await session.execute(_SELECT_AFFECTED_PLACE_IDS_SQL)).all()
         ]
+        started = time.monotonic()
         await recompute_place_counts(session, affected_ids)
+        log.info(
+            "place_counts_recomputed",
+            extra={
+                **log_extra,
+                "phase": "final_changed",
+                "affected_places": len(affected_ids),
+                "elapsed_ms": round((time.monotonic() - started) * 1000),
+            },
+        )
     affected_count = (await session.execute(_COUNT_AFFECTED_PLACES_SQL)).scalar_one()
     log.info(
         "city_remapped",
