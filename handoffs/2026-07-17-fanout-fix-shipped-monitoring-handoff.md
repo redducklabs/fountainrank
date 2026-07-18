@@ -74,8 +74,9 @@ incident handoff §3.)
 
 ## 4. The monitoring job
 
-Poll `gh run list --workflow 306378652` periodically (runs take ~15 min to ~2 h each; the whole
-queue is likely **2–4 days**). Per terminal outcome:
+Poll `gh run list --workflow 306378652` periodically until no pending/in-progress runs remain
+(for calibration, completed-run durations are visible in the run list — e.g. Spain finished in
+1h46m; per-country durations vary widely with country size). Per terminal outcome:
 
 - **success** → nothing to do. Optionally spot-check committed cells for that country.
 - **failure — expected fail-closed territories `fo gg im je nc xk`**: the pinned Overture
