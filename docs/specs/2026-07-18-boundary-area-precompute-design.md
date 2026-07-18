@@ -85,9 +85,10 @@ Add `boundary_area: Mapped[float | None]` to `PlaceBoundary`.
 
 - **Behavior-preserving:** stored value equals the recomputed value; `COALESCE` guarantees identical
   ordering with or without backfill. Membership assignment (`docs/specs/...§5/§11.5`) is unchanged.
-- **No live-site impact:** `/api/v1/places` does not read `boundary_area`; the migration is
-  rewrite-free and bounds its `ACCESS EXCLUSIVE` acquisition with a 3s `lock_timeout` (fail-fast, no
-  unbounded stall); the loader change only adds a cheap column write per boundary insert.
+- **Bounded live-site impact:** `/api/v1/places` does not read `boundary_area`; the migration is
+  rewrite-free and bounds its `ACCESS EXCLUSIVE` acquisition with a 3s `lock_timeout` (worst case a
+  ≤3s read-queue, fail-fast, no unbounded stall); the loader change only adds a cheap column write
+  per boundary insert.
 - **Tests:** existing `backend/tests/test_membership*.py` and boundary-load tests must stay green
   (ordering unchanged). Assert (a) a freshly loaded boundary has `boundary_area` populated and equal
   to `ST_Area(boundary, true)`, and (b) an `ON CONFLICT` reload with a different-area geometry moves
