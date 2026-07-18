@@ -192,6 +192,38 @@ async def test_persisted_fields_round_trip(session):
 
 
 @pytest.mark.asyncio
+async def test_conflict_update_refreshes_boundary_area(session):
+    # The ON CONFLICT UPDATE must move boundary and boundary_area together — a stale precomputed
+    # area would silently corrupt the membership "smallest/largest covering place" ordering.
+    bigger = {"type": "Polygon", "coordinates": [[[0, 0], [4, 0], [4, 4], [0, 4], [0, 0]]]}
+    await load_boundaries(session, features=[_feat(overture_id="ov-area", geometry=_POLY)])
+    await session.commit()
+    first_area = (
+        await session.execute(
+            select(PlaceBoundary.boundary_area).where(PlaceBoundary.overture_id == "ov-area")
+        )
+    ).scalar_one()
+    # Reload the SAME overture_id with a larger geometry.
+    summary = await load_boundaries(
+        session, features=[_feat(overture_id="ov-area", geometry=bigger)]
+    )
+    await session.commit()
+    assert summary.updated_count == 1
+    row = (
+        await session.execute(select(PlaceBoundary).where(PlaceBoundary.overture_id == "ov-area"))
+    ).scalar_one()
+    recomputed = (
+        await session.execute(
+            text(
+                "SELECT ST_Area(boundary, true) FROM place_boundaries WHERE overture_id = 'ov-area'"
+            )
+        )
+    ).scalar_one()
+    assert row.boundary_area == pytest.approx(recomputed)
+    assert row.boundary_area > first_area  # grew with the larger geometry — not stale
+
+
+@pytest.mark.asyncio
 async def test_country_code_lowercased_at_insert_boundary(session):
     # load_boundaries is a directly-callable internal API; even an uppercase country_code on a
     # hand-built feature must land lowercased so canonical (country_code, slug) uniqueness holds.

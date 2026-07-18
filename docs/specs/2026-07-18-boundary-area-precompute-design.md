@@ -48,8 +48,13 @@ correctly — just without the speedup.
 
 ### 3.1 Migration (`0028_boundary_area`)
 
-- `ALTER TABLE place_boundaries ADD COLUMN boundary_area double precision` — nullable, metadata-only,
-  **no table rewrite, no long lock** on the 248k-row live table.
+- `ALTER TABLE place_boundaries ADD COLUMN boundary_area double precision` — nullable, **metadata-only
+  (rewrite-free)**: it does not rewrite the 248k rows. It is *not* lock-free — ADD COLUMN briefly
+  takes `ACCESS EXCLUSIVE`, and a queued acquisition behind a conflicting long transaction would
+  block ordinary reads. The migration runs `SET LOCAL lock_timeout = '3s'` first so, if the deploy's
+  no-loader-in-flight precondition is ever violated, it **fails fast (retry in a quiet window)**
+  instead of stalling live reads. In the normal deploy window the lock is free and the ALTER is
+  near-instant.
 - **No in-migration backfill.** Correctness is preserved by the `COALESCE` fallback; new/re-loaded
   boundaries populate the column on insert. This keeps the deploy migration instant and avoids
   bloating the live table during a deploy. Backfilling already-loaded countries is a separate,
@@ -80,11 +85,14 @@ Add `boundary_area: Mapped[float | None]` to `PlaceBoundary`.
 
 - **Behavior-preserving:** stored value equals the recomputed value; `COALESCE` guarantees identical
   ordering with or without backfill. Membership assignment (`docs/specs/...§5/§11.5`) is unchanged.
-- **No live-site impact:** `/api/v1/places` does not read `boundary_area`; the migration takes no
-  meaningful lock; the loader change only adds a cheap column write per boundary insert.
+- **No live-site impact:** `/api/v1/places` does not read `boundary_area`; the migration is
+  rewrite-free and bounds its `ACCESS EXCLUSIVE` acquisition with a 3s `lock_timeout` (fail-fast, no
+  unbounded stall); the loader change only adds a cheap column write per boundary insert.
 - **Tests:** existing `backend/tests/test_membership*.py` and boundary-load tests must stay green
-  (ordering unchanged). Add a targeted assertion that a loaded boundary has `boundary_area` populated
-  and equal to `ST_Area(boundary)`, and that `alembic upgrade head` + `alembic check` are clean.
+  (ordering unchanged). Assert (a) a freshly loaded boundary has `boundary_area` populated and equal
+  to `ST_Area(boundary, true)`, and (b) an `ON CONFLICT` reload with a different-area geometry moves
+  `boundary` and `boundary_area` together (no stale precomputed area). Confirm `alembic upgrade head`
+  + `alembic check` are clean.
 
 ## 5. Expected effect
 

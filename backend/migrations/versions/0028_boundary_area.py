@@ -9,10 +9,17 @@ area over large region multipolygons — once per candidate. The city-parent ste
 per city (37k cities over ~13 regions for a country like FR), a per-load hotspot. Store the area as
 a column, populated by the loader on write and read via COALESCE(boundary_area, ST_Area(boundary)).
 
-Nullable + NO backfill: a plain metadata-only ADD COLUMN takes no table rewrite / long lock on the
-live table, and the COALESCE fallback keeps ordering correct for any row written before this column
-existed. Newly (re)loaded boundaries populate it on insert. Backfilling already-loaded countries is
-an optional, separately-batched follow-up (they are loaded; only future refreshes benefit).
+Nullable + NO backfill: a nullable ADD COLUMN is metadata-only (rewrite-free) — it does NOT rewrite
+the 248k rows — and the COALESCE fallback keeps ordering correct for any row written before this
+column existed. Newly (re)loaded boundaries populate it on insert. Backfilling already-loaded
+countries is an optional, separately-batched follow-up (they are loaded; only future refreshes
+benefit).
+
+It is rewrite-free but NOT lock-free: ADD COLUMN still briefly takes ACCESS EXCLUSIVE, and while
+that request is queued behind a conflicting long transaction it would block ordinary reads. Deploys
+run migrations with no loader in flight (loader-runbook rule), so the lock is normally free and the
+ALTER is near-instant; a short lock_timeout bounds the blast radius if that assumption is ever
+violated — the migration fails loudly (retry in a quiet window) instead of stalling live reads.
 """
 
 import sqlalchemy as sa
@@ -25,6 +32,10 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Bound the ACCESS EXCLUSIVE acquisition: if a conflicting long transaction holds the table,
+    # fail the deploy fast rather than queue live reads behind an unbounded lock wait. SET LOCAL is
+    # scoped to alembic's migration transaction and resets on commit.
+    op.execute("SET LOCAL lock_timeout = '3s'")
     op.add_column(
         "place_boundaries",
         sa.Column("boundary_area", sa.Double(), nullable=True),
