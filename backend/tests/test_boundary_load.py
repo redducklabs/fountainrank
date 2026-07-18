@@ -176,6 +176,19 @@ async def test_persisted_fields_round_trip(session):
     assert row.country_code == "lu"
     assert row.slug == "bech"
     assert row.is_canonical is False  # loader never sets canonical (Slice 1d does)
+    # boundary_area is precomputed on write == ST_Area(boundary, true) — the value the membership
+    # order-bys read via COALESCE(boundary_area, ST_Area(boundary)) instead of recomputing the
+    # geodesic area per candidate (boundary-area precompute; unblocks large city-dense loads).
+    assert row.boundary_area is not None and row.boundary_area > 0
+    expected_area = (
+        await session.execute(
+            text(
+                "SELECT ST_Area(boundary, true) FROM place_boundaries "
+                "WHERE overture_id = 'ov-round'"
+            )
+        )
+    ).scalar_one()
+    assert row.boundary_area == pytest.approx(expected_area)
 
 
 @pytest.mark.asyncio

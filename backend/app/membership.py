@@ -167,7 +167,7 @@ _ASSIGN_SQL = text(
             WHERE pb.country_code = cc.country_code
               AND pb.place_kind = 'region'
               AND ST_Covers(c.geom, f2.location::geometry)
-            ORDER BY ST_Area(pb.boundary) ASC, pb.overture_id ASC
+            ORDER BY COALESCE(pb.boundary_area, ST_Area(pb.boundary)) ASC, pb.overture_id ASC
             LIMIT 1
         ) region ON TRUE
         LEFT JOIN LATERAL (
@@ -178,7 +178,7 @@ _ASSIGN_SQL = text(
               AND pb.place_kind = 'city'
               AND ST_Covers(c.geom, f2.location::geometry)
             ORDER BY ({_priority_case("pb.subtype")}) DESC,
-                     ST_Area(pb.boundary) ASC,
+                     COALESCE(pb.boundary_area, ST_Area(pb.boundary)) ASC,
                      pb.overture_id ASC
             LIMIT 1
         ) city ON TRUE
@@ -220,7 +220,7 @@ _ASSIGN_CANDIDATE_SQL = text(
             WHERE pb.country_code = cc.country_code
               AND pb.place_kind = 'region'
               AND ST_Covers(c.geom, f2.location::geometry)
-            ORDER BY ST_Area(pb.boundary) ASC, pb.overture_id ASC
+            ORDER BY COALESCE(pb.boundary_area, ST_Area(pb.boundary)) ASC, pb.overture_id ASC
             LIMIT 1
         ) region ON TRUE
         LEFT JOIN LATERAL (
@@ -231,7 +231,7 @@ _ASSIGN_CANDIDATE_SQL = text(
               AND pb.place_kind = 'city'
               AND ST_Covers(c.geom, f2.location::geometry)
             ORDER BY ({_priority_case("pb.subtype")}) DESC,
-                     ST_Area(pb.boundary) ASC,
+                     COALESCE(pb.boundary_area, ST_Area(pb.boundary)) ASC,
                      pb.overture_id ASC
             LIMIT 1
         ) city ON TRUE
@@ -745,7 +745,7 @@ _STAGED_CANONICAL_REGIONS_SQL = text(
     WITH ranked AS (
         SELECT sbd.place_id, ROW_NUMBER() OVER (
             PARTITION BY pb.country_code, pb.slug
-            ORDER BY ST_Area(pb.boundary) DESC, pb.overture_id ASC
+            ORDER BY COALESCE(pb.boundary_area, ST_Area(pb.boundary)) DESC, pb.overture_id ASC
         ) AS rn
         FROM _staged_boundary_derivation sbd
         JOIN place_boundaries pb ON pb.id = sbd.place_id
@@ -762,7 +762,7 @@ _STAGED_CANONICAL_REGIONS_COUNTRY_SQL = text(
     WITH ranked AS (
         SELECT sbd.place_id, ROW_NUMBER() OVER (
             PARTITION BY pb.country_code, pb.slug
-            ORDER BY ST_Area(pb.boundary) DESC, pb.overture_id ASC
+            ORDER BY COALESCE(pb.boundary_area, ST_Area(pb.boundary)) DESC, pb.overture_id ASC
         ) AS rn
         FROM _staged_boundary_derivation sbd
         JOIN place_boundaries pb ON pb.id = sbd.place_id
@@ -889,7 +889,7 @@ def _staged_city_parent_sql(cell_table: str, *, scoped: bool):
                   AND s3.is_canonical = true
                   AND pb.country_code = cp.country_code
                   AND ST_Covers(cell.geom, cp.pt)
-                ORDER BY ST_Area(pb.boundary) ASC, pb.overture_id ASC
+                ORDER BY COALESCE(pb.boundary_area, ST_Area(pb.boundary)) ASC, pb.overture_id ASC
                 LIMIT 1
             ) region ON TRUE
         ) p

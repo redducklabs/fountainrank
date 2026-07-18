@@ -43,10 +43,11 @@ _UPSERT_SQL = text(
     ins AS (
         INSERT INTO place_boundaries
             (id, overture_id, subtype, "class", admin_level, osm_type, osm_id,
-             name, country_code, slug, is_canonical, boundary, created_at, updated_at)
+             name, country_code, slug, is_canonical, boundary, boundary_area,
+             created_at, updated_at)
         SELECT gen_random_uuid(), :overture_id, :subtype, :place_class, :admin_level,
                :osm_type, :osm_id, :name, :country_code, :slug, false,
-               coerced.g::geography, now(), now()
+               coerced.g::geography, ST_Area(coerced.g::geography, true), now(), now()
         FROM coerced
         WHERE ST_IsValid(coerced.g)
           AND NOT ST_IsEmpty(coerced.g)
@@ -61,6 +62,7 @@ _UPSERT_SQL = text(
             country_code = EXCLUDED.country_code,
             -- slug is intentionally NOT updated: it is sticky (spec §4.3).
             boundary = EXCLUDED.boundary,
+            boundary_area = ST_Area(EXCLUDED.boundary, true),
             updated_at = now()
         RETURNING overture_id
     )
