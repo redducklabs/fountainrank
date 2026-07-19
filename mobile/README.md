@@ -173,7 +173,10 @@ publishing is off. The Expo org/project are linked in `app.config.ts`
 `820564bf-5f29-44c7-8ec7-edde67b77360`), and the native identity is
 owner-confirmed as `com.redducklabs.fountainrank`.
 
-The app version defaults to `1.0.0` in `app.config.ts`. Store-release CI sets
+The app version defaults to `1.0.1` in `app.config.ts` — **bump it for every
+store release** (App Store Connect rejects re-submitting an already-submitted
+iOS `CFBundleShortVersionString`; Android is fine via its auto-incremented
+`versionCode`). Store-release CI sets
 `EXPO_APP_VERSION` for both Android and iOS builds: tag releases use the
 `vMAJOR.MINOR.PATCH` tag exactly, while manual dispatches use the configured
 default until a matching tag exists and then bump the patch component from the
