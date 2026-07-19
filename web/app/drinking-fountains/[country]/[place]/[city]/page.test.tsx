@@ -155,7 +155,7 @@ it("generateMetadata uses the canonical nested city URL", async () => {
   mockResolvedCity();
 
   const meta = await generateMetadata({ params: params("us", "california", "san-diego") });
-  expect(meta.title).toBe("Drinking fountains in San Diego");
+  expect(meta.title).toBe("Public drinking fountains in San Diego — 12 mapped");
   expect(meta.alternates?.canonical).toBe("/drinking-fountains/us/california/san-diego");
   expect(meta.robots).toBeUndefined();
 });

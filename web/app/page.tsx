@@ -1,17 +1,52 @@
 import type { Metadata } from "next";
+import { unstable_cache } from "next/cache";
 import Link from "next/link";
 import { MobileStoreLinks } from "../components/MobileStoreLinks";
 import { SiteHeader } from "../components/SiteHeader";
 import MapBrowserLoader from "../components/map/MapBrowserLoader";
+import { getSiteStatsServer, roundedCountPlus, type SiteStatsOut } from "../lib/places";
+import { log } from "../lib/server/log";
 import { getViewer } from "../lib/server/viewer";
 
 export const dynamic = "force-dynamic";
 
-// Emit a self-referential canonical so the apex homepage is the one indexed
-// variant (see #126).
-export const metadata: Metadata = {
-  alternates: { canonical: "/" },
-};
+// The homepage is force-dynamic (viewer + ?add), but the site-wide counts change slowly and must NOT
+// run a full fountains count() on every landing-page hit (the most-exposed route). Cache the
+// aggregate in Next's data cache for an hour (a static key, independent of any per-request id),
+// revalidated in the background. A failed fetch is logged (structured, no secrets — just the status)
+// and THROWS so the failure is not cached — the next request retries and the caller falls back to
+// countless copy.
+const getCachedSiteStats = unstable_cache(
+  async (): Promise<SiteStatsOut> => {
+    const { data, status } = await getSiteStatsServer();
+    if (!data) {
+      log("warn", "homepage site-stats fetch failed; using countless copy", { status });
+      throw new Error("site stats unavailable");
+    }
+    return data;
+  },
+  ["home-site-stats"],
+  { revalidate: 3600 },
+);
+
+// Self-referential canonical (the apex homepage is the one indexed variant, #126) + a positioning
+// meta description with LIVE counts (approved copy). If the stats fetch fails, fall back to a
+// countless phrasing rather than render "undefined".
+export async function generateMetadata(): Promise<Metadata> {
+  let stats: SiteStatsOut | null = null;
+  try {
+    stats = await getCachedSiteStats();
+  } catch {
+    stats = null;
+  }
+  const description = stats
+    ? `Browse ${roundedCountPlus(stats.total_fountains)} public drinking fountains across ${stats.total_countries} countries, rated by the community for working status and quality. Find water near you and refill for free.`
+    : "Browse public drinking fountains rated by the community for working status and quality. Find water near you and refill for free.";
+  return {
+    description,
+    alternates: { canonical: "/" },
+  };
+}
 
 export default async function Home({ searchParams }: { searchParams: Promise<{ add?: string }> }) {
   const [{ add }, viewer] = await Promise.all([searchParams, getViewer(crypto.randomUUID())]);

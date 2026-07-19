@@ -9,6 +9,7 @@ import {
   cityPath,
   countryPath,
   getNestedCityFountainsServer,
+  placeTitle,
   regionPath,
   resolvePlaceServer,
 } from "../../../../../lib/places";
@@ -99,7 +100,7 @@ export async function generateMetadata({
   const { data, region: regionPlace } = await loadCity(country, region, city);
   if (!data || !regionPlace) return { robots: { index: false, follow: false } };
   const { place, indexable } = data;
-  const title = `Drinking fountains in ${place.name}`;
+  const title = placeTitle(place.name, place.fountain_count);
   const description = cityDescription(place);
   const canonical = cityPath(place.country_code, place.slug, regionPlace.slug);
   return {

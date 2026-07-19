@@ -10,6 +10,7 @@ import {
   countryPath,
   getCityFountainsServer,
   getRegionFountainsServer,
+  placeTitle,
   regionPath,
   resolvePlaceServer,
 } from "../../../../lib/places";
@@ -104,7 +105,7 @@ export async function generateMetadata({
   if (!data?.fountains) return { robots: { index: false, follow: false } };
   const resolvedPlace = data.resolved.place;
   const canonical = data.resolved.canonical_path;
-  const title = `Drinking fountains in ${resolvedPlace.name}`;
+  const title = placeTitle(resolvedPlace.name, resolvedPlace.fountain_count);
   const desc = description(resolvedPlace);
   return {
     title,

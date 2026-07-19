@@ -10,6 +10,7 @@ import {
   getCountriesServer,
   getCountryCitiesServer,
   getCountryRegionsServer,
+  placeTitle,
   regionPath,
 } from "../../../lib/places";
 import type { PlaceOut } from "../../../lib/places";
@@ -41,7 +42,7 @@ export async function generateMetadata({
     // Unknown / below-gate country: the page 404s, but keep metadata explicitly non-indexable.
     return { robots: { index: false, follow: false } };
   }
-  const title = `Drinking fountains in ${place.name}`;
+  const title = placeTitle(place.name, place.fountain_count);
   const description = `Find public drinking fountains and water bottle refill stations across ${place.name} — ${place.fountain_count.toLocaleString()} mapped on FountainRank.`;
   const canonical = countryPath(place.country_code);
   return {
