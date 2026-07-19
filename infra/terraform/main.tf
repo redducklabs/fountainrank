@@ -179,10 +179,12 @@ variable "node_max" {
 variable "db_size" {
   # Bumped 1gb->4gb: the initial db-s-1vcpu-1gb was the minimal single-node default and was never
   # tuned. It is structurally undersized for the PostGIS workload (worldwide boundary membership +
-  # ~285k-fountain ST_Covers/ST_Area joins and the boundary-load publish), which triggered a DO
-  # low-resources alert. db-s-2vcpu-4gb is a same-family 4x-RAM / 2x-vCPU bump that matches the 4gb
-  # DOKS node tier. NOTE: applying a size change resizes the managed DB with a brief failover /
-  # connection drop — never apply while a boundary load is in flight (it would abort the publish).
+  # ~285k-fountain ST_Covers/ST_Area joins and the boundary-load publish), which tripped a DO
+  # low-resources alert — so 4x RAM is a workload-driven floor, not a node-parity choice. Post-resize
+  # DB telemetry (cache hit ratio, memory pressure, CPU during a publish) should drive any further
+  # sizing. db-s-2vcpu-4gb is a same-family (basic tier) 4x-RAM / 2x-vCPU bump. NOTE: applying a size
+  # change resizes the managed DB with a brief failover / connection drop — never apply while a
+  # boundary load is in flight (it would abort the publish).
   description = "Managed Postgres size."
   type        = string
   default     = "db-s-2vcpu-4gb"
