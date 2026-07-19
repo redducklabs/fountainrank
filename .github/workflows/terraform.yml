@@ -17,6 +17,11 @@ on:
         required: false
         default: false
         type: boolean
+      target:
+        description: "Optional -target for a SCOPED plan/apply (e.g. digitalocean_database_cluster.postgres). Empty = full plan/apply. Use to isolate one resource away from unrelated drift (a count-gated destroy, a k8s version bump)."
+        required: false
+        default: ""
+        type: string
 
 concurrency:
   group: terraform-production
@@ -64,7 +69,24 @@ jobs:
           terraform_version: 1.15.6
       - run: terraform init
       - name: Terraform plan
-        run: terraform plan -input=false -out=tfplan
+        # The optional scoped -target comes from an untrusted dispatch input, so pass it as a raw env
+        # value (Actions-evaluated, never inline in the command), VALIDATE it against the terraform
+        # resource-address grammar, and build argv as an array — no word-splitting / flag injection.
+        # The saved tfplan encodes -target, so the apply step replays exactly this scope.
+        env:
+          TARGET: ${{ github.event.inputs.target }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [ -n "$TARGET" ]; then
+            # ERE in a single-quoted var, matched UNQUOTED (the only way bash treats it as a regex,
+            # not a literal). The bracket lists ']' first and '-' last so both are literal; it allows
+            # the terraform resource-address grammar (type.name, [idx], "key", module.*).
+            target_re='^[a-zA-Z_][]a-zA-Z0-9_.["-]*$'
+            [[ "$TARGET" =~ $target_re ]] || { echo "invalid -target: $TARGET"; exit 1; }
+            args+=(-target="$TARGET")
+          fi
+          terraform plan -input=false "${args[@]}" -out=tfplan
       - name: Terraform apply
         if: github.event.inputs.action == 'apply'
         run: terraform apply -input=false -auto-approve tfplan
