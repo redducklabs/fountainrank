@@ -9,14 +9,23 @@ path reads only the precomputed membership columns on ``place_boundaries`` — i
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import func, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.config import Settings, get_settings
 from app.db import get_session
 from app.geo import latitude_of, longitude_of
 from app.models import Fountain, FountainPhoto, PlaceBoundary, PlaceScopeConfig
-from app.schemas import CityFountainPin, CityFountainsOut, Coordinates, PlaceOut, PlaceResolveOut
+from app.schemas import (
+    CityFountainPin,
+    CityFountainsOut,
+    CitySitemapItem,
+    CitySitemapOut,
+    Coordinates,
+    PlaceOut,
+    PlaceResolveOut,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -300,6 +309,65 @@ async def list_places(
         },
     )
     return await _places_out(session, rows, settings)
+
+
+@router.get("/places/cities/sitemap", response_model=CitySitemapOut)
+async def cities_sitemap(
+    response: Response,
+    limit: int = Query(default=50000, ge=1, le=50000),
+    offset: int = Query(default=0, ge=0),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> CitySitemapOut:
+    """The indexable cities for the cities sitemap chunk (spec §6/§7).
+
+    Enumerates the canonical cities in city-routes-ready scopes with ``fountain_count >= K`` — the
+    SAME gate ``PlaceOut.indexable`` applies for the city page's ``noindex`` verdict — ordered by id
+    for a stable, deterministic page across offsets. Joins each city's parent to derive the
+    canonical URL shape in one query: a canonical **region** parent yields the nested
+    ``/[country]/[region]/[city]`` slug, a **country** parent the two-level ``/[country]/[city]`` —
+    so the web builder never runs a per-city resolve, and a city whose parent was dropped (SET NULL)
+    or is a non-canonical region is excluded (it owns no canonical URL). Reads only the precomputed
+    membership columns (never a live ``ST_Covers``, spec §5); unauthenticated + cacheable.
+    ``total_count`` is the full indexable total so the sitemap builder sizes chunk URLs and logs
+    (never silently) when a chunk nears the 50k-URL limit and must be split. Declared BEFORE
+    ``/places/{country}/...`` so the literal ``cities/sitemap`` path is not parsed as a country.
+    """
+    parent = aliased(PlaceBoundary)
+    region_slug = case((parent.place_kind == "region", parent.slug), else_=None).label(
+        "region_slug"
+    )
+    base = (
+        select(PlaceBoundary.country_code, PlaceBoundary.slug, region_slug)
+        .join(parent, parent.id == PlaceBoundary.parent_id)
+        .join(PlaceScopeConfig, PlaceScopeConfig.country_code == PlaceBoundary.country_code)
+        .where(
+            PlaceBoundary.place_kind == "city",
+            PlaceBoundary.is_canonical.is_(True),
+            PlaceBoundary.fountain_count >= settings.seo_place_min_fountains,
+            PlaceScopeConfig.city_routes_ready.is_(True),
+            or_(
+                parent.place_kind == "country",
+                and_(parent.place_kind == "region", parent.is_canonical.is_(True)),
+            ),
+        )
+    )
+    total_count = (
+        await session.execute(select(func.count()).select_from(base.subquery()))
+    ).scalar_one()
+    rows = (
+        await session.execute(base.order_by(PlaceBoundary.id.asc()).limit(limit).offset(offset))
+    ).all()
+    cities = [
+        CitySitemapItem(country_code=row.country_code, slug=row.slug, region_slug=row.region_slug)
+        for row in rows
+    ]
+    _set_cache(response, settings)
+    logger.info(
+        "cities sitemap served",
+        extra={"total_count": total_count, "rows": len(cities), "limit": limit, "offset": offset},
+    )
+    return CitySitemapOut(cities=cities, total_count=total_count)
 
 
 @router.get("/places/{country}/regions", response_model=list[PlaceOut])
