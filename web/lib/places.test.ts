@@ -30,12 +30,14 @@ describe("regionPath", () => {
 });
 
 describe("placeTitle", () => {
-  it("builds the intent-matched title with a locale-formatted count", () => {
-    expect(placeTitle("San Diego", 42)).toBe(
-      "Public drinking fountains in San Diego — 42 mapped & rated",
-    );
+  it("builds the intent-matched title with an en-US-formatted mapped count", () => {
+    expect(placeTitle("San Diego", 42)).toBe("Public drinking fountains in San Diego — 42 mapped");
     expect(placeTitle("United States", 1234)).toBe(
-      "Public drinking fountains in United States — 1,234 mapped & rated",
+      "Public drinking fountains in United States — 1,234 mapped",
+    );
+    // Large numbers keep the en-US thousands separators, deterministically.
+    expect(placeTitle("Île-de-France", 1234567)).toBe(
+      "Public drinking fountains in Île-de-France — 1,234,567 mapped",
     );
   });
 });

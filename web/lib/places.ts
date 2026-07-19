@@ -32,18 +32,24 @@ export function cityPath(countryCode: string, slug: string, regionSlug?: string 
     : `/drinking-fountains/${cc}/${slug}`;
 }
 
+// Deterministic number formatting for SEO copy — pinned to en-US so the rendered title/description
+// never varies with the server's default locale (which would emit "1.234" or localized separators).
+const SEO_NUMBER_FORMAT = new Intl.NumberFormat("en-US");
+
 // Pure: the SEO <title> for a country/region/city place page — intent-matched ("public drinking
-// fountains in {place}") with the live mapped count. Approved positioning copy (owner sign-off).
+// fountains in {place}") with the live MAPPED count. Says "mapped", not "mapped & rated": the count
+// is every non-hidden fountain, and imported fountains may be unrated — so "rated" must not be
+// grammatically applied to N (the community-rating positioning lives in the homepage h1 instead).
 export function placeTitle(name: string, fountainCount: number): string {
-  return `Public drinking fountains in ${name} — ${fountainCount.toLocaleString()} mapped & rated`;
+  return `Public drinking fountains in ${name} — ${SEO_NUMBER_FORMAT.format(fountainCount)} mapped`;
 }
 
 // Pure: a headline count rounded DOWN to a clean thousand and suffixed "+" (285,432 -> "285,000+"),
 // so the homepage copy stays honest as the dataset grows. Below 1,000 it shows the exact number
 // (no misleading "0+").
 export function roundedCountPlus(n: number): string {
-  if (n < 1000) return n.toLocaleString();
-  return `${(Math.floor(n / 1000) * 1000).toLocaleString()}+`;
+  if (n < 1000) return SEO_NUMBER_FORMAT.format(n);
+  return `${SEO_NUMBER_FORMAT.format(Math.floor(n / 1000) * 1000)}+`;
 }
 
 // Server-only fetch of the public place list. This module is client-bundlable, so it never

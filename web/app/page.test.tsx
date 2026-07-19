@@ -7,6 +7,11 @@ const { getViewer, getSiteStatsServer } = vi.hoisted(() => ({
   getSiteStatsServer: vi.fn(),
 }));
 vi.mock("../lib/server/viewer", () => ({ getViewer }));
+// Pass unstable_cache through unchanged so each test's mocked fetch drives the result (no cross-test
+// caching of the first resolution).
+vi.mock("next/cache", () => ({
+  unstable_cache: <T,>(fn: T): T => fn,
+}));
 // Keep the real pure helpers (roundedCountPlus); stub only the server stats fetch.
 vi.mock("../lib/places", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/places")>();
