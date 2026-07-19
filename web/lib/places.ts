@@ -296,3 +296,38 @@ export async function getIndexableFountainsServer(
     return { data: undefined, status: 0 };
   }
 }
+
+// --- Cities sitemap (flat, chunked enumeration) — spec §6/§7 ---------------------------------
+
+// One indexable city's canonical-URL parts. `region_slug` is the parent region's slug for a
+// region-tier country (nested `/[country]/[region]/[city]`) or null for a two-level country.
+export type CitySitemapItem = components["schemas"]["CitySitemapItem"];
+export type CitySitemapOut = components["schemas"]["CitySitemapOut"];
+
+// The backend /api/v1/places/cities/sitemap `limit` hard cap (server enforces le=50000). Each cities
+// sitemap chunk fetches exactly one capped page; the sitemap index sizes chunk URLs from
+// `total_count`. Mirrors SITEMAP_FOUNTAIN_CAP so the two chunked sitemaps behave identically.
+export const SITEMAP_CITY_CAP = 50000;
+
+// Server-only fetch of the indexable cities' URL parts (canonical, city-routes-ready, >= K). A
+// network error yields `undefined` with status 0 (the sitemap builder then emits a transient 503
+// rather than a partial/false sitemap). This single flat, offset-paginated query replaces the old
+// per-country -> per-region -> per-region-cities fan-out.
+export async function getSitemapCitiesServer(
+  requestId?: string,
+  limit = SITEMAP_CITY_CAP,
+  offset = 0,
+): Promise<{ data: CitySitemapOut | undefined; status: number }> {
+  const headers: Record<string, string> = {};
+  if (requestId) headers["X-Request-ID"] = requestId;
+  const client = makeClient(resolveApiBaseUrl(), { headers });
+  try {
+    const { data, response } = await client.GET("/api/v1/places/cities/sitemap", {
+      params: { query: { limit, offset } },
+    });
+    return { data, status: response?.status ?? 0 };
+  } catch {
+    // status 0 = no HTTP response (network error / backend down / DNS failure)
+    return { data: undefined, status: 0 };
+  }
+}

@@ -3890,6 +3890,63 @@
         }
       }
     },
+    "/api/v1/places/cities/sitemap": {
+      "get": {
+        "tags": [
+          "places"
+        ],
+        "summary": "Cities Sitemap",
+        "description": "The indexable cities for the cities sitemap chunk (spec \u00a76/\u00a77).\n\nEnumerates the canonical cities in city-routes-ready scopes with ``fountain_count >= K`` \u2014 the\nSAME gate ``PlaceOut.indexable`` applies for the city page's ``noindex`` verdict \u2014 ordered by id\nfor a stable, deterministic page across offsets. Joins each city's parent to derive the\ncanonical URL shape in one query: a canonical **region** parent yields the nested\n``/[country]/[region]/[city]`` slug, a **country** parent the two-level ``/[country]/[city]`` \u2014\nso the web builder never runs a per-city resolve, and a city whose parent was dropped (SET NULL)\nor is a non-canonical region is excluded (it owns no canonical URL). Reads only the precomputed\nmembership columns (never a live ``ST_Covers``, spec \u00a75); unauthenticated + cacheable.\n``total_count`` is the full indexable total so the sitemap builder sizes chunk URLs and logs\n(never silently) when a chunk nears the 50k-URL limit and must be split. Declared BEFORE\n``/places/{country}/...`` so the literal ``cities/sitemap`` path is not parsed as a country.",
+        "operationId": "cities_sitemap_api_v1_places_cities_sitemap_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50000,
+              "minimum": 1,
+              "default": 50000,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CitySitemapOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/places/{country}/regions": {
       "get": {
         "tags": [
@@ -6010,6 +6067,59 @@
         ],
         "title": "CityFountainsOut",
         "description": "A city place plus its ranked, paginated fountains (#127 Slice 3, spec \u00a74.3/\u00a75).\n\n``place`` is the canonical city that owns the ``/[country]/[city]`` URL; ``fountains`` are its\nnon-hidden fountains, best-rated first. ``place.fountain_count`` is the full non-hidden total\n(the list is capped by ``limit``), so the page can show \"top N of M\" without a separate count.\n``indexable`` is the spec \u00a77 thin-content predicate computed server-side (``fountain_count >=\nseo_place_min_fountains``) \u2014 the single source of truth for K, so the web sets ``noindex`` from\nit rather than knowing the threshold."
+      },
+      "CitySitemapItem": {
+        "properties": {
+          "country_code": {
+            "type": "string",
+            "title": "Country Code"
+          },
+          "slug": {
+            "type": "string",
+            "title": "Slug"
+          },
+          "region_slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region Slug"
+          }
+        },
+        "type": "object",
+        "required": [
+          "country_code",
+          "slug",
+          "region_slug"
+        ],
+        "title": "CitySitemapItem",
+        "description": "One indexable city's canonical-URL parts for the cities sitemap (#127, spec \u00a76).\n\n``region_slug`` is the parent region's slug for a region-tier country (the nested\n``/[country]/[region]/[city]`` URL) or ``None`` for a two-level country\n(``/[country]/[city]``), so the web builder emits the canonical path without a per-city resolve."
+      },
+      "CitySitemapOut": {
+        "properties": {
+          "cities": {
+            "items": {
+              "$ref": "#/components/schemas/CitySitemapItem"
+            },
+            "type": "array",
+            "title": "Cities"
+          },
+          "total_count": {
+            "type": "integer",
+            "title": "Total Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "cities",
+          "total_count"
+        ],
+        "title": "CitySitemapOut",
+        "description": "The indexable cities for a cities sitemap chunk (#127, spec \u00a76/\u00a77).\n\n``cities`` are the canonical, city-routes-ready cities with ``fountain_count >= K`` (the same\nindexability gate the city page and ``PlaceOut.indexable`` use), ordered by id for stable\npagination and capped by ``limit``. ``total_count`` is the full indexable total, so the sitemap\nbuilder sizes the chunk URLs and logs (never silently) when a chunk nears the 50k-URL limit."
       },
       "ConditionReportRequest": {
         "properties": {
