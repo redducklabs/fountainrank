@@ -32,6 +32,20 @@ export function cityPath(countryCode: string, slug: string, regionSlug?: string 
     : `/drinking-fountains/${cc}/${slug}`;
 }
 
+// Pure: the SEO <title> for a country/region/city place page — intent-matched ("public drinking
+// fountains in {place}") with the live mapped count. Approved positioning copy (owner sign-off).
+export function placeTitle(name: string, fountainCount: number): string {
+  return `Public drinking fountains in ${name} — ${fountainCount.toLocaleString()} mapped & rated`;
+}
+
+// Pure: a headline count rounded DOWN to a clean thousand and suffixed "+" (285,432 -> "285,000+"),
+// so the homepage copy stays honest as the dataset grows. Below 1,000 it shows the exact number
+// (no misleading "0+").
+export function roundedCountPlus(n: number): string {
+  if (n < 1000) return n.toLocaleString();
+  return `${(Math.floor(n / 1000) * 1000).toLocaleString()}+`;
+}
+
 // Server-only fetch of the public place list. This module is client-bundlable, so it never
 // reads a token (the endpoint is public/unauthenticated). A network error yields an empty
 // list with status 0 (the caller decides between "render empty" and notFound()).
@@ -325,6 +339,28 @@ export async function getSitemapCitiesServer(
     const { data, response } = await client.GET("/api/v1/places/cities/sitemap", {
       params: { query: { limit, offset } },
     });
+    return { data, status: response?.status ?? 0 };
+  } catch {
+    // status 0 = no HTTP response (network error / backend down / DNS failure)
+    return { data: undefined, status: 0 };
+  }
+}
+
+// --- Site-wide stats (homepage positioning copy) ---------------------------------------------
+
+export type SiteStatsOut = components["schemas"]["SiteStatsOut"];
+
+// Server-only fetch of the public site-wide counts (total non-hidden fountains + countries with
+// fountains). A network error yields `undefined` with status 0 so the homepage copy falls back to a
+// countless phrasing rather than rendering "undefined".
+export async function getSiteStatsServer(
+  requestId?: string,
+): Promise<{ data: SiteStatsOut | undefined; status: number }> {
+  const headers: Record<string, string> = {};
+  if (requestId) headers["X-Request-ID"] = requestId;
+  const client = makeClient(resolveApiBaseUrl(), { headers });
+  try {
+    const { data, response } = await client.GET("/api/v1/stats");
     return { data, status: response?.status ?? 0 };
   } catch {
     // status 0 = no HTTP response (network error / backend down / DNS failure)

@@ -117,7 +117,7 @@ it("generateMetadata: title + canonical for a known country", async () => {
   getCountriesServer.mockResolvedValue({ data: [US], status: 200 });
 
   const meta = await generateMetadata({ params: Promise.resolve({ country: "us" }) });
-  expect(meta.title).toBe("Drinking fountains in United States");
+  expect(meta.title).toBe("Public drinking fountains in United States — 1,234 mapped & rated");
   expect(meta.alternates?.canonical).toBe("/drinking-fountains/us");
   expect(meta.description).toContain("United States");
   expect(meta.robots).toBeUndefined();
@@ -127,7 +127,7 @@ it("generateMetadata: noindex for a known but not-ready country", async () => {
   getCountriesServer.mockResolvedValue({ data: [{ ...US, indexable: false }], status: 200 });
 
   const meta = await generateMetadata({ params: Promise.resolve({ country: "us" }) });
-  expect(meta.title).toBe("Drinking fountains in United States");
+  expect(meta.title).toBe("Public drinking fountains in United States — 1,234 mapped & rated");
   expect(meta.alternates?.canonical).toBe("/drinking-fountains/us");
   expect(meta.robots).toEqual({ index: false, follow: true });
 });

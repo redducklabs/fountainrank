@@ -196,7 +196,7 @@ it("generateMetadata uses resolver canonical and backend indexability", async ()
 
   const meta = await generateMetadata({ params: params("us", "washington") });
 
-  expect(meta.title).toBe("Drinking fountains in Washington");
+  expect(meta.title).toBe("Public drinking fountains in Washington — 120 mapped & rated");
   expect(meta.alternates?.canonical).toBe("/drinking-fountains/us/washington");
   expect(meta.robots).toEqual({ index: false, follow: true });
 });
