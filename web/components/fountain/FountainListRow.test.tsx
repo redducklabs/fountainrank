@@ -43,6 +43,22 @@ describe("FountainListRow", () => {
     expect(thumb.getAttribute("src")).toBe("http://localhost:3021/api/v1/photos/p1/thumb");
   });
 
+  it("constrains the thumbnail to a fixed-size, non-shrinking box (no full-width overflow)", () => {
+    // Regression (#257): LoadableImage baked `h-full w-full` into the wrapper, so passing
+    // `h-12 w-12` via wrapperClassName let w-full win and the thumbnail stretched to the full row
+    // width, pushing the row content out of the card. The wrapper's size now comes solely from
+    // wrapperClassName — the thumbnail box must be the fixed w-12 shrink-0 size, never w-full.
+    const { container } = render(
+      <FountainListRow
+        fountain={{ ...base, thumbnail_url: "/api/v1/photos/p1/thumb", photo_count: 1 }}
+      />,
+    );
+    const box = container.querySelector("img")?.closest("span.shrink-0");
+    expect(box).not.toBeNull();
+    expect(box?.className).toMatch(/\bw-12\b/);
+    expect(box?.className).not.toMatch(/\bw-full\b/);
+  });
+
   it("renders a neutral placeholder (no broken img) when thumbnail_url is null", () => {
     const { container } = render(
       <FountainListRow fountain={{ ...base, thumbnail_url: null, photo_count: 0 }} />,
