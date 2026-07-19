@@ -818,7 +818,11 @@ function MapTopBar({
           <Text style={styles.brandSubline}>Map</Text>
         </View>
       </View>
-      {totalPoints != null ? <PointsChip total={totalPoints} onPress={onPointsPress} /> : null}
+      {totalPoints != null ? (
+        <PointsChip total={totalPoints} onPress={onPointsPress} />
+      ) : (
+        <View style={styles.pointsChipPlaceholder} accessibilityElementsHidden />
+      )}
     </View>
   );
 }
@@ -1341,6 +1345,12 @@ const styles = StyleSheet.create({
   brandSubline: { ...typography.meta, color: "#BFDBFE", fontWeight: "700" },
   filterBar: { position: "absolute", left: 0, right: 0 },
   pointsChipWrap: {},
+  pointsChipPlaceholder: {
+    width: 78,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: colors.surface,
+  },
   pointsChip: {
     backgroundColor: "#06306F",
     borderColor: colors.brandYellow,

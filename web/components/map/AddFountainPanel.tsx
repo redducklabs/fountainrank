@@ -22,6 +22,7 @@ export type AddFountainPanelProps = {
   working: boolean;
   placeable: boolean;
   gpsUnavailable: boolean;
+  gpsPending: boolean;
   duplicateId: string | null;
   errorKind: AddFountainError | null;
   onCancel: () => void;
@@ -171,6 +172,15 @@ function PlacingStep(props: AddFountainPanelProps) {
         <p className="mt-2 rounded bg-amber-50 px-2 py-1 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
           We couldn&rsquo;t confirm your location — make sure the pin is exactly where the fountain
           is.
+        </p>
+      )}
+      {props.gpsPending && (
+        <p
+          role="status"
+          aria-busy="true"
+          className="mt-2 flex items-center gap-2 text-xs text-muted"
+        >
+          <Spinner className="h-3.5 w-3.5" /> Checking your location…
         </p>
       )}
       {!props.placeable && (

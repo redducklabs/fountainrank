@@ -12,6 +12,7 @@ const base: AddFountainPanelProps = {
   working: true,
   placeable: false,
   gpsUnavailable: false,
+  gpsPending: false,
   duplicateId: null,
   errorKind: null,
   onCancel: vi.fn(),
@@ -73,6 +74,12 @@ describe("AddFountainPanel", () => {
   it("placing: shows the fallback copy when GPS is unavailable", () => {
     render(<AddFountainPanel {...base} gpsUnavailable />);
     expect(screen.getByText(/couldn.t confirm your location/i)).toBeTruthy();
+  });
+
+  it("placing: shows pending GPS without false failure copy", () => {
+    render(<AddFountainPanel {...base} gpsPending />);
+    expect(screen.getByRole("status")).toHaveTextContent(/checking your location/i);
+    expect(screen.queryByText(/couldn.t confirm/i)).toBeNull();
   });
 
   it("details: working toggle defaults to Yes and can flip", () => {

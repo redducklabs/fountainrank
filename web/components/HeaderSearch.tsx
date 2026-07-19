@@ -9,7 +9,7 @@
 // This component owns the reducer, the debounce timer, the `AbortController`, and the
 // dropdown open/highlight state - `lib/search/state.ts` only decides WHAT to show.
 
-import { useEffect, useReducer, useRef, useState } from "react";
+import { useEffect, useReducer, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { mapGeocodeError, searchGeocode } from "../lib/search/geocode-client";
 import { buildFlyToQuery } from "../lib/search/flyto";
@@ -21,6 +21,7 @@ import {
   type SearchResultItem,
   type SearchState,
 } from "../lib/search/state";
+import { Spinner } from "./ui/Spinner";
 
 /** Mirrors mobile's SearchOverlay - the same LocationIQ ToS attribution page (spec §12). */
 const ATTRIBUTION_URL = "https://locationiq.com/attribution";
@@ -31,6 +32,7 @@ export function HeaderSearch() {
   const [state, dispatch] = useReducer(searchReducer, initialSearchState);
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(-1);
+  const [navigationPending, startNavigation] = useTransition();
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Reset the keyboard highlight whenever a NEW result set arrives, without a
@@ -116,7 +118,7 @@ export function HeaderSearch() {
       lat: item.latitude,
       bbox: item.boundingBox,
     });
-    router.push(`/?${query}`);
+    startNavigation(() => router.push(`/?${query}`));
   }
 
   const showDropdown = open && state.status !== "idle";
@@ -181,6 +183,15 @@ export function HeaderSearch() {
         }}
         className="w-full rounded-full border border-white/30 bg-white/10 px-4 py-2 text-sm text-white placeholder-white/60 outline-none transition focus-visible:border-white focus-visible:bg-white/20 focus-visible:ring-2 focus-visible:ring-white/60"
       />
+      {navigationPending && (
+        <span
+          role="status"
+          aria-busy="true"
+          className="absolute right-3 top-1/2 flex -translate-y-1/2 items-center gap-1 text-xs text-white"
+        >
+          <Spinner className="h-3.5 w-3.5" /> Opening map…
+        </span>
+      )}
       {showDropdown && (
         <div
           id="header-search-listbox"

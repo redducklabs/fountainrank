@@ -10,6 +10,8 @@ export const DEFAULT_CENTER: [number, number] = [-98.5, 39.8]; // continental US
 export const DEFAULT_ZOOM = 3.5;
 export const CLUSTER_RADIUS = 60;
 export const CLUSTER_MAX_ZOOM = 14;
+/** Deep-linked fountain destination. Strictly above clusterMaxZoom so the exact pin is visible. */
+export const FOCUSED_PIN_ZOOM = 16;
 
 // Add-fountain placement (slice 6b-2, spec §6).
 export const BOUND_RADIUS_MIN_M = 150;

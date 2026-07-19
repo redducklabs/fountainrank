@@ -6,6 +6,7 @@ import { SignInButton } from "../../components/SignInButton";
 import { SignOutButton } from "../../components/SignOutButton";
 import { SiteHeader } from "../../components/SiteHeader";
 import ThemeToggle from "../../components/ThemeToggle";
+import { LoadableImage } from "../../components/ui/LoadableImage";
 import { resolveAccountGate } from "../../lib/server/account-gate";
 import { isDisplayableEmail } from "../../lib/email";
 
@@ -77,8 +78,15 @@ export default async function AccountPage({
       <main className={shell}>
         <h1 className="text-2xl font-bold">Signed in</h1>
         {profile.avatar_url ? (
-          // eslint-disable-next-line @next/next/no-img-element -- arbitrary external avatar host; no next/image loader configured
-          <img src={profile.avatar_url} alt="" width={64} height={64} className="rounded-full" />
+          <LoadableImage
+            src={profile.avatar_url}
+            alt=""
+            width={64}
+            height={64}
+            wrapperClassName="h-16 w-16 rounded-full"
+            className="h-16 w-16 object-cover"
+            fallback={profile.display_name.trim().charAt(0).toUpperCase()}
+          />
         ) : null}
         <dl className="text-white/90">
           <div className="flex gap-2">

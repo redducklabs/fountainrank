@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import type { PhotoOut } from "../../lib/fountains";
 import { resolveApiBaseUrl } from "../../lib/api";
 import { SpinnerButton } from "../ui/SpinnerButton";
+import { LoadableImage } from "../ui/LoadableImage";
 
 // `PhotoOut.url`/`thumbnail_url` are API-relative gated read paths (`/api/v1/photos/{id}`,
 // `.../thumb`) — never a durable object URL (docs/style-guide.md "Fountain photos (PR 2)").
@@ -67,7 +68,7 @@ export function PhotoCarousel({
 
   return (
     <div className="relative aspect-[4/3] w-full overflow-hidden rounded-lg bg-surface">
-      <img
+      <LoadableImage
         src={resolvePhotoUrl(current.url)}
         alt=""
         loading="lazy"

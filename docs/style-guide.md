@@ -2786,3 +2786,27 @@ are on screen:
 `accessibilityLabel`/`accessibilityRole` (never a bare icon-only control without a label); the
 list uses `keyboardShouldPersistTaps="handled"` so tapping a result while the keyboard is open
 does not require a second tap.
+
+## Focused fountains and loading feedback (#213, #215, #254)
+
+- **Focused web fountain:** a deep-linked fountain is shown above clustering at the named
+  `FOCUSED_PIN_ZOOM`, with a persistently enlarged pin, high-contrast halo, and centered
+  **Selected fountain** preview. The preview names the state in text, reports working status,
+  and opens details; selection is never color- or motion-only. Camera movement is non-essential
+  and therefore respects reduced-motion preferences. Missing/hidden ids show no false selection.
+- **Navigation pending:** the activated Link/router/map-pin surface acknowledges navigation
+  immediately with a spinner or selected/pressed marker and accessible busy/status text. Duplicate
+  activation is suppressed while pending. Fountain detail navigation mounts a drawer skeleton
+  immediately; timeout/failure replaces it with a visible retry action.
+- **Map startup and GPS:** dynamic map import and startup first-fix waits use visible `role="status"`
+  copy. **Locating you…** suppresses the misleading below-zoom hint until resolution. Add-fountain
+  GPS uses distinct pending and denied states; failure copy never appears during an in-flight fix.
+- **Route skeletons:** skeletons reserve the destination geometry, use surface/border tokens, and
+  expose one concise busy announcement. Pulse animation uses `motion-reduce:animate-none`.
+- **Images:** web fountain imagery reserves its final frame with a neutral surface skeleton until
+  load, then fades in; failure keeps the frame and says **Image unavailable**. Native `expo-image`
+  frames reserve the same geometry and use a short transition. A not-yet-loaded native hero reserves
+  its 4:3 frame instead of popping into the layout.
+- **Native bootstrap:** the platform splash remains until auth/provider initialization resolves or
+  reaches a handled error. It never waits for GPS. Header points space remains reserved while account
+  totals load, preventing the map header from shifting.
