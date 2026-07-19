@@ -32,18 +32,13 @@ export function FountainListRow({ fountain: f }: { fountain: FountainRowPin }) {
   return (
     <li className="flex items-center gap-3 py-3">
       {f.thumbnail_url ? (
-        // LoadableImage's wrapper is `h-full w-full`, so it must live inside an explicitly SIZED
-        // parent (the PhotoHero/PhotoCarousel pattern). Passing `h-12 w-12` via wrapperClassName
-        // conflicted with `w-full` and let the thumbnail stretch to the full row width, pushing the
-        // row content out of the card (#257 regression). The sizing + shrink-0 belong on this span.
-        <span className="h-12 w-12 shrink-0 overflow-hidden rounded-md">
-          <LoadableImage
-            src={resolveThumbnailUrl(f.thumbnail_url)}
-            alt=""
-            loading="lazy"
-            className="h-full w-full object-cover"
-          />
-        </span>
+        <LoadableImage
+          src={resolveThumbnailUrl(f.thumbnail_url)}
+          alt=""
+          loading="lazy"
+          wrapperClassName="h-12 w-12 shrink-0 rounded-md"
+          className="h-12 w-12 object-cover"
+        />
       ) : (
         <span
           aria-hidden="true"

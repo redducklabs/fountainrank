@@ -13,6 +13,27 @@ describe("LoadableImage", () => {
     expect(container.querySelector(".animate-pulse")).toBeNull();
   });
 
+  it("fills its parent by default (h-full w-full wrapper for the sized-parent pattern)", () => {
+    const { container } = render(<LoadableImage src="/x.jpg" alt="x" />);
+    const wrapper = container.querySelector("span.relative");
+    expect(wrapper?.className).toMatch(/\bh-full\b/);
+    expect(wrapper?.className).toMatch(/\bw-full\b/);
+  });
+
+  it("uses ONLY the explicit wrapperClassName size (no leftover w-full to stretch it)", () => {
+    // The #257 regression: a baked-in `h-full w-full` won the Tailwind conflict against a caller's
+    // `h-12 w-12`, stretching fixed-size thumbnails/avatars to full width. Explicit sizing must win.
+    const { container } = render(
+      <LoadableImage src="/x.jpg" alt="x" wrapperClassName="h-12 w-12 shrink-0 rounded-md" />,
+    );
+    const wrapper = container.querySelector("span.relative");
+    expect(wrapper?.className).toMatch(/\bh-12\b/);
+    expect(wrapper?.className).toMatch(/\bw-12\b/);
+    expect(wrapper?.className).toMatch(/\bshrink-0\b/);
+    expect(wrapper?.className).not.toMatch(/\bh-full\b/);
+    expect(wrapper?.className).not.toMatch(/\bw-full\b/);
+  });
+
   it("shows an accessible fallback on error", () => {
     render(<LoadableImage src="/broken.jpg" alt="Fountain photo" />);
     fireEvent.error(screen.getByAltText("Fountain photo"));

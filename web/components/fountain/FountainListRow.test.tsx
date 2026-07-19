@@ -44,10 +44,10 @@ describe("FountainListRow", () => {
   });
 
   it("constrains the thumbnail to a fixed-size, non-shrinking box (no full-width overflow)", () => {
-    // Regression: LoadableImage's wrapper is h-full w-full, so passing h-12 w-12 via
-    // wrapperClassName let w-full win and the thumbnail stretched to the full row width, pushing
-    // the row content out of the card (#257). The thumbnail must sit inside an explicitly sized,
-    // non-shrinking box instead.
+    // Regression (#257): LoadableImage baked `h-full w-full` into the wrapper, so passing
+    // `h-12 w-12` via wrapperClassName let w-full win and the thumbnail stretched to the full row
+    // width, pushing the row content out of the card. The wrapper's size now comes solely from
+    // wrapperClassName — the thumbnail box must be the fixed w-12 shrink-0 size, never w-full.
     const { container } = render(
       <FountainListRow
         fountain={{ ...base, thumbnail_url: "/api/v1/photos/p1/thumb", photo_count: 1 }}
