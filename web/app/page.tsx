@@ -5,6 +5,7 @@ import { MobileStoreLinks } from "../components/MobileStoreLinks";
 import { SiteHeader } from "../components/SiteHeader";
 import MapBrowserLoader from "../components/map/MapBrowserLoader";
 import { getSiteStatsServer, roundedCountPlus, type SiteStatsOut } from "../lib/places";
+import { log } from "../lib/server/log";
 import { getViewer } from "../lib/server/viewer";
 
 export const dynamic = "force-dynamic";
@@ -12,12 +13,16 @@ export const dynamic = "force-dynamic";
 // The homepage is force-dynamic (viewer + ?add), but the site-wide counts change slowly and must NOT
 // run a full fountains count() on every landing-page hit (the most-exposed route). Cache the
 // aggregate in Next's data cache for an hour (a static key, independent of any per-request id),
-// revalidated in the background. A failed fetch THROWS so the failure is not cached — the next
-// request retries and the caller falls back to countless copy.
+// revalidated in the background. A failed fetch is logged (structured, no secrets — just the status)
+// and THROWS so the failure is not cached — the next request retries and the caller falls back to
+// countless copy.
 const getCachedSiteStats = unstable_cache(
   async (): Promise<SiteStatsOut> => {
-    const { data } = await getSiteStatsServer();
-    if (!data) throw new Error("site stats unavailable");
+    const { data, status } = await getSiteStatsServer();
+    if (!data) {
+      log("warn", "homepage site-stats fetch failed; using countless copy", { status });
+      throw new Error("site stats unavailable");
+    }
     return data;
   },
   ["home-site-stats"],

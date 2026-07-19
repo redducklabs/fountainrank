@@ -2,15 +2,21 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 
-const { getViewer, getSiteStatsServer } = vi.hoisted(() => ({
+const { getViewer, getSiteStatsServer, logFn, cacheCalls } = vi.hoisted(() => ({
   getViewer: vi.fn(),
   getSiteStatsServer: vi.fn(),
+  logFn: vi.fn(),
+  cacheCalls: [] as { keys: unknown; opts: unknown }[],
 }));
 vi.mock("../lib/server/viewer", () => ({ getViewer }));
-// Pass unstable_cache through unchanged so each test's mocked fetch drives the result (no cross-test
-// caching of the first resolution).
+vi.mock("../lib/server/log", () => ({ log: logFn }));
+// Record the unstable_cache config (asserted below), and pass the fn through unchanged so each
+// test's mocked fetch drives the result (no cross-test caching of the first resolution).
 vi.mock("next/cache", () => ({
-  unstable_cache: <T,>(fn: T): T => fn,
+  unstable_cache: <T,>(fn: T, keys: unknown, opts: unknown): T => {
+    cacheCalls.push({ keys, opts });
+    return fn;
+  },
 }));
 // Keep the real pure helpers (roundedCountPlus); stub only the server stats fetch.
 vi.mock("../lib/places", async (importOriginal) => {
@@ -49,12 +55,18 @@ describe("generateMetadata", () => {
     expect(meta.alternates?.canonical).toBe("/");
   });
 
-  it("falls back to a countless description when stats are unavailable", async () => {
+  it("falls back to a countless description AND logs the failure when stats are unavailable", async () => {
     getSiteStatsServer.mockResolvedValue({ data: undefined, status: 0 });
     const meta = await generateMetadata();
     expect(meta.description).not.toMatch(/\d/);
     expect(meta.description).toContain("public drinking fountains");
     expect(meta.alternates?.canonical).toBe("/");
+    expect(logFn).toHaveBeenCalledWith("warn", expect.stringMatching(/site-stats/i), { status: 0 });
+  });
+
+  it("wraps the stats fetch in a stable-keyed, 1h-revalidated data cache", () => {
+    // Captured when ./page is imported: the aggregate must not run per-request on the exposed route.
+    expect(cacheCalls).toContainEqual({ keys: ["home-site-stats"], opts: { revalidate: 3600 } });
   });
 });
 
