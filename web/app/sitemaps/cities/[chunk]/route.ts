@@ -25,6 +25,9 @@ export async function GET(
 
   const chunkNumber = Number(match[1]);
   const offset = chunkNumber * SITEMAP_CITY_CAP;
+  // An out-of-range chunk name (digits beyond the safe-integer range lose precision / overflow)
+  // is an invalid URL, not a transient backend failure — 404 it rather than 503-ing a bad offset.
+  if (!Number.isSafeInteger(chunkNumber) || !Number.isSafeInteger(offset)) notFound();
   const { data, status } = await getSitemapCitiesServer(
     crypto.randomUUID(),
     SITEMAP_CITY_CAP,

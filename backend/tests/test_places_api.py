@@ -1202,3 +1202,113 @@ async def test_cities_sitemap_excludes_orphan_and_noncanonical_region_parent(ses
     assert body["total_count"] == 1
     assert {c["slug"] for c in body["cities"]} == {"real"}
     assert body["cities"][0]["region_slug"] == "north"
+
+
+@pytest.mark.asyncio
+async def test_cities_sitemap_excludes_country_city_colliding_with_region_slug(session, api):
+    """A country-parented city is emitted only when no canonical region shares its (country_code,
+    slug). resolve_level2_place matches a canonical region BEFORE a country-parented city, so a
+    same-slug region owns /[country]/[slug] and the city's two-level URL would resolve to the region
+    page — the sitemap must not advertise it. A country-parented city with a non-colliding slug IS
+    emitted."""
+    country = await _add_place(
+        session,
+        overture_id="rt",
+        subtype="country",
+        country_code="rt",
+        name="Regionland",
+        slug="regionland",
+        fountain_count=100,
+        is_canonical=False,
+    )
+    await _add_place(
+        session,
+        overture_id="rt-north-region",
+        subtype="region",
+        country_code="rt",
+        name="North",
+        slug="north",
+        fountain_count=50,
+        is_canonical=True,
+        parent_id=country,
+        place_kind="region",
+    )
+    # Country-parented city whose slug collides with the canonical region "north" -> excluded.
+    await _add_place(
+        session,
+        overture_id="rt-north-city",
+        subtype="locality",
+        country_code="rt",
+        name="North City",
+        slug="north",
+        fountain_count=5,
+        is_canonical=True,
+        parent_id=country,
+    )
+    # Country-parented city with a non-colliding slug -> emitted as a two-level URL.
+    await _add_place(
+        session,
+        overture_id="rt-solo",
+        subtype="locality",
+        country_code="rt",
+        name="Solo",
+        slug="solo",
+        fountain_count=5,
+        is_canonical=True,
+        parent_id=country,
+    )
+    await _set_scope_ready(session, "rt", ready=True)
+    await session.commit()
+
+    body = (await api.get("/api/v1/places/cities/sitemap")).json()
+    assert body["total_count"] == 1
+    assert {(c["slug"], c["region_slug"]) for c in body["cities"]} == {("solo", None)}
+
+
+@pytest.mark.asyncio
+async def test_cities_sitemap_excludes_cross_country_parent(session, api):
+    """A city whose parent boundary is in a DIFFERENT country is excluded — the public feed fails
+    closed on inconsistent hierarchy data rather than emitting a cross-country/404 URL. (Uses
+    scope codes outside other suites' fixtures — place_scope_config is not truncated between tests.)
+    """
+    qp = await _add_place(
+        session,
+        overture_id="qp",
+        subtype="country",
+        country_code="qp",
+        name="Parentland",
+        slug="parentland",
+        fountain_count=100,
+        is_canonical=False,
+    )
+    foreign_region = await _add_place(
+        session,
+        overture_id="qp-foreign",
+        subtype="region",
+        country_code="qp",
+        name="Foreign",
+        slug="foreign",
+        fountain_count=50,
+        is_canonical=True,
+        parent_id=qp,
+        place_kind="region",
+    )
+    # City claims country "qx" but is parented to a region in "qp".
+    await _add_place(
+        session,
+        overture_id="qx-stray",
+        subtype="locality",
+        country_code="qx",
+        name="Stray",
+        slug="stray",
+        fountain_count=5,
+        is_canonical=True,
+        parent_id=foreign_region,
+    )
+    await _set_scope_ready(session, "qx", ready=True)
+    await _set_scope_ready(session, "qp", ready=True)
+    await session.commit()
+
+    body = (await api.get("/api/v1/places/cities/sitemap")).json()
+    assert body["total_count"] == 0
+    assert body["cities"] == []

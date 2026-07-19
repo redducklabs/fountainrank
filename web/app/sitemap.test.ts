@@ -422,6 +422,13 @@ describe("cities chunks (/sitemaps/cities/[chunk])", () => {
     expect(getSitemapCitiesServer).not.toHaveBeenCalled();
   });
 
+  it("404s an out-of-safe-range chunk number without hitting the backend", async () => {
+    await expect(
+      citiesChunkGET(new Request("https://example.com"), chunkParams("99999999999999999999.xml")),
+    ).rejects.toThrow("NEXT_NOT_FOUND");
+    expect(getSitemapCitiesServer).not.toHaveBeenCalled();
+  });
+
   it("308s the legacy cities sitemap to chunk zero", async () => {
     await expect(legacyCitiesGET()).rejects.toThrow("NEXT_REDIRECT:/sitemaps/cities/0.xml");
     expect(permanentRedirect).toHaveBeenCalledWith("/sitemaps/cities/0.xml");

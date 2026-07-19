@@ -323,19 +323,38 @@ async def cities_sitemap(
 
     Enumerates the canonical cities in city-routes-ready scopes with ``fountain_count >= K`` — the
     SAME gate ``PlaceOut.indexable`` applies for the city page's ``noindex`` verdict — ordered by id
-    for a stable, deterministic page across offsets. Joins each city's parent to derive the
-    canonical URL shape in one query: a canonical **region** parent yields the nested
+    for a stable, deterministic page across offsets. Joins each city's parent (in the SAME country)
+    to derive the canonical URL shape in one query: a canonical **region** parent yields the nested
     ``/[country]/[region]/[city]`` slug, a **country** parent the two-level ``/[country]/[city]`` —
-    so the web builder never runs a per-city resolve, and a city whose parent was dropped (SET NULL)
-    or is a non-canonical region is excluded (it owns no canonical URL). Reads only the precomputed
-    membership columns (never a live ``ST_Covers``, spec §5); unauthenticated + cacheable.
-    ``total_count`` is the full indexable total so the sitemap builder sizes chunk URLs and logs
-    (never silently) when a chunk nears the 50k-URL limit and must be split. Declared BEFORE
-    ``/places/{country}/...`` so the literal ``cities/sitemap`` path is not parsed as a country.
+    so the web builder never runs a per-city resolve. A city whose parent was dropped (SET NULL), is
+    a non-canonical region, or sits in a different country is excluded (it owns no canonical URL).
+
+    A country-parented city is emitted ONLY when no canonical region shares its
+    ``(country_code, slug)``: ``resolve_level2_place`` matches a canonical region BEFORE a
+    country-parented city, so a same-slug region would own ``/[country]/[slug]`` and the city's
+    two-level URL would resolve to the region page — never advertise that URL. (Two-level countries
+    have no regions, so their cities are always emitted.) Reads only the precomputed membership
+    columns (never a live ``ST_Covers``, spec §5); unauthenticated + cacheable. ``total_count`` is
+    the full indexable total so the sitemap builder sizes chunk URLs and logs (never silently) when
+    a chunk nears the 50k-URL limit and must be split. Declared BEFORE ``/places/{country}/...`` so
+    ``cities/sitemap`` is not parsed as a country.
     """
     parent = aliased(PlaceBoundary)
+    region = aliased(PlaceBoundary)
     region_slug = case((parent.place_kind == "region", parent.slug), else_=None).label(
         "region_slug"
+    )
+    # A canonical region owning the same (country_code, slug) as this city — its existence means the
+    # city's would-be two-level URL resolves to that region, so a country-parented city is excluded.
+    region_owns_slug = (
+        select(region.id)
+        .where(
+            region.country_code == PlaceBoundary.country_code,
+            region.slug == PlaceBoundary.slug,
+            region.place_kind == "region",
+            region.is_canonical.is_(True),
+        )
+        .exists()
     )
     base = (
         select(PlaceBoundary.country_code, PlaceBoundary.slug, region_slug)
@@ -346,9 +365,10 @@ async def cities_sitemap(
             PlaceBoundary.is_canonical.is_(True),
             PlaceBoundary.fountain_count >= settings.seo_place_min_fountains,
             PlaceScopeConfig.city_routes_ready.is_(True),
+            parent.country_code == PlaceBoundary.country_code,
             or_(
-                parent.place_kind == "country",
                 and_(parent.place_kind == "region", parent.is_canonical.is_(True)),
+                and_(parent.place_kind == "country", ~region_owns_slug),
             ),
         )
     )
