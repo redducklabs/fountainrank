@@ -177,13 +177,21 @@ variable "node_max" {
 }
 
 variable "db_size" {
-  description = "Managed Postgres size (minimal single-node default; tune before first apply)."
+  # Bumped 1gb->4gb: the initial db-s-1vcpu-1gb was the minimal single-node default and was never
+  # tuned. It is structurally undersized for the PostGIS workload (worldwide boundary membership +
+  # ~285k-fountain ST_Covers/ST_Area joins and the boundary-load publish), which triggered a DO
+  # low-resources alert. db-s-2vcpu-4gb is a same-family 4x-RAM / 2x-vCPU bump that matches the 4gb
+  # DOKS node tier. NOTE: applying a size change resizes the managed DB with a brief failover /
+  # connection drop — never apply while a boundary load is in flight (it would abort the publish).
+  description = "Managed Postgres size."
   type        = string
-  default     = "db-s-1vcpu-1gb"
+  default     = "db-s-2vcpu-4gb"
 }
 
 variable "db_node_count" {
-  description = "Managed Postgres node count (db-s-1vcpu-1gb supports only 1)."
+  # Single-node (no standby). db-s-2vcpu-4gb supports 1-3 nodes; HA is a separate, cost-bearing
+  # decision from this resource bump, so we stay single-node.
+  description = "Managed Postgres node count."
   type        = number
   default     = 1
 }
