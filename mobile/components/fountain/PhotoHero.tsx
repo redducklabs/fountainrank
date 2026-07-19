@@ -22,6 +22,15 @@ export function PhotoHero({
   apiBaseUrl: string;
 }) {
   const { setActive } = useFountainDetailTabs();
+  if (photos === undefined) {
+    return (
+      <View
+        style={styles.frame}
+        accessibilityLiveRegion="polite"
+        accessibilityLabel="Loading fountain photo"
+      />
+    );
+  }
   const newest = heroPhoto(photos);
   if (!newest) return null;
   const count = photos?.length ?? 0;
@@ -37,6 +46,7 @@ export function PhotoHero({
           source={{ uri: resolvePhotoUrl(apiBaseUrl, newest.url) }}
           style={StyleSheet.absoluteFill}
           contentFit="cover"
+          transition={200}
           accessibilityIgnoresInvertColors
         />
       </View>

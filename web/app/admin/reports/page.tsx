@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import type { components } from "@fountainrank/api-client";
 import { SiteHeader } from "../../../components/SiteHeader";
+import { LoadableImage } from "../../../components/ui/LoadableImage";
 import { ReportedContentActions } from "../../../components/admin/ReportedContentActions";
 import { getViewer } from "../../../lib/server/viewer";
 import { getContentReportsServer } from "../../../lib/server/content-reports";
@@ -68,12 +69,12 @@ function ReportedContentRow({ item }: { item: ReportedContentOut }) {
   return (
     <li className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-3 sm:flex-row sm:items-start">
       {item.content_type === "photo" && item.thumbnail_url && (
-        // eslint-disable-next-line @next/next/no-img-element -- gated API-relative photo path
-        <img
+        <LoadableImage
           src={resolvePhotoUrl(item.thumbnail_url)}
           alt=""
           loading="lazy"
-          className="h-16 w-16 shrink-0 rounded-md object-cover"
+          wrapperClassName="h-16 w-16 shrink-0 rounded-md"
+          className="h-16 w-16 object-cover"
         />
       )}
       <div className="min-w-0 flex-1">

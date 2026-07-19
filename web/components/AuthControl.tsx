@@ -5,6 +5,8 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { signInWithReturn, signOutAction } from "../app/actions/auth";
 import { ReportBadge } from "./admin/ReportBadge";
 import type { Viewer } from "../lib/server/viewer";
+import { FormSubmitButton } from "./ui/FormSubmitButton";
+import { LoadableImage } from "./ui/LoadableImage";
 
 export function AuthControl({
   viewer,
@@ -22,12 +24,12 @@ export function AuthControl({
   if (viewer.state === "anonymous") {
     return (
       <form action={signInWithReturn.bind(null, returnTo)}>
-        <button
-          type="submit"
+        <FormSubmitButton
+          pendingLabel="Signing in…"
           className="inline-flex shrink-0 items-center justify-center rounded-full bg-accent-gold px-5 py-2 text-sm font-semibold text-brand transition hover:bg-accent-gold-hover"
         >
           Sign in
-        </button>
+        </FormSubmitButton>
       </form>
     );
   }
@@ -116,8 +118,15 @@ function UserMenu({
           className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-white/20 text-sm font-semibold text-white"
         >
           {avatarUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element -- arbitrary external avatar host
-            <img src={avatarUrl} alt="" width={36} height={36} className="h-9 w-9 object-cover" />
+            <LoadableImage
+              src={avatarUrl}
+              alt=""
+              width={36}
+              height={36}
+              wrapperClassName="h-9 w-9 rounded-full"
+              className="h-9 w-9 object-cover"
+              fallback={<span aria-hidden="true">{initial}</span>}
+            />
           ) : (
             <span aria-hidden="true">{initial}</span>
           )}
@@ -163,13 +172,13 @@ function UserMenu({
           )}
           <div className="my-1 border-t border-border" />
           <form action={signOutAction}>
-            <button
+            <FormSubmitButton
               role="menuitem"
-              type="submit"
+              pendingLabel="Signing out…"
               className="block w-full px-3 py-2 text-left text-sm text-foreground hover:bg-surface"
             >
               Sign out
-            </button>
+            </FormSubmitButton>
           </form>
         </div>
       )}

@@ -115,7 +115,7 @@ export function selectedIconExpr(selectedPinName: string) {
   ] as const;
 }
 
-const byId = (id: string): FilterSpecification => [
+export const selectedFountainFilter = (id: string): FilterSpecification => [
   "all",
   ["!", ["has", "point_count"]],
   ["==", ["get", "id"], id],
@@ -126,11 +126,11 @@ export function selectedHaloLayer(id: string, c: MapColors): CircleLayerSpecific
     id: "selected-halo",
     type: "circle",
     source: "fountains",
-    filter: byId(id),
+    filter: selectedFountainFilter(id),
     paint: {
-      "circle-radius": 26,
+      "circle-radius": 30,
       "circle-color": c.halo,
-      "circle-opacity": 0.18,
+      "circle-opacity": 0.32,
       "circle-translate": [0, -18],
     },
   };
@@ -141,11 +141,11 @@ export function selectedPinLayer(id: string, selectedPinName: string): SymbolLay
     id: "selected-pin",
     type: "symbol",
     source: "fountains",
-    filter: byId(id),
+    filter: selectedFountainFilter(id),
     layout: {
       "icon-image": selectedIconExpr(selectedPinName) as unknown as string,
       "icon-anchor": "bottom",
-      "icon-size": 0.56,
+      "icon-size": 0.68,
       "icon-allow-overlap": true,
     },
   };

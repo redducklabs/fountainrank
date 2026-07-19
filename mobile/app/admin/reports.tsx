@@ -239,6 +239,7 @@ function ReportRow({
           source={{ uri: resolvePhotoUrl(apiBaseUrl, item.thumbnail_url) }}
           style={styles.thumb}
           contentFit="cover"
+          transition={200}
           accessibilityIgnoresInvertColors
         />
       ) : null}

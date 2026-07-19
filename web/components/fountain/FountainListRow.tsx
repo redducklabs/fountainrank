@@ -4,6 +4,8 @@ import type { FountainPin } from "../../lib/fountains";
 import { resolveApiBaseUrl } from "../../lib/api";
 import { seeOnMapHref } from "../../lib/fountain/see-on-map";
 import { Stars } from "./Stars";
+import { PendingLinkLabel } from "../ui/PendingLinkLabel";
+import { LoadableImage } from "../ui/LoadableImage";
 
 // The city-list endpoint (`GET /api/v1/places/{country}/{city}/fountains`) returns
 // `CityFountainPin`, which adds `photo_count`/`thumbnail_url` on top of the plain
@@ -30,11 +32,12 @@ export function FountainListRow({ fountain: f }: { fountain: FountainRowPin }) {
   return (
     <li className="flex items-center gap-3 py-3">
       {f.thumbnail_url ? (
-        <img
+        <LoadableImage
           src={resolveThumbnailUrl(f.thumbnail_url)}
           alt=""
           loading="lazy"
-          className="h-12 w-12 shrink-0 rounded-md object-cover"
+          wrapperClassName="h-12 w-12 shrink-0 rounded-md"
+          className="h-12 w-12 object-cover"
         />
       ) : (
         <span
@@ -60,7 +63,9 @@ export function FountainListRow({ fountain: f }: { fountain: FountainRowPin }) {
             href={`/fountains/${f.id}`}
             className="min-w-0 truncate text-brand-ink underline focus-visible:outline-2"
           >
-            Drinking fountain{f.is_working ? "" : " · Out of order"}
+            <PendingLinkLabel pendingLabel="Opening details…">
+              Drinking fountain{f.is_working ? "" : " · Out of order"}
+            </PendingLinkLabel>
           </Link>
           <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted">
             {f.average_rating != null ? (
@@ -75,7 +80,7 @@ export function FountainListRow({ fountain: f }: { fountain: FountainRowPin }) {
               href={href}
               className="whitespace-nowrap text-brand-ink underline focus-visible:outline-2"
             >
-              See on Map
+              <PendingLinkLabel pendingLabel="Opening map…">See on Map</PendingLinkLabel>
             </Link>
           </span>
         </div>

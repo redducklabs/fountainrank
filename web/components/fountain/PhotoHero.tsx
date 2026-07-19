@@ -2,6 +2,7 @@
 import type { PhotoOut } from "../../lib/fountains";
 import { resolveApiBaseUrl } from "../../lib/api";
 import { useFountainDetailTabs } from "./FountainDetailTabs";
+import { LoadableImage } from "../ui/LoadableImage";
 
 /** Single newest-photo hero at the top of the Info tab. Clicking it opens the Photos tab
  *  (the full set). Rendered only when at least one photo exists. `PhotoOut.url` is an
@@ -17,7 +18,7 @@ export function PhotoHero({ photos }: { photos: PhotoOut[] }) {
       onClick={() => setActive("photos")}
       className="relative block aspect-[4/3] w-full overflow-hidden rounded-lg bg-surface outline-none focus-visible:ring-2 focus-visible:ring-brand"
     >
-      <img
+      <LoadableImage
         src={`${resolveApiBaseUrl()}${newest.url}`}
         alt=""
         loading="lazy"
