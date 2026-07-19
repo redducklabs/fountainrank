@@ -692,15 +692,21 @@ export interface paths {
          *
          *     Enumerates the canonical cities in city-routes-ready scopes with ``fountain_count >= K`` — the
          *     SAME gate ``PlaceOut.indexable`` applies for the city page's ``noindex`` verdict — ordered by id
-         *     for a stable, deterministic page across offsets. Joins each city's parent to derive the
-         *     canonical URL shape in one query: a canonical **region** parent yields the nested
+         *     for a stable, deterministic page across offsets. Joins each city's parent (in the SAME country)
+         *     to derive the canonical URL shape in one query: a canonical **region** parent yields the nested
          *     ``/[country]/[region]/[city]`` slug, a **country** parent the two-level ``/[country]/[city]`` —
-         *     so the web builder never runs a per-city resolve, and a city whose parent was dropped (SET NULL)
-         *     or is a non-canonical region is excluded (it owns no canonical URL). Reads only the precomputed
-         *     membership columns (never a live ``ST_Covers``, spec §5); unauthenticated + cacheable.
-         *     ``total_count`` is the full indexable total so the sitemap builder sizes chunk URLs and logs
-         *     (never silently) when a chunk nears the 50k-URL limit and must be split. Declared BEFORE
-         *     ``/places/{country}/...`` so the literal ``cities/sitemap`` path is not parsed as a country.
+         *     so the web builder never runs a per-city resolve. A city whose parent was dropped (SET NULL), is
+         *     a non-canonical region, or sits in a different country is excluded (it owns no canonical URL).
+         *
+         *     A country-parented city is emitted ONLY when no canonical region shares its
+         *     ``(country_code, slug)``: ``resolve_level2_place`` matches a canonical region BEFORE a
+         *     country-parented city, so a same-slug region would own ``/[country]/[slug]`` and the city's
+         *     two-level URL would resolve to the region page — never advertise that URL. (Two-level countries
+         *     have no regions, so their cities are always emitted.) Reads only the precomputed membership
+         *     columns (never a live ``ST_Covers``, spec §5); unauthenticated + cacheable. ``total_count`` is
+         *     the full indexable total so the sitemap builder sizes chunk URLs and logs (never silently) when
+         *     a chunk nears the 50k-URL limit and must be split. Declared BEFORE ``/places/{country}/...`` so
+         *     ``cities/sitemap`` is not parsed as a country.
          */
         get: operations["cities_sitemap_api_v1_places_cities_sitemap_get"];
         put?: never;
@@ -831,6 +837,31 @@ export interface paths {
          *     can ``notFound()``.
          */
         get: operations["city_fountains_api_v1_places__country___city__fountains_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Site Stats
+         * @description Site-wide public counts for the homepage positioning copy.
+         *
+         *     ``total_fountains`` counts every non-hidden fountain (the honest "N+ fountains" headline — a
+         *     live count, not a sum of per-place ``fountain_count``, which would miss fountains outside any
+         *     place). ``total_countries`` counts the country places with at least one non-hidden fountain (the
+         *     same set the browse hub lists). Unauthenticated + cacheable; no live ST_Covers.
+         */
+        get: operations["site_stats_api_v1_stats_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1805,6 +1836,22 @@ export interface components {
         ReportsSummary: {
             /** Pending Count */
             pending_count: number;
+        };
+        /**
+         * SiteStatsOut
+         * @description Public site-wide counts for the homepage positioning copy.
+         *
+         *     ``total_fountains`` is every non-hidden fountain (the headline "N+ fountains" number); it is a
+         *     live count of the fountains table, NOT a sum of per-place ``fountain_count`` (which would miss
+         *     fountains not assigned to any place). ``total_countries`` is the number of country places with
+         *     at least one non-hidden fountain — the same "countries with fountains" set the browse hub lists.
+         *     Both are cacheable + unauthenticated.
+         */
+        SiteStatsOut: {
+            /** Total Fountains */
+            total_fountains: number;
+            /** Total Countries */
+            total_countries: number;
         };
         /** SyncProfileRequest */
         SyncProfileRequest: {
@@ -3599,6 +3646,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    site_stats_api_v1_stats_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SiteStatsOut"];
                 };
             };
         };

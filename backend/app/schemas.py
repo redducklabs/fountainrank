@@ -618,3 +618,17 @@ class CitySitemapOut(BaseModel):
 
     cities: list[CitySitemapItem]
     total_count: int
+
+
+class SiteStatsOut(BaseModel):
+    """Public site-wide counts for the homepage positioning copy.
+
+    ``total_fountains`` is every non-hidden fountain (the headline "N+ fountains" number); it is a
+    live count of the fountains table, NOT a sum of per-place ``fountain_count`` (which would miss
+    fountains not assigned to any place). ``total_countries`` is the number of country places with
+    at least one non-hidden fountain — the same "countries with fountains" set the browse hub lists.
+    Both are cacheable + unauthenticated.
+    """
+
+    total_fountains: int
+    total_countries: int

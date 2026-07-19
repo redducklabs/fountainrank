@@ -20,6 +20,7 @@ from app.routers import (
     photos,
     places,
     rating_types,
+    stats,
     users,
 )
 
@@ -51,6 +52,7 @@ def create_app() -> FastAPI:
     app.include_router(admin.router)
     app.include_router(leaderboard.router)
     app.include_router(places.router)
+    app.include_router(stats.router)
     app.include_router(users.router)
     app.include_router(email_webhook.router)
     app.include_router(geocode.router)
