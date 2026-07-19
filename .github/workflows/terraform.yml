@@ -17,6 +17,11 @@ on:
         required: false
         default: false
         type: boolean
+      target:
+        description: "Optional -target for a SCOPED plan/apply (e.g. digitalocean_database_cluster.postgres). Empty = full plan/apply. Use to isolate one resource away from unrelated drift (a count-gated destroy, a k8s version bump)."
+        required: false
+        default: ""
+        type: string
 
 concurrency:
   group: terraform-production
@@ -57,6 +62,9 @@ jobs:
       # Phase 4 photos gate (default false). Set the workflow input true — with a
       # bucket-create-capable Spaces key above — to create the private photos bucket.
       TF_VAR_manage_photos_spaces: ${{ github.event.inputs.manage_photos_spaces }}
+      # Optional scoped -target. Built at the workflow level (not inline in `run`) so the
+      # untrusted dispatch input is not interpolated into the shell command; empty => no flag.
+      TARGET_ARG: ${{ github.event.inputs.target != '' && format('-target={0}', github.event.inputs.target) || '' }}
     steps:
       - uses: actions/checkout@v7
       - uses: hashicorp/setup-terraform@v4
@@ -64,7 +72,8 @@ jobs:
           terraform_version: 1.15.6
       - run: terraform init
       - name: Terraform plan
-        run: terraform plan -input=false -out=tfplan
+        # The saved tfplan already encodes -target, so apply replays exactly this scope.
+        run: terraform plan -input=false $TARGET_ARG -out=tfplan
       - name: Terraform apply
         if: github.event.inputs.action == 'apply'
         run: terraform apply -input=false -auto-approve tfplan
