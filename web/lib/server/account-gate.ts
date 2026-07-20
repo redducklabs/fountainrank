@@ -10,6 +10,8 @@ export type MeProfile = {
   email: string;
   avatar_url: string | null;
   needs_name: boolean;
+  account_status: "active" | "suspended" | "banned";
+  suspended_until: string | null;
 };
 
 // The account first-sign-in flow, single-sourced so every account-scoped page (the account

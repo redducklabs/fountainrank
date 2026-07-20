@@ -8,6 +8,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import func, select
+from starlette.requests import Request
 
 from app.auth import get_current_user, get_jwks_cache
 from app.config import Settings, get_settings
@@ -20,6 +21,10 @@ from app.userinfo import UserinfoClaims
 KID = "test-key-1"
 ISSUER = "https://auth.fountainrank.com/oidc"
 AUDIENCE = "https://api.fountainrank.com"
+
+
+def _request() -> Request:
+    return Request({"type": "http", "method": "GET", "path": "/", "headers": []})
 
 
 def _b64(n: int, length: int) -> str:
@@ -296,6 +301,7 @@ async def test_bearer_without_email_name_uses_fallbacks(keypair, cache, session,
         headers={"kid": KID},
     )
     user = await get_current_user(
+        request=_request(),
         authorization=f"Bearer {token}",
         x_dev_user=None,
         x_dev_email=None,
@@ -314,6 +320,7 @@ async def test_malformed_authorization_rejected_without_dev_fallthrough(cache, s
     # and X-Dev-User set — it must NOT fall through to the dev path.
     with pytest.raises(HTTPException) as ei:
         await get_current_user(
+            request=_request(),
             authorization="Banana xyz",
             x_dev_user="logto-abc",
             x_dev_email=None,
@@ -328,6 +335,7 @@ async def test_malformed_authorization_rejected_without_dev_fallthrough(cache, s
 async def test_no_credential_rejected_when_dev_disabled(cache, session):
     with pytest.raises(HTTPException) as ei:
         await get_current_user(
+            request=_request(),
             authorization=None,
             x_dev_user=None,
             x_dev_email=None,
@@ -347,6 +355,7 @@ async def test_auth_failure_logs_kid_not_token(keypair, cache, session, caplog):
     with caplog.at_level("WARNING", logger="app.auth"):
         with pytest.raises(HTTPException):
             await get_current_user(
+                request=_request(),
                 authorization=f"Bearer {token}",
                 x_dev_user=None,
                 x_dev_email=None,

@@ -108,6 +108,8 @@ function ReportedContentRow({ item }: { item: ReportedContentOut }) {
         contentId={item.content_id}
         fountainId={item.fountain_id}
         isHidden={item.is_hidden}
+        contributorUserId={item.contributor_user_id}
+        contributorAccountStatus={item.contributor_account_status}
       />
     </li>
   );

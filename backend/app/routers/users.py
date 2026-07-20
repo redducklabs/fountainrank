@@ -89,6 +89,8 @@ def me_response(user: User) -> MeResponse:
         email=email,
         avatar_url=user.avatar_url,
         is_admin=user.is_admin,
+        account_status=user.account_status,
+        suspended_until=user.suspended_until,
         created_at=user.created_at,
         needs_name=resolved is None,
     )

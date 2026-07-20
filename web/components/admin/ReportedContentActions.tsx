@@ -9,6 +9,7 @@ import {
   adminHidePhoto,
   adminSetFountainHidden,
   adminSetNoteHidden,
+  adminSetUserSanction,
   type AdminActionResult,
   type AdminContentType,
 } from "../../app/actions/admin";
@@ -38,17 +39,23 @@ export function ReportedContentActions({
   contentId,
   fountainId,
   isHidden,
+  contributorUserId,
+  contributorAccountStatus,
 }: {
   contentType: AdminContentType;
   contentId: string;
   fountainId: string;
   isHidden: boolean;
+  contributorUserId?: string | null;
+  contributorAccountStatus?: "active" | "suspended" | "banned" | null;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [result, setResult] = useState<AdminActionResult | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [moderationReason, setModerationReason] = useState("");
+  const [suspensionUntil, setSuspensionUntil] = useState("");
+  const canSanction = Boolean(contributorUserId && moderationReason.trim());
   // Which action is in flight, so only the tapped button spins while `pending` disables the whole
   // row (single-flight). The local Cancel / initial-Delete toggles never spin.
   const [activeKey, setActiveKey] = useState<string | null>(null);
@@ -101,7 +108,7 @@ export function ReportedContentActions({
         value={moderationReason}
         onChange={(event) => setModerationReason(event.target.value)}
         maxLength={500}
-        placeholder="Moderation reason (optional)"
+        placeholder="Reason (required for account sanctions)"
         aria-label="Moderation reason"
         className="w-full rounded-md border border-border bg-surface px-2 py-1 text-xs text-foreground sm:w-56"
       />
@@ -159,6 +166,65 @@ export function ReportedContentActions({
             </SpinnerButton>
           ))}
       </div>
+      {contributorUserId ? (
+        <div className="flex max-w-96 flex-wrap justify-end gap-2">
+          {contributorAccountStatus === "active" ? (
+            <>
+              <SpinnerButton
+                pending={pending && activeKey === "ban"}
+                disabled={pending || !canSanction}
+                onClick={() => {
+                  if (window.confirm("Permanently ban this contributor?"))
+                    run("ban", () =>
+                      adminSetUserSanction(contributorUserId, "banned", moderationReason),
+                    );
+                }}
+                className="rounded-full border border-danger px-3 py-1.5 text-xs font-semibold text-danger disabled:opacity-60"
+              >
+                Ban contributor
+              </SpinnerButton>
+              <input
+                type="datetime-local"
+                value={suspensionUntil}
+                onChange={(event) => setSuspensionUntil(event.target.value)}
+                aria-label="Suspend contributor until"
+                className="rounded-md border border-border bg-surface px-2 py-1 text-xs"
+              />
+              <SpinnerButton
+                pending={pending && activeKey === "suspend"}
+                disabled={pending || !canSanction || !suspensionUntil}
+                onClick={() => {
+                  if (window.confirm("Suspend this contributor until the selected time?"))
+                    run("suspend", () =>
+                      adminSetUserSanction(
+                        contributorUserId,
+                        "suspended",
+                        moderationReason,
+                        new Date(suspensionUntil).toISOString(),
+                      ),
+                    );
+                }}
+                className="rounded-full border border-danger px-3 py-1.5 text-xs font-semibold text-danger disabled:opacity-60"
+              >
+                Suspend
+              </SpinnerButton>
+            </>
+          ) : contributorAccountStatus === "suspended" || contributorAccountStatus === "banned" ? (
+            <SpinnerButton
+              pending={pending && activeKey === "unban"}
+              disabled={pending || !canSanction}
+              onClick={() =>
+                run("unban", () =>
+                  adminSetUserSanction(contributorUserId, "active", moderationReason),
+                )
+              }
+              className="rounded-full border border-brand px-3 py-1.5 text-xs font-semibold text-brand-ink disabled:opacity-60"
+            >
+              Lift {contributorAccountStatus === "banned" ? "ban" : "suspension"}
+            </SpinnerButton>
+          ) : null}
+        </div>
+      ) : null}
       {message ? <p className="text-xs text-danger">{message}</p> : null}
     </div>
   );

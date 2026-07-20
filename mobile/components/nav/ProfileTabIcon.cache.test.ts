@@ -11,6 +11,8 @@ const PROFILE: MeProfile = {
   email: "aron@example.com",
   avatar_url: "https://example.com/avatar.jpg",
   is_admin: false,
+  account_status: "active",
+  suspended_until: null,
   created_at: "2026-01-01T00:00:00Z",
   needs_name: false,
 };

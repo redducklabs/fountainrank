@@ -38,6 +38,20 @@ class Base(DeclarativeBase):
 
 class User(Base):
     __tablename__ = "users"
+    __table_args__ = (
+        CheckConstraint("account_status IN ('active','suspended','banned')", name="account_status"),
+        CheckConstraint(
+            "(account_status = 'active' AND suspended_until IS NULL AND "
+            "sanction_reason IS NULL AND sanctioned_at IS NULL AND "
+            "sanctioned_by_user_id IS NULL) OR "
+            "(account_status = 'banned' AND suspended_until IS NULL AND "
+            "sanction_reason IS NOT NULL AND sanctioned_at IS NOT NULL) OR "
+            "(account_status = 'suspended' AND suspended_until IS NOT NULL AND "
+            "sanction_reason IS NOT NULL AND sanctioned_at IS NOT NULL)",
+            name="sanction_shape",
+        ),
+        Index("ix_users_account_status_suspended_until", "account_status", "suspended_until"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -50,6 +64,17 @@ class User(Base):
     email: Mapped[str] = mapped_column(String, nullable=False)
     avatar_url: Mapped[str | None] = mapped_column(String, nullable=True)
     is_admin: Mapped[bool] = mapped_column(nullable=False, server_default=text("false"))
+    account_status: Mapped[str] = mapped_column(
+        String, nullable=False, server_default=text("'active'")
+    )
+    suspended_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    sanction_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    sanctioned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    sanctioned_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL", name="fk_users_sanctioned_by"),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -814,10 +839,18 @@ class ModerationAction(Base):
     __tablename__ = "moderation_actions"
     __table_args__ = (
         CheckConstraint(
-            "action IN ('hide','unhide','dismiss','delete','rating_delete')", name="action"
+            "action IN ('hide','unhide','dismiss','delete','rating_delete',"
+            "'ban','suspend','unban','expire')",
+            name="action",
         ),
         CheckConstraint(
-            "content_type IN ('fountain','note','photo','rating')", name="content_type"
+            "content_type IN ('fountain','note','photo','rating','user')", name="content_type"
+        ),
+        CheckConstraint("actor_kind IN ('admin','system')", name="actor_kind"),
+        CheckConstraint(
+            "(actor_kind = 'admin' AND admin_actor_id IS NOT NULL) OR "
+            "(actor_kind = 'system' AND admin_actor_id IS NULL)",
+            name="actor_shape",
         ),
         Index(
             "ix_moderation_actions_target",
@@ -837,7 +870,10 @@ class ModerationAction(Base):
         ForeignKey("users.id", ondelete="SET NULL", name="fk_moderation_actions_admin"),
         nullable=True,
     )
-    admin_actor_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
+    admin_actor_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
+    actor_kind: Mapped[str] = mapped_column(
+        String, nullable=False, default="admin", server_default=text("'admin'")
+    )
     action: Mapped[str] = mapped_column(String, nullable=False)
     content_type: Mapped[str] = mapped_column(String, nullable=False)
     content_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)

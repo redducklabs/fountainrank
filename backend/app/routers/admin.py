@@ -41,6 +41,8 @@ from app.schemas import (
     AdminPhotoOut,
     AdminPhotoPatch,
     AdminRatingOut,
+    AdminSanctionOut,
+    AdminSanctionRequest,
     ModerationReasonRequest,
     PhotoReportsSummary,
     ReportDismissRequest,
@@ -84,6 +86,84 @@ def _record_moderation_action(
             reason=reason,
             details=details,
         )
+    )
+
+
+@router.patch("/users/{user_id}/sanction", response_model=AdminSanctionOut)
+async def set_user_sanction(
+    user_id: uuid.UUID,
+    payload: AdminSanctionRequest,
+    admin: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+) -> AdminSanctionOut:
+    target = (
+        await session.execute(select(User).where(User.id == user_id).with_for_update())
+    ).scalar_one_or_none()
+    if target is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="user not found")
+    if target.id == admin.id or target.is_admin:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="cannot_sanction_admin")
+
+    expiry = payload.suspended_until
+    if expiry is not None:
+        if expiry.tzinfo is None:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, detail="suspended_until_timezone_required"
+            )
+        expiry = expiry.astimezone(UTC)
+        if expiry <= datetime.now(UTC):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, detail="suspended_until_must_be_future"
+            )
+
+    unchanged = (
+        target.account_status == payload.status
+        and target.sanction_reason == (None if payload.status == "active" else payload.reason)
+        and target.suspended_until == expiry
+    )
+    if unchanged:
+        return AdminSanctionOut(
+            user_id=target.id,
+            status=target.account_status,
+            suspended_until=target.suspended_until,
+            reason=target.sanction_reason,
+        )
+
+    previous = target.account_status
+    target.account_status = payload.status
+    if payload.status == "active":
+        target.suspended_until = None
+        target.sanction_reason = None
+        target.sanctioned_at = None
+        target.sanctioned_by_user_id = None
+        action = "unban"
+    else:
+        target.suspended_until = expiry
+        target.sanction_reason = payload.reason
+        target.sanctioned_at = datetime.now(UTC)
+        target.sanctioned_by_user_id = admin.id
+        action = "suspend" if payload.status == "suspended" else "ban"
+    _record_moderation_action(
+        session,
+        admin,
+        action=action,
+        content_type="user",
+        content_id=target.id,
+        fountain_id=None,
+        reason=payload.reason,
+        details={
+            "previous_status": previous,
+            "new_status": payload.status,
+            "suspended_until": expiry.isoformat() if expiry else None,
+        },
+    )
+    await session.commit()
+    await session.refresh(target)
+    return AdminSanctionOut(
+        user_id=target.id,
+        status=target.account_status,
+        suspended_until=target.suspended_until,
+        reason=target.sanction_reason,
     )
 
 
@@ -1024,6 +1104,9 @@ async def admin_reports(
                     FountainPhoto.id,
                     FountainPhoto.fountain_id,
                     FountainPhoto.is_hidden,
+                    User.id.label("contributor_user_id"),
+                    User.account_status.label("contributor_account_status"),
+                    User.suspended_until.label("contributor_suspended_until"),
                     User.display_name,
                     User.logto_user_id,
                     User.nickname,
@@ -1036,6 +1119,9 @@ async def admin_reports(
                 "fountain_id": r.fountain_id,
                 "is_hidden": r.is_hidden,
                 "contributor": public_display_name(r.display_name, r.logto_user_id, r.nickname),
+                "contributor_user_id": r.contributor_user_id,
+                "contributor_account_status": r.contributor_account_status,
+                "contributor_suspended_until": r.contributor_suspended_until,
                 "thumbnail_url": f"/api/v1/photos/{r.id}/thumb",
                 "url": f"/api/v1/photos/{r.id}",
             }
@@ -1047,6 +1133,9 @@ async def admin_reports(
                     FountainNote.fountain_id,
                     FountainNote.is_hidden,
                     func.left(FountainNote.body, MAX_NOTE_CHARS).label("excerpt"),
+                    User.id.label("contributor_user_id"),
+                    User.account_status.label("contributor_account_status"),
+                    User.suspended_until.label("contributor_suspended_until"),
                     User.display_name,
                     User.logto_user_id,
                     User.nickname,
@@ -1059,20 +1148,39 @@ async def admin_reports(
                 "fountain_id": r.fountain_id,
                 "is_hidden": r.is_hidden,
                 "contributor": public_display_name(r.display_name, r.logto_user_id, r.nickname),
+                "contributor_user_id": r.contributor_user_id,
+                "contributor_account_status": r.contributor_account_status,
+                "contributor_suspended_until": r.contributor_suspended_until,
                 "excerpt": r.excerpt,
             }
     if fountain_ids := ids_by_type.get("fountain"):
         for r in (
             await session.execute(
-                select(Fountain.id, Fountain.is_hidden, Fountain.placement_note).where(
-                    Fountain.id.in_(fountain_ids)
+                select(
+                    Fountain.id,
+                    Fountain.is_hidden,
+                    Fountain.placement_note,
+                    User.id.label("contributor_user_id"),
+                    User.account_status.label("contributor_account_status"),
+                    User.suspended_until.label("contributor_suspended_until"),
+                    User.display_name,
+                    User.logto_user_id,
+                    User.nickname,
                 )
+                .outerjoin(User, User.id == Fountain.added_by_user_id)
+                .where(Fountain.id.in_(fountain_ids))
             )
         ).all():
             details[("fountain", r.id)] = {
                 "fountain_id": r.id,
                 "is_hidden": r.is_hidden,
                 "fountain_label": r.placement_note,
+                "contributor": public_display_name(r.display_name, r.logto_user_id, r.nickname)
+                if r.contributor_user_id
+                else None,
+                "contributor_user_id": r.contributor_user_id,
+                "contributor_account_status": r.contributor_account_status,
+                "contributor_suspended_until": r.contributor_suspended_until,
             }
 
     result: list[ReportedContentOut] = []
@@ -1102,6 +1210,9 @@ async def admin_reports(
                 notes=notes_by_key.get(key, []),
                 first_reported_at=row.first_reported_at,
                 contributor=detail.get("contributor"),
+                contributor_user_id=detail.get("contributor_user_id"),
+                contributor_account_status=detail.get("contributor_account_status"),
+                contributor_suspended_until=detail.get("contributor_suspended_until"),
                 thumbnail_url=detail.get("thumbnail_url"),
                 url=detail.get("url"),
                 excerpt=detail.get("excerpt"),

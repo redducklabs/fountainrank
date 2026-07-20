@@ -8,6 +8,9 @@ overrides:
   # expo-asset's older compatible resolution and expo-doctor fails the duplicate-native-module
   # check. Revisit/remove on the next Expo SDK bump.
   'expo-asset>expo-constants': '56.0.21'
+  # GHSA-3jxr-9vmj-r5cp: Redocly's minimatch 5 chain otherwise resolves vulnerable 2.1.1.
+  # Keep the override scoped to that chain; remove once Redocly/minimatch carries >=2.1.2.
+  'minimatch@5.1.9>brace-expansion': '2.1.2'
 allowBuilds:
   sharp: true
   unrs-resolver: true
