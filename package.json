@@ -16,7 +16,7 @@
     "format:check": "prettier --check \"{web,mobile,packages}/**/*.{ts,tsx,js,jsx,mjs,cjs,json,css,md}\""
   },
   "devDependencies": {
-    "prettier": "3.9.4",
-    "turbo": "2.10.3"
+    "prettier": "3.9.5",
+    "turbo": "2.10.5"
   }
 }
