@@ -23,13 +23,13 @@ export default async function ContributorHistoryPage({
   if (viewer.state !== "authed" || !viewer.isAdmin) notFound();
   const [{ userId }, query] = await Promise.all([params, searchParams]);
   const client = await getAuthedApiClient(requestId);
-  const { data, response } = await client.GET(
-    "/api/v1/admin/contributors/{user_id}/contributions",
-    {
+  const result = await client
+    .GET("/api/v1/admin/contributors/{user_id}/contributions", {
       params: { path: { user_id: userId }, query: { cursor: query.cursor, limit: 50 } },
-    },
-  );
-  if (response.status === 404) notFound();
+    })
+    .catch(() => null);
+  if (result?.response.status === 404) notFound();
+  const data = result?.data;
 
   return (
     <>

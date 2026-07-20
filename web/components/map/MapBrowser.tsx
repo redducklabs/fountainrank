@@ -36,7 +36,7 @@ import {
   NEIGHBORHOOD_ZOOM,
 } from "../../lib/map/constants";
 import { resolveActiveId } from "../../lib/map/active-id";
-import { hrefWithoutFocus } from "../../lib/map/focus-url";
+import { resolveFocusClearNavigation } from "../../lib/map/focus-url";
 import {
   detailToPin,
   focusCameraAction,
@@ -191,7 +191,13 @@ export default function MapBrowser({
   const clearFocus = useCallback(
     (beforeDetailNavigation = false) => {
       const ownedFocus = focusIdRef.current;
-      if (!ownedFocus) return;
+      const navigation = resolveFocusClearNavigation({
+        ownedFocus,
+        trigger: beforeDetailNavigation ? "open-detail" : "dismiss",
+        pathname: pathnameRef.current,
+        search: searchRef.current,
+      });
+      if (navigation.kind === "noop") return;
       focusIdRef.current = "";
       focusedPinRef.current = null;
       consumedFocusRef.current = null;
@@ -204,13 +210,12 @@ export default function MapBrowser({
       (mapRef.current?.getSource("fountains") as GeoJSONSource | undefined)?.setData(
         pinsToFeatureCollection(inputs, themeRef.current),
       );
-      const cleanHref = hrefWithoutFocus(pathnameRef.current, searchRef.current);
-      if (beforeDetailNavigation) {
+      if (navigation.kind === "replace-state") {
         // Clean the current map history entry synchronously before pushing detail. Otherwise closing
         // the intercepted detail would Back-navigate to the stale deep-link focus and resurrect it.
-        window.history.replaceState(window.history.state, "", cleanHref);
+        window.history.replaceState(window.history.state, "", navigation.href);
       } else {
-        router.replace(cleanHref, { scroll: false });
+        router.replace(navigation.href, { scroll: false });
       }
     },
     [router],
