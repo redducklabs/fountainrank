@@ -1,12 +1,15 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 
-const { getNestedCityFountainsServer, resolvePlaceServer } = vi.hoisted(() => ({
-  getNestedCityFountainsServer: vi.fn(),
-  resolvePlaceServer: vi.fn(),
-}));
+const { getNestedCityFountainsServer, getRegionCitiesServer, resolvePlaceServer } = vi.hoisted(
+  () => ({
+    getNestedCityFountainsServer: vi.fn(),
+    getRegionCitiesServer: vi.fn(),
+    resolvePlaceServer: vi.fn(),
+  }),
+);
 const { notFound, permanentRedirect } = vi.hoisted(() => ({
   notFound: vi.fn(() => {
     throw new Error("NEXT_NOT_FOUND");
@@ -18,7 +21,7 @@ const { notFound, permanentRedirect } = vi.hoisted(() => ({
 
 vi.mock("../../../../../lib/places", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../../../../lib/places")>();
-  return { ...actual, getNestedCityFountainsServer, resolvePlaceServer };
+  return { ...actual, getNestedCityFountainsServer, getRegionCitiesServer, resolvePlaceServer };
 });
 vi.mock("next/navigation", () => ({ notFound, permanentRedirect }));
 vi.mock("next/link", () => ({
@@ -79,6 +82,13 @@ const FOUNTAIN = {
   distance_m: null,
 };
 const CITY = { place: PLACE, fountains: [FOUNTAIN], indexable: true };
+// Sibling cities in the same region (California) for the RelatedPlaces block; includes the current
+// city (San Diego) so the test proves it is excluded from its own sibling list.
+const SIBLING_CITIES = [
+  { ...PLACE, id: "p2", slug: "los-angeles", name: "Los Angeles", fountain_count: 50 },
+  PLACE,
+  { ...PLACE, id: "p3", slug: "san-francisco", name: "San Francisco", fountain_count: 30 },
+];
 
 const params = (country: string, place: string, city: string) =>
   Promise.resolve({ country, place, city });
@@ -97,6 +107,7 @@ function mockResolvedCity(indexable = true) {
     data: { kind: "region", canonical_path: "/drinking-fountains/us/california", place: REGION },
     status: 200,
   });
+  getRegionCitiesServer.mockResolvedValue({ data: SIBLING_CITIES, status: 200 });
 }
 
 it("renders the nested city page with parent-region breadcrumbs", async () => {
@@ -116,9 +127,27 @@ it("renders the nested city page with parent-region breadcrumbs", async () => {
     "href",
     "/drinking-fountains/us/california",
   );
-  const script = document.querySelector<HTMLScriptElement>('script[type="application/ld+json"]');
-  expect(script).not.toBeNull();
-  expect(JSON.parse(script?.textContent ?? "{}").itemListElement).toHaveLength(4);
+  const scripts = Array.from(
+    document.querySelectorAll<HTMLScriptElement>('script[type="application/ld+json"]'),
+  ).map((s) => JSON.parse(s.textContent ?? "{}"));
+  const breadcrumb = scripts.find((s) => s["@type"] === "BreadcrumbList");
+  const itemList = scripts.find((s) => s["@type"] === "ItemList");
+  expect(breadcrumb?.itemListElement).toHaveLength(4);
+  // ItemList of the one listed fountain, linking to its detail page.
+  expect(itemList?.itemListElement).toEqual([
+    { "@type": "ListItem", position: 1, url: "https://fountainrank.com/fountains/f1" },
+  ]);
+  // Sideways links to sibling cities in California, excluding the current city (San Diego).
+  const related = screen.getByRole("navigation", { name: "Other cities in California" });
+  expect(within(related).getByRole("link", { name: "Los Angeles" })).toHaveAttribute(
+    "href",
+    "/drinking-fountains/us/california/los-angeles",
+  );
+  expect(within(related).getByRole("link", { name: "San Francisco" })).toHaveAttribute(
+    "href",
+    "/drinking-fountains/us/california/san-francisco",
+  );
+  expect(within(related).queryByRole("link", { name: "San Diego" })).toBeNull();
 });
 
 it("404s when the nested city does not resolve", async () => {
@@ -143,12 +172,28 @@ it("308s non-canonical casing to the canonical nested URL", async () => {
   expect(permanentRedirect).toHaveBeenCalledWith("/drinking-fountains/us/california/san-diego");
 });
 
-it("does not render JSON-LD when the city is noindex", async () => {
+it("does not render JSON-LD when the city is noindex, but still links siblings", async () => {
   mockResolvedCity(false);
 
   render(await CityPage({ params: params("us", "california", "san-diego") }));
   await screen.findByRole("heading", { level: 1 });
   expect(document.querySelector('script[type="application/ld+json"]')).toBeNull();
+  // Sibling links are NOT gated on indexability — internal links still help crawl on noindex,follow.
+  expect(screen.getByRole("navigation", { name: "Other cities in California" })).toBeTruthy();
+});
+
+it("renders no related-places nav when there are no sibling cities", async () => {
+  getNestedCityFountainsServer.mockResolvedValue({ data: CITY, status: 200 });
+  resolvePlaceServer.mockResolvedValue({
+    data: { kind: "region", canonical_path: "/drinking-fountains/us/california", place: REGION },
+    status: 200,
+  });
+  // Only the current city comes back → excluded → empty list → the block renders nothing.
+  getRegionCitiesServer.mockResolvedValue({ data: [PLACE], status: 200 });
+
+  render(await CityPage({ params: params("us", "california", "san-diego") }));
+  await screen.findByRole("heading", { level: 1 });
+  expect(screen.queryByRole("navigation", { name: /Other cities/ })).toBeNull();
 });
 
 it("generateMetadata uses the canonical nested city URL", async () => {
