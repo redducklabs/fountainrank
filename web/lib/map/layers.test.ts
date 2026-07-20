@@ -107,9 +107,10 @@ describe("selectedIconExpr behavioral matrix", () => {
     ranking_score: number | null;
     icon: string;
   }): string {
-    // Pass null for propertySpec — the second arg is optional; null skips
-    // property-type constraints while still parsing the expression fully.
-    const parsed = createExpression(selectedIconExpr("pin-selected"), null);
+    // Pass null for propertySpec so property-type constraints are skipped while
+    // the expression is still parsed fully. MapLibre 26 requires a diagnostic
+    // root key before the optional property specification.
+    const parsed = createExpression(selectedIconExpr("pin-selected"), "selectedIconExpr", null);
     if (parsed.result !== "success") {
       throw new Error(`Failed to parse SELECTED_ICON_EXPR: ${JSON.stringify(parsed.value)}`);
     }
