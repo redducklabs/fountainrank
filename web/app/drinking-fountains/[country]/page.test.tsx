@@ -121,6 +121,19 @@ it("falls back to two-level city links when a country has no regions", async () 
   ]);
 });
 
+it("emits no structured data for a rendered-but-noindex country", async () => {
+  getCountriesServer.mockResolvedValue({ data: [{ ...US, indexable: false }], status: 200 });
+  getCountryRegionsServer.mockResolvedValue({ data: [CALIFORNIA], status: 200 });
+  getCountryCitiesServer.mockResolvedValue({ data: [SAN_DIEGO], status: 200 });
+
+  render(await CountryPage({ params: Promise.resolve({ country: "us" }) }));
+
+  await screen.findByRole("heading", { level: 1 });
+  // A below-gate country still renders, but both the BreadcrumbList and the ItemList are gated on
+  // indexability, so it emits no structured data at all.
+  expect(document.querySelector('script[type="application/ld+json"]')).toBeNull();
+});
+
 it("resolves the country segment case-insensitively", async () => {
   getCountriesServer.mockResolvedValue({ data: [US], status: 200 });
   getCountryRegionsServer.mockResolvedValue({ data: [], status: 200 });

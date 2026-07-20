@@ -172,12 +172,28 @@ it("308s non-canonical casing to the canonical nested URL", async () => {
   expect(permanentRedirect).toHaveBeenCalledWith("/drinking-fountains/us/california/san-diego");
 });
 
-it("does not render JSON-LD when the city is noindex", async () => {
+it("does not render JSON-LD when the city is noindex, but still links siblings", async () => {
   mockResolvedCity(false);
 
   render(await CityPage({ params: params("us", "california", "san-diego") }));
   await screen.findByRole("heading", { level: 1 });
   expect(document.querySelector('script[type="application/ld+json"]')).toBeNull();
+  // Sibling links are NOT gated on indexability — internal links still help crawl on noindex,follow.
+  expect(screen.getByRole("navigation", { name: "Other cities in California" })).toBeTruthy();
+});
+
+it("renders no related-places nav when there are no sibling cities", async () => {
+  getNestedCityFountainsServer.mockResolvedValue({ data: CITY, status: 200 });
+  resolvePlaceServer.mockResolvedValue({
+    data: { kind: "region", canonical_path: "/drinking-fountains/us/california", place: REGION },
+    status: 200,
+  });
+  // Only the current city comes back → excluded → empty list → the block renders nothing.
+  getRegionCitiesServer.mockResolvedValue({ data: [PLACE], status: 200 });
+
+  render(await CityPage({ params: params("us", "california", "san-diego") }));
+  await screen.findByRole("heading", { level: 1 });
+  expect(screen.queryByRole("navigation", { name: /Other cities/ })).toBeNull();
 });
 
 it("generateMetadata uses the canonical nested city URL", async () => {
