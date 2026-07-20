@@ -127,19 +127,31 @@ export async function adminUpdateFountainFromForm(
 export async function adminSetFountainHidden(
   fountainId: string,
   isHidden: boolean,
+  moderationReason?: string,
 ): Promise<AdminActionResult> {
   if (!UUID_RE.test(fountainId)) return fail("validation");
-  const result = await adminUpdateFountain(fountainId, { is_hidden: isHidden });
+  const reason = cleanText(moderationReason ?? null);
+  const result = await adminUpdateFountain(fountainId, {
+    is_hidden: isHidden,
+    ...(reason ? { moderation_reason: reason } : {}),
+  });
   // Refresh the moderation queue when this is invoked from it (#12).
   if (result.ok) revalidatePath("/admin/reports");
   return result;
 }
 
-export async function adminDeleteFountain(fountainId: string): Promise<AdminActionResult> {
+export async function adminDeleteFountain(
+  fountainId: string,
+  moderationReason?: string,
+): Promise<AdminActionResult> {
   if (!UUID_RE.test(fountainId)) return fail("validation");
+  const reason = cleanText(moderationReason ?? null);
   return runAdminAction("delete_fountain", fountainId, async (client) => {
     const { response } = await client.DELETE("/api/v1/admin/fountains/{fountain_id}", {
-      params: { path: { fountain_id: fountainId } },
+      params: {
+        path: { fountain_id: fountainId },
+        ...(reason ? { query: { reason } } : {}),
+      },
     });
     return { response };
   }).then((result) => {
@@ -155,12 +167,14 @@ export async function adminSetNoteHidden(
   noteId: string,
   isHidden: boolean,
   fountainId: string,
+  moderationReason?: string,
 ): Promise<AdminActionResult> {
   if (!UUID_RE.test(noteId) || !UUID_RE.test(fountainId)) return fail("validation");
+  const reason = cleanText(moderationReason ?? null);
   return runAdminAction(isHidden ? "hide_note" : "unhide_note", noteId, async (client) => {
     const { response } = await client.PATCH("/api/v1/admin/notes/{note_id}", {
       params: { path: { note_id: noteId } },
-      body: { is_hidden: isHidden },
+      body: { is_hidden: isHidden, ...(reason ? { moderation_reason: reason } : {}) },
     });
     return { response };
   }).then((result) => {
@@ -177,12 +191,14 @@ export async function adminSetNoteHidden(
 export async function adminHidePhoto(
   photoId: string,
   isHidden: boolean,
+  moderationReason?: string,
 ): Promise<AdminActionResult> {
   if (!UUID_RE.test(photoId)) return fail("validation");
+  const reason = cleanText(moderationReason ?? null);
   return runAdminAction(isHidden ? "hide_photo" : "unhide_photo", photoId, async (client) => {
     const { response } = await client.PATCH("/api/v1/admin/photos/{photo_id}", {
       params: { path: { photo_id: photoId } },
-      body: { is_hidden: isHidden },
+      body: { is_hidden: isHidden, ...(reason ? { moderation_reason: reason } : {}) },
     });
     return { response };
   }).then((result) => {
@@ -199,14 +215,20 @@ export async function adminHidePhoto(
 export async function adminDismissReport(
   contentType: AdminContentType,
   contentId: string,
+  moderationReason?: string,
 ): Promise<AdminActionResult> {
   if (!UUID_RE.test(contentId)) return fail("validation");
   if (contentType !== "photo" && contentType !== "note" && contentType !== "fountain") {
     return fail("validation");
   }
+  const reason = cleanText(moderationReason ?? null);
   return runAdminAction("dismiss_report", contentId, async (client) => {
     const { response } = await client.POST("/api/v1/admin/reports/dismiss", {
-      body: { content_type: contentType, content_id: contentId },
+      body: {
+        content_type: contentType,
+        content_id: contentId,
+        ...(reason ? { reason } : {}),
+      },
     });
     return { response };
   }).then((result) => {
@@ -217,17 +239,45 @@ export async function adminDismissReport(
   });
 }
 
-export async function adminDeletePhoto(photoId: string): Promise<AdminActionResult> {
+export async function adminDeletePhoto(
+  photoId: string,
+  moderationReason?: string,
+): Promise<AdminActionResult> {
   if (!UUID_RE.test(photoId)) return fail("validation");
+  const reason = cleanText(moderationReason ?? null);
   return runAdminAction("delete_photo", photoId, async (client) => {
     const { response } = await client.DELETE("/api/v1/admin/photos/{photo_id}", {
-      params: { path: { photo_id: photoId } },
+      params: {
+        path: { photo_id: photoId },
+        ...(reason ? { query: { reason } } : {}),
+      },
     });
     return { response };
   }).then((result) => {
     if (result.ok) {
       revalidatePath("/admin/reports");
     }
+    return result;
+  });
+}
+
+export async function adminDeleteRating(
+  ratingId: string,
+  fountainId: string,
+  reason: string,
+): Promise<AdminActionResult> {
+  const cleanedReason = cleanText(reason);
+  if (!UUID_RE.test(ratingId) || !UUID_RE.test(fountainId) || !cleanedReason) {
+    return fail("validation");
+  }
+  return runAdminAction("delete_rating", ratingId, async (client) => {
+    const { response } = await client.DELETE("/api/v1/admin/ratings/{rating_id}", {
+      params: { path: { rating_id: ratingId } },
+      body: { reason: cleanedReason },
+    });
+    return { response };
+  }).then((result) => {
+    if (result.ok) revalidatePath(`/fountains/${fountainId}`);
     return result;
   });
 }

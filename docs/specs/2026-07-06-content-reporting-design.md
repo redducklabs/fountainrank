@@ -6,11 +6,11 @@ Design spec for GitHub issue **#11** (report content into a moderation queue). I
 "a photos-scoped slice of #11 and #12") so that **notes** (review/comment text) and
 **user-visible fountains** become reportable too, on a single polymorphic reporting spine.
 
-This is the **reporting (write) half** of the moderation story. The **admin queue / triage /
-content-removal half** — generalizing the admin UI to notes & fountains, the
-`moderation_actions` audit table, and rating removal + ranking recompute — is
-[#12](https://github.com/redducklabs/fountainrank/issues/12) and is deliberately **out of
-scope here** (§13). Ships as its own branch/PR.
+This is the **reporting (write) half** of the moderation story. The admin queue/triage
+generalization shipped as [#12](https://github.com/redducklabs/fountainrank/issues/12); the
+deferred `moderation_actions` audit table and rating removal + ranking recompute are tracked by
+[#216](https://github.com/redducklabs/fountainrank/issues/216). Both are deliberately **out of
+scope here** (§13).
 
 ## 1. Problem & scope
 
@@ -40,14 +40,14 @@ one queue to generalize instead of a `UNION` of two tables.
 
 **Out of scope (explicitly):**
 
-- The **admin queue generalization** to notes/fountains, per-type resolution actions, the
-  `moderation_actions` audit table, and rating removal + ranking recompute — **all #12**
-  (§13). This release keeps the admin surface **photo-only**; it only repoints it onto the
-  new table so it keeps working.
+- The **admin queue generalization** to notes/fountains and per-type resolution actions (#12),
+  plus the `moderation_actions` audit table and rating removal + ranking recompute (#216)
+  (§13). This release keeps the admin surface **photo-only**; it only repoints it onto the new
+  table so it keeps working.
 - **Ratings are not reportable.** A rating is a 1–5 star value shown only in aggregate
   (`average_rating`, per-dimension counts) — no other user's individual rating is displayed
   anywhere, so there is no surface to report one from. Admin-initiated rating *removal*
-  (vote-manipulation cleanup) is a #12 concern.
+  (vote-manipulation cleanup) is a #216 concern.
 - **Condition reports** and **attribute observations** are not reportable in v1 (not
   individually surfaced as free-text content). The polymorphic table makes adding them later
   a one-line `content_type` + category-matrix change — noted, not built.
@@ -344,10 +344,11 @@ that web/mobile no longer typecheck against can't slip through.
   + the shared chokepoint; the `photo_reports` → `content_reports` migration; **repoint** the
   existing photo admin queue so it keeps working (photo-only); web + mobile report affordances
   for notes & fountains.
-- **#12 (next):** generalize the admin **queue/triage UI** to display & action note/fountain
-  reports (per-type resolution: hide the note, hide/delete the fountain); the
-  **`moderation_actions` audit table**; **rating removal** + `recompute_fountain_ranking`
-  excluding removed ratings; the profile **badge** count broadening beyond photos.
+- **#12 (shipped):** generalize the admin **queue/triage UI** to display and action
+  note/fountain reports (per-type resolution: hide the note, hide/delete the fountain), and
+  broaden the profile badge beyond photos.
+- **#216 (follow-up):** add the **`moderation_actions` audit table** and **rating removal** +
+  `recompute_fountain_ranking` excluding removed ratings.
 
 ## 14. Out-of-scope / open decisions for spec review
 

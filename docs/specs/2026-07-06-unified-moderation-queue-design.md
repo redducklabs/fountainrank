@@ -13,7 +13,8 @@ This is a deliberately **lean slice of #12**: the unified queue + badge + per-ty
 reusing the existing admin action endpoints. The heavier parts of #12 — a `moderation_actions`
 audit table, soft-delete/tombstones beyond the existing `is_hidden`, rating removal + ranking
 recompute, and account-ban escalation ([#13](https://github.com/redducklabs/fountainrank/issues/13))
-— stay **out of scope** (§10) and remain tracked on #12/#13.
+— stay **out of scope** (§10) and are tracked on
+[#216](https://github.com/redducklabs/fountainrank/issues/216) / #13.
 
 ## 1. Problem & scope
 
@@ -44,7 +45,7 @@ correctly but is **invisible** to moderators and does **not** move the badge.
 - **`docs/style-guide.md`** updated for the moderation-queue row variants + badge copy change.
 - Tests mirroring CI across backend + web + mobile.
 
-**Out of scope (explicitly) — stays on #12/#13:**
+**Out of scope (explicitly) — tracked on #216/#13:**
 
 - `moderation_actions` **audit table** (who/what/when/reason).
 - **Soft-delete / tombstones** beyond the existing `is_hidden` visibility flag.
@@ -346,7 +347,7 @@ mirror so a regenerated client that web/mobile no longer typecheck against can't
 ## 10. #12 boundary after this slice
 
 Shipped here: the unified queue + badge + per-type Hide/Reject/(Delete) reusing existing action
-endpoints, with resolve-on-action generalized to notes/fountains. **Still open on #12/#13:**
+endpoints, with resolve-on-action generalized to notes/fountains. **Tracked on #216/#13:**
 `moderation_actions` audit table; soft-delete/tombstones beyond `is_hidden`; rating removal +
 ranking recompute; note hard-delete; account-ban escalation (#13). None are prerequisites for
 this slice — it is independently useful and testable.

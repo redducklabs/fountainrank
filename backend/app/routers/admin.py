@@ -13,13 +13,24 @@ from app.contributions import (
     reactivate_contribution_for_target,
     reverse_contribution_for_target,
     reverse_contributions,
+    reverse_first_rating_bonus_for_actor,
 )
 from app.db import get_session
 from app.display import public_display_name
 from app.geo import point_geography
 from app.locks import ADD_FOUNTAIN_LOCK_KEY, InteractiveWriteBusy, interactive_lock_timeout
 from app.membership import recompute_fountain_membership, recompute_place_counts
-from app.models import ContentReport, Fountain, FountainNote, FountainPhoto, StorageCleanup, User
+from app.models import (
+    ContentReport,
+    Fountain,
+    FountainNote,
+    FountainPhoto,
+    ModerationAction,
+    Rating,
+    RatingType,
+    StorageCleanup,
+    User,
+)
 from app.ranking import recompute_fountain_ranking
 from app.routers.fountains import BUSY_RESPONSE, busy_exception, serialize_fountain_detail
 from app.schemas import (
@@ -29,6 +40,8 @@ from app.schemas import (
     AdminNotePatch,
     AdminPhotoOut,
     AdminPhotoPatch,
+    AdminRatingOut,
+    ModerationReasonRequest,
     PhotoReportsSummary,
     ReportDismissRequest,
     ReportedContentOut,
@@ -47,6 +60,31 @@ logger = logging.getLogger(__name__)
 
 def _admin_context(admin: User) -> dict[str, str]:
     return {"admin_sub": admin.logto_user_id, "admin_user_id": str(admin.id)}
+
+
+def _record_moderation_action(
+    session: AsyncSession,
+    admin: User,
+    *,
+    action: str,
+    content_type: str,
+    content_id: uuid.UUID,
+    fountain_id: uuid.UUID | None,
+    reason: str | None = None,
+    details: dict[str, object] | None = None,
+) -> None:
+    session.add(
+        ModerationAction(
+            admin_user_id=admin.id,
+            admin_actor_id=admin.id,
+            action=action,
+            content_type=content_type,
+            content_id=content_id,
+            fountain_id=fountain_id,
+            reason=reason,
+            details=details,
+        )
+    )
 
 
 async def _serialize_admin_note(note: FountainNote, author: User) -> AdminNoteOut:
@@ -77,10 +115,35 @@ async def _serialize_admin_fountain(
         )
     ).all()
     notes = [await _serialize_admin_note(note, author) for note, author in note_rows]
+    rating_rows = (
+        await session.execute(
+            select(Rating, RatingType.name, User)
+            .join(RatingType, RatingType.id == Rating.rating_type_id)
+            .outerjoin(User, User.id == Rating.user_id)
+            .where(Rating.fountain_id == fountain.id)
+            .order_by(Rating.updated_at.desc(), Rating.id.desc())
+        )
+    ).all()
+    ratings = [
+        AdminRatingOut(
+            id=rating.id,
+            rating_type_id=rating.rating_type_id,
+            rating_type_name=rating_type_name,
+            stars=rating.stars,
+            contributor=(
+                public_display_name(author.display_name, author.logto_user_id, author.nickname)
+                if author is not None
+                else "Deleted account"
+            ),
+            updated_at=rating.updated_at,
+        )
+        for rating, rating_type_name, author in rating_rows
+    ]
     return AdminFountainDetail(
         **public_detail.model_dump(),
         is_hidden=fountain.is_hidden,
         notes=notes,
+        ratings=ratings,
     )
 
 
@@ -200,6 +263,17 @@ async def admin_patch_fountain(
             if "location" in changes or "is_hidden" in changes:
                 await session.flush()
                 await recompute_fountain_membership(session, fountain.id)
+            if "is_hidden" in changes:
+                _record_moderation_action(
+                    session,
+                    admin,
+                    action="hide" if fountain.is_hidden else "unhide",
+                    content_type="fountain",
+                    content_id=fountain.id,
+                    fountain_id=fountain.id,
+                    reason=payload.moderation_reason,
+                    details={"resolved_reports": resolved_reports},
+                )
             await session.commit()
     except InteractiveWriteBusy as exc:
         raise busy_exception() from exc
@@ -229,6 +303,7 @@ async def admin_patch_fountain(
 )
 async def admin_delete_fountain(
     fountain_id: uuid.UUID,
+    reason: str | None = Query(default=None, max_length=500),
     session: AsyncSession = Depends(get_session),
     admin: User = Depends(require_admin),
     settings: Settings = Depends(get_settings),
@@ -277,6 +352,16 @@ async def admin_delete_fountain(
             # leaderboard. Must run first because contribution_events.fountain_id is ON DELETE SET
             # NULL — once the fountain row is gone the events can no longer be found by fountain_id.
             reversed_events = await reverse_contributions(session, fountain_id)
+            _record_moderation_action(
+                session,
+                admin,
+                action="delete",
+                content_type="fountain",
+                content_id=fountain_id,
+                fountain_id=fountain_id,
+                reason=reason.strip() or None if reason is not None else None,
+                details={"reversed_contribution_events": reversed_events},
+            )
             await session.delete(fountain)
             await session.flush()  # the row must be gone before its old places are recounted
             await recompute_place_counts(session, old_place_ids)
@@ -330,6 +415,17 @@ async def admin_patch_note(
         note.is_hidden = False
         note.hidden_by_user_id = None
         note.hidden_at = None
+    if before_hidden != note.is_hidden:
+        _record_moderation_action(
+            session,
+            admin,
+            action="hide" if note.is_hidden else "unhide",
+            content_type="note",
+            content_id=note.id,
+            fountain_id=note.fountain_id,
+            reason=payload.moderation_reason,
+            details={"resolved_reports": resolved_reports},
+        )
     await session.commit()
     await session.refresh(note)
     logger.info(
@@ -558,6 +654,17 @@ async def admin_patch_photo(
             photo.hidden_by_user_id = None
             photo.hidden_at = None
             await reactivate_contribution_for_target(session, "photo", photo_id)
+    if before_hidden != photo.is_hidden:
+        _record_moderation_action(
+            session,
+            admin,
+            action="hide" if photo.is_hidden else "unhide",
+            content_type="photo",
+            content_id=photo.id,
+            fountain_id=photo.fountain_id,
+            reason=payload.moderation_reason,
+            details={"resolved_reports": resolved_reports},
+        )
     await session.commit()
     await session.refresh(photo)
 
@@ -580,18 +687,29 @@ async def admin_patch_photo(
 @router.post("/photos/{photo_id}/dismiss-reports", status_code=status.HTTP_204_NO_CONTENT)
 async def admin_dismiss_photo_reports(
     photo_id: uuid.UUID,
+    reason: str | None = Query(default=None, max_length=500),
     session: AsyncSession = Depends(get_session),
     admin: User = Depends(require_admin),
 ) -> Response:
     """Reject a photo's pending reports without touching the photo — it stays visible. The
     reports flip to `resolved`/`rejected`; the photo drops out of the queue."""
-    exists = (
-        await session.execute(select(FountainPhoto.id).where(FountainPhoto.id == photo_id))
+    fountain_id = (
+        await session.execute(select(FountainPhoto.fountain_id).where(FountainPhoto.id == photo_id))
     ).scalar_one_or_none()
-    if exists is None:
+    if fountain_id is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="photo not found")
 
     resolved = await _resolve_pending_reports(session, "photo", photo_id, admin, "rejected")
+    _record_moderation_action(
+        session,
+        admin,
+        action="dismiss",
+        content_type="photo",
+        content_id=photo_id,
+        fountain_id=fountain_id,
+        reason=reason.strip() or None if reason is not None else None,
+        details={"resolved_reports": resolved},
+    )
     await session.commit()
     logger.info(
         "admin photo mutation",
@@ -609,6 +727,7 @@ async def admin_dismiss_photo_reports(
 @router.delete("/photos/{photo_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def admin_delete_photo(
     photo_id: uuid.UUID,
+    reason: str | None = Query(default=None, max_length=500),
     session: AsyncSession = Depends(get_session),
     admin: User = Depends(require_admin),
     settings: Settings = Depends(get_settings),
@@ -666,6 +785,15 @@ async def admin_delete_photo(
             ContentReport.content_type == "photo", ContentReport.content_id == photo_id
         )
     )
+    _record_moderation_action(
+        session,
+        admin,
+        action="delete",
+        content_type="photo",
+        content_id=photo_id,
+        fountain_id=photo.fountain_id,
+        reason=reason.strip() or None if reason is not None else None,
+    )
     await session.execute(delete(FountainPhoto).where(FountainPhoto.id == photo_id))
     await session.commit()
 
@@ -676,6 +804,97 @@ async def admin_delete_photo(
             "action": "delete",
             "target_type": "photo",
             "target_id": str(photo_id),
+        },
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.delete(
+    "/ratings/{rating_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={status.HTTP_503_SERVICE_UNAVAILABLE: BUSY_RESPONSE},
+)
+async def admin_delete_rating(
+    rating_id: uuid.UUID,
+    payload: ModerationReasonRequest,
+    session: AsyncSession = Depends(get_session),
+    admin: User = Depends(require_admin),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    """Remove one rating and reverse only the contribution points it earned."""
+    try:
+        async with interactive_lock_timeout(session, settings, context="admin_delete_rating"):
+            fountain_id = (
+                await session.execute(select(Rating.fountain_id).where(Rating.id == rating_id))
+            ).scalar_one_or_none()
+            if fountain_id is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, detail="rating not found")
+
+            # Keep the project's ranking-write lock order: fountain first, child row second.
+            fountain = (
+                await session.execute(
+                    select(Fountain).where(Fountain.id == fountain_id).with_for_update()
+                )
+            ).scalar_one_or_none()
+            if fountain is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, detail="rating not found")
+            rating = (
+                await session.execute(
+                    select(Rating).where(Rating.id == rating_id).with_for_update()
+                )
+            ).scalar_one_or_none()
+            if rating is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, detail="rating not found")
+
+            actor_id = rating.user_id
+            rating_type_id = rating.rating_type_id
+            stars = rating.stars
+            reversed_events = await reverse_contribution_for_target(session, "rating", rating_id)
+            await session.delete(rating)
+            await session.flush()
+
+            reversed_bonus_events = 0
+            if actor_id is not None:
+                remaining_actor_ratings = (
+                    await session.execute(
+                        select(func.count(Rating.id)).where(
+                            Rating.fountain_id == fountain_id,
+                            Rating.user_id == actor_id,
+                        )
+                    )
+                ).scalar_one()
+                if remaining_actor_ratings == 0:
+                    reversed_bonus_events = await reverse_first_rating_bonus_for_actor(
+                        session, fountain_id, actor_id
+                    )
+
+            await recompute_fountain_ranking(session, fountain.id)
+            _record_moderation_action(
+                session,
+                admin,
+                action="rating_delete",
+                content_type="rating",
+                content_id=rating_id,
+                fountain_id=fountain_id,
+                reason=payload.reason,
+                details={
+                    "rating_type_id": rating_type_id,
+                    "stars": stars,
+                    "reversed_contribution_events": reversed_events,
+                    "reversed_bonus_events": reversed_bonus_events,
+                },
+            )
+            await session.commit()
+    except InteractiveWriteBusy as exc:
+        raise busy_exception() from exc
+
+    logger.info(
+        "admin rating mutation",
+        extra={
+            **_admin_context(admin),
+            "action": "delete",
+            "target_type": "rating",
+            "target_id": str(rating_id),
         },
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -931,13 +1150,24 @@ async def admin_dismiss_reports(
             detail=f"invalid content_type: {payload.content_type}",
         )
     target = (
-        await session.execute(select(model.id).where(model.id == payload.content_id))
+        await session.execute(select(model).where(model.id == payload.content_id))
     ).scalar_one_or_none()
     if target is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"{payload.content_type} not found")
 
     resolved = await _resolve_pending_reports(
         session, payload.content_type, payload.content_id, admin, "rejected"
+    )
+    fountain_id = target.id if isinstance(target, Fountain) else target.fountain_id
+    _record_moderation_action(
+        session,
+        admin,
+        action="dismiss",
+        content_type=payload.content_type,
+        content_id=payload.content_id,
+        fountain_id=fountain_id,
+        reason=payload.reason,
+        details={"resolved_reports": resolved},
     )
     await session.commit()
     logger.info(

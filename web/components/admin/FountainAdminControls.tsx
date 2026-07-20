@@ -5,6 +5,7 @@ import { useState, useTransition } from "react";
 import type { components } from "@fountainrank/api-client";
 import {
   adminDeleteFountain,
+  adminDeleteRating,
   adminSetFountainHidden,
   adminSetNoteHidden,
   adminUpdateFountainFromForm,
@@ -40,6 +41,8 @@ export function FountainAdminControls({ detail }: { detail: AdminFountainDetail 
   const [pending, startTransition] = useTransition();
   const [result, setResult] = useState<AdminActionResult | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmRatingId, setConfirmRatingId] = useState<string | null>(null);
+  const [moderationReason, setModerationReason] = useState("");
   // Which action is in flight, so only the tapped button spins while `pending` disables the whole
   // group (single-flight). Local toggles (Cancel / the initial Delete affordance) never spin.
   const [activeKey, setActiveKey] = useState<string | null>(null);
@@ -145,11 +148,27 @@ export function FountainAdminControls({ detail }: { detail: AdminFountainDetail 
         </SpinnerButton>
       </form>
 
+      <label className="block space-y-1 text-sm font-semibold text-foreground">
+        <span>Moderation reason</span>
+        <textarea
+          value={moderationReason}
+          onChange={(event) => setModerationReason(event.target.value)}
+          maxLength={500}
+          rows={2}
+          placeholder="Required for rating removal; optional for other moderation actions"
+          className="w-full rounded-md border border-border bg-surface-raised px-3 py-2 font-normal text-foreground"
+        />
+      </label>
+
       <div className="flex flex-wrap gap-2">
         <SpinnerButton
           pending={pending && activeKey === "hide"}
           disabled={pending}
-          onClick={() => run("hide", () => adminSetFountainHidden(detail.id, !detail.is_hidden))}
+          onClick={() =>
+            run("hide", () =>
+              adminSetFountainHidden(detail.id, !detail.is_hidden, moderationReason),
+            )
+          }
           className="rounded-full border border-brand px-4 py-2 text-sm font-bold text-brand-ink disabled:opacity-60"
         >
           {detail.is_hidden ? "Unhide fountain" : "Hide fountain"}
@@ -162,7 +181,7 @@ export function FountainAdminControls({ detail }: { detail: AdminFountainDetail 
               onClick={() =>
                 run(
                   "delete",
-                  () => adminDeleteFountain(detail.id),
+                  () => adminDeleteFountain(detail.id, moderationReason),
                   () => router.push("/"),
                 )
               }
@@ -215,13 +234,68 @@ export function FountainAdminControls({ detail }: { detail: AdminFountainDetail 
                   aria-label={`${note.is_hidden ? "Unhide" : "Hide"} note ${noteLabel(note)}`}
                   onClick={() =>
                     run(`note:${note.id}`, () =>
-                      adminSetNoteHidden(note.id, !note.is_hidden, detail.id),
+                      adminSetNoteHidden(note.id, !note.is_hidden, detail.id, moderationReason),
                     )
                   }
                   className="shrink-0 rounded-full border border-brand px-3 py-1.5 text-xs font-bold text-brand-ink disabled:opacity-60"
                 >
                   {note.is_hidden ? "Unhide" : "Hide"}
                 </SpinnerButton>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {detail.ratings.length > 0 ? (
+        <div className="space-y-2">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
+            Moderate ratings
+          </h3>
+          <ul className="space-y-2">
+            {detail.ratings.map((rating) => (
+              <li
+                key={rating.id}
+                className="flex flex-col gap-2 rounded-lg border border-border bg-surface-raised p-3 text-sm sm:flex-row sm:items-center sm:justify-between"
+              >
+                <p className="text-foreground">
+                  {rating.rating_type_name}: {rating.stars}/5 · {rating.contributor}
+                </p>
+                {confirmRatingId === rating.id ? (
+                  <div className="flex shrink-0 gap-2">
+                    <SpinnerButton
+                      pending={pending && activeKey === `rating:${rating.id}`}
+                      disabled={pending || moderationReason.trim().length === 0}
+                      onClick={() =>
+                        run(
+                          `rating:${rating.id}`,
+                          () => adminDeleteRating(rating.id, detail.id, moderationReason),
+                          () => setConfirmRatingId(null),
+                        )
+                      }
+                      className="rounded-full bg-red-700 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60 dark:bg-red-500"
+                    >
+                      Confirm removal
+                    </SpinnerButton>
+                    <SpinnerButton
+                      pending={false}
+                      disabled={pending}
+                      onClick={() => setConfirmRatingId(null)}
+                      className="rounded-full border border-border px-3 py-1.5 text-xs font-bold text-foreground disabled:opacity-60"
+                    >
+                      Cancel
+                    </SpinnerButton>
+                  </div>
+                ) : (
+                  <SpinnerButton
+                    pending={false}
+                    disabled={pending || moderationReason.trim().length === 0}
+                    onClick={() => setConfirmRatingId(rating.id)}
+                    className="shrink-0 rounded-full border border-danger px-3 py-1.5 text-xs font-bold text-danger disabled:opacity-60"
+                  >
+                    Remove rating
+                  </SpinnerButton>
+                )}
               </li>
             ))}
           </ul>
