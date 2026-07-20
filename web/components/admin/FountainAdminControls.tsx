@@ -265,7 +265,7 @@ export function FountainAdminControls({ detail }: { detail: AdminFountainDetail 
                   <div className="flex shrink-0 gap-2">
                     <SpinnerButton
                       pending={pending && activeKey === `rating:${rating.id}`}
-                      disabled={pending}
+                      disabled={pending || moderationReason.trim().length === 0}
                       onClick={() =>
                         run(
                           `rating:${rating.id}`,
