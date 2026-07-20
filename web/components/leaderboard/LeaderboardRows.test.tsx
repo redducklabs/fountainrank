@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { LeaderboardRows } from "./LeaderboardRows";
-import type { ContributorRow, YourStanding } from "../../lib/leaderboard";
+import type { AdminContributorRow, ContributorRow, YourStanding } from "../../lib/leaderboard";
 
 // jsdom has no IntersectionObserver; provide a controllable stub so the sticky-overlay
 // visibility logic (#147) can be driven from tests. Each instance records its callback.
@@ -40,6 +40,7 @@ afterEach(() => {
 const row = (over: Partial<ContributorRow> = {}): ContributorRow => ({
   rank: 1,
   display_name: "Alice",
+  avatar_url: null,
   points: 100,
   category_count: null,
   is_you: false,
@@ -88,10 +89,51 @@ describe("LeaderboardRows", () => {
     expect(screen.getAllByRole("img", { name: "Category leader" })).toHaveLength(1);
   });
 
+  it("renders decorative avatars and swaps failed images to initials", () => {
+    const { container } = render(
+      <LeaderboardRows
+        rows={[row({ display_name: "Ada Lovelace", avatar_url: "https://example.com/ada.jpg" })]}
+        you={null}
+        sort="total"
+      />,
+    );
+    const image = container.querySelector('img[src="https://example.com/ada.jpg"]');
+    expect(image).toHaveAttribute("alt", "");
+    fireEvent.error(image as HTMLImageElement);
+    expect(screen.getByText("AL")).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("renders a fixed initials fallback when no avatar is available", () => {
+    render(
+      <LeaderboardRows
+        rows={[row({ display_name: "Ada Lovelace", avatar_url: null })]}
+        you={null}
+        sort="total"
+      />,
+    );
+    expect(screen.getByText("AL")).toHaveAttribute("aria-hidden", "true");
+  });
+
   it("shows no current-user overlay for signed-out visitors (#147)", () => {
     render(<LeaderboardRows rows={[row()]} you={null} sort="total" />);
     expect(screen.queryByText("You")).toBeNull();
     expect(screen.queryByText("Not yet ranked")).toBeNull();
+  });
+
+  it("shows stable-id history links only for confirmed admin rows", () => {
+    const adminRow: AdminContributorRow = {
+      ...row(),
+      user_id: "11111111-1111-1111-1111-111111111111",
+    };
+    const { rerender } = render(
+      <LeaderboardRows rows={[adminRow]} you={null} sort="total" admin />,
+    );
+    expect(screen.getByRole("link", { name: "View history" })).toHaveAttribute(
+      "href",
+      "/admin/contributors/11111111-1111-1111-1111-111111111111",
+    );
+    rerender(<LeaderboardRows rows={[row()]} you={null} sort="total" />);
+    expect(screen.queryByRole("link", { name: "View history" })).toBeNull();
   });
 
   it("reveals the overlay when the caller's in-list row scrolls out of view (#147)", () => {

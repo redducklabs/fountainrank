@@ -1,18 +1,24 @@
 import logging
-from typing import Literal
+from typing import Literal, overload
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
-from app.auth import get_optional_user
+from app.auth import get_optional_user, require_admin
 from app.config import Settings, get_settings
 from app.db import get_session
 from app.display import public_display_name
 from app.geo import point_geography
 from app.models import ContributionEvent, User, UserContributionStats
-from app.schemas import ContributorRow, LeaderboardOut, YourStanding
+from app.schemas import (
+    AdminContributorRow,
+    AdminLeaderboardOut,
+    ContributorRow,
+    LeaderboardOut,
+    YourStanding,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -88,10 +94,77 @@ async def contributors(
     return result
 
 
+@router.get("/admin/leaderboard/contributors", response_model=AdminLeaderboardOut, tags=["admin"])
+async def admin_contributors(
+    response: Response,
+    limit: int = Query(default=20, ge=1, le=100),
+    near_lat: float | None = Query(default=None, ge=-90.0, le=90.0),
+    near_lng: float | None = Query(default=None, ge=-180.0, le=180.0),
+    radius_m: float | None = Query(default=None, gt=0.0),
+    sort: LeaderboardSort = Query(default="total"),
+    admin: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> AdminLeaderboardOut:
+    """Admin leaderboard variant. Stable user IDs never cross the public response model."""
+    response.headers["Cache-Control"] = "private, no-store"
+    if (near_lat is None) != (near_lng is None):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="near_lat and near_lng must be provided together",
+        )
+    is_local = near_lat is not None and near_lng is not None
+    result = (
+        await _local_board(
+            session, settings, near_lat, near_lng, radius_m, sort, limit, admin, admin_rows=True
+        )
+        if is_local
+        else await _global_board(session, sort, limit, admin, admin_rows=True)
+    )
+    logger.info(
+        "admin leaderboard served",
+        extra={
+            "admin_user_id": str(admin.id),
+            "scope": "local" if is_local else "global",
+            "sort": sort,
+            "limit": limit,
+            "rows": len(result.rows),
+        },
+    )
+    return result
+
+
 # --- global board (denormalized UserContributionStats) -----------------------------------------
+@overload
 async def _global_board(
-    session: AsyncSession, sort: LeaderboardSort, limit: int, user: User | None
-) -> LeaderboardOut:
+    session: AsyncSession,
+    sort: LeaderboardSort,
+    limit: int,
+    user: User | None,
+    *,
+    admin_rows: Literal[False] = False,
+) -> LeaderboardOut: ...
+
+
+@overload
+async def _global_board(
+    session: AsyncSession,
+    sort: LeaderboardSort,
+    limit: int,
+    user: User,
+    *,
+    admin_rows: Literal[True],
+) -> AdminLeaderboardOut: ...
+
+
+async def _global_board(
+    session: AsyncSession,
+    sort: LeaderboardSort,
+    limit: int,
+    user: User | None,
+    *,
+    admin_rows: bool = False,
+) -> LeaderboardOut | AdminLeaderboardOut:
     metric_col = UserContributionStats.total_points if sort == "total" else _CATEGORY[sort][0]
 
     db_rows = (
@@ -101,6 +174,7 @@ async def _global_board(
                 User.display_name,
                 User.logto_user_id,
                 User.nickname,
+                User.avatar_url,
                 UserContributionStats.total_points,
                 metric_col.label("metric"),
             )
@@ -114,10 +188,13 @@ async def _global_board(
         )
     ).all()
 
+    row_type = AdminContributorRow if admin_rows else ContributorRow
     rows = [
-        ContributorRow(
+        row_type(
+            **({"user_id": r.id} if admin_rows else {}),
             rank=i,
             display_name=public_display_name(r.display_name, r.logto_user_id, r.nickname),
+            avatar_url=r.avatar_url,
             points=r.total_points,
             category_count=(None if sort == "total" else r.metric),
             is_you=user is not None and r.id == user.id,
@@ -126,6 +203,9 @@ async def _global_board(
     ]
 
     you = await _global_you(session, sort, metric_col, user) if user is not None else None
+    if admin_rows:
+        assert user is not None
+        return AdminLeaderboardOut(rows=rows, you=you)
     return LeaderboardOut(rows=rows, you=you)
 
 
@@ -164,6 +244,7 @@ async def _global_you(
 
 
 # --- local board (in-area scan over contribution_events) ---------------------------------------
+@overload
 async def _local_board(
     session: AsyncSession,
     settings: Settings,
@@ -173,7 +254,38 @@ async def _local_board(
     sort: LeaderboardSort,
     limit: int,
     user: User | None,
-) -> LeaderboardOut:
+    *,
+    admin_rows: Literal[False] = False,
+) -> LeaderboardOut: ...
+
+
+@overload
+async def _local_board(
+    session: AsyncSession,
+    settings: Settings,
+    near_lat: float,
+    near_lng: float,
+    radius_m: float | None,
+    sort: LeaderboardSort,
+    limit: int,
+    user: User,
+    *,
+    admin_rows: Literal[True],
+) -> AdminLeaderboardOut: ...
+
+
+async def _local_board(
+    session: AsyncSession,
+    settings: Settings,
+    near_lat: float,
+    near_lng: float,
+    radius_m: float | None,
+    sort: LeaderboardSort,
+    limit: int,
+    user: User | None,
+    *,
+    admin_rows: bool = False,
+) -> LeaderboardOut | AdminLeaderboardOut:
     radius = min(radius_m or settings.leaderboard_local_radius_m, settings.nearby_max_radius_m)
     point = point_geography(near_lat, near_lng)
     is_category = sort != "total"
@@ -223,6 +335,7 @@ async def _local_board(
         User.display_name,
         User.logto_user_id,
         User.nickname,
+        User.avatar_url,
     ]
     if is_category:
         select_cols.append(base.c.category_count)
@@ -237,10 +350,13 @@ async def _local_board(
     ).all()
 
     in_list = sorted((r for r in db_rows if r.rn is not None and r.rn <= limit), key=lambda r: r.rn)
+    row_type = AdminContributorRow if admin_rows else ContributorRow
     rows = [
-        ContributorRow(
+        row_type(
+            **({"user_id": r.user_id} if admin_rows else {}),
             rank=r.rn,
             display_name=public_display_name(r.display_name, r.logto_user_id, r.nickname),
+            avatar_url=r.avatar_url,
             points=int(r.points),
             category_count=(int(r.category_count) if is_category else None),
             is_you=user is not None and r.user_id == user.id,
@@ -259,4 +375,7 @@ async def _local_board(
             )
         else:  # signed in but no in-area events at all
             you = YourStanding(rank=None, points=0, category_count=(0 if is_category else None))
+    if admin_rows:
+        assert you is not None
+        return AdminLeaderboardOut(rows=rows, you=you)
     return LeaderboardOut(rows=rows, you=you)

@@ -431,6 +431,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/contributors/{user_id}/contributions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Admin Contributor History
+         * @description Newest-first contribution-event audit log for one user, including reversals.
+         */
+        get: operations["admin_contributor_history_api_v1_admin_contributors__user_id__contributions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/users/{user_id}/sanction": {
         parameters: {
             query?: never;
@@ -681,6 +701,26 @@ export interface paths {
          *     an invalid bearer is still a hard 401, never silently downgraded to anonymous (#117).
          */
         get: operations["contributors_api_v1_leaderboard_contributors_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/leaderboard/contributors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Admin Contributors
+         * @description Admin leaderboard variant. Stable user IDs never cross the public response model.
+         */
+        get: operations["admin_contributors_api_v1_admin_leaderboard_contributors_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1048,6 +1088,79 @@ export interface components {
             /** Body */
             body: string;
         };
+        /** AdminContributionEventOut */
+        AdminContributionEventOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Event Type */
+            event_type: string;
+            /** Points */
+            points: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "awarded" | "reversed";
+            /** Fountain Id */
+            fountain_id: string | null;
+            /** Target Type */
+            target_type: string | null;
+            /** Target Id */
+            target_id: string | null;
+            /** Metadata */
+            metadata: {
+                [key: string]: string | number | boolean | null;
+            };
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** AdminContributorHistoryOut */
+        AdminContributorHistoryOut: {
+            /**
+             * User Id
+             * Format: uuid
+             */
+            user_id: string;
+            /** Display Name */
+            display_name: string;
+            stats: components["schemas"]["ContributionStatsOut"];
+            /** Events */
+            events: components["schemas"]["AdminContributionEventOut"][];
+            /** Next Cursor */
+            next_cursor?: string | null;
+        };
+        /**
+         * AdminContributorRow
+         * @description Leaderboard row with stable identity, available only behind ``require_admin``.
+         */
+        AdminContributorRow: {
+            /** Rank */
+            rank: number;
+            /** Display Name */
+            display_name: string;
+            /** Avatar Url */
+            avatar_url: string | null;
+            /** Points */
+            points: number;
+            /** Category Count */
+            category_count?: number | null;
+            /**
+             * Is You
+             * @default false
+             */
+            is_you: boolean;
+            /**
+             * User Id
+             * Format: uuid
+             */
+            user_id: string;
+        };
         /** AdminFountainDetail */
         AdminFountainDetail: {
             /**
@@ -1113,6 +1226,12 @@ export interface components {
             is_hidden?: boolean | null;
             /** Moderation Reason */
             moderation_reason?: string | null;
+        };
+        /** AdminLeaderboardOut */
+        AdminLeaderboardOut: {
+            /** Rows */
+            rows: components["schemas"]["AdminContributorRow"][];
+            you: components["schemas"]["YourStanding"];
         };
         /** AdminNoteOut */
         AdminNoteOut: {
@@ -1447,6 +1566,8 @@ export interface components {
             rank: number;
             /** Display Name */
             display_name: string;
+            /** Avatar Url */
+            avatar_url: string | null;
             /** Points */
             points: number;
             /** Category Count */
@@ -2963,6 +3084,45 @@ export interface operations {
             };
         };
     };
+    admin_contributor_history_api_v1_admin_contributors__user_id__contributions_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+                "X-Dev-User"?: string | null;
+                "X-Dev-Email"?: string | null;
+                "X-Dev-Name"?: string | null;
+            };
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminContributorHistoryOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     set_user_sanction_api_v1_admin_users__user_id__sanction_patch: {
         parameters: {
             query?: never;
@@ -3538,6 +3698,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LeaderboardOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    admin_contributors_api_v1_admin_leaderboard_contributors_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                near_lat?: number | null;
+                near_lng?: number | null;
+                radius_m?: number | null;
+                sort?: "total" | "fountains" | "ratings" | "verifications" | "conditions" | "attributes" | "notes";
+            };
+            header?: {
+                authorization?: string | null;
+                "X-Dev-User"?: string | null;
+                "X-Dev-Email"?: string | null;
+                "X-Dev-Name"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminLeaderboardOut"];
                 };
             };
             /** @description Validation Error */

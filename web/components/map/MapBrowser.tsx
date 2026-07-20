@@ -36,6 +36,7 @@ import {
   NEIGHBORHOOD_ZOOM,
 } from "../../lib/map/constants";
 import { resolveActiveId } from "../../lib/map/active-id";
+import { resolveFocusClearNavigation } from "../../lib/map/focus-url";
 import {
   detailToPin,
   focusCameraAction,
@@ -127,6 +128,12 @@ export default function MapBrowser({
   const focusIdRef = useRef(focusId);
   // eslint-disable-next-line react-hooks/refs -- native MapLibre callbacks require the latest URL owner.
   focusIdRef.current = focusId;
+  const pathnameRef = useRef(pathname);
+  const searchRef = useRef(searchParams.toString());
+  // eslint-disable-next-line react-hooks/refs -- native callbacks need the latest URL snapshot.
+  pathnameRef.current = pathname;
+  // eslint-disable-next-line react-hooks/refs -- native callbacks need the latest URL snapshot.
+  searchRef.current = searchParams.toString();
   const { resolvedTheme } = useTheme();
   const mounted = useSyncExternalStore(
     subscribeMounted,
@@ -137,6 +144,7 @@ export default function MapBrowser({
   // current theme / pins / selection without being re-registered (which would double-fire).
   const themeRef = useRef<"light" | "dark">("light");
   const pinsRef = useRef<PinInput[]>([]);
+  const bboxPinsRef = useRef<FountainPin[]>([]);
   const focusedPinRef = useRef<FountainPin | null>(null);
   const consumedFocusRef = useRef<string | null>(null);
   const activeIdRef = useRef<string>("");
@@ -180,9 +188,43 @@ export default function MapBrowser({
     hadAddParam,
   });
 
+  const clearFocus = useCallback(
+    (beforeDetailNavigation = false) => {
+      const ownedFocus = focusIdRef.current;
+      const navigation = resolveFocusClearNavigation({
+        ownedFocus,
+        trigger: beforeDetailNavigation ? "open-detail" : "dismiss",
+        pathname: pathnameRef.current,
+        search: searchRef.current,
+      });
+      if (navigation.kind === "noop") return;
+      focusIdRef.current = "";
+      focusedPinRef.current = null;
+      consumedFocusRef.current = null;
+      setFocusedPin(null);
+      setFocusStatus("idle");
+      const base = bboxPinsRef.current;
+      setPins(base);
+      const inputs = base.map((pin) => ({ ...pin, ranking_score: pin.ranking_score ?? null }));
+      pinsRef.current = inputs;
+      (mapRef.current?.getSource("fountains") as GeoJSONSource | undefined)?.setData(
+        pinsToFeatureCollection(inputs, themeRef.current),
+      );
+      if (navigation.kind === "replace-state") {
+        // Clean the current map history entry synchronously before pushing detail. Otherwise closing
+        // the intercepted detail would Back-navigate to the stale deep-link focus and resurrect it.
+        window.history.replaceState(window.history.state, "", navigation.href);
+      } else {
+        router.replace(navigation.href, { scroll: false });
+      }
+    },
+    [router],
+  );
+
   const openDetail = useCallback(
     (id: string) => {
       if (pendingDetailRef.current) return;
+      clearFocus(true);
       pendingDetailRef.current = id;
       setPendingDetail({ id, failed: false });
       try {
@@ -198,7 +240,7 @@ export default function MapBrowser({
         setPendingDetail({ id, failed: true });
       }
     },
-    [router],
+    [clearFocus, router],
   );
 
   useEffect(() => {
@@ -439,6 +481,7 @@ export default function MapBrowser({
       if (!shouldLoadPins(m.getZoom())) {
         (m.getSource("fountains") as GeoJSONSource | undefined)?.setData(EMPTY_FC);
         pinsRef.current = []; // a later swap re-seeds empty, not stale (spec §6.1)
+        bboxPinsRef.current = [];
         setPins([]);
         setStatus("belowZoom");
         return; // seq bump already invalidates in-flight fetches
@@ -463,6 +506,7 @@ export default function MapBrowser({
         const result = await fetchBbox(norm.params, reqId);
         // Stale if a newer load started OR a style swap superseded this generation.
         if (seq !== loadSeqRef.current || gen !== styleGenRef.current) return;
+        bboxPinsRef.current = result.pins;
         const data = mergeFocusedPin(result.pins, focusedPinRef.current);
         setPins(data);
         // Normalise ranking_score: the API schema marks it optional (?), but PinInput requires
@@ -684,6 +728,9 @@ export default function MapBrowser({
           className="absolute left-1/2 top-20 z-40 -translate-x-1/2 rounded-full bg-surface-raised px-4 py-2 text-sm shadow"
         >
           Locating selected fountain…
+          <button type="button" className="ml-2 underline" onClick={() => clearFocus()}>
+            Dismiss
+          </button>
         </div>
       )}
       {focusStatus === "not-found" && (
@@ -692,6 +739,9 @@ export default function MapBrowser({
           className="absolute left-1/2 top-20 z-40 -translate-x-1/2 rounded-full bg-surface-raised px-4 py-2 text-sm shadow"
         >
           That fountain is no longer available.
+          <button type="button" className="ml-2 underline" onClick={() => clearFocus()}>
+            Dismiss
+          </button>
         </div>
       )}
       {focusStatus === "error" && (
@@ -700,6 +750,9 @@ export default function MapBrowser({
           className="absolute left-1/2 top-20 z-40 -translate-x-1/2 rounded-full bg-surface-raised px-4 py-2 text-sm shadow"
         >
           Couldn&rsquo;t load the selected fountain.
+          <button type="button" className="ml-2 underline" onClick={() => clearFocus()}>
+            Dismiss
+          </button>
         </div>
       )}
       {focusedPin && (

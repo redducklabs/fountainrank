@@ -1,6 +1,7 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { Image } from "expo-image";
 import { useQuery } from "@tanstack/react-query";
-import { useFocusEffect, useLocalSearchParams } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -15,20 +16,25 @@ import {
 } from "react-native";
 
 import { unwrap } from "../../lib/api";
+import { contributorInitials } from "../../lib/leaderboard/avatar";
 import {
   buildLeaderboardQuery,
+  contributorHistoryUserId,
   LEADERBOARD_SORTS,
   parseCenterParam,
   rowMetricCaption,
   rowPrimaryValue,
   SORT_LABELS,
   type ContributorRow,
+  type AdminContributorRow,
+  type AdminLeaderboardOut,
   type LeaderboardOut,
   type LeaderboardScope,
   type LeaderboardSort,
   type YourStanding,
 } from "../../lib/leaderboard/query";
 import { useApi } from "../../providers/api-provider";
+import { useAuth } from "../../providers/auth-provider";
 import { colors, spacing, typography } from "../../theme";
 
 // A row counts as "on screen" once at least half of it is visible. Kept at module scope so the
@@ -37,20 +43,35 @@ const VIEWABILITY_CONFIG = { itemVisiblePercentThreshold: 50 };
 
 export default function LeaderboardScreen() {
   const { client } = useApi();
+  const auth = useAuth();
   const params = useLocalSearchParams<{ lat?: string; lng?: string }>();
   // The Map screen passes the current center; when absent only the global board is reachable.
   const center = useMemo(() => parseCenterParam(params.lat, params.lng), [params.lat, params.lng]);
   const [scope, setScope] = useState<LeaderboardScope>("global");
   const [sort, setSort] = useState<LeaderboardSort>("total");
 
+  const meQuery = useQuery({
+    queryKey: ["me"],
+    enabled: auth.status === "authenticated",
+    queryFn: async () => unwrap(await client.GET("/api/v1/me")),
+  });
+  const isAdmin = meQuery.data?.is_admin === true;
+
   const query = useQuery({
-    queryKey: ["leaderboard", scope, sort, center?.lat ?? null, center?.lng ?? null],
-    queryFn: async (): Promise<LeaderboardOut> =>
-      unwrap(
-        await client.GET("/api/v1/leaderboard/contributors", {
-          params: { query: buildLeaderboardQuery(scope, sort, center) },
-        }),
-      ),
+    queryKey: [
+      "leaderboard",
+      isAdmin ? "admin" : "public",
+      scope,
+      sort,
+      center?.lat ?? null,
+      center?.lng ?? null,
+    ],
+    queryFn: async (): Promise<LeaderboardOut | AdminLeaderboardOut> => {
+      const params = { query: buildLeaderboardQuery(scope, sort, center) };
+      return isAdmin
+        ? unwrap(await client.GET("/api/v1/admin/leaderboard/contributors", { params }))
+        : unwrap(await client.GET("/api/v1/leaderboard/contributors", { params }));
+    },
   });
 
   // Rankings change from the web app and from other contributors, so the mobile
@@ -95,7 +116,7 @@ export default function LeaderboardScreen() {
       <FlatList
         data={rows}
         keyExtractor={(r) => `${r.rank}-${r.display_name}`}
-        renderItem={({ item }) => <Row row={item} sort={sort} />}
+        renderItem={({ item }) => <Row row={item} sort={sort} admin={isAdmin} />}
         contentContainerStyle={styles.listContent}
         onViewableItemsChanged={onViewableItemsChanged}
         viewabilityConfig={VIEWABILITY_CONFIG}
@@ -201,31 +222,79 @@ function Chip({ label, active, onPress }: { label: string; active: boolean; onPr
   );
 }
 
-function Row({ row, sort }: { row: ContributorRow; sort: LeaderboardSort }) {
+function Row({
+  row,
+  sort,
+  admin,
+}: {
+  row: ContributorRow | AdminContributorRow;
+  sort: LeaderboardSort;
+  admin: boolean;
+}) {
   // Rank 1 is the leader of the active category/sort — mark it with a crown (#146).
   const isLeader = row.rank === 1;
+  const historyUserId = contributorHistoryUserId(row, admin);
   return (
     <View style={[styles.row, row.is_you && styles.rowYou]}>
       <Text style={[styles.rank, row.is_you && styles.rankYou]}>{row.rank}</Text>
-      <View style={styles.nameWrap}>
-        {isLeader ? (
-          <MaterialCommunityIcons
-            name="crown"
-            size={16}
-            color={colors.brandYellow}
-            accessibilityLabel="Category leader"
-            style={styles.crown}
-          />
+      <ContributorAvatar name={row.display_name} url={row.avatar_url} />
+      <View style={styles.nameColumn}>
+        <View style={styles.nameWrap}>
+          {isLeader ? (
+            <MaterialCommunityIcons
+              name="crown"
+              size={16}
+              color={colors.brandYellow}
+              accessibilityLabel="Category leader"
+              style={styles.crown}
+            />
+          ) : null}
+          <Text style={styles.name} numberOfLines={1}>
+            {row.display_name}
+            {row.is_you ? "  (You)" : ""}
+          </Text>
+        </View>
+        {historyUserId ? (
+          <Pressable
+            accessibilityRole="link"
+            onPress={() => router.push(`/admin/contributors/${historyUserId}`)}
+          >
+            <Text style={styles.historyLink}>View history</Text>
+          </Pressable>
         ) : null}
-        <Text style={styles.name} numberOfLines={1}>
-          {row.display_name}
-          {row.is_you ? "  (You)" : ""}
-        </Text>
       </View>
       <Metric
         value={rowPrimaryValue(row.points, row.category_count, sort)}
         caption={rowMetricCaption(row.points, sort)}
       />
+    </View>
+  );
+}
+
+function ContributorAvatar({ name, url }: { name: string; url: string | null }) {
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const showImage = Boolean(url) && failedUrl !== url;
+  if (showImage) {
+    return (
+      <Image
+        source={{ uri: url as string }}
+        style={styles.avatar}
+        contentFit="cover"
+        transition={150}
+        accessible={false}
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+        onError={() => setFailedUrl(url)}
+      />
+    );
+  }
+  return (
+    <View
+      style={[styles.avatar, styles.avatarFallback]}
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+    >
+      <Text style={styles.avatarInitials}>{contributorInitials(name)}</Text>
     </View>
   );
 }
@@ -329,7 +398,12 @@ const styles = StyleSheet.create({
     textAlign: "right",
   },
   rankYou: { color: colors.brandBlue },
+  avatar: { width: 32, height: 32, borderRadius: 16 },
+  avatarFallback: { alignItems: "center", justifyContent: "center", backgroundColor: "#E7F0FF" },
+  avatarInitials: { ...typography.meta, fontWeight: "800", color: colors.brandBlue },
   nameWrap: { flex: 1, flexDirection: "row", alignItems: "center" },
+  nameColumn: { flex: 1 },
+  historyLink: { ...typography.meta, color: colors.brandBlue, textDecorationLine: "underline" },
   crown: { marginRight: spacing.xs },
   name: { ...typography.body, fontWeight: "600", color: colors.text, flex: 1 },
   metric: { alignItems: "flex-end" },

@@ -29,6 +29,7 @@ const config: ExpoConfig = {
     [
       "expo-image-picker",
       {
+        cameraPermission: "Allow FountainRank to take photos of drinking fountains you add.",
         photosPermission: "Allow FountainRank to add photos of drinking fountains you choose.",
       },
     ],
@@ -55,7 +56,7 @@ const config: ExpoConfig = {
   android: {
     package: "com.redducklabs.fountainrank",
     versionCode: 1,
-    permissions: ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"],
+    permissions: ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION", "CAMERA"],
     adaptiveIcon: {
       foregroundImage: "./assets/adaptive-icon.png",
       backgroundColor: "#ffffff",

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildLeaderboardQuery,
+  contributorHistoryUserId,
   parseCenterParam,
   rowMetricCaption,
   rowPrimaryValue,
@@ -54,5 +55,26 @@ describe("row metric selection", () => {
   it("treats a missing category count as zero", () => {
     expect(rowPrimaryValue(10, null, "notes")).toBe(0);
     expect(rowPrimaryValue(10, undefined, "notes")).toBe(0);
+  });
+});
+
+describe("contributor history visibility", () => {
+  const publicRow = {
+    rank: 1,
+    display_name: "Same Name",
+    avatar_url: null,
+    points: 10,
+    category_count: null,
+    is_you: false,
+  };
+  const adminRow = {
+    ...publicRow,
+    user_id: "11111111-1111-1111-1111-111111111111",
+  };
+
+  it("returns a stable id only for confirmed admins with admin rows", () => {
+    expect(contributorHistoryUserId(adminRow, true)).toBe(adminRow.user_id);
+    expect(contributorHistoryUserId(adminRow, false)).toBeNull();
+    expect(contributorHistoryUserId(publicRow, true)).toBeNull();
   });
 });

@@ -133,6 +133,7 @@ async def test_global_leaderboard_order_and_tie(session):
     a = await _user(session, "lb-a")
     b = await _user(session, "lb-b")
     c = await _user(session, "lb-c")
+    a.avatar_url = "https://cdn.example.com/a.jpg"
     session.add_all(
         [
             UserContributionStats(user_id=a.id, total_points=100),
@@ -150,6 +151,9 @@ async def test_global_leaderboard_order_and_tie(session):
     tied = sorted([a, c], key=lambda u: str(u.id))
     assert [r["display_name"] for r in rows[:2]] == [tied[0].display_name, tied[1].display_name]
     assert rows[2]["display_name"] == b.display_name
+    avatar_by_name = {row["display_name"]: row["avatar_url"] for row in rows}
+    assert avatar_by_name[a.display_name] == "https://cdn.example.com/a.jpg"
+    assert avatar_by_name[b.display_name] is None
     assert body["you"] is None  # anonymous
 
 
@@ -223,6 +227,7 @@ async def test_global_category_leaderboard(session):
 @pytest.mark.asyncio
 async def test_local_leaderboard(session):
     near = await _user(session, "lb-near")
+    near.avatar_url = "https://cdn.example.com/near.jpg"
     far = await _user(session, "lb-far")
     session.add_all(
         # near: an awarded add (counts) + a reversed rate (excluded); far: an awarded add (excluded)
@@ -237,6 +242,7 @@ async def test_local_leaderboard(session):
     assert rows[0]["points"] == 10  # reversed near event excluded; far excluded
     assert rows[0]["rank"] == 1
     assert rows[0]["category_count"] is None  # sort=total -> no category count
+    assert rows[0]["avatar_url"] == "https://cdn.example.com/near.jpg"
 
 
 @pytest.mark.asyncio
