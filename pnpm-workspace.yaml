@@ -11,6 +11,9 @@ overrides:
   # GHSA-3jxr-9vmj-r5cp: Redocly's minimatch 5 chain otherwise resolves vulnerable 2.1.1.
   # Keep the override scoped to that chain; remove once Redocly/minimatch carries >=2.1.2.
   'minimatch@5.1.9>brace-expansion': '2.1.2'
+  # GHSA-52cp-r559-cp3m: Redocly's lockfile resolution predates js-yaml's 4.3.0 fix.
+  # Keep this scoped to Redocly; remove once its normal resolution carries >=4.3.0.
+  '@redocly/openapi-core>js-yaml': '4.3.0'
 allowBuilds:
   sharp: true
   unrs-resolver: true
