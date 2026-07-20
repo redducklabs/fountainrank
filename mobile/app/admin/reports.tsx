@@ -2,7 +2,7 @@ import type { components } from "@fountainrank/api-client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Image } from "expo-image";
 import { Stack, router } from "expo-router";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -10,6 +10,7 @@ import {
   Pressable,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 
@@ -41,6 +42,8 @@ export default function AdminReportsScreen() {
   const { client, config } = useApi();
   const auth = useAuth();
   const queryClient = useQueryClient();
+  const [sanctionReason, setSanctionReason] = useState("");
+  const [suspendedUntil, setSuspendedUntil] = useState("");
 
   const meQuery = useQuery({
     queryKey: ["me"],
@@ -138,6 +141,30 @@ export default function AdminReportsScreen() {
     },
   });
 
+  const sanctionMutation = useMutation({
+    mutationFn: async ({
+      item,
+      status,
+    }: {
+      item: ReportedContentOut;
+      status: "active" | "suspended" | "banned";
+    }) => {
+      if (!item.contributor_user_id) throw new Error("missing contributor");
+      return unwrap(
+        await client.PATCH("/api/v1/admin/users/{user_id}/sanction", {
+          params: { path: { user_id: item.contributor_user_id } },
+          body: {
+            status,
+            reason: sanctionReason.trim(),
+            suspended_until: status === "suspended" ? new Date(suspendedUntil).toISOString() : null,
+          },
+        }),
+      );
+    },
+    onSuccess: invalidateAfterModeration,
+    onError: () => Alert.alert("Couldn't update this account", "Check the reason and expiry."),
+  });
+
   const confirmDelete = (item: ReportedContentOut) => {
     const title = item.content_type === "fountain" ? "Delete fountain?" : "Delete photo?";
     Alert.alert(title, "This can't be undone.", [
@@ -150,7 +177,11 @@ export default function AdminReportsScreen() {
     ]);
   };
 
-  const pending = hideMutation.isPending || dismissMutation.isPending || deleteMutation.isPending;
+  const pending =
+    hideMutation.isPending ||
+    dismissMutation.isPending ||
+    deleteMutation.isPending ||
+    sanctionMutation.isPending;
   // The mutations are screen-level (they disable every row's buttons while any one runs), so drive
   // the spinner off the acted item + action — otherwise every button in the list would spin (#212).
   const itemKey = (i: ReportedContentOut) => `${i.content_type}:${i.content_id}`;
@@ -177,6 +208,20 @@ export default function AdminReportsScreen() {
   return (
     <ScreenContainer>
       <Stack.Screen options={{ headerShown: true, title: "Moderation queue" }} />
+      <TextInput
+        value={sanctionReason}
+        onChangeText={setSanctionReason}
+        placeholder="Account sanction reason"
+        maxLength={500}
+        style={styles.input}
+      />
+      <TextInput
+        value={suspendedUntil}
+        onChangeText={setSuspendedUntil}
+        placeholder="Suspension expiry (ISO 8601)"
+        autoCapitalize="none"
+        style={styles.input}
+      />
       <QueryStateView
         input={{
           isLoading: !viewerResolved || meQuery.isLoading || reportsQuery.isLoading,
@@ -202,6 +247,24 @@ export default function AdminReportsScreen() {
               onHideToggle={() => hideMutation.mutate(item)}
               onReject={() => dismissMutation.mutate(item)}
               onDelete={() => confirmDelete(item)}
+              sanctionsEnabled={sanctionReason.trim().length > 0}
+              suspensionEnabled={
+                sanctionReason.trim().length > 0 && !Number.isNaN(Date.parse(suspendedUntil))
+              }
+              onSanction={(status) =>
+                Alert.alert(
+                  status === "active" ? "Lift account sanction?" : `${status} contributor?`,
+                  sanctionReason.trim(),
+                  [
+                    { text: "Cancel", style: "cancel" },
+                    {
+                      text: "Confirm",
+                      style: status === "active" ? "default" : "destructive",
+                      onPress: () => sanctionMutation.mutate({ item, status }),
+                    },
+                  ],
+                )
+              }
             />
           )}
         />
@@ -220,6 +283,9 @@ function ReportRow({
   onHideToggle,
   onReject,
   onDelete,
+  sanctionsEnabled,
+  suspensionEnabled,
+  onSanction,
 }: {
   item: ReportedContentOut;
   apiBaseUrl: string;
@@ -230,6 +296,9 @@ function ReportRow({
   onHideToggle: () => void;
   onReject: () => void;
   onDelete: () => void;
+  sanctionsEnabled: boolean;
+  suspensionEnabled: boolean;
+  onSanction: (status: "active" | "suspended" | "banned") => void;
 }) {
   const showDelete = contentSupportsDelete(item.content_type);
   return (
@@ -311,6 +380,36 @@ function ReportRow({
             </Pressable>
           ) : null}
         </View>
+        {item.contributor_user_id ? (
+          <View style={styles.actions}>
+            {item.contributor_account_status === "active" ? (
+              <>
+                <Pressable
+                  disabled={pending || !sanctionsEnabled}
+                  onPress={() => onSanction("banned")}
+                  style={[styles.dangerButton, pending ? styles.disabled : null]}
+                >
+                  <Text style={styles.dangerText}>Ban contributor</Text>
+                </Pressable>
+                <Pressable
+                  disabled={pending || !suspensionEnabled}
+                  onPress={() => onSanction("suspended")}
+                  style={[styles.dangerButton, pending ? styles.disabled : null]}
+                >
+                  <Text style={styles.dangerText}>Suspend</Text>
+                </Pressable>
+              </>
+            ) : (
+              <Pressable
+                disabled={pending || !sanctionsEnabled}
+                onPress={() => onSanction("active")}
+                style={[styles.outlineButton, pending ? styles.disabled : null]}
+              >
+                <Text style={styles.outlineText}>Lift sanction</Text>
+              </Pressable>
+            )}
+          </View>
+        ) : null}
       </View>
     </View>
   );
@@ -320,6 +419,14 @@ const styles = StyleSheet.create({
   centered: { flex: 1, alignItems: "center", justifyContent: "center" },
   notAuthorized: { ...typography.body, color: colors.textMuted },
   list: { gap: spacing.md, paddingBottom: spacing.lg },
+  input: {
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: 8,
+    color: colors.text,
+    marginBottom: spacing.sm,
+    padding: spacing.sm,
+  },
   row: {
     flexDirection: "row",
     gap: spacing.md,

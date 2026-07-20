@@ -431,6 +431,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/users/{user_id}/sanction": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Set User Sanction */
+        patch: operations["set_user_sanction_api_v1_admin_users__user_id__sanction_patch"];
+        trace?: never;
+    };
     "/api/v1/admin/fountains/{fountain_id}": {
         parameters: {
             query?: never;
@@ -1170,6 +1187,35 @@ export interface components {
              */
             updated_at: string;
         };
+        /** AdminSanctionOut */
+        AdminSanctionOut: {
+            /**
+             * User Id
+             * Format: uuid
+             */
+            user_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "active" | "suspended" | "banned";
+            /** Suspended Until */
+            suspended_until: string | null;
+            /** Reason */
+            reason: string | null;
+        };
+        /** AdminSanctionRequest */
+        AdminSanctionRequest: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "active" | "suspended" | "banned";
+            /** Reason */
+            reason: string;
+            /** Suspended Until */
+            suspended_until?: string | null;
+        };
         /** AttributeConsensusOut */
         AttributeConsensusOut: {
             /** Attribute Type Id */
@@ -1618,6 +1664,13 @@ export interface components {
             /** Is Admin */
             is_admin: boolean;
             /**
+             * Account Status
+             * @enum {string}
+             */
+            account_status: "active" | "suspended" | "banned";
+            /** Suspended Until */
+            suspended_until: string | null;
+            /**
              * Created At
              * Format: date-time
              */
@@ -1847,6 +1900,12 @@ export interface components {
             first_reported_at: string;
             /** Contributor */
             contributor?: string | null;
+            /** Contributor User Id */
+            contributor_user_id?: string | null;
+            /** Contributor Account Status */
+            contributor_account_status?: ("active" | "suspended" | "banned") | null;
+            /** Contributor Suspended Until */
+            contributor_suspended_until?: string | null;
             /** Thumbnail Url */
             thumbnail_url?: string | null;
             /** Url */
@@ -2892,6 +2951,46 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_user_sanction_api_v1_admin_users__user_id__sanction_patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "X-Dev-User"?: string | null;
+                "X-Dev-Email"?: string | null;
+                "X-Dev-Name"?: string | null;
+            };
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminSanctionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminSanctionOut"];
+                };
             };
             /** @description Validation Error */
             422: {

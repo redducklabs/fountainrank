@@ -296,6 +296,11 @@ function SignedInProfile({
           <Text style={styles.name}>{profile.display_name}</Text>
           {email ? <Text style={styles.note}>{email}</Text> : null}
           {profile.is_admin ? <Text style={styles.meta}>Admin</Text> : null}
+          {profile.account_status !== "active" ? (
+            <Text style={styles.warning}>
+              {`Account ${profile.account_status}. Browsing remains available, but contributions are disabled${profile.suspended_until ? ` until ${new Date(profile.suspended_until).toLocaleString()}` : ""}.`}
+            </Text>
+          ) : null}
           {profile.is_admin ? (
             <Link href="/admin/reports" style={styles.link}>
               Reports

@@ -8,6 +8,7 @@ import { log } from "../../lib/server/log";
 export type AdminError = "unauthenticated" | "forbidden" | "validation" | "not_found" | "server";
 export type AdminActionResult = { ok: true } | { ok: false; error: AdminError };
 export type AdminContentType = "photo" | "note" | "fountain";
+export type AdminSanctionStatus = "active" | "suspended" | "banned";
 type AdminFountainPatch = components["schemas"]["AdminFountainPatch"];
 
 const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
@@ -74,6 +75,28 @@ function cleanText(value: string | null): string | null {
   if (value == null) return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+export async function adminSetUserSanction(
+  userId: string,
+  status: AdminSanctionStatus,
+  reason: string,
+  suspendedUntil?: string,
+): Promise<AdminActionResult> {
+  const cleanReason = cleanText(reason);
+  if (!UUID_RE.test(userId) || !cleanReason) return fail("validation");
+  const result = await runAdminAction("user_sanction", userId, (client) =>
+    client.PATCH("/api/v1/admin/users/{user_id}/sanction", {
+      params: { path: { user_id: userId } },
+      body: {
+        status,
+        reason: cleanReason,
+        suspended_until: status === "suspended" ? suspendedUntil : null,
+      },
+    }),
+  );
+  if (result.ok) revalidatePath("/admin/reports");
+  return result;
 }
 
 export async function adminUpdateFountain(

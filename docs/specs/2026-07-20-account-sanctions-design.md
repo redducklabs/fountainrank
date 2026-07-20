@@ -17,8 +17,10 @@ Migration `0030_account_sanctions` adds to `users`:
 - `sanctioned_by_user_id`: nullable self-FK with `ON DELETE SET NULL`.
 
 The migration adds CHECKs for the status and coherent shape: `active` requires all four sanction
-fields null; `banned` requires a reason/time/actor and no expiry; `suspended` requires a future-or-
-past expiry plus reason/time/actor. An index on `(account_status, suspended_until)` supports queue
+fields null; `banned` requires a reason/time and no expiry; `suspended` requires a future-or-past
+expiry plus reason/time. The actor is required when an admin creates a sanction, but may later
+become null through the declared `ON DELETE SET NULL` account-erasure behavior; immutable actor
+attribution remains in the audit row. An index on `(account_status, suspended_until)` supports queue
 state enrichment and operational searches for current/expired sanctions.
 
 Current state lives on `users`; history lives in the existing append-only `moderation_actions`

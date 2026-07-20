@@ -264,6 +264,8 @@ class MeResponse(BaseModel):
     email: str
     avatar_url: str | None
     is_admin: bool
+    account_status: Literal["active", "suspended", "banned"]
+    suspended_until: datetime | None
     created_at: datetime
     # True when the account still resolves to "Anonymous" (no nickname and display_name == subject);
     # drives the client name-capture gate. When true, display_name is "" (never the raw subject).
@@ -544,6 +546,9 @@ class ReportedContentOut(BaseModel):
     notes: list[str]
     first_reported_at: datetime
     contributor: str | None = None  # uploader (photo) / author (note); None for fountain
+    contributor_user_id: uuid.UUID | None = None
+    contributor_account_status: Literal["active", "suspended", "banned"] | None = None
+    contributor_suspended_until: datetime | None = None
     thumbnail_url: str | None = None  # photo only
     url: str | None = None  # photo only (gated full-image path)
     excerpt: str | None = None  # note body, truncated <=200 (note only)
@@ -552,6 +557,27 @@ class ReportedContentOut(BaseModel):
 
 class ReportsSummary(BaseModel):
     pending_count: int
+
+
+class AdminSanctionRequest(BaseModel):
+    status: Literal["active", "suspended", "banned"]
+    reason: ModerationReason
+    suspended_until: datetime | None = None
+
+    @model_validator(mode="after")
+    def _expiry_matches_status(self) -> "AdminSanctionRequest":
+        if self.status == "suspended" and self.suspended_until is None:
+            raise ValueError("suspended_until is required for a suspension")
+        if self.status != "suspended" and self.suspended_until is not None:
+            raise ValueError("suspended_until is only valid for a suspension")
+        return self
+
+
+class AdminSanctionOut(BaseModel):
+    user_id: uuid.UUID
+    status: Literal["active", "suspended", "banned"]
+    suspended_until: datetime | None
+    reason: str | None
 
 
 class ReportDismissRequest(BaseModel):

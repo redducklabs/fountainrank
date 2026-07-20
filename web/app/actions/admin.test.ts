@@ -21,12 +21,47 @@ import {
   adminHidePhoto,
   adminSetFountainHidden,
   adminSetNoteHidden,
+  adminSetUserSanction,
   fetchPendingReportCount,
 } from "./admin";
 
 const PHOTO_ID = "11111111-1111-1111-1111-111111111111";
 const NOTE_ID = "22222222-2222-2222-2222-222222222222";
 const FOUNTAIN_ID = "33333333-3333-3333-3333-333333333333";
+const USER_ID = "44444444-4444-4444-4444-444444444444";
+
+describe("adminSetUserSanction", () => {
+  it("PATCHes a suspension and revalidates the moderation queue", async () => {
+    PATCH.mockResolvedValue({ response: { status: 200 } });
+    const result = await adminSetUserSanction(
+      USER_ID,
+      "suspended",
+      "Repeated abuse",
+      "2026-07-22T20:00:00.000Z",
+    );
+    expect(result).toEqual({ ok: true });
+    expect(PATCH).toHaveBeenCalledWith(
+      "/api/v1/admin/users/{user_id}/sanction",
+      expect.objectContaining({
+        params: { path: { user_id: USER_ID } },
+        body: {
+          status: "suspended",
+          reason: "Repeated abuse",
+          suspended_until: "2026-07-22T20:00:00.000Z",
+        },
+      }),
+    );
+    expect(revalidatePath).toHaveBeenCalledWith("/admin/reports");
+  });
+
+  it("rejects an empty reason before making an API call", async () => {
+    expect(await adminSetUserSanction(USER_ID, "banned", "   ")).toEqual({
+      ok: false,
+      error: "validation",
+    });
+    expect(getClient).not.toHaveBeenCalled();
+  });
+});
 
 beforeEach(() => {
   getClient.mockImplementation(async () => ({ GET, PATCH, POST, DELETE }));

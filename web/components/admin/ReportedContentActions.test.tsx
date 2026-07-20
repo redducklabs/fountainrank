@@ -9,6 +9,7 @@ const actions = vi.hoisted(() => ({
   adminSetNoteHidden: vi.fn(async () => ({ ok: true })),
   adminSetFountainHidden: vi.fn(async () => ({ ok: true })),
   adminDeleteFountain: vi.fn(async () => ({ ok: true })),
+  adminSetUserSanction: vi.fn(async () => ({ ok: true })),
 }));
 vi.mock("../../app/actions/admin", () => actions);
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
@@ -95,4 +96,23 @@ it("Delete is a two-step confirm before the destructive call", async () => {
   expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Confirm delete" }));
   await waitFor(() => expect(actions.adminDeleteFountain).toHaveBeenCalledWith(ID));
+});
+
+it("requires a reason before enabling contributor sanctions", () => {
+  render(
+    <ReportedContentActions
+      contentType="photo"
+      contentId={ID}
+      fountainId={FID}
+      isHidden={false}
+      contributorUserId={ID}
+      contributorAccountStatus="active"
+    />,
+  );
+  const ban = screen.getByRole("button", { name: "Ban contributor" });
+  expect((ban as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.change(screen.getByLabelText("Moderation reason"), {
+    target: { value: "Repeated abuse" },
+  });
+  expect((ban as HTMLButtonElement).disabled).toBe(false);
 });

@@ -1,7 +1,8 @@
 import logging
 import uuid
+from datetime import UTC, datetime
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,7 +11,7 @@ from app.config import Settings, get_settings
 from app.db import get_session
 from app.display import resolved_display_name
 from app.logto_auth import AuthError, JwksCache, validate_bearer_token
-from app.models import DeletedAccount, User
+from app.models import DeletedAccount, ModerationAction, User
 
 logger = logging.getLogger("app.auth")
 
@@ -88,7 +89,57 @@ async def _reconcile_admin(session: AsyncSession, user: User, sub: str, settings
     return user
 
 
+async def _enforce_account_sanction(session: AsyncSession, user: User, request: Request) -> User:
+    """Expire stale suspensions atomically, then reject sanctioned writes."""
+    now = datetime.now(UTC)
+    if (
+        user.account_status == "suspended"
+        and user.suspended_until is not None
+        and user.suspended_until <= now
+    ):
+        locked = (
+            await session.execute(select(User).where(User.id == user.id).with_for_update())
+        ).scalar_one()
+        if (
+            locked.account_status == "suspended"
+            and locked.suspended_until is not None
+            and locked.suspended_until <= now
+        ):
+            expired_at = locked.suspended_until
+            locked.account_status = "active"
+            locked.suspended_until = None
+            locked.sanction_reason = None
+            locked.sanctioned_at = None
+            locked.sanctioned_by_user_id = None
+            session.add(
+                ModerationAction(
+                    admin_user_id=None,
+                    admin_actor_id=None,
+                    actor_kind="system",
+                    action="expire",
+                    content_type="user",
+                    content_id=locked.id,
+                    fountain_id=None,
+                    details={"suspended_until": expired_at.isoformat()},
+                )
+            )
+            await session.commit()
+            await session.refresh(locked)
+        user = locked
+
+    if request.method in {"GET", "HEAD", "OPTIONS"}:
+        return user
+    if request.method == "DELETE" and request.url.path == "/api/v1/me":
+        return user
+    if user.account_status == "banned":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="account_banned")
+    if user.account_status == "suspended":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="account_suspended")
+    return user
+
+
 async def get_current_user(
+    request: Request,
     authorization: str | None = Header(default=None),
     x_dev_user: str | None = Header(default=None, alias="X-Dev-User"),
     x_dev_email: str | None = Header(default=None, alias="X-Dev-Email"),
@@ -128,7 +179,8 @@ async def get_current_user(
         user = await get_or_create_user(
             session, logto_user_id=sub, email=email, display_name=display_name
         )
-        return await _reconcile_admin(session, user, sub, settings)
+        user = await _reconcile_admin(session, user, sub, settings)
+        return await _enforce_account_sanction(session, user, request)
 
     if settings.dev_auth_enabled and x_dev_user:
         user = await get_or_create_user(
@@ -137,7 +189,8 @@ async def get_current_user(
             email=x_dev_email or f"{x_dev_user}@dev.local",
             display_name=x_dev_name or x_dev_user,
         )
-        return await _reconcile_admin(session, user, x_dev_user, settings)
+        user = await _reconcile_admin(session, user, x_dev_user, settings)
+        return await _enforce_account_sanction(session, user, request)
 
     raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="authentication required")
 
@@ -168,6 +221,7 @@ def ensure_named_user(user: User) -> User:
 
 
 async def get_optional_user(
+    request: Request,
     authorization: str | None = Header(default=None),
     x_dev_user: str | None = Header(default=None, alias="X-Dev-User"),
     x_dev_email: str | None = Header(default=None, alias="X-Dev-Email"),
@@ -186,6 +240,7 @@ async def get_optional_user(
     if authorization is None and not (settings.dev_auth_enabled and x_dev_user):
         return None
     return await get_current_user(
+        request=request,
         authorization=authorization,
         x_dev_user=x_dev_user,
         x_dev_email=x_dev_email,

@@ -77,6 +77,16 @@ export default async function AccountPage({
       <SiteHeader variant="bar" />
       <main className={shell}>
         <h1 className="text-2xl font-bold">Signed in</h1>
+        {profile.account_status !== "active" ? (
+          <div className="max-w-md rounded-lg border border-red-200 bg-red-950/40 p-3 text-sm">
+            This account is {profile.account_status}. You can continue browsing, but contributions
+            are disabled
+            {profile.suspended_until
+              ? ` until ${new Date(profile.suspended_until).toLocaleString()}`
+              : ""}
+            . Account deletion remains available below.
+          </div>
+        ) : null}
         {profile.avatar_url ? (
           <LoadableImage
             src={profile.avatar_url}
