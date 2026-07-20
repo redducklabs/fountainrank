@@ -5,10 +5,10 @@ Managed Postgres + PostGIS (app DB + a separate Logto DB), the LB-terminated Let
 Encrypt SAN cert, and DNS A records — with the cluster, DB, LB, and domain assigned
 to the `FountainRank` DO project. **Not managed here:** the container registry (DO
 multiple-registries feature is incompatible with the provider's legacy endpoint —
-created out-of-band). The **basemap** Spaces bucket + CDN + CORS are managed here
-unconditionally (live prod infra; the old `var.manage_basemap_spaces` count-gate was
-removed 2026-07-04 — see the checklist). The Phase 4 photos bucket remains deferred.
-See the pre-apply checklist below.
+created out-of-band). The **basemap** Spaces bucket + CDN + CORS and the private
+**photos** Spaces bucket are all managed here unconditionally (live prod infra; the old
+`var.manage_basemap_spaces` / `var.manage_photos_spaces` count-gates were both removed —
+see the checklist). See the pre-apply checklist below.
 
 ## 🔴 Local use is READ-ONLY
 
@@ -59,14 +59,17 @@ environment secrets (`DIGITALOCEAN_ACCESS_TOKEN`, `SPACES_ACCESS_KEY`,
    (`422 certificate cannot be created when DNSSEC is enabled`). The DS record lived at the
    registrar (GoDaddy); it was removed 2026-06-18. Verify with
    `curl 'https://dns.google/resolve?name=fountainrank.com&type=DS'` → no `Answer`.
-5. **Basemap Spaces bucket + CDN + CORS:** ✅ live prod infra, managed **unconditionally**.
-   Originally count-gated behind `var.manage_basemap_spaces` (default `false`) to defer creation
-   until a bucket-create-capable Spaces key was wired; once the bucket was live in state that gate
-   became a footgun (a default apply planned to DESTROY the live basemap), so it was **removed
-   2026-07-04**. The removal used Terraform `moved` blocks (`.basemap[0]` → unindexed) — a pure
-   state refactor, zero destroy/recreate. Every apply now manages the bucket plainly; no dispatch
-   input is needed. Full basemap setup (upload + env + smoke) in `docs/setup/README.md` →
-   "Basemap hosting". The Phase 4 **photos** bucket remains deferred.
+5. **Spaces buckets (basemap + photos):** ✅ live prod infra, both managed **unconditionally**.
+   Each was originally count-gated (`var.manage_basemap_spaces` / `var.manage_photos_spaces`,
+   default `false`) to defer creation until a bucket-create-capable Spaces key was wired; once a
+   bucket is live in state that gate becomes a footgun (a default apply plans to DESTROY the live
+   bucket). Basemap's gate was **removed 2026-07-04**; the **photos** gate was **removed 2026-07-20**
+   after a full plan confirmed `.photos[0]` was in state and slated for destruction. Both removals
+   used Terraform `moved` blocks (`.basemap[0]` / `.photos[0]` → unindexed) — a pure state refactor,
+   zero destroy/recreate. The photos bucket additionally carries `lifecycle { prevent_destroy = true }`
+   so any future plan-to-destroy is a loud apply-time error, not silent user-data loss. Every apply
+   now manages both buckets plainly; no dispatch input is needed. Full basemap setup (upload + env +
+   smoke) in `docs/setup/README.md` → "Basemap hosting".
 6. **DNS:** the four A records (`@`/`www`/`api`/`auth`) are created here; the owner's
    email records (MX/DKIM/SPF/DMARC) are intentionally unmanaged.
 7. **App DB SSL:** ✅ wired (Phase 0f). The backend passes `connect_args={"ssl": ctx}` when
