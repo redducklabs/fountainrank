@@ -1,10 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  PHOTO_PICKER_OPTIONS,
-  selectPhoto,
-  type PhotoPickerDependencies,
-} from "./photo-picker";
+import { PHOTO_PICKER_OPTIONS, selectPhoto, type PhotoPickerDependencies } from "./photo-picker";
 
 function dependencies(): PhotoPickerDependencies {
   return {
@@ -61,10 +57,13 @@ describe("selectPhoto", () => {
     },
   );
 
-  it.each(["camera", "library"] as const)("treats a canceled %s picker as a no-op", async (source) => {
-    const deps = dependencies();
-    const launch = source === "camera" ? deps.launchCameraAsync : deps.launchImageLibraryAsync;
-    vi.mocked(launch).mockResolvedValue({ canceled: true, assets: [] });
-    await expect(selectPhoto(source, deps)).resolves.toEqual({ kind: "canceled" });
-  });
+  it.each(["camera", "library"] as const)(
+    "treats a canceled %s picker as a no-op",
+    async (source) => {
+      const deps = dependencies();
+      const launch = source === "camera" ? deps.launchCameraAsync : deps.launchImageLibraryAsync;
+      vi.mocked(launch).mockResolvedValue({ canceled: true, assets: [] });
+      await expect(selectPhoto(source, deps)).resolves.toEqual({ kind: "canceled" });
+    },
+  );
 });
