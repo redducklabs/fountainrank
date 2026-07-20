@@ -33,7 +33,7 @@ async def clean_db(engine):
                 # and intentionally NOT truncated.
                 "TRUNCATE write_attempts, contribution_events, user_contribution_stats, "
                 "fountain_attribute_consensus, attribute_observations, condition_reports, "
-                "fountain_notes, "
+                "fountain_notes, moderation_actions, "
                 "content_reports, upload_attempts, storage_cleanup, fountain_photos, "
                 "fountain_import_events, osm_fountain_import_candidates, "
                 "fountain_provenances, osm_fountain_import_runs, ratings, fountains, "

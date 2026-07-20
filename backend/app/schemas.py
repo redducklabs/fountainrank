@@ -20,6 +20,9 @@ COMMENTS_MAX_LENGTH = 1000
 RATINGS_MAX_ITEMS = 32
 OBSERVATIONS_MAX_ITEMS = 128
 CommentBody = Annotated[str, StringConstraints(max_length=COMMENTS_MAX_LENGTH)]
+ModerationReason = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)
+]
 
 
 def _normalize_optional_text(value: object) -> object:
@@ -370,10 +373,22 @@ class AdminNoteOut(NoteOut):
 
 class AdminNotePatch(BaseModel):
     is_hidden: bool
+    moderation_reason: str | None = Field(default=None, max_length=500)
+
+    @field_validator("moderation_reason", mode="before")
+    @classmethod
+    def _normalize_reason(cls, v: object) -> object:
+        return _normalize_optional_text(v)
 
 
 class AdminPhotoPatch(BaseModel):
     is_hidden: bool
+    moderation_reason: str | None = Field(default=None, max_length=500)
+
+    @field_validator("moderation_reason", mode="before")
+    @classmethod
+    def _normalize_reason(cls, v: object) -> object:
+        return _normalize_optional_text(v)
 
 
 class AdminPhotoOut(BaseModel):
@@ -388,22 +403,37 @@ class AdminFountainPatch(BaseModel):
     placement_note: str | None = None
     comments: CommentBody | None = None
     is_hidden: bool | None = None
+    moderation_reason: str | None = Field(default=None, max_length=500)
 
-    @field_validator("comments", mode="before")
+    @field_validator("comments", "moderation_reason", mode="before")
     @classmethod
     def _normalize_comments(cls, v: object) -> object:
         return _normalize_optional_text(v)
 
     @model_validator(mode="after")
     def _reject_empty_patch(self) -> "AdminFountainPatch":
-        if not self.model_fields_set:
+        if not (self.model_fields_set - {"moderation_reason"}):
             raise ValueError("patch must include at least one field")
         return self
+
+
+class AdminRatingOut(BaseModel):
+    id: uuid.UUID
+    rating_type_id: int
+    rating_type_name: str
+    stars: int
+    contributor: str
+    updated_at: datetime
 
 
 class AdminFountainDetail(FountainDetail):
     is_hidden: bool
     notes: list[AdminNoteOut]
+    ratings: list[AdminRatingOut]
+
+
+class ModerationReasonRequest(BaseModel):
+    reason: ModerationReason
 
 
 class BoundingBox(BaseModel):
@@ -527,6 +557,12 @@ class ReportsSummary(BaseModel):
 class ReportDismissRequest(BaseModel):
     content_type: str
     content_id: uuid.UUID
+    reason: str | None = Field(default=None, max_length=500)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _normalize_reason(cls, v: object) -> object:
+        return _normalize_optional_text(v)
 
 
 class CityFountainsOut(BaseModel):

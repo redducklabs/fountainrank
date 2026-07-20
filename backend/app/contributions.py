@@ -486,6 +486,46 @@ async def reverse_contribution_for_target(
     return await _adjust_target(session, target_type, target_id, "awarded", "reversed", -1)
 
 
+async def reverse_first_rating_bonus_for_actor(
+    session: AsyncSession, fountain_id: uuid.UUID, user_id: uuid.UUID
+) -> int:
+    """Reverse the still-awarded first-rating bonus only when it belongs to ``user_id``.
+
+    The bonus deliberately has no polymorphic target, so target reversal cannot reach it. The
+    caller decides whether this is the actor's last remaining rating; this helper enforces actor,
+    event, dedup-key, and status scope and mirrors the denormalized points adjustment.
+    """
+    rows = (
+        await session.execute(
+            update(ContributionEvent)
+            .where(
+                ContributionEvent.event_type == "first_rating_bonus",
+                ContributionEvent.dedup_key == dk_first_rating(fountain_id),
+                ContributionEvent.user_id == user_id,
+                ContributionEvent.status == "awarded",
+            )
+            .values(status="reversed")
+            .returning(ContributionEvent.user_id, ContributionEvent.points)
+        )
+    ).all()
+    for row in rows:
+        await session.execute(
+            update(UserContributionStats)
+            .where(UserContributionStats.user_id == row.user_id)
+            .values(
+                total_points=func.greatest(UserContributionStats.total_points - row.points, 0),
+                updated_at=func.now(),
+            )
+        )
+    logger.info(
+        "first-rating bonus reversal fountain_id=%s actor_id=%s events=%d",
+        fountain_id,
+        user_id,
+        len(rows),
+    )
+    return len(rows)
+
+
 async def reactivate_contribution_for_target(
     session: AsyncSession, target_type: str, target_id: uuid.UUID
 ) -> int:

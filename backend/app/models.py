@@ -803,6 +803,56 @@ class ContentReport(Base):
     )
 
 
+class ModerationAction(Base):
+    """Append-only durable record of an effective admin moderation decision (#216).
+
+    ``content_id`` is deliberately polymorphic and remains populated after a hard delete.
+    ``admin_actor_id`` is the immutable internal actor snapshot; the nullable FK supports current
+    joins without erasing attribution when the admin account is later deleted.
+    """
+
+    __tablename__ = "moderation_actions"
+    __table_args__ = (
+        CheckConstraint(
+            "action IN ('hide','unhide','dismiss','delete','rating_delete')", name="action"
+        ),
+        CheckConstraint(
+            "content_type IN ('fountain','note','photo','rating')", name="content_type"
+        ),
+        Index(
+            "ix_moderation_actions_target",
+            "content_type",
+            "content_id",
+            "created_at",
+        ),
+        Index("ix_moderation_actions_admin_created", "admin_user_id", "created_at"),
+        Index("ix_moderation_actions_fountain_created", "fountain_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    admin_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL", name="fk_moderation_actions_admin"),
+        nullable=True,
+    )
+    admin_actor_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
+    action: Mapped[str] = mapped_column(String, nullable=False)
+    content_type: Mapped[str] = mapped_column(String, nullable=False)
+    content_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
+    fountain_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("fountains.id", ondelete="SET NULL", name="fk_moderation_actions_fountain"),
+        nullable=True,
+    )
+    reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    details: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class StorageCleanup(Base):
     """Durable retry ledger for Spaces objects whose deletion failed or must be swept
     (fountain-photos design §3.3) — tracks orphans even when no `fountain_photos` row was

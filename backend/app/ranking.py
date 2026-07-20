@@ -1,5 +1,4 @@
 import uuid
-from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,11 +14,12 @@ def rating_actor_expr():
 async def recompute_fountain_ranking(session: AsyncSession, fountain_id: uuid.UUID) -> None:
     """Recompute and store a fountain's denormalized rating fields. The caller owns
     the transaction (commit happens upstream)."""
-    vote_count, average = (
+    vote_count, average, last_rated_at = (
         await session.execute(
             select(
                 func.count(func.distinct(rating_actor_expr())),
                 func.avg(Rating.stars),
+                func.max(Rating.updated_at),
             ).where(Rating.fountain_id == fountain_id)
         )
     ).one()
@@ -43,12 +43,10 @@ async def recompute_fountain_ranking(session: AsyncSession, fountain_id: uuid.UU
     fountain.rating_count = vote_count
     fountain.average_rating = average
     fountain.ranking_score = ranking_score
-    if vote_count > 0:
-        fountain.last_rated_at = datetime.now(tz=UTC)
-    else:
-        # Make the no-ratings state complete + deterministic (e.g. after a rating is
-        # retracted or denormalized state is repaired): clear the stale timestamp too.
-        fountain.last_rated_at = None
+    # This is the latest rating-row mutation, not the time of an unrelated aggregate recompute.
+    # Account detachment may update Rating.updated_at; that accepted semantic is still more
+    # accurate than stamping every recompute with the current time (#216).
+    fountain.last_rated_at = last_rated_at
     # Flush so callers can safely session.refresh() the fountain within the same
     # transaction and see the updated denormalized fields before commit.
     await session.flush()

@@ -2537,6 +2537,23 @@
             }
           },
           {
+            "name": "reason",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 500
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Reason"
+            }
+          },
+          {
             "name": "authorization",
             "in": "header",
             "required": false,
@@ -3105,6 +3122,23 @@
             }
           },
           {
+            "name": "reason",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 500
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Reason"
+            }
+          },
+          {
             "name": "authorization",
             "in": "header",
             "required": false,
@@ -3206,6 +3240,23 @@
             }
           },
           {
+            "name": "reason",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 500
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Reason"
+            }
+          },
+          {
             "name": "authorization",
             "in": "header",
             "required": false,
@@ -3273,6 +3324,128 @@
         "responses": {
           "204": {
             "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/ratings/{rating_id}": {
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Admin Delete Rating",
+        "description": "Remove one rating and reverse only the contribution points it earned.",
+        "operationId": "admin_delete_rating_api_v1_admin_ratings__rating_id__delete",
+        "parameters": [
+          {
+            "name": "rating_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Rating Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "X-Dev-User",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Dev-User"
+            }
+          },
+          {
+            "name": "X-Dev-Email",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Dev-Email"
+            }
+          },
+          {
+            "name": "X-Dev-Name",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Dev-Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModerationReasonRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "503": {
+            "description": "A boundary load / membership refresh holds the write lock; retry after the interval in `Retry-After`.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying the write.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -5517,6 +5690,13 @@
             },
             "type": "array",
             "title": "Notes"
+          },
+          "ratings": {
+            "items": {
+              "$ref": "#/components/schemas/AdminRatingOut"
+            },
+            "type": "array",
+            "title": "Ratings"
           }
         },
         "type": "object",
@@ -5532,7 +5712,8 @@
           "last_rated_at",
           "dimensions",
           "is_hidden",
-          "notes"
+          "notes",
+          "ratings"
         ],
         "title": "AdminFountainDetail"
       },
@@ -5592,6 +5773,18 @@
               }
             ],
             "title": "Is Hidden"
+          },
+          "moderation_reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Moderation Reason"
           }
         },
         "type": "object",
@@ -5654,6 +5847,18 @@
           "is_hidden": {
             "type": "boolean",
             "title": "Is Hidden"
+          },
+          "moderation_reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Moderation Reason"
           }
         },
         "type": "object",
@@ -5699,6 +5904,18 @@
           "is_hidden": {
             "type": "boolean",
             "title": "Is Hidden"
+          },
+          "moderation_reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Moderation Reason"
           }
         },
         "type": "object",
@@ -5706,6 +5923,46 @@
           "is_hidden"
         ],
         "title": "AdminPhotoPatch"
+      },
+      "AdminRatingOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "rating_type_id": {
+            "type": "integer",
+            "title": "Rating Type Id"
+          },
+          "rating_type_name": {
+            "type": "string",
+            "title": "Rating Type Name"
+          },
+          "stars": {
+            "type": "integer",
+            "title": "Stars"
+          },
+          "contributor": {
+            "type": "string",
+            "title": "Contributor"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "rating_type_id",
+          "rating_type_name",
+          "stars",
+          "contributor",
+          "updated_at"
+        ],
+        "title": "AdminRatingOut"
       },
       "AttributeConsensusOut": {
         "properties": {
@@ -6934,6 +7191,21 @@
         ],
         "title": "MeResponse"
       },
+      "ModerationReasonRequest": {
+        "properties": {
+          "reason": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "reason"
+        ],
+        "title": "ModerationReasonRequest"
+      },
       "MyFountainsOut": {
         "properties": {
           "fountains": {
@@ -7347,6 +7619,18 @@
             "type": "string",
             "format": "uuid",
             "title": "Content Id"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
           }
         },
         "type": "object",

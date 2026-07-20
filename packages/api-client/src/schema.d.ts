@@ -562,6 +562,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/ratings/{rating_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Admin Delete Rating
+         * @description Remove one rating and reverse only the contribution points it earned.
+         */
+        delete: operations["admin_delete_rating_api_v1_admin_ratings__rating_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/reports": {
         parameters: {
             query?: never;
@@ -1060,6 +1080,8 @@ export interface components {
             is_hidden: boolean;
             /** Notes */
             notes: components["schemas"]["AdminNoteOut"][];
+            /** Ratings */
+            ratings: components["schemas"]["AdminRatingOut"][];
         };
         /** AdminFountainPatch */
         AdminFountainPatch: {
@@ -1072,6 +1094,8 @@ export interface components {
             comments?: string | null;
             /** Is Hidden */
             is_hidden?: boolean | null;
+            /** Moderation Reason */
+            moderation_reason?: string | null;
         };
         /** AdminNoteOut */
         AdminNoteOut: {
@@ -1103,6 +1127,8 @@ export interface components {
         AdminNotePatch: {
             /** Is Hidden */
             is_hidden: boolean;
+            /** Moderation Reason */
+            moderation_reason?: string | null;
         };
         /** AdminPhotoOut */
         AdminPhotoOut: {
@@ -1120,6 +1146,29 @@ export interface components {
         AdminPhotoPatch: {
             /** Is Hidden */
             is_hidden: boolean;
+            /** Moderation Reason */
+            moderation_reason?: string | null;
+        };
+        /** AdminRatingOut */
+        AdminRatingOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Rating Type Id */
+            rating_type_id: number;
+            /** Rating Type Name */
+            rating_type_name: string;
+            /** Stars */
+            stars: number;
+            /** Contributor */
+            contributor: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
         };
         /** AttributeConsensusOut */
         AttributeConsensusOut: {
@@ -1579,6 +1628,11 @@ export interface components {
              */
             needs_name: boolean;
         };
+        /** ModerationReasonRequest */
+        ModerationReasonRequest: {
+            /** Reason */
+            reason: string;
+        };
         /**
          * MyFountainsOut
          * @description Fountains the authenticated user has contributed to (#170).
@@ -1755,6 +1809,8 @@ export interface components {
              * Format: uuid
              */
             content_id: string;
+            /** Reason */
+            reason?: string | null;
         };
         /**
          * ReportedContentOut
@@ -2886,7 +2942,9 @@ export interface operations {
     };
     admin_delete_fountain_api_v1_admin_fountains__fountain_id__delete: {
         parameters: {
-            query?: never;
+            query?: {
+                reason?: string | null;
+            };
             header?: {
                 authorization?: string | null;
                 "X-Dev-User"?: string | null;
@@ -3089,7 +3147,9 @@ export interface operations {
     };
     admin_delete_photo_api_v1_admin_photos__photo_id__delete: {
         parameters: {
-            query?: never;
+            query?: {
+                reason?: string | null;
+            };
             header?: {
                 authorization?: string | null;
                 "X-Dev-User"?: string | null;
@@ -3163,7 +3223,9 @@ export interface operations {
     };
     admin_dismiss_photo_reports_api_v1_admin_photos__photo_id__dismiss_reports_post: {
         parameters: {
-            query?: never;
+            query?: {
+                reason?: string | null;
+            };
             header?: {
                 authorization?: string | null;
                 "X-Dev-User"?: string | null;
@@ -3192,6 +3254,53 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    admin_delete_rating_api_v1_admin_ratings__rating_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "X-Dev-User"?: string | null;
+                "X-Dev-Email"?: string | null;
+                "X-Dev-Name"?: string | null;
+            };
+            path: {
+                rating_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModerationReasonRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A boundary load / membership refresh holds the write lock; retry after the interval in `Retry-After`. */
+            503: {
+                headers: {
+                    /** @description Seconds to wait before retrying the write. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

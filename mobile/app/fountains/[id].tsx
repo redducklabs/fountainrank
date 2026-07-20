@@ -462,11 +462,11 @@ export default function FountainDetailScreen() {
   });
 
   const adminDeleteMutation = useMutation({
-    mutationFn: async (): Promise<void> => {
+    mutationFn: async (reason: string): Promise<void> => {
       if (fountainId == null) throw new Error("missing fountain id");
       unwrap(
         await client.DELETE("/api/v1/admin/fountains/{fountain_id}", {
-          params: { path: { fountain_id: fountainId } },
+          params: { path: { fountain_id: fountainId }, query: { reason: reason.trim() || null } },
         }),
       );
     },
@@ -477,16 +477,36 @@ export default function FountainDetailScreen() {
     mutationFn: async ({
       noteId,
       isHidden,
+      reason,
     }: {
       noteId: string;
       isHidden: boolean;
+      reason: string;
     }): Promise<AdminNoteOut> =>
       unwrap(
         await client.PATCH("/api/v1/admin/notes/{note_id}", {
           params: { path: { note_id: noteId } },
-          body: { is_hidden: isHidden },
+          body: { is_hidden: isHidden, moderation_reason: reason.trim() || null },
         }),
       ),
+    onSuccess: refreshAdminAfterWrite,
+  });
+
+  const adminRatingDeleteMutation = useMutation({
+    mutationFn: async ({
+      ratingId,
+      reason,
+    }: {
+      ratingId: string;
+      reason: string;
+    }): Promise<void> => {
+      unwrap(
+        await client.DELETE("/api/v1/admin/ratings/{rating_id}", {
+          params: { path: { rating_id: ratingId } },
+          body: { reason: reason.trim() },
+        }),
+      );
+    },
     onSuccess: refreshAdminAfterWrite,
   });
 
@@ -656,16 +676,24 @@ export default function FountainDetailScreen() {
                         pending={
                           adminUpdateMutation.isPending ||
                           adminDeleteMutation.isPending ||
-                          adminNoteMutation.isPending
+                          adminNoteMutation.isPending ||
+                          adminRatingDeleteMutation.isPending
                         }
                         onUpdate={async (patch) => {
                           await adminUpdateMutation.mutateAsync(patch);
                         }}
-                        onDelete={async () => {
-                          await adminDeleteMutation.mutateAsync();
+                        onDelete={async (reason) => {
+                          await adminDeleteMutation.mutateAsync(reason);
                         }}
-                        onSetNoteHidden={async (noteId, isHidden) => {
-                          await adminNoteMutation.mutateAsync({ noteId, isHidden });
+                        onSetNoteHidden={async (noteId, isHidden, reason) => {
+                          await adminNoteMutation.mutateAsync({
+                            noteId,
+                            isHidden,
+                            reason,
+                          });
+                        }}
+                        onDeleteRating={async (ratingId, reason) => {
+                          await adminRatingDeleteMutation.mutateAsync({ ratingId, reason });
                         }}
                       />
                     ) : undefined
@@ -704,18 +732,21 @@ function AdminControls({
   onUpdate,
   onDelete,
   onSetNoteHidden,
+  onDeleteRating,
 }: {
   detail: AdminFountainDetail;
   pending: boolean;
   onUpdate: (patch: AdminFountainPatch) => Promise<void>;
-  onDelete: () => Promise<void>;
-  onSetNoteHidden: (noteId: string, isHidden: boolean) => Promise<void>;
+  onDelete: (reason: string) => Promise<void>;
+  onSetNoteHidden: (noteId: string, isHidden: boolean, reason: string) => Promise<void>;
+  onDeleteRating: (ratingId: string, reason: string) => Promise<void>;
 }) {
   const [latitude, setLatitude] = useState(String(detail.location.latitude));
   const [longitude, setLongitude] = useState(String(detail.location.longitude));
   const [isWorking, setIsWorking] = useState(detail.is_working);
   const [placementNote, setPlacementNote] = useState(detail.placement_note ?? "");
   const [comments, setComments] = useState(detail.comments ?? "");
+  const [moderationReason, setModerationReason] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   // Which button is in flight, so only the tapped one spins while `pending` disables them all
   // (Save and Hide share one mutation, so isPending alone can't tell them apart) (#212).
@@ -770,7 +801,7 @@ function AdminControls({
           text: "Delete",
           style: "destructive",
           onPress: () => {
-            void run("delete", onDelete);
+            void run("delete", () => onDelete(moderationReason));
           },
         },
       ],
@@ -852,13 +883,30 @@ function AdminControls({
           <Text style={styles.adminPrimaryText}>Save edits</Text>
         </Pressable>
       </View>
+      <View style={styles.adminForm}>
+        <Text style={styles.adminLabel}>Moderation reason</Text>
+        <TextInput
+          value={moderationReason}
+          onChangeText={setModerationReason}
+          editable={!pending}
+          maxLength={500}
+          multiline
+          placeholder="Required for rating removal; optional for other actions"
+          style={[styles.adminInput, styles.adminMultiline]}
+        />
+      </View>
       <View style={styles.adminButtonRow}>
         <Pressable
           accessibilityRole="button"
           accessibilityState={{ disabled: pending, busy: activeAction === "hide" }}
           disabled={pending}
           onPress={() => {
-            void run("hide", () => onUpdate({ is_hidden: !detail.is_hidden }));
+            void run("hide", () =>
+              onUpdate({
+                is_hidden: !detail.is_hidden,
+                moderation_reason: moderationReason.trim() || null,
+              }),
+            );
           }}
           style={[styles.adminOutlineButton, pending ? styles.disabled : null]}
         >
@@ -899,7 +947,9 @@ function AdminControls({
                 accessibilityState={{ disabled: pending, busy: activeAction === `note:${note.id}` }}
                 disabled={pending}
                 onPress={() => {
-                  void run(`note:${note.id}`, () => onSetNoteHidden(note.id, !note.is_hidden));
+                  void run(`note:${note.id}`, () =>
+                    onSetNoteHidden(note.id, !note.is_hidden, moderationReason),
+                  );
                 }}
                 style={[styles.adminSmallButton, pending ? styles.disabled : null]}
               >
@@ -907,6 +957,33 @@ function AdminControls({
                   <ActivityIndicator size="small" color={colors.brandBlue} />
                 ) : null}
                 <Text style={styles.adminOutlineText}>{note.is_hidden ? "Unhide" : "Hide"}</Text>
+              </Pressable>
+            </View>
+          ))}
+        </View>
+      ) : null}
+      {detail.ratings.length > 0 ? (
+        <View style={styles.adminNotes}>
+          <Text style={styles.adminMeta}>MODERATE RATINGS</Text>
+          {detail.ratings.map((rating) => (
+            <View key={rating.id} style={styles.adminNoteRow}>
+              <Text style={styles.adminNoteBody}>
+                {rating.rating_type_name}: {rating.stars}/5 · {rating.contributor}
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                disabled={pending || moderationReason.trim().length === 0}
+                onPress={() => {
+                  void run(`rating:${rating.id}`, () =>
+                    onDeleteRating(rating.id, moderationReason),
+                  );
+                }}
+                style={[styles.adminDangerButton, pending ? styles.disabled : null]}
+              >
+                {activeAction === `rating:${rating.id}` ? (
+                  <ActivityIndicator size="small" color={colors.danger} />
+                ) : null}
+                <Text style={styles.adminDangerText}>Remove rating</Text>
               </Pressable>
             </View>
           ))}

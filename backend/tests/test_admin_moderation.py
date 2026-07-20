@@ -19,6 +19,7 @@ from app.models import (
     FountainNote,
     FountainPhoto,
     FountainProvenance,
+    ModerationAction,
     OsmImportRun,
     Rating,
     StorageCleanup,
@@ -211,6 +212,191 @@ async def test_admin_fountain_patch_bounds_and_normalizes_comments(raw_client, s
         json={"comments": "x" * 1001},
     )
     assert oversized.status_code == 422
+
+
+async def test_moderation_hide_records_durable_actor_reason_and_target(raw_client, session, author):
+    fountain = await _create_fountain(session, author)
+
+    response = await raw_client.patch(
+        f"/api/v1/admin/fountains/{fountain.id}",
+        headers={"X-Dev-User": "admin-sub"},
+        json={"is_hidden": True, "moderation_reason": "  Duplicate listing  "},
+    )
+    assert response.status_code == 200
+
+    action = (await session.execute(select(ModerationAction))).scalar_one()
+    assert action.action == "hide"
+    assert action.content_type == "fountain"
+    assert action.content_id == fountain.id
+    assert action.fountain_id == fountain.id
+    assert action.admin_user_id == action.admin_actor_id
+    assert action.reason == "Duplicate listing"
+    assert action.details == {"resolved_reports": 0}
+
+
+async def test_note_photo_hides_and_dismiss_are_all_audited(raw_client, session, author):
+    fountain = await _create_fountain(session, author)
+    note = await _create_note(session, fountain, author)
+    photo = await _add_photo(session, fountain, author)
+    headers = {"X-Dev-User": "admin-sub"}
+
+    note_hide = await raw_client.patch(
+        f"/api/v1/admin/notes/{note.id}",
+        headers=headers,
+        json={"is_hidden": True, "moderation_reason": "reported note"},
+    )
+    photo_hide = await raw_client.patch(
+        f"/api/v1/admin/photos/{photo.id}",
+        headers=headers,
+        json={"is_hidden": True, "moderation_reason": "reported photo"},
+    )
+    dismissed = await raw_client.post(
+        "/api/v1/admin/reports/dismiss",
+        headers=headers,
+        json={
+            "content_type": "fountain",
+            "content_id": str(fountain.id),
+            "reason": "report not substantiated",
+        },
+    )
+    assert note_hide.status_code == photo_hide.status_code == 200
+    assert dismissed.status_code == 204
+
+    actions = (
+        await session.execute(select(ModerationAction).order_by(ModerationAction.created_at))
+    ).scalars()
+    assert [(row.action, row.content_type, row.reason) for row in actions] == [
+        ("hide", "note", "reported note"),
+        ("hide", "photo", "reported photo"),
+        ("dismiss", "fountain", "report not substantiated"),
+    ]
+
+
+async def test_admin_lists_and_removes_rating_with_required_reason(raw_client, session, author):
+    fountain = await _create_fountain(session, author)
+    rating = Rating(fountain_id=fountain.id, user_id=author.id, rating_type_id=1, stars=2)
+    session.add(rating)
+    await session.commit()
+    await session.refresh(rating)
+    rating_id = rating.id
+
+    detail = await raw_client.get(
+        f"/api/v1/admin/fountains/{fountain.id}",
+        headers={"X-Dev-User": "admin-sub"},
+    )
+    assert detail.status_code == 200
+    assert detail.json()["ratings"] == [
+        {
+            "id": str(rating.id),
+            "rating_type_id": 1,
+            "rating_type_name": "Clarity",
+            "stars": 2,
+            "contributor": "Author",
+            "updated_at": rating.updated_at.isoformat().replace("+00:00", "Z"),
+        }
+    ]
+
+    missing_reason = await raw_client.request(
+        "DELETE",
+        f"/api/v1/admin/ratings/{rating_id}",
+        headers={"X-Dev-User": "admin-sub"},
+        json={"reason": "  "},
+    )
+    assert missing_reason.status_code == 422
+
+    removed = await raw_client.request(
+        "DELETE",
+        f"/api/v1/admin/ratings/{rating_id}",
+        headers={"X-Dev-User": "admin-sub"},
+        json={"reason": "Clearly abusive rating"},
+    )
+    assert removed.status_code == 204
+    session.expire_all()
+    assert await session.get(Rating, rating_id) is None
+    action = (
+        await session.execute(
+            select(ModerationAction).where(ModerationAction.content_id == rating_id)
+        )
+    ).scalar_one()
+    assert action.action == "rating_delete"
+    assert action.reason == "Clearly abusive rating"
+
+
+async def test_rating_removal_reverses_target_points_and_last_actor_bonus(
+    raw_client, session, author
+):
+    fountain = await _create_fountain(session, author)
+    fountain_id = fountain.id
+    author_id = author.id
+    rated = await raw_client.post(
+        f"/api/v1/fountains/{fountain.id}/ratings",
+        headers={"X-Dev-User": author.logto_user_id},
+        json={
+            "ratings": [
+                {"rating_type_id": 1, "stars": 1},
+                {"rating_type_id": 2, "stars": 5},
+            ]
+        },
+    )
+    assert rated.status_code == 200
+    rating_ids = (
+        (
+            await session.execute(
+                select(Rating.id)
+                .where(Rating.fountain_id == fountain.id)
+                .order_by(Rating.rating_type_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    headers = {"X-Dev-User": "admin-sub"}
+
+    first_removed = await raw_client.request(
+        "DELETE",
+        f"/api/v1/admin/ratings/{rating_ids[0]}",
+        headers=headers,
+        json={"reason": "manipulated vote"},
+    )
+    assert first_removed.status_code == 204
+    stats = await session.get(UserContributionStats, author_id, populate_existing=True)
+    assert stats is not None
+    assert (stats.total_points, stats.ratings_count) == (7, 1)
+    bonus = (
+        await session.execute(
+            select(ContributionEvent).where(
+                ContributionEvent.event_type == "first_rating_bonus",
+                ContributionEvent.fountain_id == fountain.id,
+            )
+        )
+    ).scalar_one()
+    assert bonus.status == "awarded"
+
+    last_removed = await raw_client.request(
+        "DELETE",
+        f"/api/v1/admin/ratings/{rating_ids[1]}",
+        headers=headers,
+        json={"reason": "manipulated vote"},
+    )
+    assert last_removed.status_code == 204
+    session.expire_all()
+    stats = await session.get(UserContributionStats, author_id)
+    assert stats is not None
+    assert (stats.total_points, stats.ratings_count) == (0, 0)
+    bonus = (
+        await session.execute(
+            select(ContributionEvent).where(
+                ContributionEvent.event_type == "first_rating_bonus",
+                ContributionEvent.fountain_id == fountain_id,
+            )
+        )
+    ).scalar_one()
+    refreshed_fountain = await session.get(Fountain, fountain_id)
+    assert bonus.status == "reversed"
+    assert refreshed_fountain is not None
+    assert refreshed_fountain.rating_count == 0
+    assert refreshed_fountain.average_rating is None
+    assert refreshed_fountain.last_rated_at is None
 
 
 async def test_soft_hide_fountain_disappears_from_public_reads_but_admin_can_read(

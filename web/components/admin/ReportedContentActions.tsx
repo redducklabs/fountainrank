@@ -48,6 +48,7 @@ export function ReportedContentActions({
   const [pending, startTransition] = useTransition();
   const [result, setResult] = useState<AdminActionResult | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [moderationReason, setModerationReason] = useState("");
   // Which action is in flight, so only the tapped button spins while `pending` disables the whole
   // row (single-flight). The local Cancel / initial-Delete toggles never spin.
   const [activeKey, setActiveKey] = useState<string | null>(null);
@@ -66,21 +67,44 @@ export function ReportedContentActions({
   };
 
   const hide = (): Promise<AdminActionResult> => {
-    if (contentType === "photo") return adminHidePhoto(contentId, !isHidden);
-    if (contentType === "note") return adminSetNoteHidden(contentId, !isHidden, fountainId);
-    return adminSetFountainHidden(contentId, !isHidden);
+    const reason = moderationReason.trim() || undefined;
+    if (contentType === "photo")
+      return reason
+        ? adminHidePhoto(contentId, !isHidden, reason)
+        : adminHidePhoto(contentId, !isHidden);
+    if (contentType === "note")
+      return reason
+        ? adminSetNoteHidden(contentId, !isHidden, fountainId, reason)
+        : adminSetNoteHidden(contentId, !isHidden, fountainId);
+    return reason
+      ? adminSetFountainHidden(contentId, !isHidden, reason)
+      : adminSetFountainHidden(contentId, !isHidden);
   };
 
   // Only photo and fountain support a hard delete; a note's removal is a Hide.
   const deleteAction =
     contentType === "photo"
-      ? () => adminDeletePhoto(contentId)
+      ? () =>
+          moderationReason.trim()
+            ? adminDeletePhoto(contentId, moderationReason)
+            : adminDeletePhoto(contentId)
       : contentType === "fountain"
-        ? () => adminDeleteFountain(contentId)
+        ? () =>
+            moderationReason.trim()
+              ? adminDeleteFountain(contentId, moderationReason)
+              : adminDeleteFountain(contentId)
         : null;
 
   return (
     <div className="flex shrink-0 flex-col items-end gap-1">
+      <input
+        value={moderationReason}
+        onChange={(event) => setModerationReason(event.target.value)}
+        maxLength={500}
+        placeholder="Moderation reason (optional)"
+        aria-label="Moderation reason"
+        className="w-full rounded-md border border-border bg-surface px-2 py-1 text-xs text-foreground sm:w-56"
+      />
       <div className="flex gap-2">
         <SpinnerButton
           pending={pending && activeKey === "hide"}
@@ -93,7 +117,13 @@ export function ReportedContentActions({
         <SpinnerButton
           pending={pending && activeKey === "reject"}
           disabled={pending}
-          onClick={() => run("reject", () => adminDismissReport(contentType, contentId))}
+          onClick={() =>
+            run("reject", () =>
+              moderationReason.trim()
+                ? adminDismissReport(contentType, contentId, moderationReason)
+                : adminDismissReport(contentType, contentId),
+            )
+          }
           className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold text-muted hover:bg-surface disabled:opacity-60"
         >
           Reject
