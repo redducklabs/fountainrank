@@ -316,7 +316,9 @@ function SignedInProfile({
           </Text>
         </View>
       ) : null}
-      <DisplayNameForm initialValue={profile.display_name} required={false} />
+      {profile.account_status === "active" ? (
+        <DisplayNameForm initialValue={profile.display_name} required={false} />
+      ) : null}
       {message ? <Text style={styles.warning}>{message}</Text> : null}
       <SecondaryButton
         label="Sign out"

@@ -1,9 +1,14 @@
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker
+from starlette.requests import Request
 
+from app.auth import _enforce_account_sanction
 from app.config import Settings, get_settings
 from app.main import app
 from app.models import ModerationAction, User
@@ -178,3 +183,90 @@ async def test_expired_suspension_is_cleared_once_with_system_audit(raw_client, 
     assert rows[0].actor_kind == "system"
     assert rows[0].admin_user_id is None
     assert rows[0].admin_actor_id is None
+
+
+async def test_expiry_reloads_locked_row_and_cannot_overwrite_concurrent_ban(session, engine):
+    actor = await _user(session, "race-actor", is_admin=True)
+    user = await _user(session, "race-user")
+    user.account_status = "suspended"
+    user.suspended_until = datetime.now(UTC) - timedelta(minutes=1)
+    user.sanction_reason = "Initial suspension"
+    user.sanctioned_at = datetime.now(UTC) - timedelta(days=1)
+    user.sanctioned_by_user_id = actor.id
+    await session.commit()
+
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    async with maker() as stale_session, maker() as admin_session:
+        stale_user = (
+            await stale_session.execute(select(User).where(User.id == user.id))
+        ).scalar_one()
+        locked_by_admin = (
+            await admin_session.execute(select(User).where(User.id == user.id).with_for_update())
+        ).scalar_one()
+        locked_by_admin.account_status = "banned"
+        locked_by_admin.suspended_until = None
+        locked_by_admin.sanction_reason = "Escalated ban"
+        locked_by_admin.sanctioned_at = datetime.now(UTC)
+        await admin_session.commit()
+
+        request = Request({"type": "http", "method": "PATCH", "path": "/api/v1/me", "headers": []})
+        with pytest.raises(HTTPException) as exc_info:
+            await _enforce_account_sanction(stale_session, stale_user, request)
+        assert getattr(exc_info.value, "detail", None) == "account_banned"
+
+    await session.refresh(user)
+    assert user.account_status == "banned"
+    expiry_rows = (
+        (
+            await session.execute(
+                select(ModerationAction).where(
+                    ModerationAction.content_id == user.id, ModerationAction.action == "expire"
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert expiry_rows == []
+
+
+WRITE_ROUTES = [
+    ("PATCH", "/api/v1/me", {"json": {"display_name": "Blocked"}}),
+    ("POST", "/api/v1/me/sync", {"json": {"userinfo_token": "unused"}}),
+    (
+        "POST",
+        "/api/v1/fountains",
+        {"json": {"location": {"latitude": 1.0, "longitude": 2.0}}},
+    ),
+    (
+        "POST",
+        f"/api/v1/fountains/{uuid.uuid4()}/ratings",
+        {"json": {"ratings": [{"rating_type_id": 1, "stars": 5}]}},
+    ),
+    ("POST", f"/api/v1/fountains/{uuid.uuid4()}/conditions", {"json": {"status": "working"}}),
+    ("POST", f"/api/v1/fountains/{uuid.uuid4()}/notes", {"json": {"body": "Blocked"}}),
+    ("POST", f"/api/v1/fountains/{uuid.uuid4()}/photos", {"content": b""}),
+    ("POST", f"/api/v1/fountains/{uuid.uuid4()}/report", {"json": {"category": "other"}}),
+]
+
+
+@pytest.mark.parametrize("account_status", ["banned", "suspended"])
+@pytest.mark.parametrize(("method", "path", "kwargs"), WRITE_ROUTES)
+async def test_sanctions_block_each_authenticated_write_route_class(
+    raw_client, session, account_status, method, path, kwargs
+):
+    actor = await _user(session, "boundary-actor", is_admin=True)
+    user = await _user(session, "boundary-user")
+    user.account_status = account_status
+    user.sanction_reason = "Boundary test"
+    user.sanctioned_at = datetime.now(UTC)
+    user.sanctioned_by_user_id = actor.id
+    if account_status == "suspended":
+        user.suspended_until = datetime.now(UTC) + timedelta(days=1)
+    await session.commit()
+
+    headers = {"X-Dev-User": "boundary-user", "X-Dev-Name": "Boundary User"}
+    response = await raw_client.request(method, path, headers=headers, **kwargs)
+    assert response.status_code == 403
+    assert response.json()["detail"] == f"account_{account_status}"
+    assert (await raw_client.get("/api/v1/me", headers=headers)).status_code == 200

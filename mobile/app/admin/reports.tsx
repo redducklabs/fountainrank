@@ -399,7 +399,8 @@ function ReportRow({
                   <Text style={styles.dangerText}>Suspend</Text>
                 </Pressable>
               </>
-            ) : (
+            ) : item.contributor_account_status === "suspended" ||
+              item.contributor_account_status === "banned" ? (
               <Pressable
                 disabled={pending || !sanctionsEnabled}
                 onPress={() => onSanction("active")}
@@ -407,7 +408,7 @@ function ReportRow({
               >
                 <Text style={styles.outlineText}>Lift sanction</Text>
               </Pressable>
-            )}
+            ) : null}
           </View>
         ) : null}
       </View>

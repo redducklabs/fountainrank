@@ -108,7 +108,7 @@ export function ReportedContentActions({
         value={moderationReason}
         onChange={(event) => setModerationReason(event.target.value)}
         maxLength={500}
-        placeholder="Moderation reason (optional)"
+        placeholder="Reason (required for account sanctions)"
         aria-label="Moderation reason"
         className="w-full rounded-md border border-border bg-surface px-2 py-1 text-xs text-foreground sm:w-56"
       />
@@ -209,7 +209,7 @@ export function ReportedContentActions({
                 Suspend
               </SpinnerButton>
             </>
-          ) : (
+          ) : contributorAccountStatus === "suspended" || contributorAccountStatus === "banned" ? (
             <SpinnerButton
               pending={pending && activeKey === "unban"}
               disabled={pending || !canSanction}
@@ -222,7 +222,7 @@ export function ReportedContentActions({
             >
               Lift {contributorAccountStatus === "banned" ? "ban" : "suspension"}
             </SpinnerButton>
-          )}
+          ) : null}
         </div>
       ) : null}
       {message ? <p className="text-xs text-danger">{message}</p> : null}

@@ -98,7 +98,12 @@ async def _enforce_account_sanction(session: AsyncSession, user: User, request: 
         and user.suspended_until <= now
     ):
         locked = (
-            await session.execute(select(User).where(User.id == user.id).with_for_update())
+            await session.execute(
+                select(User)
+                .where(User.id == user.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
         ).scalar_one()
         if (
             locked.account_status == "suspended"

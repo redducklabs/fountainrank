@@ -110,7 +110,9 @@ export default async function AccountPage({
             </div>
           )}
         </dl>
-        <DisplayNameForm initialValue={profile.display_name} required={false} />
+        {profile.account_status === "active" ? (
+          <DisplayNameForm initialValue={profile.display_name} required={false} />
+        ) : null}
         <div className="flex items-center gap-3">
           <span className="text-sm font-semibold text-white/90">Appearance</span>
           <ThemeToggle />
