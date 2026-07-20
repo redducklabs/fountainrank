@@ -41,6 +41,7 @@ export function FountainAdminControls({ detail }: { detail: AdminFountainDetail 
   const [pending, startTransition] = useTransition();
   const [result, setResult] = useState<AdminActionResult | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmRatingId, setConfirmRatingId] = useState<string | null>(null);
   const [moderationReason, setModerationReason] = useState("");
   // Which action is in flight, so only the tapped button spins while `pending` disables the whole
   // group (single-flight). Local toggles (Cancel / the initial Delete affordance) never spin.
@@ -260,18 +261,41 @@ export function FountainAdminControls({ detail }: { detail: AdminFountainDetail 
                 <p className="text-foreground">
                   {rating.rating_type_name}: {rating.stars}/5 · {rating.contributor}
                 </p>
-                <SpinnerButton
-                  pending={pending && activeKey === `rating:${rating.id}`}
-                  disabled={pending || moderationReason.trim().length === 0}
-                  onClick={() =>
-                    run(`rating:${rating.id}`, () =>
-                      adminDeleteRating(rating.id, detail.id, moderationReason),
-                    )
-                  }
-                  className="shrink-0 rounded-full border border-danger px-3 py-1.5 text-xs font-bold text-danger disabled:opacity-60"
-                >
-                  Remove rating
-                </SpinnerButton>
+                {confirmRatingId === rating.id ? (
+                  <div className="flex shrink-0 gap-2">
+                    <SpinnerButton
+                      pending={pending && activeKey === `rating:${rating.id}`}
+                      disabled={pending}
+                      onClick={() =>
+                        run(
+                          `rating:${rating.id}`,
+                          () => adminDeleteRating(rating.id, detail.id, moderationReason),
+                          () => setConfirmRatingId(null),
+                        )
+                      }
+                      className="rounded-full bg-red-700 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60 dark:bg-red-500"
+                    >
+                      Confirm removal
+                    </SpinnerButton>
+                    <SpinnerButton
+                      pending={false}
+                      disabled={pending}
+                      onClick={() => setConfirmRatingId(null)}
+                      className="rounded-full border border-border px-3 py-1.5 text-xs font-bold text-foreground disabled:opacity-60"
+                    >
+                      Cancel
+                    </SpinnerButton>
+                  </div>
+                ) : (
+                  <SpinnerButton
+                    pending={false}
+                    disabled={pending || moderationReason.trim().length === 0}
+                    onClick={() => setConfirmRatingId(rating.id)}
+                    className="shrink-0 rounded-full border border-danger px-3 py-1.5 text-xs font-bold text-danger disabled:opacity-60"
+                  >
+                    Remove rating
+                  </SpinnerButton>
+                )}
               </li>
             ))}
           </ul>

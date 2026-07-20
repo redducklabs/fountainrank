@@ -163,6 +163,55 @@ async def test_admin_delete_busy_503(session, admin_client, engine):
         await gate.close()
 
 
+@pytest.mark.asyncio
+async def test_admin_rating_delete_busy_503(session, admin_client, engine):
+    uid = (
+        await session.execute(
+            text(
+                "INSERT INTO users (id, logto_user_id, email, display_name) "
+                "VALUES (gen_random_uuid(), 'rating-lock-user', 'rating-lock@example.com', "
+                "'Rating Lock') RETURNING id"
+            )
+        )
+    ).scalar_one()
+    fid = (
+        await session.execute(
+            text(
+                "INSERT INTO fountains (id, location, is_hidden, created_source) "
+                "VALUES (gen_random_uuid(), ST_SetSRID(ST_MakePoint(1.5,1.5),4326)::geography, "
+                "false, 'admin_import') RETURNING id"
+            )
+        )
+    ).scalar_one()
+    rid = (
+        await session.execute(
+            text(
+                "INSERT INTO ratings (id, fountain_id, user_id, rating_type_id, stars) "
+                "VALUES (gen_random_uuid(), :fid, :uid, 1, 3) RETURNING id"
+            ),
+            {"fid": fid, "uid": uid},
+        )
+    ).scalar_one()
+    await session.commit()
+
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    gate = maker()
+    await gate.execute(select(Fountain).where(Fountain.id == fid).with_for_update())
+    try:
+        resp = await admin_client.request(
+            "DELETE",
+            f"/api/v1/admin/ratings/{rid}",
+            headers=_ADMIN_HEADERS,
+            json={"reason": "lock timeout test"},
+        )
+        assert resp.status_code == 503
+        assert resp.json() == {"detail": "busy"}
+        assert resp.headers.get("retry-after") == "30"
+    finally:
+        await gate.rollback()
+        await gate.close()
+
+
 # --- placement: the bound covers the DOMAIN transaction, after the reservation commit ---------
 
 

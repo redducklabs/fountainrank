@@ -835,7 +835,9 @@ async def admin_delete_rating(
                 await session.execute(
                     select(Fountain).where(Fountain.id == fountain_id).with_for_update()
                 )
-            ).scalar_one()
+            ).scalar_one_or_none()
+            if fountain is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, detail="rating not found")
             rating = (
                 await session.execute(
                     select(Rating).where(Rating.id == rating_id).with_for_update()

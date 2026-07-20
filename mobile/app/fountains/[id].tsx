@@ -974,8 +974,21 @@ function AdminControls({
                 accessibilityRole="button"
                 disabled={pending || moderationReason.trim().length === 0}
                 onPress={() => {
-                  void run(`rating:${rating.id}`, () =>
-                    onDeleteRating(rating.id, moderationReason),
+                  Alert.alert(
+                    "Remove rating?",
+                    "This permanently removes the rating and reverses its contribution points.",
+                    [
+                      { text: "Cancel", style: "cancel" },
+                      {
+                        text: "Remove",
+                        style: "destructive",
+                        onPress: () => {
+                          void run(`rating:${rating.id}`, () =>
+                            onDeleteRating(rating.id, moderationReason),
+                          );
+                        },
+                      },
+                    ],
                   );
                 }}
                 style={[styles.adminDangerButton, pending ? styles.disabled : null]}

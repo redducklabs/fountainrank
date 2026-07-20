@@ -181,6 +181,17 @@ async def test_admin_routes_authz_matrix(raw_client, session, author):
         json={"is_hidden": True},
     )
 
+    rating = Rating(fountain_id=fountain.id, user_id=author.id, rating_type_id=1, stars=3)
+    session.add(rating)
+    await session.commit()
+    await session.refresh(rating)
+    await _assert_authz(
+        raw_client,
+        "DELETE",
+        f"/api/v1/admin/ratings/{rating.id}",
+        json={"reason": "auth boundary test"},
+    )
+
     to_delete = await _create_fountain(session, author)
     await _assert_authz(raw_client, "DELETE", f"/api/v1/admin/fountains/{to_delete.id}")
 
@@ -303,6 +314,14 @@ async def test_admin_lists_and_removes_rating_with_required_reason(raw_client, s
         json={"reason": "  "},
     )
     assert missing_reason.status_code == 422
+
+    missing = await raw_client.request(
+        "DELETE",
+        f"/api/v1/admin/ratings/{uuid.uuid4()}",
+        headers={"X-Dev-User": "admin-sub"},
+        json={"reason": "not found test"},
+    )
+    assert missing.status_code == 404
 
     removed = await raw_client.request(
         "DELETE",
