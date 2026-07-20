@@ -15,7 +15,7 @@ import {
 } from "../../../lib/places";
 import type { PlaceOut } from "../../../lib/places";
 import { log } from "../../../lib/server/log";
-import { jsonLdScript } from "../../../lib/seo/jsonld";
+import { itemListStructuredData, jsonLdScript } from "../../../lib/seo/jsonld";
 import { SITE_URL } from "../../../lib/seo/site";
 
 export const dynamic = "force-dynamic";
@@ -88,10 +88,22 @@ export default async function CountryPage({ params }: { params: Promise<{ countr
     ],
   });
 
+  // ItemList of the child places this page lists (regions when the country has a region tier, else
+  // the top cities), so search engines see the ordered set of crawlable sub-pages. Gated on
+  // indexability like the breadcrumb — no structured data for a below-gate page.
+  const childUrls = hasRegions
+    ? regions.map((region) => `${SITE_URL}${regionPath(place.country_code, region.slug)}`)
+    : cities.map((city) => `${SITE_URL}${cityPath(place.country_code, city.slug)}`);
+  const itemList = place.indexable ? itemListStructuredData(childUrls) : null;
+  const itemListJson = itemList ? jsonLdScript(itemList) : null;
+
   return (
     <>
       <SiteHeader variant="bar" />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: structuredJson }} />
+      {itemListJson ? (
+        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: itemListJson }} />
+      ) : null}
       <main className={shell}>
         <Link href="/" className="text-sm text-brand-ink underline">
           ← Back to the map

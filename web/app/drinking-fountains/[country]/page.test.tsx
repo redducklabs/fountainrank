@@ -82,6 +82,19 @@ it("renders the country name, count, and links to regions when present", async (
   expect(regionLink.getAttribute("href")).toBe("/drinking-fountains/us/california");
   expect(screen.getByText(/100 fountains/)).toBeTruthy();
   expect(screen.queryByRole("link", { name: "San Diego" })).toBeNull();
+  // ItemList of the listed child places (regions), each linking to its region page.
+  const itemList = Array.from(
+    document.querySelectorAll<HTMLScriptElement>('script[type="application/ld+json"]'),
+  )
+    .map((s) => JSON.parse(s.textContent ?? "{}"))
+    .find((s) => s["@type"] === "ItemList");
+  expect(itemList?.itemListElement).toEqual([
+    {
+      "@type": "ListItem",
+      position: 1,
+      url: "https://fountainrank.com/drinking-fountains/us/california",
+    },
+  ]);
 });
 
 it("falls back to two-level city links when a country has no regions", async () => {
@@ -93,6 +106,19 @@ it("falls back to two-level city links when a country has no regions", async () 
 
   const cityLink = await screen.findByRole("link", { name: "San Diego" });
   expect(cityLink.getAttribute("href")).toBe("/drinking-fountains/us/san-diego");
+  // ItemList of the listed child places (two-level cities), each linking to its city page.
+  const itemList = Array.from(
+    document.querySelectorAll<HTMLScriptElement>('script[type="application/ld+json"]'),
+  )
+    .map((s) => JSON.parse(s.textContent ?? "{}"))
+    .find((s) => s["@type"] === "ItemList");
+  expect(itemList?.itemListElement).toEqual([
+    {
+      "@type": "ListItem",
+      position: 1,
+      url: "https://fountainrank.com/drinking-fountains/us/san-diego",
+    },
+  ]);
 });
 
 it("resolves the country segment case-insensitively", async () => {

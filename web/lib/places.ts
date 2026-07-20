@@ -94,6 +94,10 @@ export function getCountryCitiesServer(
     .catch(() => ({ data: [], status: 0 }));
 }
 
+// Max sibling links a place page's "related places" block renders (SEO #53) — the fetchers return
+// most-populous-first, so this shows the top N siblings after excluding the current place.
+export const RELATED_PLACES_CAP = 12;
+
 export function getCountryRegionsServer(
   country: string,
   requestId?: string,

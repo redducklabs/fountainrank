@@ -220,6 +220,20 @@ Crawlable, server-rendered directory pages for organic search (#127): the **hub*
   region → city for region-tier countries, and country → city for two-level countries. Fountain
   detail breadcrumbs use the parent region returned by `FountainPlaceOut`, never a raw
   `region_place_id`. Only indexable pages emit matching `BreadcrumbList` JSON-LD.
+- **ItemList JSON-LD (`web/lib/seo/jsonld.ts` `itemListStructuredData`):** alongside the breadcrumb,
+  place pages emit a second `application/ld+json` script — a schema.org `ItemList` in the
+  summary-page format (ordered `ListItem`s carrying only `position` + `url`) of the items the page
+  lists: the fountains (`/fountains/{id}`) on city/region pages, the child regions or cities on
+  country pages. URL-only by design — individual fountains have no public name, so a per-item name
+  would be fabricated. Gated on `indexable` like the breadcrumb (empty list ⇒ no script).
+- **Related places (sibling links) (`web/components/place/RelatedPlaces.tsx`):** a `<nav>` block
+  below the fountain list that links sideways across the place tree — city pages link to other
+  cities in the same region (region-tier) or country (two-level); region pages link to other regions
+  in the country. Shows up to `RELATED_PLACES_CAP` (12) most-populous siblings with the current place
+  excluded. Same styling as the country region/city list (`divide-y divide-border`, brand-underlined
+  links, right-aligned muted "{n} fountains"); the `aria-label` is the heading (e.g. "Other cities in
+  {region}"). Renders nothing when there are no siblings, and is **not** gated on indexability —
+  internal links still aid crawl discovery on `noindex, follow` pages.
 - **Region disambiguation link:** canonical region pages with known slug collisions add one muted
   line below the lead copy, e.g. Washington state links to "Looking for Washington, District of
   Columbia?". The link uses the canonical nested city URL and is informational, not a CTA button.
