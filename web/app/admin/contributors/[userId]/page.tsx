@@ -7,6 +7,7 @@ import {
   signedContributionPoints,
 } from "../../../../lib/admin/contributions";
 import { getAuthedApiClient } from "../../../../lib/server/api";
+import { log } from "../../../../lib/server/log";
 import { getViewer } from "../../../../lib/server/viewer";
 
 export const dynamic = "force-dynamic";
@@ -30,6 +31,12 @@ export default async function ContributorHistoryPage({
     .catch(() => null);
   if (result?.response.status === 404) notFound();
   const data = result?.data;
+  if (!data) {
+    log("warn", "failed to load contributor history", {
+      requestId,
+      status: result?.response.status ?? "transport-error",
+    });
+  }
 
   return (
     <>
