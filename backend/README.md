@@ -79,7 +79,13 @@ Writes (require auth — see below):
   `rating_type_id` or out-of-range `stars` → `422`. Returns the created fountain
   detail (`201`). Adds and ratings emit contribution events (points); the
   `first_in_area_bonus` is awarded only when no other fountain exists within
-  `first_in_area_radius_m` (default 600 m) of the new point.
+  `first_in_area_radius_m` (default 600 m) of the new point. The whole write
+  transaction (and the admin patch/delete below) runs under a bounded
+  `lock_timeout` so an interactive write never queues indefinitely behind a
+  boundary load / membership refresh — on a timeout it returns `503`
+  `{ "detail": "busy" }` with `Retry-After: 30`. Bound via `ADD_LOCK_TIMEOUT_MS`
+  (default `8000` ms; must be `> 0` and `≤ 60000`; bulk/CLI paths keep their
+  deliberate unbounded wait). See `docs/specs/2026-07-17-scoped-add-fountain-lock-design.md`.
 - `POST /api/v1/fountains/{fountain_id}/ratings` — create/update this user's
   ratings for a fountain (atomic upsert on `(fountain, user, dimension)`). Body:
   `{ "ratings": [{ "rating_type_id", "stars" }] }` (non-empty). Unknown fountain
@@ -180,3 +186,26 @@ Settings (safe defaults; override by env var name only — never commit values):
 - `OSM_TAG_MAX_KEY_LEN` (`64`), `OSM_TAG_MAX_VALUE_LEN` (`255`),
   `OSM_TAGS_MAX_BYTES` (`4096`) — untrusted-tag guards for the allow-listed
   `source_tags` jsonb.
+
+## Loader session identity + fail-closed cancellation
+
+The isolated loader Jobs (boundary load / OSM imports) arm per-connection PostgreSQL startup
+GUCs so a killed Job can never leave an unbounded server-side statement or advisory-lock waiter
+(design: `docs/specs/2026-07-17-candidate-capture-and-loader-cancellation-design.md`). All three
+settings default to unset — the serving backend and local dev are unaffected; only the rendered
+Job manifests set them (env var names only — never commit values):
+
+- `DB_APPLICATION_NAME` — the run-scoped session marker
+  `loader:<job-name>:<github-run-id>` (composed and validated by
+  `app/imports/loader_session.py`). The guaranteed-teardown reaper
+  (`python -m app.imports.session_reaper --job-name <name> --run-id <id>`) terminates exactly
+  the sessions bearing this marker.
+- `DB_CLIENT_CONNECTION_CHECK_INTERVAL_MS` (loader Jobs set `30000`; must be `> 0` and
+  `≤ 600000`) — makes a busy server-side statement notice its dead client and abort.
+- `DB_LOCK_TIMEOUT_MS` (loader Jobs set `900000`; must be `> 0` and `≤ 18000000`) — bounds lock
+  waits only (never executing statements); a loader queued behind an orphaned/wedged lock holder
+  fails fast and visibly instead of burning the Job deadline.
+
+The workflow teardown runs `python -m app.imports.loader_teardown` (state machine: Job delete →
+pod-absence confirm → reaper with retries → re-query to zero, under a hard 210 s deadline) via
+`.github/actions/teardown-loader-job`.

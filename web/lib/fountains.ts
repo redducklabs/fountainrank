@@ -10,6 +10,32 @@ export type NoteOut = components["schemas"]["NoteOut"];
 export type PhotoOut = components["schemas"]["PhotoOut"];
 export type BboxResult = { pins: FountainPin[]; truncated: boolean };
 
+export type PublicFountainResult =
+  | { kind: "found"; fountain: FountainDetail }
+  | { kind: "not-found" }
+  | { kind: "error"; status: number };
+
+/** Anonymous browser lookup used only to resolve an exact public focused-map pin. */
+export async function fetchPublicFountain(
+  id: string,
+  requestId?: string,
+): Promise<PublicFountainResult> {
+  const client = requestId
+    ? makeClient(resolveApiBaseUrl(), { headers: { "X-Request-ID": requestId } })
+    : getApiClient();
+  try {
+    const { data, response } = await client.GET("/api/v1/fountains/{fountain_id}", {
+      params: { path: { fountain_id: id } },
+    });
+    const status = response?.status ?? 0;
+    if (status === 404) return { kind: "not-found" };
+    if (!data || !response?.ok) return { kind: "error", status };
+    return { kind: "found", fountain: data };
+  } catch {
+    return { kind: "error", status: 0 };
+  }
+}
+
 export async function fetchBbox(params: BboxParams, requestId?: string): Promise<BboxResult> {
   const client = requestId
     ? makeClient(resolveApiBaseUrl(), { headers: { "X-Request-ID": requestId } })

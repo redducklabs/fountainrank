@@ -1,9 +1,8 @@
 "use client";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
 import maplibregl, {
-  type FilterSpecification,
   type LayerSpecification,
   type MapLayerMouseEvent,
   type GeoJSONSource,
@@ -13,7 +12,7 @@ import { useAddFountainMode } from "./useAddFountainMode";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { styleUrlFor, themedPinAssets, themedPillBg } from "../../lib/map/style";
 import { mapColorsFor } from "../../lib/map/colors";
-import { fetchBbox, type FountainPin } from "../../lib/fountains";
+import { fetchBbox, fetchPublicFountain, type FountainPin } from "../../lib/fountains";
 import { resolveApiBaseUrl } from "../../lib/api";
 import { CONTRIBUTION_EVENT, contributionPoints } from "../../lib/contribution-event";
 import { pinsToFeatureCollection, type PinInput } from "../../lib/map/pins";
@@ -27,6 +26,7 @@ import {
   pillLayer,
   selectedHaloLayer,
   selectedPinLayer,
+  selectedFountainFilter,
 } from "../../lib/map/layers";
 import {
   DEBOUNCE_MS,
@@ -36,6 +36,12 @@ import {
   NEIGHBORHOOD_ZOOM,
 } from "../../lib/map/constants";
 import { resolveActiveId } from "../../lib/map/active-id";
+import {
+  detailToPin,
+  focusCameraAction,
+  mergeFocusedPin,
+  shouldMoveToStartupLocation,
+} from "../../lib/map/focus";
 import { logMapError } from "../../lib/map/log";
 import { deriveCameraAction, parseFlyToParam } from "../../lib/search/flyto";
 import { FountainsInViewList } from "./FountainsInViewList";
@@ -117,6 +123,10 @@ export default function MapBrowser({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const focusId = searchParams.get("focus") ?? "";
+  const focusIdRef = useRef(focusId);
+  // eslint-disable-next-line react-hooks/refs -- native MapLibre callbacks require the latest URL owner.
+  focusIdRef.current = focusId;
   const { resolvedTheme } = useTheme();
   const mounted = useSyncExternalStore(
     subscribeMounted,
@@ -127,6 +137,8 @@ export default function MapBrowser({
   // current theme / pins / selection without being re-registered (which would double-fire).
   const themeRef = useRef<"light" | "dark">("light");
   const pinsRef = useRef<PinInput[]>([]);
+  const focusedPinRef = useRef<FountainPin | null>(null);
+  const consumedFocusRef = useRef<string | null>(null);
   const activeIdRef = useRef<string>("");
   // Generation counter bumped on every setStyle: an in-flight installOverlay/load() from a prior
   // theme aborts once it sees a newer generation (prevents seeding the new overlay with stale data
@@ -140,19 +152,62 @@ export default function MapBrowser({
   const styleThemeRef = useRef<"light" | "dark">("light");
   const placementRef = useRef<PlacementMap | null>(null);
   const [pins, setPins] = useState<FountainPin[]>([]);
+  const [focusedPin, setFocusedPin] = useState<FountainPin | null>(null);
+  const [focusStatus, setFocusStatus] = useState<
+    "idle" | "loading" | "found" | "not-found" | "error"
+  >(focusId ? "loading" : "idle");
+  const [pendingDetail, setPendingDetail] = useState<{ id: string; failed: boolean } | null>(null);
+  const pendingDetailRef = useRef<string | null>(null);
+  const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [status, setStatus] = useState<Status>("idle");
+  const [locateStatus, setLocateStatus] = useState<"locating" | "resolved">("locating");
   const [celebrationKey, setCelebrationKey] = useState(0);
   const [celebrationPoints, setCelebrationPoints] = useState<number | undefined>(undefined);
   const [webglOk] = useState(isWebglSupported);
   // `?focus=<id>` (from the city-list / my-fountains "See on Map" links) wins over the path so
   // the map highlights that fountain on `/`; otherwise the id comes from `/fountains/<id>`.
-  const activeId = resolveActiveId(searchParams.get("focus"), pathname);
+  const activeId = pendingDetail?.id ?? resolveActiveId(searchParams.get("focus"), pathname);
+  const [syncedFocusId, setSyncedFocusId] = useState(focusId);
+  if (syncedFocusId !== focusId) {
+    setSyncedFocusId(focusId);
+    setFocusedPin(null);
+    setFocusStatus(focusId ? "loading" : "idle");
+  }
   const add = useAddFountainMode(placementMap, {
     isAuthenticated,
     webglOk,
     autoEnter: autoEnterAdd,
     hadAddParam,
   });
+
+  const openDetail = useCallback(
+    (id: string) => {
+      if (pendingDetailRef.current) return;
+      pendingDetailRef.current = id;
+      setPendingDetail({ id, failed: false });
+      try {
+        router.push(`/fountains/${id}`);
+        pendingTimerRef.current = setTimeout(() => {
+          logMapError("detail-navigation-timeout", { id });
+          pendingDetailRef.current = null;
+          setPendingDetail({ id, failed: true });
+        }, 15000);
+      } catch (error) {
+        logMapError("detail-navigation-failed", { id, name: (error as Error).name });
+        pendingDetailRef.current = null;
+        setPendingDetail({ id, failed: true });
+      }
+    },
+    [router],
+  );
+
+  useEffect(() => {
+    if (!pendingDetailRef.current || !pathname.startsWith(`/fountains/${pendingDetailRef.current}`))
+      return;
+    pendingDetailRef.current = null;
+    setPendingDetail(null);
+    if (pendingTimerRef.current) clearTimeout(pendingTimerRef.current);
+  }, [pathname]);
   // Suppress browse nav while add-mode is active (ref avoids stale closure).
   const addActiveRef = useRef(false);
   // eslint-disable-next-line react-hooks/refs
@@ -269,7 +324,7 @@ export default function MapBrowser({
     const openPin = (e: MapLayerMouseEvent) => {
       if (addActiveRef.current) return;
       const id = e.features?.[0]?.properties?.id as string | undefined;
-      if (id) router.push(`/fountains/${id}`);
+      if (id) openDetail(id);
     };
     map.on("click", "pins", openPin);
     map.on("click", "selected-pin", openPin);
@@ -282,14 +337,24 @@ export default function MapBrowser({
     // Geolocate ONCE at startup (not on style swaps): map.once("load") fires only on the initial
     // load; setStyle emits style.load, never load again.
     map.once("load", () => {
-      navigator.geolocation?.getCurrentPosition(
-        (pos) =>
-          map.flyTo({
-            center: [pos.coords.longitude, pos.coords.latitude],
-            zoom: NEIGHBORHOOD_ZOOM,
-          }),
-        () => {
-          /* denied/unavailable: stay at default view */
+      if (!navigator.geolocation) {
+        logMapError("startup-geolocation-unavailable");
+        setLocateStatus("resolved");
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          setLocateStatus("resolved");
+          if (shouldMoveToStartupLocation(focusIdRef.current)) {
+            map.flyTo({
+              center: [pos.coords.longitude, pos.coords.latitude],
+              zoom: NEIGHBORHOOD_ZOOM,
+            });
+          }
+        },
+        (error) => {
+          logMapError("startup-geolocation-failed", { code: error.code });
+          setLocateStatus("resolved");
         },
         { enableHighAccuracy: false, timeout: GEOLOCATE_TIMEOUT_MS },
       );
@@ -361,11 +426,7 @@ export default function MapBrowser({
 
     function applyActiveFilter(m: maplibregl.Map, id: string) {
       if (!m.getLayer("selected-halo")) return;
-      const flt: FilterSpecification = [
-        "all",
-        ["!", ["has", "point_count"]],
-        ["==", ["get", "id"], id],
-      ];
+      const flt = selectedFountainFilter(id);
       m.setFilter("selected-halo", flt);
       m.setFilter("selected-pin", flt);
     }
@@ -402,7 +463,7 @@ export default function MapBrowser({
         const result = await fetchBbox(norm.params, reqId);
         // Stale if a newer load started OR a style swap superseded this generation.
         if (seq !== loadSeqRef.current || gen !== styleGenRef.current) return;
-        const data = result.pins;
+        const data = mergeFocusedPin(result.pins, focusedPinRef.current);
         setPins(data);
         // Normalise ranking_score: the API schema marks it optional (?), but PinInput requires
         // number | null. Map undefined → null so pinsToFeatureCollection is type-safe.
@@ -440,7 +501,7 @@ export default function MapBrowser({
     // in place (the setStyle effect below), never rebuilds the map — a rebuild would drop the
     // camera + re-trigger geolocation. It is read via themeRef at build time instead.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [router, webglOk, debug, mounted]);
+  }, [router, webglOk, debug, mounted, openDetail]);
 
   // Theme change → swap the basemap style in place (camera preserved; no rebuild, no geolocation
   // re-trigger). Bumping styleGenRef first makes any in-flight installOverlay/load() from the prior
@@ -476,14 +537,64 @@ export default function MapBrowser({
     activeIdRef.current = activeId;
     const m = mapRef.current;
     if (!m || !m.getLayer?.("selected-halo")) return;
-    const flt: FilterSpecification = [
-      "all",
-      ["!", ["has", "point_count"]],
-      ["==", ["get", "id"], activeId],
-    ];
+    const flt = selectedFountainFilter(activeId);
     m.setFilter("selected-halo", flt);
     m.setFilter("selected-pin", flt);
   }, [activeId, status]);
+
+  // Resolve deep-linked focus independently of bbox timing. The public detail endpoint enforces
+  // hidden/deleted visibility and supplies the exact coordinates used for the one authoritative
+  // focus camera move.
+  useEffect(() => {
+    if (!focusId) {
+      focusedPinRef.current = null;
+      consumedFocusRef.current = null;
+      return;
+    }
+    focusedPinRef.current = null;
+    const controller = new AbortController();
+    const requestId =
+      typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}`;
+    void fetchPublicFountain(focusId, requestId).then((result) => {
+      if (controller.signal.aborted) return;
+      if (result.kind === "not-found") {
+        focusedPinRef.current = null;
+        setFocusedPin(null);
+        setFocusStatus("not-found");
+        return;
+      }
+      if (result.kind === "error") {
+        logMapError("focus-resolution-failed", { id: focusId, status: result.status });
+        focusedPinRef.current = null;
+        setFocusedPin(null);
+        setFocusStatus("error");
+        return;
+      }
+      const pin = detailToPin(result.fountain);
+      focusedPinRef.current = pin;
+      setFocusedPin(pin);
+      setFocusStatus("found");
+    });
+    return () => controller.abort();
+  }, [focusId]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!focusedPin || !placementMap || !map || consumedFocusRef.current === focusId) return;
+    consumedFocusRef.current = focusId;
+    map.flyTo(focusCameraAction(focusedPin));
+  }, [focusId, focusedPin, placementMap]);
+
+  // Re-seed immediately when exact focus data resolves instead of waiting for the next moveend.
+  useEffect(() => {
+    if (!focusedPin) return;
+    const merged = mergeFocusedPin(pins, focusedPin);
+    const inputs = merged.map((pin) => ({ ...pin, ranking_score: pin.ranking_score ?? null }));
+    pinsRef.current = inputs;
+    (mapRef.current?.getSource("fountains") as GeoJSONSource | undefined)?.setData(
+      pinsToFeatureCollection(inputs, themeRef.current),
+    );
+  }, [focusedPin, pins]);
 
   // Header-search handoff (design doc §4.2/§4.3): consumes the `flyto`/`bbox` query params
   // HeaderSearch writes on select, applies the resulting camera move, then strips ONLY those
@@ -523,10 +634,11 @@ export default function MapBrowser({
 
     const parsed = parseFlyToParam({ flyto: flytoRaw, bbox: bboxRaw });
     if (parsed && webglOk && !placementMap) return; // valid target: wait for the map to be ready
+    if (parsed && focusId && focusStatus === "loading") return; // exact focus decides first
 
     consumedFlyToRef.current = rawKey;
     const map = mapRef.current;
-    if (parsed && map) {
+    if (parsed && map && (!focusId || focusStatus === "not-found" || focusStatus === "error")) {
       const action = deriveCameraAction(parsed);
       if (action.kind === "fit") {
         map.fitBounds(action.bounds, {
@@ -544,7 +656,7 @@ export default function MapBrowser({
     params.delete("bbox");
     const qs = params.toString();
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
-  }, [searchParams, webglOk, placementMap, router, pathname]);
+  }, [searchParams, webglOk, placementMap, router, pathname, focusId, focusStatus]);
 
   const retry = () => mapRef.current?.fire("moveend");
 
@@ -552,10 +664,95 @@ export default function MapBrowser({
     <div className="absolute inset-0">
       <div ref={ref} className="h-full w-full" />
       {status === "loading" && <LoadingBar />}
-      {status === "belowZoom" && <ZoomInHint />}
+      {status === "belowZoom" && locateStatus === "resolved" && <ZoomInHint />}
+      {locateStatus === "locating" && !focusId && (
+        <div
+          role="status"
+          aria-busy="true"
+          className="absolute left-1/2 top-20 z-30 -translate-x-1/2 rounded-full bg-surface-raised px-4 py-2 text-sm shadow"
+        >
+          Locating you…
+        </div>
+      )}
       {status === "empty" && <EmptyHint />}
       {status === "capped" && <CapHint />}
       {status === "error" && <ErrorToast onRetry={retry} />}
+      {focusStatus === "loading" && (
+        <div
+          role="status"
+          aria-busy="true"
+          className="absolute left-1/2 top-20 z-40 -translate-x-1/2 rounded-full bg-surface-raised px-4 py-2 text-sm shadow"
+        >
+          Locating selected fountain…
+        </div>
+      )}
+      {focusStatus === "not-found" && (
+        <div
+          role="status"
+          className="absolute left-1/2 top-20 z-40 -translate-x-1/2 rounded-full bg-surface-raised px-4 py-2 text-sm shadow"
+        >
+          That fountain is no longer available.
+        </div>
+      )}
+      {focusStatus === "error" && (
+        <div
+          role="alert"
+          className="absolute left-1/2 top-20 z-40 -translate-x-1/2 rounded-full bg-surface-raised px-4 py-2 text-sm shadow"
+        >
+          Couldn&rsquo;t load the selected fountain.
+        </div>
+      )}
+      {focusedPin && (
+        <button
+          type="button"
+          aria-label={`Selected fountain at ${focusedPin.location.latitude.toFixed(5)}, ${focusedPin.location.longitude.toFixed(5)}. ${focusedPin.is_working ? "Working" : "Out of order"}. Open details`}
+          onClick={() => openDetail(String(focusedPin.id))}
+          className="absolute left-1/2 top-20 z-40 -translate-x-1/2 rounded-xl border-2 border-brand bg-surface-raised px-4 py-3 text-left shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+        >
+          <span className="block text-xs font-bold uppercase tracking-wide text-brand-ink">
+            Selected fountain
+          </span>
+          <span className="block text-sm font-semibold">
+            {focusedPin.is_working ? "Working" : "Out of order"} · Open details
+          </span>
+        </button>
+      )}
+      {pendingDetail?.failed && (
+        <aside
+          role="alert"
+          className="absolute inset-x-2 bottom-2 z-50 rounded-2xl border border-border bg-surface-raised p-5 shadow-xl md:inset-x-auto md:bottom-4 md:right-4 md:w-96"
+        >
+          <p className="font-semibold">Couldn&rsquo;t open fountain details.</p>
+          <button
+            type="button"
+            className="mt-3 rounded-full bg-brand px-4 py-2 font-semibold text-white"
+            onClick={() => {
+              const id = pendingDetail.id;
+              pendingDetailRef.current = null;
+              setPendingDetail(null);
+              openDetail(id);
+            }}
+          >
+            Retry
+          </button>
+          <button
+            type="button"
+            className="ml-2 mt-3 rounded-full border border-border px-4 py-2 font-semibold"
+            onClick={() => setPendingDetail(null)}
+          >
+            Dismiss
+          </button>
+        </aside>
+      )}
+      {pendingDetail && !pendingDetail.failed && (
+        <div
+          role="status"
+          aria-busy="true"
+          className="absolute bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-full bg-surface-raised px-4 py-2 text-sm font-semibold shadow-lg"
+        >
+          Opening fountain details…
+        </div>
+      )}
       {!webglOk && <UnsupportedHint />}
       <WaterCelebration triggerKey={celebrationKey} points={celebrationPoints} />
       {webglOk && add.fab}
@@ -579,13 +776,7 @@ export default function MapBrowser({
           )}
         </div>
       )}
-      {!add.active && (
-        <FountainsInViewList
-          pins={pins}
-          activeId={activeId}
-          onOpen={(id) => router.push(`/fountains/${id}`)}
-        />
-      )}
+      {!add.active && <FountainsInViewList pins={pins} activeId={activeId} onOpen={openDetail} />}
     </div>
   );
 }

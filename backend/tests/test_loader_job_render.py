@@ -10,6 +10,7 @@ BASE = dict(
     job_name="boundary-load",
     image="registry.example/fountainrank-backend:abc123",
     namespace="fountainrank",
+    session_marker="loader:boundary-load:29468135928",
     files=[{"local": "/tmp/x.geojsonl", "container": "/work/boundary.geojsonl"}],
     mem_request="256Mi",
     mem_limit="1Gi",
@@ -55,7 +56,9 @@ def test_security_and_backstop_fields():
     assert spec["activeDeadlineSeconds"] == 5400
     assert spec["ttlSecondsAfterFinished"] == 600
     assert pod["restartPolicy"] == "Never"
-    assert pod["terminationGracePeriodSeconds"] == 30
+    # 5 s grace: the loader has no graceful-shutdown work, and a longer grace makes teardown's
+    # pod-absence confirmation miss its poll budget on every cancellation (#250).
+    assert pod["terminationGracePeriodSeconds"] == 5
     assert pod["imagePullSecrets"] == [{"name": "regcred"}]
     assert pod["securityContext"]["fsGroup"] == 1000
     assert pod["securityContext"]["runAsNonRoot"] is True
@@ -67,6 +70,10 @@ def test_security_and_backstop_fields():
     envs = {e["name"]: e for e in c["env"]}
     assert envs["DATABASE_URL"]["valueFrom"]["secretKeyRef"]["key"] == "database-url"
     assert envs["DB_SSL_ROOT_CERT"]["value"].endswith("/database-ca.crt")
+    # Fail-closed loader-session env (spec 2026-07-17 §2a).
+    assert envs["DB_APPLICATION_NAME"]["value"] == BASE["session_marker"]
+    assert envs["DB_CLIENT_CONNECTION_CHECK_INTERVAL_MS"]["value"] == "30000"
+    assert envs["DB_LOCK_TIMEOUT_MS"]["value"] == "900000"
 
 
 @pytest.mark.parametrize("bad", ["/etc/passwd", "/work/../etc", "/work/sub/x", "work/x", "/work/"])
@@ -85,27 +92,63 @@ def test_rejects_empty_files():
         render_job(argv=["python"], **{**BASE, "files": []})
 
 
+_CLI_ARGS = [
+    "--job-name",
+    "boundary-load",
+    "--run-id",
+    "29468135928",
+    "--image",
+    "img:1",
+    "--namespace",
+    "fountainrank",
+    "--argv-json",
+    json.dumps(["python", "-m", "app.imports.boundary_cli"]),
+    "--files-json",
+    json.dumps([{"local": "/t", "container": "/work/b.geojsonl"}]),
+    "--active-deadline-seconds",
+    "5400",
+    "--ready-timeout-seconds",
+    "600",
+]
+
+
 def test_cli_main_emits_valid_json():
     out = subprocess.check_output(
-        [
-            sys.executable,
-            "-m",
-            "app.imports.loader_job_render",
-            "--job-name",
-            "boundary-load",
-            "--image",
-            "img:1",
-            "--namespace",
-            "fountainrank",
-            "--argv-json",
-            json.dumps(["python", "-m", "app.imports.boundary_cli"]),
-            "--files-json",
-            json.dumps([{"local": "/t", "container": "/work/b.geojsonl"}]),
-            "--active-deadline-seconds",
-            "5400",
-            "--ready-timeout-seconds",
-            "600",
-        ],
+        [sys.executable, "-m", "app.imports.loader_job_render", *_CLI_ARGS],
     )
     m = json.loads(out)
     assert m["kind"] == "Job" and m["metadata"]["name"] == "boundary-load"
+    envs = {e["name"]: e for e in m["spec"]["template"]["spec"]["containers"][0]["env"]}
+    assert envs["DB_APPLICATION_NAME"]["value"] == "loader:boundary-load:29468135928"
+
+
+@pytest.mark.parametrize(
+    ("flag", "value"),
+    [("--job-name", "not-a-loader"), ("--run-id", "abc"), ("--run-id", "")],
+)
+def test_cli_main_rejects_bad_marker_components(flag, value):
+    args = list(_CLI_ARGS)
+    args[args.index(flag) + 1] = value
+    proc = subprocess.run(
+        [sys.executable, "-m", "app.imports.loader_job_render", *args],
+        capture_output=True,
+    )
+    assert proc.returncode == 2
+    assert not proc.stdout  # nothing rendered
+
+
+def test_runner_side_invocation_from_repo_root():
+    # The EXACT invocation the composite actions use on a bare GitHub runner: module form from
+    # the repository root with PYTHONPATH=backend. Proves the package import contract (empty
+    # __init__ files, stdlib-only modules) holds outside the installed venv layout.
+    import os
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[2]
+    env = {**os.environ, "PYTHONPATH": "backend"}
+    out = subprocess.check_output(
+        [sys.executable, "-m", "app.imports.loader_job_render", *_CLI_ARGS],
+        cwd=repo_root,
+        env=env,
+    )
+    assert json.loads(out)["kind"] == "Job"

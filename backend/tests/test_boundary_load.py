@@ -176,6 +176,51 @@ async def test_persisted_fields_round_trip(session):
     assert row.country_code == "lu"
     assert row.slug == "bech"
     assert row.is_canonical is False  # loader never sets canonical (Slice 1d does)
+    # boundary_area is precomputed on write == ST_Area(boundary, true) — the value the membership
+    # order-bys read via COALESCE(boundary_area, ST_Area(boundary)) instead of recomputing the
+    # geodesic area per candidate (boundary-area precompute; unblocks large city-dense loads).
+    assert row.boundary_area is not None and row.boundary_area > 0
+    expected_area = (
+        await session.execute(
+            text(
+                "SELECT ST_Area(boundary, true) FROM place_boundaries "
+                "WHERE overture_id = 'ov-round'"
+            )
+        )
+    ).scalar_one()
+    assert row.boundary_area == pytest.approx(expected_area)
+
+
+@pytest.mark.asyncio
+async def test_conflict_update_refreshes_boundary_area(session):
+    # The ON CONFLICT UPDATE must move boundary and boundary_area together — a stale precomputed
+    # area would silently corrupt the membership "smallest/largest covering place" ordering.
+    bigger = {"type": "Polygon", "coordinates": [[[0, 0], [4, 0], [4, 4], [0, 4], [0, 0]]]}
+    await load_boundaries(session, features=[_feat(overture_id="ov-area", geometry=_POLY)])
+    await session.commit()
+    first_area = (
+        await session.execute(
+            select(PlaceBoundary.boundary_area).where(PlaceBoundary.overture_id == "ov-area")
+        )
+    ).scalar_one()
+    # Reload the SAME overture_id with a larger geometry.
+    summary = await load_boundaries(
+        session, features=[_feat(overture_id="ov-area", geometry=bigger)]
+    )
+    await session.commit()
+    assert summary.updated_count == 1
+    row = (
+        await session.execute(select(PlaceBoundary).where(PlaceBoundary.overture_id == "ov-area"))
+    ).scalar_one()
+    recomputed = (
+        await session.execute(
+            text(
+                "SELECT ST_Area(boundary, true) FROM place_boundaries WHERE overture_id = 'ov-area'"
+            )
+        )
+    ).scalar_one()
+    assert row.boundary_area == pytest.approx(recomputed)
+    assert row.boundary_area > first_area  # grew with the larger geometry — not stale
 
 
 @pytest.mark.asyncio

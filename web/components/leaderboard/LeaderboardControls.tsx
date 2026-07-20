@@ -6,6 +6,7 @@ import {
   type LeaderboardScope,
   type ParsedLeaderboard,
 } from "../../lib/leaderboard";
+import { PendingLinkLabel } from "../ui/PendingLinkLabel";
 
 // Scope toggle (Global / Near here) + category chips. Every control is a plain <Link> that flips a
 // query param and lets the server re-render — no client state. "Near here" only appears when a map
@@ -36,7 +37,7 @@ export function LeaderboardControls({ state }: { state: ParsedLeaderboard }) {
                   : "border-border bg-surface-raised text-muted hover:border-brand-mid hover:text-brand-ink")
               }
             >
-              {SORT_LABELS[sort]}
+              <PendingLinkLabel pendingLabel="Loading…">{SORT_LABELS[sort]}</PendingLinkLabel>
             </Link>
           );
         })}
@@ -64,7 +65,7 @@ function ScopeLink({
         (active ? "bg-brand text-white" : "text-muted hover:text-brand-ink")
       }
     >
-      {label}
+      <PendingLinkLabel pendingLabel="Loading…">{label}</PendingLinkLabel>
     </Link>
   );
 }

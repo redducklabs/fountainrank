@@ -31,9 +31,14 @@ afterEach(() => {
 });
 
 describe("SiteHeader", () => {
-  it("hero variant shows the tagline", async () => {
+  it("hero variant shows the positioning h1", async () => {
     render(await SiteHeader({ variant: "hero" }));
-    expect(screen.getByText(/find a drinking fountain near you/i)).toBeTruthy();
+    expect(
+      screen.getByRole("heading", {
+        level: 1,
+        name: /the largest community-rated guide to public drinking fountains/i,
+      }),
+    ).toBeTruthy();
     expect(screen.getByTestId("auth-control")).toBeTruthy();
   });
 
@@ -47,7 +52,7 @@ describe("SiteHeader", () => {
 
   it("bar variant has no tagline", async () => {
     render(await SiteHeader({ variant: "bar" }));
-    expect(screen.queryByText(/find a drinking fountain near you/i)).toBeNull();
+    expect(screen.queryByText(/the largest community-rated guide/i)).toBeNull();
   });
 
   it("shows points in the right-side header cluster for authenticated viewers", async () => {

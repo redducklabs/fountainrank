@@ -1,4 +1,37 @@
+import pytest
+from pydantic import ValidationError
+
 from app.config import Settings
+
+
+def test_add_lock_timeout_ms_default_is_8000():
+    # Bounded interactive write lock wait (spec 2026-07-17 §1): the whole interactive write
+    # transaction runs under this lock_timeout so an add never waits unbounded behind a refresh.
+    assert Settings().add_lock_timeout_ms == 8000
+
+
+def test_add_lock_timeout_ms_accepts_valid_override():
+    assert Settings(add_lock_timeout_ms=30_000).add_lock_timeout_ms == 30_000
+    # Boundary values of gt=0, le=60_000 are accepted.
+    assert Settings(add_lock_timeout_ms=1).add_lock_timeout_ms == 1
+    assert Settings(add_lock_timeout_ms=60_000).add_lock_timeout_ms == 60_000
+
+
+def test_add_lock_timeout_ms_rejects_zero():
+    # 0 would silently DISABLE the timeout (no reset ever re-bounds it) — must be rejected.
+    with pytest.raises(ValidationError):
+        Settings(add_lock_timeout_ms=0)
+
+
+def test_add_lock_timeout_ms_rejects_negative():
+    with pytest.raises(ValidationError):
+        Settings(add_lock_timeout_ms=-1)
+
+
+def test_add_lock_timeout_ms_rejects_over_60s():
+    # An unbounded value defeats the whole design (the interactive path must fail fast).
+    with pytest.raises(ValidationError):
+        Settings(add_lock_timeout_ms=60_001)
 
 
 def test_default_url_is_async_postgres():

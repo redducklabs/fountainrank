@@ -220,6 +220,20 @@ Crawlable, server-rendered directory pages for organic search (#127): the **hub*
   region → city for region-tier countries, and country → city for two-level countries. Fountain
   detail breadcrumbs use the parent region returned by `FountainPlaceOut`, never a raw
   `region_place_id`. Only indexable pages emit matching `BreadcrumbList` JSON-LD.
+- **ItemList JSON-LD (`web/lib/seo/jsonld.ts` `itemListStructuredData`):** alongside the breadcrumb,
+  place pages emit a second `application/ld+json` script — a schema.org `ItemList` in the
+  summary-page format (ordered `ListItem`s carrying only `position` + `url`) of the items the page
+  lists: the fountains (`/fountains/{id}`) on city/region pages, the child regions or cities on
+  country pages. URL-only by design — individual fountains have no public name, so a per-item name
+  would be fabricated. Gated on `indexable` like the breadcrumb (empty list ⇒ no script).
+- **Related places (sibling links) (`web/components/place/RelatedPlaces.tsx`):** a `<nav>` block
+  below the fountain list that links sideways across the place tree — city pages link to other
+  cities in the same region (region-tier) or country (two-level); region pages link to other regions
+  in the country. Shows up to `RELATED_PLACES_CAP` (12) most-populous siblings with the current place
+  excluded. Same styling as the country region/city list (`divide-y divide-border`, brand-underlined
+  links, right-aligned muted "{n} fountains"); the `aria-label` is the heading (e.g. "Other cities in
+  {region}"). Renders nothing when there are no siblings, and is **not** gated on indexability —
+  internal links still aid crawl discovery on `noindex, follow` pages.
 - **Region disambiguation link:** canonical region pages with known slug collisions add one muted
   line below the lead copy, e.g. Washington state links to "Looking for Washington, District of
   Columbia?". The link uses the canonical nested city URL and is informational, not a CTA button.
@@ -913,6 +927,18 @@ instantly with no restructuring.
   triggers doesn't flip `isLoading` — so `MapOverlay` shows a quiet corner `ActivityIndicator` while
   `pinsQuery.isFetching && !isLoading` (a `progressbar` with an "Updating fountains" label), never the
   full-screen loading state.
+- **Stale-pins banner (mobile `MapOverlay` — spec §5 / #244):** when the bbox pins query is in error
+  but still holds previously loaded pins (`pinsQuery.isError && pinsQuery.data != null` — e.g. a
+  post-add invalidation whose refetch failed on a flaky network), the map keeps rendering the saved
+  pins and the banner shows the persistent copy **"Couldn't refresh fountains — showing saved data"**
+  with a tappable **"— tap to retry"** affordance that calls `pinsQuery.refetch()`. Reuses the quiet
+  corner-banner styling, and carries **both** `accessibilityRole="alert"` **and**
+  `accessibilityLiveRegion="polite"` so a screen reader announces the stale state without
+  interrupting. This state takes precedence over the offline/error message. The **new-key** error
+  shape (`isError && data == null`, so no pins to keep) instead falls to the full "You appear to be
+  offline" / "Couldn't load fountains" overlay. The copy, spinner, retry, and accessibility contract
+  are a pure decision in `resolveMapOverlay` (`mobile/lib/map/overlay.ts`), unit-tested in
+  `overlay.test.ts`; the component is a thin renderer of that model.
 
 **Accessibility contract (both platforms):** the control carries `aria-busy` (web) /
 `accessibilityState.busy` (mobile) while pending, stays `disabled` (double-submit guard), and the
@@ -952,12 +978,27 @@ A short reward animation shown after successful contribution writes **that actua
 
 ### Mobile placement toast
 
-Used for add-fountain placement errors, especially out-of-area taps.
+Used for add-fountain placement errors (especially out-of-area taps) and, with an optional action,
+the location-denied-permanently prompt (spec §3).
 
 - Error toast: red-tinted surface (`#FEE2E2`) with danger border (`#B91C1C`), `8px` radius, bold
   readable body text.
 - Appears near the top of the map, auto-dismisses, and announces through accessibility APIs.
 - Use for actionable placement feedback; keep inline panel messages for form submission errors.
+
+**Actionable toast (optional `action`).** A toast may carry an `action: { label, onPress }` that
+renders a tappable label below the body:
+
+- The action label is `colors.brandBlue`, bold (`fontWeight: 800`), in a `Pressable` with a **≥44 pt**
+  touch target (`minHeight/minWidth: 44`) and `accessibilityRole="button"`.
+- Presence of an action **extends the auto-dismiss window** from 3.2 s to 6 s
+  (`toastAutoDismissMs` in `mobile/lib/map/toast.ts`, node-tested) so the user has time to reach it.
+- Tapping the action **dismisses the toast and invokes** `onPress`; a following toast replaces it
+  under the standard dismiss rules.
+- The one current use is the **"Open settings"** action on a denied-permanently locate press
+  (`canAskAgain === false`): it calls `Linking.openSettings()`; if that promise **rejects**, a plain
+  replacement toast (`SETTINGS_OPEN_FAILED_TEXT`, no action) is shown — the failure decision is the
+  Node-tested `openSettingsEffect` seam, since the OS can't reliably induce that failure on-device.
 
 **Variants** — controlled by a `variant: "hero" | "bar"` prop:
 
@@ -2554,15 +2595,29 @@ mapping, icon/pill selection, bounds, and filter→query logic are pure helpers 
   under the status bar. It uses brand blue with a gold bottom rule, the FountainRank name on the
   left, and the signed-in points chip on the right. The filter chips sit below this bar, and the
   native compass is offset below both pieces of top chrome.
-- **Locate button** — a 44×44 circular `surface` `Pressable` (◎ glyph,
-  brand-blue) at the bottom-right, shown only once foreground location is
-  granted; recenters the camera on the user. Denial hides it (non-blocking).
-- **Map overlay banner** — a centered pill at the bottom showing a single status
-  derived from `resolveViewState` plus map-specific notes: a spinner on first
-  load; "Zoom in to see fountains" below the fetch zoom; "You appear to be
-  offline" / "Couldn't load fountains" (both tap-to-retry); "No fountains in this
-  area"; or "Showing the first 500 — zoom in for more" when capped. Hidden when
-  idle/ready.
+- **Locate button** — a 44×44 circular `surface` `Pressable` at the bottom-right, **always mounted**
+  (no coords gate, spec §4). Its visual + accessibility contract is a pure descriptor
+  (`locateButtonDescriptor` in `mobile/lib/map/locate-button.ts`, node-tested), which the screen's
+  `LocateButton` consumes without reconstructing — the only screen-side mapping is the structural
+  tone → theme color. Four states:
+  - **granted / idle:** the brand-blue `locate` (◎) icon; label "Center on my location"; recenters
+    the camera on the user (and upgrades to a fresh fix via `refresh()`).
+  - **locating / refreshing:** a small brand-blue `ActivityIndicator` replaces the icon;
+    `accessibilityState={{ busy: true }}`; a press is a no-op (the hook single-flights) but the
+    control is **not** `disabled` (it announces busy, not unavailable); label "Finding your location".
+  - **denied / unavailable:** the `locate` icon in the **muted** text token; still actionable (a
+    press retries permission); label "Location unavailable — tap to retry"; `accessibilityHint`
+    mentions Settings only when the OS will not re-prompt (`canAskAgain === false`).
+  - On a denied-permanently press the button raises the **actionable toast** below with an
+    "Open settings" action (never an automatic redirect).
+- **Map overlay banner** — a centered pill at the bottom showing a single status derived from
+  `resolveViewState` plus map-specific notes (a pure decision in `mobile/lib/map/overlay.ts`,
+  node-tested). Priority: stale-pins > offline/error > **locating** > below-zoom > empty/capped. So:
+  a spinner on first load; **"Locating you…"** while acquiring the first fix (spec §5 — replaces the
+  misleading below-zoom hint, but a real offline/error still wins); "Zoom in to see fountains" below
+  the fetch zoom (it **returns** once the first fix resolves/denies); "You appear to be offline" /
+  "Couldn't load fountains" (both tap-to-retry); "No fountains in this area"; or "Showing the first
+  500 — zoom in for more" when capped. Hidden when idle/ready.
 
 ### Fountain detail (slice 6e-4)
 
@@ -2745,3 +2800,27 @@ are on screen:
 `accessibilityLabel`/`accessibilityRole` (never a bare icon-only control without a label); the
 list uses `keyboardShouldPersistTaps="handled"` so tapping a result while the keyboard is open
 does not require a second tap.
+
+## Focused fountains and loading feedback (#213, #215, #254)
+
+- **Focused web fountain:** a deep-linked fountain is shown above clustering at the named
+  `FOCUSED_PIN_ZOOM`, with a persistently enlarged pin, high-contrast halo, and centered
+  **Selected fountain** preview. The preview names the state in text, reports working status,
+  and opens details; selection is never color- or motion-only. Camera movement is non-essential
+  and therefore respects reduced-motion preferences. Missing/hidden ids show no false selection.
+- **Navigation pending:** the activated Link/router/map-pin surface acknowledges navigation
+  immediately with a spinner or selected/pressed marker and accessible busy/status text. Duplicate
+  activation is suppressed while pending. Fountain detail navigation mounts a drawer skeleton
+  immediately; timeout/failure replaces it with a visible retry action.
+- **Map startup and GPS:** dynamic map import and startup first-fix waits use visible `role="status"`
+  copy. **Locating you…** suppresses the misleading below-zoom hint until resolution. Add-fountain
+  GPS uses distinct pending and denied states; failure copy never appears during an in-flight fix.
+- **Route skeletons:** skeletons reserve the destination geometry, use surface/border tokens, and
+  expose one concise busy announcement. Pulse animation uses `motion-reduce:animate-none`.
+- **Images:** web fountain imagery reserves its final frame with a neutral surface skeleton until
+  load, then fades in; failure keeps the frame and says **Image unavailable**. Native `expo-image`
+  frames reserve the same geometry and use a short transition. A not-yet-loaded native hero reserves
+  its 4:3 frame instead of popping into the layout.
+- **Native bootstrap:** the platform splash remains until auth/provider initialization resolves or
+  reaches a handled error. It never waits for GPS. Header points space remains reserved while account
+  totals load, preventing the map header from shifting.

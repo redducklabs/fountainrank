@@ -23,7 +23,7 @@ import os
 import re
 from typing import TextIO
 
-from app.db import get_sessionmaker
+from app.db import get_engine, get_sessionmaker, log_session_config
 from app.imports.boundaries import BoundaryFeature, parse_boundary_feature
 from app.imports.boundary_load import (
     BoundaryLoadSummary,
@@ -31,7 +31,7 @@ from app.imports.boundary_load import (
     log_boundary_load_complete,
 )
 from app.logging_config import configure_logging
-from app.membership import refresh_all_memberships, refresh_country_memberships
+from app.membership import RefreshScope, run_staged_membership_refresh
 
 log = logging.getLogger(__name__)
 
@@ -126,15 +126,18 @@ async def run_boundary_load(
                 # Commit per batch: bounds transaction size; the idempotent upsert makes a partially
                 # committed load safe to re-run. A dry-run's SQL writes nothing, so this is a no-op.
                 await session.commit()
-            if refresh_membership and not dry_run:
-                # All boundaries are now committed — re-derive fountain membership in one set-based
-                # pass and commit it as its own transaction (its own structured summary log).
-                refresh_country = _resolved_refresh_country(scope_id, country_code)
-                if refresh_all or refresh_country is None:
-                    await refresh_all_memberships(session)
-                else:
-                    await refresh_country_memberships(session, refresh_country)
-                await session.commit()
+        if refresh_membership and not dry_run:
+            # All boundaries are now durably committed (the batch session closed). Re-derive
+            # membership via the staged pinned-connection wrapper (compute UNlocked → commit →
+            # publish locked → commit) so the dominant city-parenting geometry runs before the lock
+            # and adds never queue behind it (spec 2026-07-17 §2). Raises on publish failure so the
+            # loader Job fails visibly.
+            refresh_country = _resolved_refresh_country(scope_id, country_code)
+            if refresh_all or refresh_country is None:
+                scope = RefreshScope(rebuild_cells=True)
+            else:
+                scope = RefreshScope(country_code=refresh_country)
+            await run_staged_membership_refresh(get_engine(), scope)
     finally:
         await asyncio.to_thread(fh.close)
     if skip_counts:
@@ -150,6 +153,9 @@ async def run_boundary_load(
 
 def main(argv: list[str] | None = None) -> int:
     configure_logging()
+    # Before any database work: record the armed fail-closed session config (marker + GUCs) so
+    # cancellation behavior is diagnosable from logs alone (spec 2026-07-17 §2a).
+    log_session_config()
     p = argparse.ArgumentParser(prog="app.imports.boundary_cli")
     p.add_argument("--path", required=True)
     p.add_argument("--overture-release-id", default=None)

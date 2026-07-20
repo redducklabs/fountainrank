@@ -13,6 +13,7 @@ import {
   selectedHaloLayer,
   selectedPinLayer,
   selectedIconExpr,
+  selectedFountainFilter,
 } from "./layers";
 import { mapColorsFor } from "./colors";
 import { CLUSTER_MAX_ZOOM, CLUSTER_RADIUS, PILL_MIN_ZOOM } from "./constants";
@@ -68,6 +69,13 @@ describe("pillLayer", () => {
 });
 
 describe("selected layers", () => {
+  it("selects only the exact unclustered focus id", () => {
+    expect(selectedFountainFilter("focus-1")).toEqual([
+      "all",
+      ["!", ["has", "point_count"]],
+      ["==", ["get", "id"], "focus-1"],
+    ]);
+  });
   it("halo + pin filter by id and swap icon for working non-gold", () => {
     expect(JSON.stringify(selectedHaloLayer("abc", light).filter)).toContain("abc");
     const sp = selectedPinLayer("abc", light.selectedPin);

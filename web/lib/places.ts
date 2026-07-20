@@ -32,6 +32,26 @@ export function cityPath(countryCode: string, slug: string, regionSlug?: string 
     : `/drinking-fountains/${cc}/${slug}`;
 }
 
+// Deterministic number formatting for SEO copy — pinned to en-US so the rendered title/description
+// never varies with the server's default locale (which would emit "1.234" or localized separators).
+const SEO_NUMBER_FORMAT = new Intl.NumberFormat("en-US");
+
+// Pure: the SEO <title> for a country/region/city place page — intent-matched ("public drinking
+// fountains in {place}") with the live MAPPED count. Says "mapped", not "mapped & rated": the count
+// is every non-hidden fountain, and imported fountains may be unrated — so "rated" must not be
+// grammatically applied to N (the community-rating positioning lives in the homepage h1 instead).
+export function placeTitle(name: string, fountainCount: number): string {
+  return `Public drinking fountains in ${name} — ${SEO_NUMBER_FORMAT.format(fountainCount)} mapped`;
+}
+
+// Pure: a headline count rounded DOWN to a clean thousand and suffixed "+" (285,432 -> "285,000+"),
+// so the homepage copy stays honest as the dataset grows. Below 1,000 it shows the exact number
+// (no misleading "0+").
+export function roundedCountPlus(n: number): string {
+  if (n < 1000) return SEO_NUMBER_FORMAT.format(n);
+  return `${SEO_NUMBER_FORMAT.format(Math.floor(n / 1000) * 1000)}+`;
+}
+
 // Server-only fetch of the public place list. This module is client-bundlable, so it never
 // reads a token (the endpoint is public/unauthenticated). A network error yields an empty
 // list with status 0 (the caller decides between "render empty" and notFound()).
@@ -73,6 +93,10 @@ export function getCountryCitiesServer(
     .then(({ data, response }) => ({ data: data ?? [], status: response?.status ?? 0 }))
     .catch(() => ({ data: [], status: 0 }));
 }
+
+// Max sibling links a place page's "related places" block renders (SEO #53) — the fetchers return
+// most-populous-first, so this shows the top N siblings after excluding the current place.
+export const RELATED_PLACES_CAP = 12;
 
 export function getCountryRegionsServer(
   country: string,
@@ -290,6 +314,63 @@ export async function getIndexableFountainsServer(
     const { data, response } = await client.GET("/api/v1/fountains/sitemap", {
       params: { query: { limit, offset } },
     });
+    return { data, status: response?.status ?? 0 };
+  } catch {
+    // status 0 = no HTTP response (network error / backend down / DNS failure)
+    return { data: undefined, status: 0 };
+  }
+}
+
+// --- Cities sitemap (flat, chunked enumeration) — spec §6/§7 ---------------------------------
+
+// One indexable city's canonical-URL parts. `region_slug` is the parent region's slug for a
+// region-tier country (nested `/[country]/[region]/[city]`) or null for a two-level country.
+export type CitySitemapItem = components["schemas"]["CitySitemapItem"];
+export type CitySitemapOut = components["schemas"]["CitySitemapOut"];
+
+// The backend /api/v1/places/cities/sitemap `limit` hard cap (server enforces le=50000). Each cities
+// sitemap chunk fetches exactly one capped page; the sitemap index sizes chunk URLs from
+// `total_count`. Mirrors SITEMAP_FOUNTAIN_CAP so the two chunked sitemaps behave identically.
+export const SITEMAP_CITY_CAP = 50000;
+
+// Server-only fetch of the indexable cities' URL parts (canonical, city-routes-ready, >= K). A
+// network error yields `undefined` with status 0 (the sitemap builder then emits a transient 503
+// rather than a partial/false sitemap). This single flat, offset-paginated query replaces the old
+// per-country -> per-region -> per-region-cities fan-out.
+export async function getSitemapCitiesServer(
+  requestId?: string,
+  limit = SITEMAP_CITY_CAP,
+  offset = 0,
+): Promise<{ data: CitySitemapOut | undefined; status: number }> {
+  const headers: Record<string, string> = {};
+  if (requestId) headers["X-Request-ID"] = requestId;
+  const client = makeClient(resolveApiBaseUrl(), { headers });
+  try {
+    const { data, response } = await client.GET("/api/v1/places/cities/sitemap", {
+      params: { query: { limit, offset } },
+    });
+    return { data, status: response?.status ?? 0 };
+  } catch {
+    // status 0 = no HTTP response (network error / backend down / DNS failure)
+    return { data: undefined, status: 0 };
+  }
+}
+
+// --- Site-wide stats (homepage positioning copy) ---------------------------------------------
+
+export type SiteStatsOut = components["schemas"]["SiteStatsOut"];
+
+// Server-only fetch of the public site-wide counts (total non-hidden fountains + countries with
+// fountains). A network error yields `undefined` with status 0 so the homepage copy falls back to a
+// countless phrasing rather than rendering "undefined".
+export async function getSiteStatsServer(
+  requestId?: string,
+): Promise<{ data: SiteStatsOut | undefined; status: number }> {
+  const headers: Record<string, string> = {};
+  if (requestId) headers["X-Request-ID"] = requestId;
+  const client = makeClient(resolveApiBaseUrl(), { headers });
+  try {
+    const { data, response } = await client.GET("/api/v1/stats");
     return { data, status: response?.status ?? 0 };
   } catch {
     // status 0 = no HTTP response (network error / backend down / DNS failure)

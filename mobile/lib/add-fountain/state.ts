@@ -1,17 +1,23 @@
-import { ApiError } from "../api";
+import type { components } from "@fountainrank/api-client";
+
+import { ApiError, ApiTimeoutError } from "../api";
 import { isAuthSessionError, type AuthStatus } from "../auth/state";
 import { normalizeFountainId } from "../detail/id";
-import { clampToBound, nudgePoint, type Bound, type LngLat } from "./placement";
+import { evaluatePlacement, nudgePoint, type Bound, type LngLat } from "./placement";
 import type { AwardedPoints } from "@fountainrank/contributions";
 
+type FountainDetail = components["schemas"]["FountainDetail"];
+
 export type AddFountainError =
-  "unauthenticated" | "validation" | "needs_name" | "network" | "server";
+  "unauthenticated" | "validation" | "needs_name" | "network" | "server" | "timeout";
 export type DuplicateConflict = { fountain_id?: unknown };
 export type AddFountainResult =
   // pointsAwarded (#204): the SERVER's award, which includes the conditional first_fountain /
   // first_in_area bonuses the client cannot predict. The add flow used to celebrate its own
   // client-side preview total instead.
-  | { ok: true; fountainId: string; pointsAwarded: AwardedPoints }
+  // detail: the full FountainDetail the POST already returned — carried so `onSuccess` can seed
+  // the detail + map-pin caches without a second round-trip (spec §3).
+  | { ok: true; fountainId: string; pointsAwarded: AwardedPoints; detail: FountainDetail }
   | { ok: false; error: "duplicate"; fountainId: string }
   | { ok: false; error: AddFountainError };
 
@@ -58,16 +64,18 @@ export function addFountainReducer(
     case "reset":
       return initialAddFountainState;
     case "setBound":
+      // Moving the bound never invalidates an already-accepted pin (spec §6); it only gates
+      // subsequent placement/nudge actions, validated against this new current bound.
       return { ...state, bound: action.bound };
     case "dropPin":
-      return {
-        ...state,
-        pin: state.bound ? clampToBound(action.point, state.bound) : action.point,
-      };
+      // The reducer is the authoritative bound backstop: a placement carries only its point, and the
+      // pin enters state ONLY when it passes the shared validator against the CURRENT bound. An
+      // out-of-bound drop is rejected (state unchanged) - no caller can install an unvalidated pin.
+      return evaluatePlacement(state.bound, action.point) ? { ...state, pin: action.point } : state;
     case "nudge": {
       if (!state.pin) return state;
       const next = nudgePoint(state.pin, action.direction);
-      return { ...state, pin: state.bound ? clampToBound(next, state.bound) : next };
+      return evaluatePlacement(state.bound, next) ? { ...state, pin: next } : state;
     }
     case "next":
       return state.pin && state.phase === "placing" ? { ...state, phase: "details" } : state;
@@ -95,9 +103,46 @@ export function mapAddFountainError(error: unknown): AddFountainError {
     if (error.status === 422) return "validation";
     return "server";
   }
-  if (error instanceof TypeError) return "network";
+  // A create that timed out (ApiTimeoutError) OR dropped mid-flight (TypeError) is
+  // OUTCOME-UNKNOWN — the server may already have committed it. Both classify as
+  // "timeout" so the flow recovers by reconciliation (unchanged retry → 409 → route to
+  // the created fountain), not by treating it as a definitive failure (spec §2).
+  if (error instanceof ApiTimeoutError) return "timeout";
+  if (error instanceof TypeError) return "timeout";
   if (error instanceof Error) return "server";
   return "network";
+}
+
+/**
+ * The outcome-unknown diagnostic descriptor (spec §2). Carries ONLY the ambiguity reason
+ * (and, for a deadline, its duration) — never the raw error message (RN network errors can
+ * embed URLs) and never coordinates. Feeds the `add_fountain_outcome_unknown` log event.
+ */
+export type AddSubmitOutcomeEvent =
+  { reason: "deadline"; timeout_ms: number } | { reason: "network_failure" };
+
+export type AddSubmitFailure = {
+  error: AddFountainError;
+  /** Present only for the two outcome-unknown branches (timeout / mid-flight network drop). */
+  outcome?: AddSubmitOutcomeEvent;
+};
+
+/**
+ * Pure classification of an add-create failure (spec §2): the mapped `AddFountainError`
+ * plus, for the two OUTCOME-UNKNOWN branches, a diagnostic descriptor for the
+ * `add_fountain_outcome_unknown` event. Kept pure and node-safe so the submit-path decision
+ * is testable without rendering the screen; the catch branch calls this and forwards any
+ * descriptor to the log seam.
+ */
+export function classifyAddSubmitFailure(error: unknown): AddSubmitFailure {
+  const mapped = mapAddFountainError(error);
+  if (error instanceof ApiTimeoutError) {
+    return { error: mapped, outcome: { reason: "deadline", timeout_ms: error.timeoutMs } };
+  }
+  if (error instanceof TypeError) {
+    return { error: mapped, outcome: { reason: "network_failure" } };
+  }
+  return { error: mapped };
 }
 
 export function duplicateFountainId(error: DuplicateConflict | undefined): string | null {
@@ -130,6 +175,11 @@ export function addFountainErrorText(error: AddFountainError): string {
       return "Check your connection and try again.";
     case "server":
       return "Couldn't add the fountain. Please try again.";
+    case "timeout":
+      // Outcome-unknown: state the ambiguity AND the reconciliation. An unchanged retry
+      // posts identical coordinates; if the first attempt already committed, the backend
+      // returns the typed 409 and the flow routes the user to that fountain (spec §2).
+      return "We couldn't confirm your fountain was saved. Leave the pin where it is and try again — if it was already saved, we'll take you to it.";
   }
 }
 

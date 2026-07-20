@@ -1,7 +1,10 @@
 """Render the isolated operator-loader Job manifest as JSON (spec 2026-07-15 §B).
 
-Stdlib-only, like the sibling CI-helper scripts (boundaries_registry.py, regions.py,
-poly_to_wkt.py) the loader workflows already invoke with system python3. ``json.dumps``
+Stdlib-only (as is :mod:`app.imports.loader_session`, its one intra-package import), so it runs
+on a bare GitHub runner. The single supported runner-side invocation is
+``PYTHONPATH=backend python3 -m app.imports.loader_job_render`` from the repository root (module
+form — required for the package import; both package ``__init__`` files are empty, so nothing
+beyond the stdlib is pulled in). ``json.dumps``
 guarantees every argv element — including an operator-supplied PBF ``--label`` with
 spaces/quotes/``$``/metacharacters — is one exec-form ``command`` element that cannot break
 out. No envsubst, so the wait-for-ready wrapper's literal ``$i``/``$@`` cannot be corrupted.
@@ -13,7 +16,16 @@ import argparse
 import json
 import re
 
+from app.imports.loader_session import compose_session_marker
+
 _CONTAINER_PATH_RE = re.compile(r"^/work/[A-Za-z0-9._-]+$")
+
+# Fail-closed cancellation GUCs armed on every loader session (spec 2026-07-17 §2a): the check
+# interval makes a busy statement notice its dead client and abort; the lock timeout bounds lock
+# waits only (a loader queued 15 min behind ANY lock is behind an orphan/wedged holder — the
+# serialized queue plus interactive writes' 8 s bound leave no legitimate long wait).
+_CHECK_INTERVAL_MS = "30000"
+_LOCK_TIMEOUT_MS = "900000"
 
 # Wait until the runner streams every input file and touches /work/.ready, bounded by
 # ready_timeout_seconds, then exec the real argv. `$i`/`$@` are literal shell text.
@@ -29,6 +41,7 @@ def render_job(
     job_name: str,
     image: str,
     namespace: str,
+    session_marker: str,
     argv: list[str],
     files: list[dict],
     mem_request: str,
@@ -38,7 +51,11 @@ def render_job(
     active_deadline_seconds: int,
     ready_timeout_seconds: int,
     ttl_seconds: int = 600,
-    grace_seconds: int = 30,
+    # 5 s, not the k8s default 30: the loader is a mid-transaction CLI with no graceful-shutdown
+    # work — SIGTERM kills it and the database-side rollback is handled by the fail-closed session
+    # config. A long grace only delays teardown's pod-absence confirmation past its poll budget,
+    # making every cancelled run report a spurious teardown failure (#250).
+    grace_seconds: int = 5,
 ) -> dict:
     if not argv or not all(isinstance(a, str) for a in argv):
         raise ValueError("argv must be a non-empty list of strings")
@@ -101,6 +118,14 @@ def render_job(
                                     "name": "DB_SSL_ROOT_CERT",
                                     "value": "/var/run/secrets/fountainrank/database-ca.crt",
                                 },
+                                # Loader-session identity + fail-closed cancellation
+                                # (spec 2026-07-17 §2a; consumed by app/config.py -> app/db.py).
+                                {"name": "DB_APPLICATION_NAME", "value": session_marker},
+                                {
+                                    "name": "DB_CLIENT_CONNECTION_CHECK_INTERVAL_MS",
+                                    "value": _CHECK_INTERVAL_MS,
+                                },
+                                {"name": "DB_LOCK_TIMEOUT_MS", "value": _LOCK_TIMEOUT_MS},
                             ],
                             "securityContext": {
                                 "allowPrivilegeEscalation": False,
@@ -130,6 +155,7 @@ def render_job(
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="app.imports.loader_job_render")
     p.add_argument("--job-name", required=True)
+    p.add_argument("--run-id", required=True, help="GitHub run id (decimal) for the session marker")
     p.add_argument("--image", required=True)
     p.add_argument("--namespace", required=True)
     p.add_argument("--argv-json", required=True)
@@ -141,10 +167,18 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--active-deadline-seconds", type=int, required=True)
     p.add_argument("--ready-timeout-seconds", type=int, required=True)
     a = p.parse_args(argv)
+    try:
+        # Component validation lives in loader_session (the ONE marker implementation); an
+        # unknown job name or malformed run id exits nonzero before anything is rendered.
+        session_marker = compose_session_marker(a.job_name, a.run_id)
+    except ValueError as exc:
+        p.error(str(exc))
+        raise AssertionError("unreachable") from exc
     manifest = render_job(
         job_name=a.job_name,
         image=a.image,
         namespace=a.namespace,
+        session_marker=session_marker,
         argv=json.loads(a.argv_json),
         files=json.loads(a.files_json),
         mem_request=a.mem_request,

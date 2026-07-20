@@ -1,10 +1,18 @@
 // @vitest-environment jsdom
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 
-const { getCityFountainsServer, getRegionFountainsServer, resolvePlaceServer } = vi.hoisted(() => ({
+const {
+  getCityFountainsServer,
+  getCountryCitiesServer,
+  getCountryRegionsServer,
+  getRegionFountainsServer,
+  resolvePlaceServer,
+} = vi.hoisted(() => ({
   getCityFountainsServer: vi.fn(),
+  getCountryCitiesServer: vi.fn(),
+  getCountryRegionsServer: vi.fn(),
   getRegionFountainsServer: vi.fn(),
   resolvePlaceServer: vi.fn(),
 }));
@@ -19,7 +27,14 @@ const { notFound, permanentRedirect } = vi.hoisted(() => ({
 
 vi.mock("../../../../lib/places", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../../../lib/places")>();
-  return { ...actual, getCityFountainsServer, getRegionFountainsServer, resolvePlaceServer };
+  return {
+    ...actual,
+    getCityFountainsServer,
+    getCountryCitiesServer,
+    getCountryRegionsServer,
+    getRegionFountainsServer,
+    resolvePlaceServer,
+  };
 });
 vi.mock("next/navigation", () => ({ notFound, permanentRedirect }));
 vi.mock("next/link", () => ({
@@ -87,6 +102,25 @@ const fountainsFor = (place: typeof WASHINGTON | typeof CITY, indexable = true) 
 });
 const params = (country: string, place: string) => Promise.resolve({ country, place });
 
+// Sibling places for the RelatedPlaces block; each list includes the current place so the tests
+// prove it is excluded from its own sibling list.
+const SIBLING_REGIONS = [
+  { ...WASHINGTON, id: "r-or", slug: "oregon", name: "Oregon", fountain_count: 80 },
+  WASHINGTON,
+  { ...WASHINGTON, id: "r-ca", slug: "california", name: "California", fountain_count: 200 },
+];
+const SIBLING_CITIES = [
+  { ...CITY, id: "c-esch", slug: "esch-sur-alzette", name: "Esch-sur-Alzette", fountain_count: 5 },
+  CITY,
+  { ...CITY, id: "c-diff", slug: "differdange", name: "Differdange", fountain_count: 3 },
+];
+
+beforeEach(() => {
+  // Safe defaults so a page render never makes a real sibling fetch; tests override as needed.
+  getCountryRegionsServer.mockResolvedValue({ data: [], status: 200 });
+  getCountryCitiesServer.mockResolvedValue({ data: [], status: 200 });
+});
+
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
@@ -102,6 +136,7 @@ it("renders the canonical region branch and the DC disambiguation link", async (
     status: 200,
   });
   getRegionFountainsServer.mockResolvedValue({ data: fountainsFor(WASHINGTON), status: 200 });
+  getCountryRegionsServer.mockResolvedValue({ data: SIBLING_REGIONS, status: 200 });
 
   render(await PlaceResolverPage({ params: params("us", "washington") }));
 
@@ -111,6 +146,26 @@ it("renders the canonical region branch and the DC disambiguation link", async (
   expect(
     await screen.findByRole("link", { name: "Looking for Washington, District of Columbia?" }),
   ).toHaveAttribute("href", "/drinking-fountains/us/district-of-columbia/washington");
+  // ItemList of the one listed fountain, linking to its detail page.
+  const itemList = Array.from(
+    document.querySelectorAll<HTMLScriptElement>('script[type="application/ld+json"]'),
+  )
+    .map((s) => JSON.parse(s.textContent ?? "{}"))
+    .find((s) => s["@type"] === "ItemList");
+  expect(itemList?.itemListElement).toEqual([
+    { "@type": "ListItem", position: 1, url: "https://fountainrank.com/fountains/f1" },
+  ]);
+  // Sideways links to other regions in the country, excluding Washington itself.
+  const related = screen.getByRole("navigation", { name: "Other regions in US" });
+  expect(within(related).getByRole("link", { name: "Oregon" })).toHaveAttribute(
+    "href",
+    "/drinking-fountains/us/oregon",
+  );
+  expect(within(related).getByRole("link", { name: "California" })).toHaveAttribute(
+    "href",
+    "/drinking-fountains/us/california",
+  );
+  expect(within(related).queryByRole("link", { name: "Washington" })).toBeNull();
 });
 
 it("renders the two-level city branch", async () => {
@@ -123,12 +178,24 @@ it("renders the two-level city branch", async () => {
     status: 200,
   });
   getCityFountainsServer.mockResolvedValue({ data: fountainsFor(CITY), status: 200 });
+  getCountryCitiesServer.mockResolvedValue({ data: SIBLING_CITIES, status: 200 });
 
   render(await PlaceResolverPage({ params: params("lu", "luxembourg") }));
 
   expect((await screen.findByRole("heading", { level: 1 })).textContent).toContain("Luxembourg");
   expect(getCityFountainsServer).toHaveBeenCalledWith("lu", "luxembourg", expect.any(String));
   expect(getRegionFountainsServer).not.toHaveBeenCalled();
+  // Sideways links to other cities in the country, excluding Luxembourg itself.
+  const related = screen.getByRole("navigation", { name: "Other cities in LU" });
+  expect(within(related).getByRole("link", { name: "Esch-sur-Alzette" })).toHaveAttribute(
+    "href",
+    "/drinking-fountains/lu/esch-sur-alzette",
+  );
+  expect(within(related).getByRole("link", { name: "Differdange" })).toHaveAttribute(
+    "href",
+    "/drinking-fountains/lu/differdange",
+  );
+  expect(within(related).queryByRole("link", { name: "Luxembourg" })).toBeNull();
 });
 
 it("308s a legacy flat city URL to the canonical nested target", async () => {
@@ -196,7 +263,7 @@ it("generateMetadata uses resolver canonical and backend indexability", async ()
 
   const meta = await generateMetadata({ params: params("us", "washington") });
 
-  expect(meta.title).toBe("Drinking fountains in Washington");
+  expect(meta.title).toBe("Public drinking fountains in Washington — 120 mapped");
   expect(meta.alternates?.canonical).toBe("/drinking-fountains/us/washington");
   expect(meta.robots).toEqual({ index: false, follow: true });
 });

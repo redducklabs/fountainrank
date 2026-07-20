@@ -7,6 +7,12 @@ inputs:
   job_name:
     required: true
     description: "Deterministic Job name (also the pod label selector)."
+  run_id:
+    required: true
+    description: >-
+      The GitHub run id (decimal). Composed (with job_name) into the run-scoped
+      application_name session marker by the renderer so the teardown reaper can terminate
+      exactly this run's database sessions (spec 2026-07-17 §2).
   argv_json:
     required: true
     description: "JSON array of strings: the exact CLI argv."
@@ -40,6 +46,7 @@ runs:
       shell: bash
       env:
         JOB_NAME: ${{ inputs.job_name }}
+        RUN_ID: ${{ inputs.run_id }}
         ARGV_JSON: ${{ inputs.argv_json }}
         FILES_JSON: ${{ inputs.files_json }}
         ACTIVE_DEADLINE: ${{ inputs.active_deadline_seconds }}
@@ -67,9 +74,12 @@ runs:
         # 2) Pre-flight: clear any stale Job of this name.
         kubectl -n "$NS" delete job "$JOB_NAME" --ignore-not-found --wait --timeout=60s
 
-        # 3) Render (stdlib python; json.dumps escapes all argv) and create.
-        python3 backend/app/imports/loader_job_render.py \
-          --job-name "$JOB_NAME" --image "$IMAGE" --namespace "$NS" \
+        # 3) Render (stdlib python; json.dumps escapes all argv) and create. Module form is the
+        #    supported invocation (the renderer imports app.imports.loader_session to compose the
+        #    run-scoped session marker; PYTHONPATH=backend + empty package __init__ files keep it
+        #    stdlib-only on this bare runner).
+        PYTHONPATH=backend python3 -m app.imports.loader_job_render \
+          --job-name "$JOB_NAME" --run-id "$RUN_ID" --image "$IMAGE" --namespace "$NS" \
           --argv-json "$ARGV_JSON" --files-json "$FILES_JSON" \
           --mem-request "$MEM_REQUEST" --mem-limit "$MEM_LIMIT" \
           --active-deadline-seconds "$ACTIVE_DEADLINE" \

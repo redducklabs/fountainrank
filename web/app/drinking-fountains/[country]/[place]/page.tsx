@@ -4,18 +4,25 @@ import { notFound, permanentRedirect } from "next/navigation";
 import { cache } from "react";
 
 import { FountainList } from "../../../../components/fountain/FountainList";
+import { RelatedPlaces } from "../../../../components/place/RelatedPlaces";
+import type { RelatedPlace } from "../../../../components/place/RelatedPlaces";
 import { SiteHeader } from "../../../../components/SiteHeader";
 import {
   cityPath,
   countryPath,
+  fountainPath,
   getCityFountainsServer,
+  getCountryCitiesServer,
+  getCountryRegionsServer,
   getRegionFountainsServer,
+  placeTitle,
+  RELATED_PLACES_CAP,
   regionPath,
   resolvePlaceServer,
 } from "../../../../lib/places";
 import type { CityFountainsOut, PlaceOut, PlaceResolveOut } from "../../../../lib/places";
 import { log } from "../../../../lib/server/log";
-import { jsonLdScript } from "../../../../lib/seo/jsonld";
+import { itemListStructuredData, jsonLdScript } from "../../../../lib/seo/jsonld";
 import { SITE_URL } from "../../../../lib/seo/site";
 
 export const dynamic = "force-dynamic";
@@ -104,7 +111,7 @@ export async function generateMetadata({
   if (!data?.fountains) return { robots: { index: false, follow: false } };
   const resolvedPlace = data.resolved.place;
   const canonical = data.resolved.canonical_path;
-  const title = `Drinking fountains in ${resolvedPlace.name}`;
+  const title = placeTitle(resolvedPlace.name, resolvedPlace.fountain_count);
   const desc = description(resolvedPlace);
   return {
     title,
@@ -162,13 +169,50 @@ export default async function PlaceResolverPage({
   const structuredJson = fountains.indexable
     ? jsonLdScript(breadcrumb(placeData, canonical))
     : null;
+  // ItemList of the fountains this page lists, each linking to its detail page. Gated on
+  // indexability like the breadcrumb — no structured data for a below-gate page.
+  const itemList = fountains.indexable
+    ? itemListStructuredData(
+        fountains.fountains.map((f) => `${SITE_URL}${fountainPath(String(f.id))}`),
+      )
+    : null;
+  const itemListJson = itemList ? jsonLdScript(itemList) : null;
   const disambiguation = resolved.kind === "region" ? disambiguationForRegion(placeData) : null;
+
+  // Sideways internal links to peer places (SEO #53): other regions in the country for a region
+  // page, or other cities in the country for a two-level city page. One cheap extra fetch; the
+  // block renders nothing on error/empty. Fetch one over the cap so excluding the current place
+  // still leaves a full row of siblings.
+  const requestId = crypto.randomUUID();
+  const siblingsRes =
+    resolved.kind === "region"
+      ? await getCountryRegionsServer(placeData.country_code, requestId, RELATED_PLACES_CAP + 1)
+      : await getCountryCitiesServer(placeData.country_code, requestId, RELATED_PLACES_CAP + 1);
+  const relatedPlaces: RelatedPlace[] = siblingsRes.data
+    .filter((sibling) => sibling.id !== placeData.id)
+    .slice(0, RELATED_PLACES_CAP)
+    .map((sibling) => ({
+      id: sibling.id,
+      name: sibling.name,
+      href:
+        resolved.kind === "region"
+          ? regionPath(sibling.country_code, sibling.slug)
+          : cityPath(sibling.country_code, sibling.slug),
+      fountainCount: sibling.fountain_count,
+    }));
+  const relatedHeading =
+    resolved.kind === "region"
+      ? `Other regions in ${placeData.country_code.toUpperCase()}`
+      : `Other cities in ${placeData.country_code.toUpperCase()}`;
 
   return (
     <>
       <SiteHeader variant="bar" />
       {structuredJson ? (
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: structuredJson }} />
+      ) : null}
+      {itemListJson ? (
+        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: itemListJson }} />
       ) : null}
       <main className={shell}>
         <Link
@@ -199,6 +243,7 @@ export default async function PlaceResolverPage({
         ) : (
           <p className="mt-6 text-muted">No public fountains are mapped here yet.</p>
         )}
+        <RelatedPlaces heading={relatedHeading} places={relatedPlaces} />
       </main>
     </>
   );

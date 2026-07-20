@@ -168,12 +168,17 @@ jobs:
         uses: ./.github/actions/run-loader-job
         with:
           job_name: osm-import
+          run_id: ${{ github.run_id }}
           namespace: ${{ env.NAMESPACE }}
           active_deadline_seconds: "10800"
           ready_timeout_seconds: "900"
           argv_json: ${{ steps.loader.outputs.argv_json }}
           files_json: ${{ steps.loader.outputs.files_json }}
 
-      - name: Delete loader Job (guaranteed teardown)
+      - name: Teardown loader Job (guaranteed delete + session reap)
         if: always()
-        run: kubectl -n "$NAMESPACE" delete job osm-import --ignore-not-found --wait --timeout=60s
+        uses: ./.github/actions/teardown-loader-job
+        with:
+          job_name: osm-import
+          run_id: ${{ github.run_id }}
+          namespace: ${{ env.NAMESPACE }}

@@ -15,7 +15,12 @@ vi.mock("@fountainrank/api-client", () => ({
   makeClient: () => ({ GET: mockGet }),
 }));
 
-import { fetchBbox, getFountainDetailServer, getFountainNotesServer } from "./fountains";
+import {
+  fetchBbox,
+  fetchPublicFountain,
+  getFountainDetailServer,
+  getFountainNotesServer,
+} from "./fountains";
 
 const PARAMS = { min_lat: 1, min_lng: 2, max_lat: 3, max_lng: 4 };
 
@@ -57,6 +62,22 @@ describe("getFountainDetailServer", () => {
     mockGet.mockRejectedValueOnce(new Error("network error"));
     const result = await getFountainDetailServer("x", "rid");
     expect(result).toEqual({ data: undefined, status: 0 });
+  });
+});
+
+describe("fetchPublicFountain", () => {
+  it("returns exact public detail", async () => {
+    const fountain = { id: "f1" };
+    bboxGet.mockResolvedValueOnce({ data: fountain, response: { ok: true, status: 200 } });
+    expect(await fetchPublicFountain("f1")).toEqual({ kind: "found", fountain });
+  });
+  it("classifies hidden/deleted public 404 without data", async () => {
+    bboxGet.mockResolvedValueOnce({ data: undefined, response: { ok: false, status: 404 } });
+    expect(await fetchPublicFountain("hidden")).toEqual({ kind: "not-found" });
+  });
+  it("classifies transport failure", async () => {
+    bboxGet.mockRejectedValueOnce(new Error("offline"));
+    expect(await fetchPublicFountain("f1")).toEqual({ kind: "error", status: 0 });
   });
 });
 

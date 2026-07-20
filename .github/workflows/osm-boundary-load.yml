@@ -184,16 +184,25 @@ jobs:
         uses: ./.github/actions/run-loader-job
         with:
           job_name: boundary-load
+          run_id: ${{ github.run_id }}
           namespace: ${{ env.NAMESPACE }}
-          # 5h backstop: fractal-coastline countries (e.g. Chile — 72k boundary cells) have a
-          # genuinely slow city-parenting membership step that exceeded a 90min deadline. Loads are
-          # serialized (queue: max), so a generous backstop is safe. A faster _CITY_PARENT_SQL is a
-          # tracked follow-up; until then this lets the geometrically-worst countries finish.
-          active_deadline_seconds: "18000"
+          # 8h backstop: city-dense countries exceed 5h even with the country/kind index —
+          # France (37k communes) needed 2h33m compute plus a publish whose fountain-assign
+          # UPDATE alone ran past 2h (run 29620154317, killed at the 5h deadline mid-publish;
+          # rollback was clean). Loads are serialized (queue: max) and cancellation is
+          # fail-closed (#248), so a generous backstop is safe. The publish-window
+          # optimization is tracked in #249; until then this lets the worst countries finish.
+          # NOTE: workflow_dispatch snapshots this YAML at dispatch time — runs already
+          # queued keep their old deadline; re-dispatch to pick this up.
+          active_deadline_seconds: "28800"
           ready_timeout_seconds: "600"
           argv_json: ${{ steps.loader.outputs.argv_json }}
           files_json: ${{ steps.loader.outputs.files_json }}
 
-      - name: Delete loader Job (guaranteed teardown)
+      - name: Teardown loader Job (guaranteed delete + session reap)
         if: always()
-        run: kubectl -n "$NAMESPACE" delete job boundary-load --ignore-not-found --wait --timeout=60s
+        uses: ./.github/actions/teardown-loader-job
+        with:
+          job_name: boundary-load
+          run_id: ${{ github.run_id }}
+          namespace: ${{ env.NAMESPACE }}

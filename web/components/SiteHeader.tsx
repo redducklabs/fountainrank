@@ -46,9 +46,9 @@ export async function SiteHeader({ variant }: { variant: "hero" | "bar" }) {
         </div>
       </div>
       {variant === "hero" && (
-        <p className="mt-2 text-sm font-semibold sm:text-base">
-          Find a drinking fountain near you.
-        </p>
+        <h1 className="mt-2 text-sm font-semibold sm:text-base">
+          The largest community-rated guide to public drinking fountains.
+        </h1>
       )}
     </header>
   );

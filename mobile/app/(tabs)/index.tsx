@@ -38,35 +38,50 @@ import {
 } from "../../lib/add-fountain/payloads";
 import {
   boundFromFix,
-  canPlace,
   centerOfViewport,
-  inBound,
-  nudgePoint,
   placementEntryTarget,
   type GpsFix,
   type LngLat,
   type ViewportBounds,
 } from "../../lib/add-fountain/placement";
 import {
+  createPlacementCoordinator,
+  type PlacementCoordinator,
+} from "../../lib/add-fountain/placement-coordinator";
+import {
   addFountainErrorText,
   addFountainGate,
   addFountainReducer,
   classifyAddConflict,
+  classifyAddSubmitFailure,
   initialAddFountainState,
-  mapAddFountainError,
   type AddFountainResult,
   type AddFountainState,
 } from "../../lib/add-fountain/state";
+import { logEvent } from "../../lib/log";
 import { isMapConfigured } from "../../lib/config";
+import { handleAddSuccess } from "../../lib/add-fountain/seed";
 import { isAtCap, normalizeBounds, type RawBounds, shouldLoadPins } from "../../lib/map/bounds";
+import {
+  initialCameraState,
+  nextCameraPolicy,
+  type CameraEvent,
+} from "../../lib/map/camera-policy";
 import { buildClusterIndex, clustersForViewport } from "../../lib/map/cluster";
-import { DEFAULT_ZOOM, INITIAL_USER_ZOOM, PLACE_MIN_ZOOM } from "../../lib/map/constants";
+import { BBOX_STALE_TIME_MS, DEFAULT_ZOOM, PLACE_MIN_ZOOM } from "../../lib/map/constants";
+import { locateButtonDescriptor, type LocateButtonDescriptor } from "../../lib/map/locate-button";
+import {
+  OPEN_SETTINGS_ACTION_LABEL,
+  SETTINGS_OPEN_FAILED_TEXT,
+  toastAutoDismissMs,
+} from "../../lib/map/toast";
 import {
   buildBboxQuery,
   DEFAULT_FILTERS,
   type FountainFilters,
   fountainsQueryKey,
 } from "../../lib/map/filters";
+import { resolveMapOverlay } from "../../lib/map/overlay";
 import { pinsToFeatureCollection } from "../../lib/map/pins";
 import { shouldClearSearchMarker } from "../../lib/map-search/marker";
 import {
@@ -89,6 +104,10 @@ type FountainPin = components["schemas"]["FountainPin"];
 type AttributeTypeOut = components["schemas"]["AttributeTypeOut"];
 type RatingTypeOut = components["schemas"]["RatingTypeOut"];
 type BboxResult = { pins: FountainPin[]; truncated: boolean };
+// An actionable toast (spec §3): the optional action renders a tappable label and extends the
+// auto-dismiss window; tapping it dismisses the toast and invokes the handler.
+type ToastAction = { label: string; onPress: () => void | Promise<void> };
+type ToastState = { tone: "err" | "ok"; text: string; nonce: number; action?: ToastAction };
 
 // Approx height of the top filter-chip bar; used to drop the native compass below
 // it so it isn't hidden behind the chips (#105).
@@ -119,7 +138,22 @@ export default function MapScreen() {
   // The screen owns all camera intent; FountainMap just executes the latest fly
   // command (see MapFlyTo). A fresh object re-issues the fly even to the same spot.
   const [flyTo, setFlyTo] = useState<MapFlyTo | null>(null);
-  const didInitialCenterRef = useRef(false);
+  // Camera policy state (spec §6). Refs, not render-read state: the one-shot is read only inside
+  // effects/callbacks (never during render), consistent with the React-Compiler rule. `locateActive`
+  // marks a locate gesture as owning the camera so the incoming refresh fix doesn't double-center.
+  const cameraStateRef = useRef(initialCameraState);
+  const locateActiveRef = useRef(false);
+  const runCamera = useCallback((event: CameraEvent) => {
+    const { state, command } = nextCameraPolicy(cameraStateRef.current, event);
+    cameraStateRef.current = state;
+    if (command) {
+      setFlyTo({
+        center: command.center,
+        zoom: command.zoom,
+        framedAboveSheet: command.framedAboveSheet,
+      });
+    }
+  }, []);
   const [addState, addDispatch] = useReducer(addFountainReducer, initialAddFountainState);
   const [ratings, setRatings] = useState<Record<number, number | undefined>>({});
   const [attributes, setAttributes] = useState<Record<number, string | undefined>>({});
@@ -127,9 +161,7 @@ export default function MapScreen() {
   const [showMoreDetails, setShowMoreDetails] = useState(false);
   const [addMessage, setAddMessage] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
   const [addMode, setAddMode] = useState(false);
-  const [toast, setToast] = useState<{ tone: "err" | "ok"; text: string; nonce: number } | null>(
-    null,
-  );
+  const [toast, setToast] = useState<ToastState | null>(null);
   const [celebrationKey, setCelebrationKey] = useState(0);
   const [celebrationPoints, setCelebrationPoints] = useState<number | null>(null);
   const regionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -167,6 +199,9 @@ export default function MapScreen() {
     queryKey: params ? fountainsQueryKey(params, filters) : ["fountains", "bbox", "idle"],
     enabled,
     placeholderData: keepPreviousData,
+    // Scoped to this query (global defaults unchanged): skip a redundant refetch on pan-back to
+    // a fresh, non-invalidated viewport. The post-add invalidation still overrides this (spec §4).
+    staleTime: BBOX_STALE_TIME_MS,
     queryFn: async (): Promise<BboxResult> => {
       const result = await client.GET("/api/v1/fountains/bbox", {
         params: { query: buildBboxQuery(params!, filters) },
@@ -214,6 +249,9 @@ export default function MapScreen() {
           ok: true,
           fountainId: result.data.id,
           pointsAwarded: awardedPoints(result.data),
+          // The POST already returned the full FountainDetail — carry it so onSuccess can seed
+          // the detail + map-pin caches with no second round-trip (spec §3).
+          detail: result.data,
         };
       }
       if (result.response.status === 409) {
@@ -228,17 +266,13 @@ export default function MapScreen() {
       if (result.response.status === 422) throw new ApiError(422);
       throw new ApiError(result.response.status);
     },
-    onSuccess: (result) => {
-      void queryClient.invalidateQueries({ queryKey: ["fountains", "bbox"] });
-      void queryClient.invalidateQueries({ queryKey: ["me", "contributions"] });
-      if (result.ok) {
-        void queryClient.invalidateQueries({ queryKey: ["fountain", result.fountainId] });
-      }
-    },
+    // Seed the detail + map-pin caches from the create response, THEN invalidate (spec §3), so
+    // the new fountain renders instantly and cannot vanish on a failed refetch.
+    onSuccess: (result) => handleAddSuccess(queryClient, result),
   });
 
-  const showToast = useCallback((tone: "err" | "ok", text: string) => {
-    setToast({ tone, text, nonce: Date.now() });
+  const showToast = useCallback((tone: "err" | "ok", text: string, action?: ToastAction) => {
+    setToast({ tone, text, nonce: Date.now(), action });
   }, []);
 
   const resetAddDraft = useCallback(() => {
@@ -249,6 +283,23 @@ export default function MapScreen() {
     setShowMoreDetails(false);
     setAddMessage(null);
   }, []);
+
+  // The placement coordinator (spec §6): every placement callback binds DIRECTLY to one of its
+  // methods. It shares the reducer's `evaluatePlacement` validator, so its immediate toast/camera
+  // effects and the reducer's authoritative transition can never diverge. Constructed inside an
+  // effect (never during render) and held in a ref, because it captures `runCamera` (which reads the
+  // camera-state ref) - the same React-Compiler `react-hooks/refs`-safe pattern as `createGuardedSubmit`.
+  const placementCoordinatorRef = useRef<PlacementCoordinator | null>(null);
+  useEffect(() => {
+    placementCoordinatorRef.current = createPlacementCoordinator({
+      dispatch: addDispatch,
+      clearMessage: () => setAddMessage(null),
+      runCamera,
+      toastOutOfArea: () =>
+        showToast("err", "You can only add fountains near your current location."),
+      toastZoomIn: () => showToast("err", "Zoom in a little more to drop the pin here."),
+    });
+  }, [runCamera, showToast]);
 
   useEffect(() => {
     if (!addMode) return;
@@ -272,17 +323,18 @@ export default function MapScreen() {
     };
   }, []);
 
-  // Center on the user the first time coords resolve (they arrive after first
-  // render, so initialViewState can't). Once only; location is fetched a single
-  // time and denial leaves the camera at the default world view.
+  // Center on the user the first time a fix resolves (spec §6). The camera policy centers exactly
+  // once; later live-watch fixes move the blue dot but not the camera. Skipped while a locate gesture
+  // owns the camera, so a locate press that yields the first fix moves the camera exactly once.
   useEffect(() => {
-    if (didInitialCenterRef.current || !location.coords) return;
-    didInitialCenterRef.current = true;
-    setFlyTo({
-      center: { lng: location.coords.longitude, lat: location.coords.latitude },
-      zoom: INITIAL_USER_ZOOM,
+    if (!location.coords) return;
+    if (locateActiveRef.current) return;
+    runCamera({
+      type: "fix",
+      source: "watch",
+      coords: { lng: location.coords.longitude, lat: location.coords.latitude },
     });
-  }, [location.coords]);
+  }, [location.coords, runCamera]);
 
   // Clustering runs in JS (native clustering is broken on this stack — see
   // lib/map/cluster.ts). The index is rebuilt only when the bbox query returns new
@@ -336,8 +388,9 @@ export default function MapScreen() {
           }
         : { ok: false };
       const target = placementEntryTarget(fix, region.bounds);
-      setFlyTo({ center: target, zoom: PLACE_MIN_ZOOM, framedAboveSheet: true });
-      addDispatch({ type: "dropPin", point: target });
+      // Pre-bound seed acceptance: the reset above cleared the bound, so the coordinator accepts and
+      // recenters via the camera policy.
+      placementCoordinatorRef.current?.enterSeed(target);
     }
     if (!location.coords && (location.status === "denied" || location.status === "unavailable")) {
       showToast(
@@ -475,10 +528,6 @@ export default function MapScreen() {
     isEmpty: pinsQuery.isSuccess && (pinsQuery.data?.pins.length ?? 0) === 0,
   });
 
-  const rejectOutOfArea = () => {
-    showToast("err", "You can only add fountains near your current location.");
-  };
-
   return (
     <View style={styles.fill}>
       <FountainMap
@@ -515,20 +564,8 @@ export default function MapScreen() {
         }}
         onMapPressForPlacement={
           gate.state === "ready" && addMode && addState.phase === "placing"
-            ? (point) => {
-                if (!canPlace(region?.zoom ?? 0, addState.bound)) {
-                  // #97: the usual cause is being below placement zoom — say that
-                  // instead of the misleading "near your current location" message.
-                  showToast("err", "Zoom in a little more to drop the pin here.");
-                  return;
-                }
-                if (addState.bound && !inBound(point, addState.bound)) {
-                  rejectOutOfArea();
-                  return;
-                }
-                setAddMessage(null);
-                addDispatch({ type: "dropPin", point });
-              }
+            ? (point) =>
+                placementCoordinatorRef.current?.mapTap(point, addState.bound, region?.zoom ?? 0)
             : undefined
         }
       />
@@ -557,34 +594,53 @@ export default function MapScreen() {
         <MapFilters filters={filters} onChange={setFilters} />
       </View>
 
-      {location.coords ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Center on my location"
-          onPress={async () => {
-            // Recenter on the best-known fix IMMEDIATELY so the button always
-            // responds. It regressed to a silent no-op in #144 when it became
-            // gated solely on `await location.refresh()` - a fresh GPS fetch that
-            // can be slow, stall, or fail. Then upgrade to the fresh fix if one
-            // resolves (#locate-stale / spec §3.4). `refresh()` is timeout-bounded
-            // in the hook, so it always settles and never bricks later presses.
+      <LocateButton
+        descriptor={locateButtonDescriptor({
+          status: location.status,
+          refreshing: location.refreshing,
+          canAskAgain: location.canAskAgain,
+        })}
+        bottom={insets.bottom + spacing.lg + 56}
+        onPress={async () => {
+          // A locate gesture owns the camera for its duration (spec §6), so the fix effect skips the
+          // incoming refresh fix and the combined "press yields the first fix" case still moves the
+          // camera exactly once regardless of effect/microtask ordering.
+          locateActiveRef.current = true;
+          try {
+            // Recenter on the best-known fix IMMEDIATELY so the button always responds (#144). Then
+            // upgrade to the fresh fix if one resolves; `refresh()` is timeout-bounded in the hook,
+            // so it always settles and never bricks later presses.
             const known = location.coords;
             if (known) {
-              setFlyTo({
-                center: { lng: known.longitude, lat: known.latitude },
-                zoom: INITIAL_USER_ZOOM,
+              runCamera({
+                type: "locatePress",
+                coords: { lng: known.longitude, lat: known.latitude },
               });
             }
-            const c = await location.refresh();
-            if (c) {
-              setFlyTo({ center: { lng: c.longitude, lat: c.latitude }, zoom: INITIAL_USER_ZOOM });
+            // Branch on the SAME call's rich outcome (spec §3), never separately-scheduled state.
+            const outcome = await location.refresh();
+            if (outcome.kind === "granted") {
+              runCamera({
+                type: "locatePress",
+                coords: { lng: outcome.coords.longitude, lat: outcome.coords.latitude },
+              });
+            } else if (outcome.kind === "denied" && !outcome.canAskAgain) {
+              // The OS will not re-prompt: offer an explicit "Open settings" action (not an automatic
+              // redirect). On the SAME press (fresh outcome), and the open-failure falls back to a
+              // plain replacement toast (spec §3).
+              showToast("err", "Location access is off. Open Settings to enable it.", {
+                label: OPEN_SETTINGS_ACTION_LABEL,
+                onPress: async () => {
+                  const result = await location.openSettings();
+                  if (result.kind === "failed") showToast("err", SETTINGS_OPEN_FAILED_TEXT);
+                },
+              });
             }
-          }}
-          style={[styles.locate, { bottom: insets.bottom + spacing.lg + 56 }]}
-        >
-          <Ionicons name="locate" color={colors.brandBlue} size={22} />
-        </Pressable>
-      ) : null}
+          } finally {
+            locateActiveRef.current = false;
+          }
+        }}
+      />
 
       {gate.state === "ready" && addMode ? (
         <MapAddPanel
@@ -613,33 +669,19 @@ export default function MapScreen() {
               );
               return;
             }
-            setAddMessage(null);
             const point = { lng: location.coords.longitude, lat: location.coords.latitude };
-            addDispatch({ type: "dropPin", point });
-            // #100: recenter the camera on the user (previously it didn't move) and
-            // frame the target above the add sheet.
-            setFlyTo({ center: point, zoom: PLACE_MIN_ZOOM, framedAboveSheet: true });
+            placementCoordinatorRef.current?.useCurrentLocation(point, addState.bound);
           }}
           onPlaceAtCenter={() => {
             if (!region) return;
-            const point = centerOfViewport(region.bounds);
-            if (addState.bound && !inBound(point, addState.bound)) {
-              rejectOutOfArea();
-              return;
-            }
-            setAddMessage(null);
-            addDispatch({ type: "dropPin", point });
+            placementCoordinatorRef.current?.placeAtCenter(
+              centerOfViewport(region.bounds),
+              addState.bound,
+            );
           }}
-          onNudge={(direction) => {
-            if (addState.pin && addState.bound) {
-              const next = nudgePoint(addState.pin, direction);
-              if (!inBound(next, addState.bound)) {
-                rejectOutOfArea();
-                return;
-              }
-            }
-            addDispatch({ type: "nudge", direction });
-          }}
+          onNudge={(direction) =>
+            placementCoordinatorRef.current?.nudge(direction, addState.pin, addState.bound)
+          }
           onNext={() => addDispatch({ type: "next" })}
           onBack={() => addDispatch({ type: "back" })}
           onSetWorking={(isWorking) => addDispatch({ type: "setWorking", isWorking })}
@@ -695,8 +737,22 @@ export default function MapScreen() {
               addDispatch({ type: "submitError", error: result.error });
               setAddMessage({ tone: "err", text: addFountainErrorText(result.error) });
             } catch (error) {
-              const mapped = mapAddFountainError(error);
+              const { error: mapped, outcome } = classifyAddSubmitFailure(error);
               if (mapped === "unauthenticated") auth.markReauthRequired();
+              // Mark the outcome-unknown branch distinctly from an ordinary failure so it is
+              // diagnosable from logs (spec §2). The draft is preserved by `submitError` (the
+              // panel stays on the details step), so an unchanged retry reconciles.
+              if (outcome) {
+                logEvent(
+                  outcome.reason === "deadline"
+                    ? {
+                        event: "add_fountain_outcome_unknown",
+                        reason: "deadline",
+                        timeout_ms: outcome.timeout_ms,
+                      }
+                    : { event: "add_fountain_outcome_unknown", reason: "network_failure" },
+                );
+              }
               addDispatch({ type: "submitError", error: mapped });
               setAddMessage({ tone: "err", text: addFountainErrorText(mapped) });
             }
@@ -713,6 +769,12 @@ export default function MapScreen() {
           viewState={viewState}
           refetching={enabled && pinsQuery.isFetching && !pinsQuery.isLoading}
           capped={capped}
+          // isError with retained pins → the stale-pins banner keeps showing saved data (#244);
+          // isError with no data (new-key failure) → the full offline/error overlay (spec §5).
+          stalePins={pinsQuery.isError && pinsQuery.data != null}
+          // Spec §5: while acquiring the first fix, show "Locating you…" instead of the misleading
+          // below-zoom hint (a real offline/error still wins).
+          locating={location.status === "locating"}
           onRetry={() => void pinsQuery.refetch()}
         />
       )}
@@ -756,7 +818,11 @@ function MapTopBar({
           <Text style={styles.brandSubline}>Map</Text>
         </View>
       </View>
-      {totalPoints != null ? <PointsChip total={totalPoints} onPress={onPointsPress} /> : null}
+      {totalPoints != null ? (
+        <PointsChip total={totalPoints} onPress={onPointsPress} />
+      ) : (
+        <View style={styles.pointsChipPlaceholder} accessibilityElementsHidden />
+      )}
     </View>
   );
 }
@@ -816,19 +882,15 @@ function PointsChip({ total, onPress }: { total: number; onPress: () => void }) 
   );
 }
 
-function MobileToast({
-  toast,
-  onDismiss,
-}: {
-  toast: { tone: "err" | "ok"; text: string; nonce: number } | null;
-  onDismiss: () => void;
-}) {
+function MobileToast({ toast, onDismiss }: { toast: ToastState | null; onDismiss: () => void }) {
+  const action = toast?.action;
   useEffect(() => {
     if (!toast) return;
-    const timer = setTimeout(onDismiss, 3200);
+    // An action present extends the dismiss window so the user can reach for it (spec §3).
+    const timer = setTimeout(onDismiss, toastAutoDismissMs(action != null));
     AccessibilityInfo.announceForAccessibility(toast.text);
     return () => clearTimeout(timer);
-  }, [onDismiss, toast]);
+  }, [onDismiss, toast, action]);
 
   if (!toast) return null;
   return (
@@ -837,7 +899,56 @@ function MobileToast({
       style={[styles.toast, toast.tone === "err" ? styles.toastErr : styles.toastOk]}
     >
       <Text style={styles.toastText}>{toast.text}</Text>
+      {toast.action ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={toast.action.label}
+          onPress={() => {
+            // Tapping the action dismisses the toast and invokes it (spec §3).
+            onDismiss();
+            void toast.action!.onPress();
+          }}
+          style={styles.toastAction}
+        >
+          <Text style={styles.toastActionText}>{toast.action.label}</Text>
+        </Pressable>
+      ) : null}
     </View>
+  );
+}
+
+function LocateButton({
+  descriptor,
+  bottom,
+  onPress,
+}: {
+  descriptor: LocateButtonDescriptor;
+  bottom: number;
+  onPress: () => void | Promise<void>;
+}) {
+  // The button is always mounted (no coords gate, spec §4). It consumes the descriptor's fields
+  // directly - the only screen-side mapping is the structural tone → theme color.
+  return (
+    <Pressable
+      accessibilityRole={descriptor.accessibilityRole}
+      accessibilityLabel={descriptor.accessibilityLabel}
+      accessibilityHint={descriptor.accessibilityHint}
+      accessibilityState={descriptor.accessibilityState}
+      onPress={() => {
+        void onPress();
+      }}
+      style={[styles.locate, { bottom }]}
+    >
+      {descriptor.visual.kind === "spinner" ? (
+        <ActivityIndicator size="small" color={colors.brandBlue} />
+      ) : (
+        <Ionicons
+          name="locate"
+          size={22}
+          color={descriptor.visual.tone === "brand" ? colors.brandBlue : colors.textMuted}
+        />
+      )}
+    </Pressable>
   );
 }
 
@@ -896,8 +1007,6 @@ function MapAddPanel({
   onSubmit: () => Promise<void>;
   onViewDuplicate: (id: string) => void;
 }) {
-  const pinInBound = state.pin != null && state.bound != null && inBound(state.pin, state.bound);
-  const placeable = canPlace(region?.zoom ?? 0, state.bound) && pinInBound;
   const ratingsCount = buildRatingsFromStars(ratingTypes, ratings).length;
   const observationsCount = buildObservationsFromValues(attributeTypes, attributes).length;
   const preview = addFountainPointsPreview({
@@ -926,9 +1035,7 @@ function MapAddPanel({
       <PanelHeader title="Add a fountain" onCancel={onCancel} />
       {state.phase === "placing" ? (
         <View style={styles.panelSection}>
-          <Text style={styles.note}>
-            {placementInstruction(placeable, region?.zoom, state.pin)}
-          </Text>
+          <Text style={styles.note}>{placementInstruction(region?.zoom, state.pin)}</Text>
           {state.pin ? (
             <Text
               style={styles.coord}
@@ -958,7 +1065,10 @@ function MapAddPanel({
           </View>
           <PrimaryAction
             label="Next"
-            disabled={!state.pin || !placeable || pending}
+            // Eligibility derives from an ACCEPTED pin (spec §6): a pin only enters state via a
+            // bound-validated action, so `state.pin != null` already means it was placeable when
+            // dropped. It stays submittable even if the live bound later moves away (walked-away).
+            disabled={!state.pin || pending}
             onPress={onNext}
           />
         </View>
@@ -1153,10 +1263,13 @@ function ChoiceAction({
   );
 }
 
-function placementInstruction(placeable: boolean, zoom: number | undefined, pin: LngLat | null) {
-  if ((zoom ?? 0) < PLACE_MIN_ZOOM) return "Zoom in, then tap the map or use a placement button.";
+function placementInstruction(zoom: number | undefined, pin: LngLat | null) {
+  // Once a pin is accepted it stays selected/submittable (spec §6) regardless of the live bound, so
+  // the guidance keys off the pin's existence, not a live in-bound recheck.
+  if (!pin && (zoom ?? 0) < PLACE_MIN_ZOOM) {
+    return "Zoom in, then tap the map or use a placement button.";
+  }
   if (!pin) return "Tap the map, use current location, or place at map center.";
-  if (!placeable) return "Move the pin inside the allowed placement area.";
   return "Location selected. You can nudge the pin before continuing.";
 }
 
@@ -1165,38 +1278,37 @@ function MapOverlay(props: {
   viewState: ViewState;
   refetching: boolean;
   capped: boolean;
+  stalePins: boolean;
+  locating: boolean;
   onRetry: () => void;
 }) {
-  const loading = props.viewState === "loading";
-  // A background refetch (a filter change or a pan after the first load) doesn't flip `isLoading`,
-  // so without this a filter tap that refetches pins gives no feedback (#212). Show the same quiet
-  // banner spinner — never the full-screen state — so the map keeps showing the current pins.
-  const refetching = props.refetching && !loading;
-  const retryable = props.viewState === "offline" || props.viewState === "error";
-
-  let message: string | null = null;
-  if (props.belowZoom) message = "Zoom in to see fountains";
-  else if (props.viewState === "offline") message = "You appear to be offline";
-  else if (props.viewState === "error") message = "Couldn't load fountains";
-  else if (props.viewState === "empty") message = "No fountains in this area";
-  else if (props.viewState === "ready" && props.capped)
-    message = "Showing the first 500 — zoom in for more";
-
-  if (!loading && !refetching && message == null) return null;
+  // The overlay's copy + accessibility contract is a pure decision (`resolveMapOverlay`), unit
+  // tested node-safe; this component is a thin renderer of that model. A background refetch (a
+  // filter change or a pan after the first load) doesn't flip `isLoading`, so it shows a quiet
+  // banner spinner (#212); a failed refetch with retained pins shows the stale-pins alert (#244).
+  const model = resolveMapOverlay(props);
+  if (model.kind === "hidden") return null;
 
   return (
-    <View style={styles.banner} pointerEvents="box-none">
-      {loading || refetching ? (
+    <View
+      style={styles.banner}
+      pointerEvents="box-none"
+      accessibilityRole={model.accessibilityRole}
+      accessibilityLiveRegion={model.accessibilityLiveRegion}
+    >
+      {model.spinner ? (
         <ActivityIndicator
           color={colors.brandBlue}
           accessibilityRole="progressbar"
-          accessibilityLabel={refetching ? "Updating fountains" : "Loading fountains"}
+          accessibilityLabel={
+            model.spinner === "updating" ? "Updating fountains" : "Loading fountains"
+          }
         />
       ) : null}
-      {message ? (
-        <Text style={styles.bannerText} onPress={retryable ? props.onRetry : undefined}>
-          {message}
-          {retryable ? " — tap to retry" : ""}
+      {model.message ? (
+        <Text style={styles.bannerText} onPress={model.retryable ? props.onRetry : undefined}>
+          {model.message}
+          {model.retryable ? " — tap to retry" : ""}
         </Text>
       ) : null}
     </View>
@@ -1233,6 +1345,12 @@ const styles = StyleSheet.create({
   brandSubline: { ...typography.meta, color: "#BFDBFE", fontWeight: "700" },
   filterBar: { position: "absolute", left: 0, right: 0 },
   pointsChipWrap: {},
+  pointsChipPlaceholder: {
+    width: 78,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: colors.surface,
+  },
   pointsChip: {
     backgroundColor: "#06306F",
     borderColor: colors.brandYellow,
@@ -1371,6 +1489,15 @@ const styles = StyleSheet.create({
   toastErr: { backgroundColor: "#FEE2E2", borderColor: colors.danger },
   toastOk: { backgroundColor: "#D1FAE5", borderColor: "#047857" },
   toastText: { ...typography.body, color: colors.text, fontWeight: "700" },
+  toastAction: {
+    minHeight: 44,
+    minWidth: 44,
+    justifyContent: "center",
+    alignSelf: "flex-start",
+    marginTop: spacing.xs,
+    paddingHorizontal: spacing.sm,
+  },
+  toastActionText: { ...typography.body, color: colors.brandBlue, fontWeight: "800" },
   title: { ...typography.title, color: colors.brandBlue },
   note: { ...typography.body, color: colors.textMuted },
 });

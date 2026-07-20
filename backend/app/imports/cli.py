@@ -16,7 +16,7 @@ import json
 import logging
 
 from app.config import get_settings
-from app.db import get_sessionmaker
+from app.db import get_sessionmaker, log_session_config
 from app.imports.merge import RunScope, RunSummary, merge_candidates
 from app.imports.osm import ParseResult, parse_osm_geojson
 from app.logging_config import configure_logging
@@ -95,6 +95,9 @@ async def run_import(
 
 def main(argv: list[str] | None = None) -> int:
     configure_logging()
+    # Before any database work: record the armed fail-closed session config (marker + GUCs) so
+    # cancellation behavior is diagnosable from logs alone (spec 2026-07-17 §2a).
+    log_session_config()
     p = argparse.ArgumentParser(prog="app.imports.cli")
     p.add_argument("--path", required=True)
     p.add_argument("--scope-id", required=True)

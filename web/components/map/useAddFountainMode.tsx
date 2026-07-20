@@ -23,6 +23,7 @@ export function useAddFountainMode(
 ): { active: boolean; fab: ReactNode; panel: ReactNode } {
   const [state, dispatch] = useReducer(addReducer, initialAddState);
   const [fix, setFix] = useState<GpsFix>({ ok: false });
+  const [gpsState, setGpsState] = useState<"idle" | "pending" | "available" | "denied">("idle");
   const [zoom, setZoom] = useState(0);
   const router = useRouter();
   const active = state.phase !== "idle";
@@ -64,6 +65,7 @@ export function useAddFountainMode(
     dispatch({ type: "ENTER" });
     resetOptional(); // never carry a prior add's optional fields into a new one
     setFix({ ok: false }); // reset stale GPS before the new request
+    setGpsState("pending");
     setZoom(placementMap.getZoom());
     dispatch({ type: "SET_BOUND", bound: boundFromFix({ ok: false }, placementMap.getViewport()) });
     navigator.geolocation?.getCurrentPosition(
@@ -71,6 +73,7 @@ export function useAddFountainMode(
         // Poor accuracy is NOT a usable fix (spec §6): no recenter, fallback bound + copy.
         if (pos.coords.accuracy > ACCURACY_MAX_M) {
           setFix({ ok: false });
+          setGpsState("denied");
           return;
         }
         const f: GpsFix = {
@@ -80,9 +83,13 @@ export function useAddFountainMode(
           accuracy: pos.coords.accuracy,
         };
         setFix(f);
+        setGpsState("available");
         placementMap.flyToFix({ lng: f.lng, lat: f.lat });
       },
-      () => setFix({ ok: false }),
+      () => {
+        setFix({ ok: false });
+        setGpsState("denied");
+      },
       { enableHighAccuracy: false, timeout: GEOLOCATE_TIMEOUT_MS },
     );
   }, [placementMap, resetOptional]);
@@ -200,7 +207,8 @@ export function useAddFountainMode(
       pin={state.pin}
       working={state.working}
       placeable={placeable}
-      gpsUnavailable={!fix.ok}
+      gpsPending={gpsState === "pending"}
+      gpsUnavailable={gpsState === "denied"}
       duplicateId={state.duplicateId}
       errorKind={state.errorKind}
       onCancel={() => {

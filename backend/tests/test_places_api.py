@@ -967,3 +967,348 @@ async def test_city_fountains_not_indexable_for_not_ready_scope(session, api):
     body = resp.json()
     assert body["indexable"] is False
     assert len(body["fountains"]) == 1  # reachable with its assigned fountain
+
+
+# --- Cities sitemap (flat, chunked enumeration) — spec §6/§7 ---------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cities_sitemap_flat_list_region_and_two_level(session, api):
+    """The cities sitemap flattens BOTH URL shapes into one indexable list: region-tier cities carry
+    their canonical region slug (nested URL), two-level cities carry region_slug=None. Below-K and
+    not-city-routes-ready cities are excluded — the same gate the page's noindex verdict uses."""
+    # Region-tier country: country -> canonical region -> city.
+    rt = await _add_place(
+        session,
+        overture_id="rt",
+        subtype="country",
+        country_code="rt",
+        name="Regionland",
+        slug="regionland",
+        fountain_count=100,
+        is_canonical=False,
+    )
+    reg = await _add_place(
+        session,
+        overture_id="rt-reg",
+        subtype="region",
+        country_code="rt",
+        name="North",
+        slug="north",
+        fountain_count=50,
+        is_canonical=True,
+        parent_id=rt,
+        place_kind="region",
+    )
+    await _add_place(
+        session,
+        overture_id="rt-alpha",
+        subtype="locality",
+        country_code="rt",
+        name="Alpha",
+        slug="alpha",
+        fountain_count=5,
+        is_canonical=True,
+        parent_id=reg,
+    )
+    # Below the K=3 gate -> excluded.
+    await _add_place(
+        session,
+        overture_id="rt-thin",
+        subtype="locality",
+        country_code="rt",
+        name="Thin",
+        slug="thin",
+        fountain_count=2,
+        is_canonical=True,
+        parent_id=reg,
+    )
+    # Two-level country: country -> city (no region tier).
+    tl = await _add_place(
+        session,
+        overture_id="tl",
+        subtype="country",
+        country_code="tl",
+        name="Twolevel",
+        slug="twolevel",
+        fountain_count=80,
+        is_canonical=False,
+    )
+    await _add_place(
+        session,
+        overture_id="tl-beta",
+        subtype="locality",
+        country_code="tl",
+        name="Beta",
+        slug="beta",
+        fountain_count=5,
+        is_canonical=True,
+        parent_id=tl,
+    )
+    # A ready-scope but not-ready country: fc >= K yet city_routes_ready=false -> excluded.
+    nr = await _add_place(
+        session,
+        overture_id="nr",
+        subtype="country",
+        country_code="nr",
+        name="Notready",
+        slug="notready",
+        fountain_count=80,
+        is_canonical=False,
+    )
+    await _add_place(
+        session,
+        overture_id="nr-delta",
+        subtype="locality",
+        country_code="nr",
+        name="Delta",
+        slug="delta",
+        fountain_count=9,
+        is_canonical=True,
+        parent_id=nr,
+    )
+    await _set_scope_ready(session, "rt", ready=True)
+    await _set_scope_ready(session, "tl", ready=True)
+    await _set_scope_ready(session, "nr", ready=False)
+    await session.commit()
+
+    resp = await api.get("/api/v1/places/cities/sitemap")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total_count"] == 2
+    got = {(c["country_code"], c["slug"], c["region_slug"]) for c in body["cities"]}
+    assert got == {("rt", "alpha", "north"), ("tl", "beta", None)}
+    assert resp.headers["cache-control"].startswith("public")
+
+
+@pytest.mark.asyncio
+async def test_cities_sitemap_paginates_with_stable_total(session, api):
+    """limit/offset page a deterministic (id-ordered) set; total_count is the full indexable total
+    on every page so the sitemap index can size chunks."""
+    tl = await _add_place(
+        session,
+        overture_id="tl",
+        subtype="country",
+        country_code="tl",
+        name="Twolevel",
+        slug="twolevel",
+        fountain_count=80,
+        is_canonical=False,
+    )
+    for slug in ("one", "two", "three"):
+        await _add_place(
+            session,
+            overture_id=f"tl-{slug}",
+            subtype="locality",
+            country_code="tl",
+            name=slug.title(),
+            slug=slug,
+            fountain_count=5,
+            is_canonical=True,
+            parent_id=tl,
+        )
+    await _set_scope_ready(session, "tl", ready=True)
+    await session.commit()
+
+    page1 = (await api.get("/api/v1/places/cities/sitemap?limit=2&offset=0")).json()
+    page2 = (await api.get("/api/v1/places/cities/sitemap?limit=2&offset=2")).json()
+    assert page1["total_count"] == 3
+    assert page2["total_count"] == 3
+    assert len(page1["cities"]) == 2
+    assert len(page2["cities"]) == 1
+    slugs = {c["slug"] for c in page1["cities"]} | {c["slug"] for c in page2["cities"]}
+    assert slugs == {"one", "two", "three"}
+
+
+@pytest.mark.asyncio
+async def test_cities_sitemap_excludes_orphan_and_noncanonical_region_parent(session, api):
+    """A canonical city owns a canonical URL only when its parent is the country or a CANONICAL
+    region. A parent dropped to NULL (SET NULL) or a non-canonical region parent -> excluded, so the
+    sitemap never emits a non-canonical/404 nested URL."""
+    country = await _add_place(
+        session,
+        overture_id="rt",
+        subtype="country",
+        country_code="rt",
+        name="Regionland",
+        slug="regionland",
+        fountain_count=100,
+        is_canonical=False,
+    )
+    canon_region = await _add_place(
+        session,
+        overture_id="rt-north",
+        subtype="region",
+        country_code="rt",
+        name="North",
+        slug="north",
+        fountain_count=50,
+        is_canonical=True,
+        parent_id=country,
+        place_kind="region",
+    )
+    noncanon_region = await _add_place(
+        session,
+        overture_id="rt-south",
+        subtype="region",
+        country_code="rt",
+        name="South",
+        slug="south",
+        fountain_count=50,
+        is_canonical=False,
+        parent_id=country,
+        place_kind="region",
+    )
+    # Under a NON-canonical region -> excluded.
+    await _add_place(
+        session,
+        overture_id="rt-ghost",
+        subtype="locality",
+        country_code="rt",
+        name="Ghost",
+        slug="ghost",
+        fountain_count=5,
+        is_canonical=True,
+        parent_id=noncanon_region,
+    )
+    # Orphaned (parent_id NULL) -> excluded.
+    await _add_place(
+        session,
+        overture_id="rt-orphan",
+        subtype="locality",
+        country_code="rt",
+        name="Orphan",
+        slug="orphan",
+        fountain_count=5,
+        is_canonical=True,
+        parent_id=None,
+    )
+    # A genuinely canonical, region-parented city -> the only row returned.
+    await _add_place(
+        session,
+        overture_id="rt-real",
+        subtype="locality",
+        country_code="rt",
+        name="Real",
+        slug="real",
+        fountain_count=5,
+        is_canonical=True,
+        parent_id=canon_region,
+    )
+    await _set_scope_ready(session, "rt", ready=True)
+    await session.commit()
+
+    body = (await api.get("/api/v1/places/cities/sitemap")).json()
+    assert body["total_count"] == 1
+    assert {c["slug"] for c in body["cities"]} == {"real"}
+    assert body["cities"][0]["region_slug"] == "north"
+
+
+@pytest.mark.asyncio
+async def test_cities_sitemap_excludes_country_city_colliding_with_region_slug(session, api):
+    """A country-parented city is emitted only when no canonical region shares its (country_code,
+    slug). resolve_level2_place matches a canonical region BEFORE a country-parented city, so a
+    same-slug region owns /[country]/[slug] and the city's two-level URL would resolve to the region
+    page — the sitemap must not advertise it. A country-parented city with a non-colliding slug IS
+    emitted."""
+    country = await _add_place(
+        session,
+        overture_id="rt",
+        subtype="country",
+        country_code="rt",
+        name="Regionland",
+        slug="regionland",
+        fountain_count=100,
+        is_canonical=False,
+    )
+    await _add_place(
+        session,
+        overture_id="rt-north-region",
+        subtype="region",
+        country_code="rt",
+        name="North",
+        slug="north",
+        fountain_count=50,
+        is_canonical=True,
+        parent_id=country,
+        place_kind="region",
+    )
+    # Country-parented city whose slug collides with the canonical region "north" -> excluded.
+    await _add_place(
+        session,
+        overture_id="rt-north-city",
+        subtype="locality",
+        country_code="rt",
+        name="North City",
+        slug="north",
+        fountain_count=5,
+        is_canonical=True,
+        parent_id=country,
+    )
+    # Country-parented city with a non-colliding slug -> emitted as a two-level URL.
+    await _add_place(
+        session,
+        overture_id="rt-solo",
+        subtype="locality",
+        country_code="rt",
+        name="Solo",
+        slug="solo",
+        fountain_count=5,
+        is_canonical=True,
+        parent_id=country,
+    )
+    await _set_scope_ready(session, "rt", ready=True)
+    await session.commit()
+
+    body = (await api.get("/api/v1/places/cities/sitemap")).json()
+    assert body["total_count"] == 1
+    assert {(c["slug"], c["region_slug"]) for c in body["cities"]} == {("solo", None)}
+
+
+@pytest.mark.asyncio
+async def test_cities_sitemap_excludes_cross_country_parent(session, api):
+    """A city whose parent boundary is in a DIFFERENT country is excluded — the public feed fails
+    closed on inconsistent hierarchy data rather than emitting a cross-country/404 URL. (Uses
+    scope codes outside other suites' fixtures — place_scope_config is not truncated between tests.)
+    """
+    qp = await _add_place(
+        session,
+        overture_id="qp",
+        subtype="country",
+        country_code="qp",
+        name="Parentland",
+        slug="parentland",
+        fountain_count=100,
+        is_canonical=False,
+    )
+    foreign_region = await _add_place(
+        session,
+        overture_id="qp-foreign",
+        subtype="region",
+        country_code="qp",
+        name="Foreign",
+        slug="foreign",
+        fountain_count=50,
+        is_canonical=True,
+        parent_id=qp,
+        place_kind="region",
+    )
+    # City claims country "qx" but is parented to a region in "qp".
+    await _add_place(
+        session,
+        overture_id="qx-stray",
+        subtype="locality",
+        country_code="qx",
+        name="Stray",
+        slug="stray",
+        fountain_count=5,
+        is_canonical=True,
+        parent_id=foreign_region,
+    )
+    await _set_scope_ready(session, "qx", ready=True)
+    await _set_scope_ready(session, "qp", ready=True)
+    await session.commit()
+
+    body = (await api.get("/api/v1/places/cities/sitemap")).json()
+    assert body["total_count"] == 0
+    assert body["cities"] == []

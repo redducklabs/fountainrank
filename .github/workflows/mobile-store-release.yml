@@ -202,7 +202,7 @@ jobs:
       PLAY_RELEASE_NOTES: ${{ needs.release-notes.outputs.store_body }}
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
       - uses: pnpm/action-setup@v6.0.9
@@ -402,7 +402,7 @@ jobs:
       EXPO_NO_CAPABILITY_SYNC: "1"
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
       - uses: pnpm/action-setup@v6.0.9

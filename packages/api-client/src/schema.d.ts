@@ -679,6 +679,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/places/cities/sitemap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Cities Sitemap
+         * @description The indexable cities for the cities sitemap chunk (spec §6/§7).
+         *
+         *     Enumerates the canonical cities in city-routes-ready scopes with ``fountain_count >= K`` — the
+         *     SAME gate ``PlaceOut.indexable`` applies for the city page's ``noindex`` verdict — ordered by id
+         *     for a stable, deterministic page across offsets. Joins each city's parent (in the SAME country)
+         *     to derive the canonical URL shape in one query: a canonical **region** parent yields the nested
+         *     ``/[country]/[region]/[city]`` slug, a **country** parent the two-level ``/[country]/[city]`` —
+         *     so the web builder never runs a per-city resolve. A city whose parent was dropped (SET NULL), is
+         *     a non-canonical region, or sits in a different country is excluded (it owns no canonical URL).
+         *
+         *     A country-parented city is emitted ONLY when no canonical region shares its
+         *     ``(country_code, slug)``: ``resolve_level2_place`` matches a canonical region BEFORE a
+         *     country-parented city, so a same-slug region would own ``/[country]/[slug]`` and the city's
+         *     two-level URL would resolve to the region page — never advertise that URL. (Two-level countries
+         *     have no regions, so their cities are always emitted.) Reads only the precomputed membership
+         *     columns (never a live ``ST_Covers``, spec §5); unauthenticated + cacheable. ``total_count`` is
+         *     the full indexable total so the sitemap builder sizes chunk URLs and logs (never silently) when
+         *     a chunk nears the 50k-URL limit and must be split. Declared BEFORE ``/places/{country}/...`` so
+         *     ``cities/sitemap`` is not parsed as a country.
+         */
+        get: operations["cities_sitemap_api_v1_places_cities_sitemap_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/places/{country}/regions": {
         parameters: {
             query?: never;
@@ -799,6 +837,31 @@ export interface paths {
          *     can ``notFound()``.
          */
         get: operations["city_fountains_api_v1_places__country___city__fountains_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Site Stats
+         * @description Site-wide public counts for the homepage positioning copy.
+         *
+         *     ``total_fountains`` counts every non-hidden fountain (the honest "N+ fountains" headline — a
+         *     live count, not a sum of per-place ``fountain_count``, which would miss fountains outside any
+         *     place). ``total_countries`` counts the country places with at least one non-hidden fountain (the
+         *     same set the browse hub lists). Unauthenticated + cacheable; no live ST_Covers.
+         */
+        get: operations["site_stats_api_v1_stats_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1203,6 +1266,37 @@ export interface components {
             fountains: components["schemas"]["CityFountainPin"][];
             /** Indexable */
             indexable: boolean;
+        };
+        /**
+         * CitySitemapItem
+         * @description One indexable city's canonical-URL parts for the cities sitemap (#127, spec §6).
+         *
+         *     ``region_slug`` is the parent region's slug for a region-tier country (the nested
+         *     ``/[country]/[region]/[city]`` URL) or ``None`` for a two-level country
+         *     (``/[country]/[city]``), so the web builder emits the canonical path without a per-city resolve.
+         */
+        CitySitemapItem: {
+            /** Country Code */
+            country_code: string;
+            /** Slug */
+            slug: string;
+            /** Region Slug */
+            region_slug: string | null;
+        };
+        /**
+         * CitySitemapOut
+         * @description The indexable cities for a cities sitemap chunk (#127, spec §6/§7).
+         *
+         *     ``cities`` are the canonical, city-routes-ready cities with ``fountain_count >= K`` (the same
+         *     indexability gate the city page and ``PlaceOut.indexable`` use), ordered by id for stable
+         *     pagination and capped by ``limit``. ``total_count`` is the full indexable total, so the sitemap
+         *     builder sizes the chunk URLs and logs (never silently) when a chunk nears the 50k-URL limit.
+         */
+        CitySitemapOut: {
+            /** Cities */
+            cities: components["schemas"]["CitySitemapItem"][];
+            /** Total Count */
+            total_count: number;
         };
         /** ConditionReportRequest */
         ConditionReportRequest: {
@@ -1743,6 +1837,22 @@ export interface components {
             /** Pending Count */
             pending_count: number;
         };
+        /**
+         * SiteStatsOut
+         * @description Public site-wide counts for the homepage positioning copy.
+         *
+         *     ``total_fountains`` is every non-hidden fountain (the headline "N+ fountains" number); it is a
+         *     live count of the fountains table, NOT a sum of per-place ``fountain_count`` (which would miss
+         *     fountains not assigned to any place). ``total_countries`` is the number of country places with
+         *     at least one non-hidden fountain — the same "countries with fountains" set the browse hub lists.
+         *     Both are cacheable + unauthenticated.
+         */
+        SiteStatsOut: {
+            /** Total Fountains */
+            total_fountains: number;
+            /** Total Countries */
+            total_countries: number;
+        };
         /** SyncProfileRequest */
         SyncProfileRequest: {
             /** Userinfo Token */
@@ -1988,6 +2098,15 @@ export interface operations {
             429: {
                 headers: {
                     /** @description Seconds until the rolling-window budget admits another attempt. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description A boundary load / membership refresh holds the write lock; retry after the interval in `Retry-After`. */
+            503: {
+                headers: {
+                    /** @description Seconds to wait before retrying the write. */
                     "Retry-After"?: number;
                     [name: string]: unknown;
                 };
@@ -2797,6 +2916,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description A boundary load / membership refresh holds the write lock; retry after the interval in `Retry-After`. */
+            503: {
+                headers: {
+                    /** @description Seconds to wait before retrying the write. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     admin_patch_fountain_api_v1_admin_fountains__fountain_id__patch: {
@@ -2836,6 +2964,15 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+            /** @description A boundary load / membership refresh holds the write lock; retry after the interval in `Retry-After`. */
+            503: {
+                headers: {
+                    /** @description Seconds to wait before retrying the write. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -3240,6 +3377,38 @@ export interface operations {
             };
         };
     };
+    cities_sitemap_api_v1_places_cities_sitemap_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CitySitemapOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_regions_api_v1_places__country__regions_get: {
         parameters: {
             query?: {
@@ -3477,6 +3646,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    site_stats_api_v1_stats_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SiteStatsOut"];
                 };
             };
         };

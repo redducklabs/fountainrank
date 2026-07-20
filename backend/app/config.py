@@ -2,7 +2,7 @@ import json
 from functools import lru_cache
 from typing import Annotated
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # Logto OSS (self-hosted, tenant id "default") always identifies its Management API by this
@@ -23,6 +23,19 @@ class Settings(BaseSettings):
     # Path to the CA cert (PEM) for DO Managed Postgres TLS, mounted as a k8s secret
     # in production (env DB_SSL_ROOT_CERT). Unset locally -> plaintext, no SSL.
     db_ssl_root_cert: str | None = None
+
+    # Loader-session identity + fail-closed cancellation GUCs (spec 2026-07-17, candidate-capture
+    # + loader-cancellation design §2a). All default None so the serving backend and local dev are
+    # byte-identical; ONLY the isolated loader Job manifests set them (envs DB_APPLICATION_NAME,
+    # DB_CLIENT_CONNECTION_CHECK_INTERVAL_MS, DB_LOCK_TIMEOUT_MS). application_name is the
+    # run-scoped marker the teardown reaper matches exactly; the check interval makes a busy
+    # server-side statement notice its dead client and abort (a killed loader pod otherwise leaves
+    # its query running for hours holding ADD_FOUNTAIN_LOCK); lock_timeout bounds ONLY lock waits
+    # (never executing statements — unlike the rejected statement_timeout), so an orphaned/wedged
+    # holder fails the loader fast instead of burning the Job deadline.
+    db_application_name: str | None = None
+    db_client_connection_check_interval_ms: Annotated[int, Field(gt=0, le=600_000)] | None = None
+    db_lock_timeout_ms: Annotated[int, Field(gt=0, le=18_000_000)] | None = None
 
     # Logging (see app/logging_config.py + CLAUDE.md "Logging & Observability").
     # LOG_LEVEL: standard level name. LOG_FORMAT: "json" (structured, default) or
@@ -64,6 +77,14 @@ class Settings(BaseSettings):
     ranking_confidence_m: int = 5
     # Reject a new fountain if one already exists within this many meters (spec §7).
     duplicate_threshold_m: float = 10.0
+    # Bound (ms) on how long an interactive write (POST /fountains, admin patch/delete) may wait on
+    # ANY lock — the advisory add lock, or the row/table locks a concurrent membership refresh
+    # holds — before failing fast with 503 busy instead of an infinite spinner (spec 2026-07-17
+    # §1). The whole interactive write transaction runs under this as a transaction-wide
+    # `lock_timeout`; there is NO reset, so bulk/CLI paths (which don't set it) keep their
+    # deliberate unbounded wait. `0` would silently disable the timeout and an unbounded value
+    # defeats the design, so both are rejected. Env var: ADD_LOCK_TIMEOUT_MS.
+    add_lock_timeout_ms: Annotated[int, Field(gt=0, le=60_000)] = 8000
     # Map-read guardrails.
     nearby_default_radius_m: float = 1000.0
     nearby_max_radius_m: float = 50_000.0

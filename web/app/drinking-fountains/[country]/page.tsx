@@ -10,11 +10,12 @@ import {
   getCountriesServer,
   getCountryCitiesServer,
   getCountryRegionsServer,
+  placeTitle,
   regionPath,
 } from "../../../lib/places";
 import type { PlaceOut } from "../../../lib/places";
 import { log } from "../../../lib/server/log";
-import { jsonLdScript } from "../../../lib/seo/jsonld";
+import { itemListStructuredData, jsonLdScript } from "../../../lib/seo/jsonld";
 import { SITE_URL } from "../../../lib/seo/site";
 
 export const dynamic = "force-dynamic";
@@ -41,7 +42,7 @@ export async function generateMetadata({
     // Unknown / below-gate country: the page 404s, but keep metadata explicitly non-indexable.
     return { robots: { index: false, follow: false } };
   }
-  const title = `Drinking fountains in ${place.name}`;
+  const title = placeTitle(place.name, place.fountain_count);
   const description = `Find public drinking fountains and water bottle refill stations across ${place.name} — ${place.fountain_count.toLocaleString()} mapped on FountainRank.`;
   const canonical = countryPath(place.country_code);
   return {
@@ -67,30 +68,47 @@ export default async function CountryPage({ params }: { params: Promise<{ countr
     getCountryCitiesServer(place.country_code, requestId),
   ]);
   const hasRegions = regions.length > 0;
-  const structuredJson = jsonLdScript({
-    "@context": "https://schema.org",
-    "@type": "BreadcrumbList",
-    itemListElement: [
-      { "@type": "ListItem", position: 1, name: "FountainRank", item: SITE_URL },
-      {
-        "@type": "ListItem",
-        position: 2,
-        name: "Drinking fountains",
-        item: `${SITE_URL}/drinking-fountains`,
-      },
-      {
-        "@type": "ListItem",
-        position: 3,
-        name: `Drinking fountains in ${place.name}`,
-        item: `${SITE_URL}${countryPath(place.country_code)}`,
-      },
-    ],
-  });
+  // Structured data: a BreadcrumbList plus an ItemList of the child places this page lists (regions
+  // when the country has a region tier, else the top cities). BOTH are gated on `place.indexable` —
+  // like the region/city templates and docs/style-guide.md, a below-gate page emits no structured
+  // data (a country page can render but be noindex when it is below the readiness gate).
+  const childUrls = hasRegions
+    ? regions.map((region) => `${SITE_URL}${regionPath(place.country_code, region.slug)}`)
+    : cities.map((city) => `${SITE_URL}${cityPath(place.country_code, city.slug)}`);
+  const breadcrumb = place.indexable
+    ? {
+        "@context": "https://schema.org",
+        "@type": "BreadcrumbList",
+        itemListElement: [
+          { "@type": "ListItem", position: 1, name: "FountainRank", item: SITE_URL },
+          {
+            "@type": "ListItem",
+            position: 2,
+            name: "Drinking fountains",
+            item: `${SITE_URL}/drinking-fountains`,
+          },
+          {
+            "@type": "ListItem",
+            position: 3,
+            name: `Drinking fountains in ${place.name}`,
+            item: `${SITE_URL}${countryPath(place.country_code)}`,
+          },
+        ],
+      }
+    : null;
+  const breadcrumbJson = breadcrumb ? jsonLdScript(breadcrumb) : null;
+  const itemList = place.indexable ? itemListStructuredData(childUrls) : null;
+  const itemListJson = itemList ? jsonLdScript(itemList) : null;
 
   return (
     <>
       <SiteHeader variant="bar" />
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: structuredJson }} />
+      {breadcrumbJson ? (
+        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: breadcrumbJson }} />
+      ) : null}
+      {itemListJson ? (
+        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: itemListJson }} />
+      ) : null}
       <main className={shell}>
         <Link href="/" className="text-sm text-brand-ink underline">
           ← Back to the map

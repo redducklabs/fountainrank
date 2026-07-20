@@ -69,6 +69,14 @@ async def test_boundary_gist_index(session):
 
 
 @pytest.mark.asyncio
+async def test_country_kind_btree_index(session):
+    idx = await _indexes(session)
+    definition = idx["ix_place_boundaries_country_kind"].lower()
+    assert "using btree" in definition
+    assert "(country_code, place_kind)" in definition
+
+
+@pytest.mark.asyncio
 async def test_partial_unique_place_hierarchy_canonical(session):
     idx = await _indexes(session)
     region = idx["uq_place_boundaries_region_canonical"].lower()

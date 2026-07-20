@@ -17,11 +17,11 @@ from app.contributions import (
 from app.db import get_session
 from app.display import public_display_name
 from app.geo import point_geography
-from app.locks import ADD_FOUNTAIN_LOCK_KEY
+from app.locks import ADD_FOUNTAIN_LOCK_KEY, InteractiveWriteBusy, interactive_lock_timeout
 from app.membership import recompute_fountain_membership, recompute_place_counts
 from app.models import ContentReport, Fountain, FountainNote, FountainPhoto, StorageCleanup, User
 from app.ranking import recompute_fountain_ranking
-from app.routers.fountains import serialize_fountain_detail
+from app.routers.fountains import BUSY_RESPONSE, busy_exception, serialize_fountain_detail
 from app.schemas import (
     AdminFountainDetail,
     AdminFountainPatch,
@@ -98,89 +98,111 @@ async def admin_fountain_detail(
     return await _serialize_admin_fountain(session, fountain, admin)
 
 
-@router.patch("/fountains/{fountain_id}", response_model=AdminFountainDetail)
+@router.patch(
+    "/fountains/{fountain_id}",
+    response_model=AdminFountainDetail,
+    responses={status.HTTP_503_SERVICE_UNAVAILABLE: BUSY_RESPONSE},
+)
 async def admin_patch_fountain(
     fountain_id: uuid.UUID,
     payload: AdminFountainPatch,
     session: AsyncSession = Depends(get_session),
     admin: User = Depends(require_admin),
+    settings: Settings = Depends(get_settings),
 ) -> AdminFountainDetail:
-    # Serialize this mutation's precomputed-membership recompute with concurrent adds / imports /
-    # full refreshes (they all share the denormalized place counts) — the same advisory lock
-    # POST /fountains and the OSM import take. Acquire it BEFORE the row lock so lock order is
-    # consistent (advisory first, then row) and no deadlock is possible (#127 Slice 1d).
-    await session.execute(select(func.pg_advisory_xact_lock(ADD_FOUNTAIN_LOCK_KEY)))
-    fountain = (
-        await session.execute(select(Fountain).where(Fountain.id == fountain_id).with_for_update())
-    ).scalar_one_or_none()
-    if fountain is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="fountain not found")
-
     changes: dict[str, dict[str, object | None]] = {}
     recompute_ranking = False
     resolved_reports = 0
-    if "location" in payload.model_fields_set:
-        if payload.location is None:
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail="location cannot be null",
-            )
-        before_detail = await serialize_fountain_detail(session, fountain)
-        before = before_detail.location.model_dump()
-        after = payload.location.model_dump()
-        if before != after:
-            fountain.location = point_geography(
-                payload.location.latitude,
-                payload.location.longitude,
-            )
-            changes["location"] = {"before": before, "after": after}
-    if "is_working" in payload.model_fields_set:
-        if payload.is_working is None:
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail="is_working cannot be null",
-            )
-    if "is_working" in payload.model_fields_set and fountain.is_working != payload.is_working:
-        changes["is_working"] = {"before": fountain.is_working, "after": payload.is_working}
-        fountain.is_working = bool(payload.is_working)
-        recompute_ranking = True
-    if (
-        "placement_note" in payload.model_fields_set
-        and fountain.placement_note != payload.placement_note
-    ):
-        changes["placement_note"] = {
-            "before": fountain.placement_note,
-            "after": payload.placement_note,
-        }
-        fountain.placement_note = payload.placement_note
-    if "comments" in payload.model_fields_set and fountain.comments != payload.comments:
-        changes["comments"] = {"before": fountain.comments, "after": payload.comments}
-        fountain.comments = payload.comments
-    if "is_hidden" in payload.model_fields_set:
-        if payload.is_hidden is None:
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail="is_hidden cannot be null",
-            )
-    if "is_hidden" in payload.model_fields_set and fountain.is_hidden != payload.is_hidden:
-        changes["is_hidden"] = {"before": fountain.is_hidden, "after": payload.is_hidden}
-        fountain.is_hidden = bool(payload.is_hidden)
-        # On a false->true hide, resolve this fountain's pending fountain-type reports (NOT the
-        # note/photo reports under it — those are separate queue items) (#12, spec §4).
-        if fountain.is_hidden:
-            resolved_reports = await _resolve_pending_reports(
-                session, "fountain", fountain.id, admin, "hidden"
-            )
+    # Bound the whole write transaction so this admin mutation never queues indefinitely behind a
+    # boundary load / membership refresh (spec 2026-07-17 §1). No separate reservation commit here,
+    # so the context is entered before the first database statement; a wait past the bound → 503.
+    try:
+        async with interactive_lock_timeout(session, settings, context="admin_patch_fountain"):
+            # Serialize this mutation's precomputed-membership recompute with concurrent adds /
+            # imports / full refreshes (they all share the denormalized place counts) — the same
+            # advisory lock POST /fountains and the OSM import take. Acquire it BEFORE the row lock
+            # so lock order is consistent (advisory first, then row) and no deadlock is possible
+            # (#127 Slice 1d).
+            await session.execute(select(func.pg_advisory_xact_lock(ADD_FOUNTAIN_LOCK_KEY)))
+            fountain = (
+                await session.execute(
+                    select(Fountain).where(Fountain.id == fountain_id).with_for_update()
+                )
+            ).scalar_one_or_none()
+            if fountain is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, detail="fountain not found")
 
-    if recompute_ranking:
-        await recompute_fountain_ranking(session, fountain.id)
-    # A move (location) or a hide/unhide changes the precomputed membership and/or the non-hidden
-    # fountain_count, so re-derive them for this fountain (and re-canonicalize its slug group)
-    # before commit — the public place counts must not go stale (#127 Slice 1d).
-    if "location" in changes or "is_hidden" in changes:
-        await session.flush()
-        await recompute_fountain_membership(session, fountain.id)
-    await session.commit()
+            if "location" in payload.model_fields_set:
+                if payload.location is None:
+                    raise HTTPException(
+                        status.HTTP_422_UNPROCESSABLE_CONTENT,
+                        detail="location cannot be null",
+                    )
+                before_detail = await serialize_fountain_detail(session, fountain)
+                before = before_detail.location.model_dump()
+                after = payload.location.model_dump()
+                if before != after:
+                    fountain.location = point_geography(
+                        payload.location.latitude,
+                        payload.location.longitude,
+                    )
+                    changes["location"] = {"before": before, "after": after}
+            if "is_working" in payload.model_fields_set:
+                if payload.is_working is None:
+                    raise HTTPException(
+                        status.HTTP_422_UNPROCESSABLE_CONTENT,
+                        detail="is_working cannot be null",
+                    )
+            if (
+                "is_working" in payload.model_fields_set
+                and fountain.is_working != payload.is_working
+            ):
+                changes["is_working"] = {
+                    "before": fountain.is_working,
+                    "after": payload.is_working,
+                }
+                fountain.is_working = bool(payload.is_working)
+                recompute_ranking = True
+            if (
+                "placement_note" in payload.model_fields_set
+                and fountain.placement_note != payload.placement_note
+            ):
+                changes["placement_note"] = {
+                    "before": fountain.placement_note,
+                    "after": payload.placement_note,
+                }
+                fountain.placement_note = payload.placement_note
+            if "comments" in payload.model_fields_set and fountain.comments != payload.comments:
+                changes["comments"] = {"before": fountain.comments, "after": payload.comments}
+                fountain.comments = payload.comments
+            if "is_hidden" in payload.model_fields_set:
+                if payload.is_hidden is None:
+                    raise HTTPException(
+                        status.HTTP_422_UNPROCESSABLE_CONTENT,
+                        detail="is_hidden cannot be null",
+                    )
+            if "is_hidden" in payload.model_fields_set and fountain.is_hidden != payload.is_hidden:
+                changes["is_hidden"] = {"before": fountain.is_hidden, "after": payload.is_hidden}
+                fountain.is_hidden = bool(payload.is_hidden)
+                # On a false->true hide, resolve this fountain's pending fountain-type reports (NOT
+                # the note/photo reports under it — those are separate queue items) (#12, spec §4).
+                if fountain.is_hidden:
+                    resolved_reports = await _resolve_pending_reports(
+                        session, "fountain", fountain.id, admin, "hidden"
+                    )
+
+            if recompute_ranking:
+                await recompute_fountain_ranking(session, fountain.id)
+            # A move (location) or a hide/unhide changes the precomputed membership and/or the
+            # non-hidden fountain_count, so re-derive them for this fountain (and re-canonicalize
+            # its slug group) before commit — the public place counts must not go stale (#127
+            # Slice 1d).
+            if "location" in changes or "is_hidden" in changes:
+                await session.flush()
+                await recompute_fountain_membership(session, fountain.id)
+            await session.commit()
+    except InteractiveWriteBusy as exc:
+        raise busy_exception() from exc
     await session.refresh(fountain)
 
     action = "edit"
@@ -200,47 +222,67 @@ async def admin_patch_fountain(
     return await _serialize_admin_fountain(session, fountain, admin)
 
 
-@router.delete("/fountains/{fountain_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/fountains/{fountain_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={status.HTTP_503_SERVICE_UNAVAILABLE: BUSY_RESPONSE},
+)
 async def admin_delete_fountain(
     fountain_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
     admin: User = Depends(require_admin),
+    settings: Settings = Depends(get_settings),
 ) -> Response:
-    # Advisory lock (see admin_patch_fountain): serialize the place-count recompute with concurrent
-    # adds / imports / full refreshes; acquire before the row lock so lock order is consistent.
-    await session.execute(select(func.pg_advisory_xact_lock(ADD_FOUNTAIN_LOCK_KEY)))
-    fountain = (
-        await session.execute(select(Fountain).where(Fountain.id == fountain_id).with_for_update())
-    ).scalar_one_or_none()
-    if fountain is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="fountain not found")
-    # Capture the deleted fountain's places so their fountain_count (and canonical winner) can be
-    # corrected after the row is gone (#127 Slice 1d).
-    old_place_ids = [fountain.country_place_id, fountain.region_place_id, fountain.city_place_id]
-    # Enqueue durable storage_cleanup rows for every photo's Spaces objects BEFORE the delete
-    # cascades the fountain_photos ROWS away (fk_fountain_photos_fountain is ON DELETE CASCADE) —
-    # otherwise the objects are orphaned in the private bucket with no ledger row for the sweep
-    # worker to find them by (design §3.3: no silent orphan). Includes hidden photos; the actual
-    # Spaces deletes are NOT done inline here, only enqueued for the sweep.
-    photo_keys = (
-        await session.execute(
-            select(FountainPhoto.storage_key, FountainPhoto.thumbnail_key).where(
-                FountainPhoto.fountain_id == fountain_id
-            )
-        )
-    ).all()
-    for storage_key, thumbnail_key in photo_keys:
-        session.add(StorageCleanup(object_key=storage_key, reason="moderation_delete"))
-        session.add(StorageCleanup(object_key=thumbnail_key, reason="moderation_delete"))
-    # Reverse every contribution tied to this fountain BEFORE deleting it (#119 anti-gaming):
-    # removing the content must not let its points persist on the leaderboard. Must run first
-    # because contribution_events.fountain_id is ON DELETE SET NULL — once the fountain row is
-    # gone the events can no longer be found by fountain_id.
-    reversed_events = await reverse_contributions(session, fountain_id)
-    await session.delete(fountain)
-    await session.flush()  # the row must be gone before its old places are recounted
-    await recompute_place_counts(session, old_place_ids)
-    await session.commit()
+    # Bound the whole delete transaction so it never queues indefinitely behind a boundary load /
+    # membership refresh (spec 2026-07-17 §1). No separate reservation commit, so the context is
+    # entered before the first database statement; a wait past the bound → 503.
+    try:
+        async with interactive_lock_timeout(session, settings, context="admin_delete_fountain"):
+            # Advisory lock (see admin_patch_fountain): serialize the place-count recompute with
+            # concurrent adds / imports / full refreshes; acquire before the row lock so lock order
+            # is consistent.
+            await session.execute(select(func.pg_advisory_xact_lock(ADD_FOUNTAIN_LOCK_KEY)))
+            fountain = (
+                await session.execute(
+                    select(Fountain).where(Fountain.id == fountain_id).with_for_update()
+                )
+            ).scalar_one_or_none()
+            if fountain is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, detail="fountain not found")
+            # Capture the deleted fountain's places so their fountain_count (and canonical winner)
+            # can be corrected after the row is gone (#127 Slice 1d).
+            old_place_ids = [
+                fountain.country_place_id,
+                fountain.region_place_id,
+                fountain.city_place_id,
+            ]
+            # Enqueue durable storage_cleanup rows for every photo's Spaces objects BEFORE the
+            # delete cascades the fountain_photos ROWS away (fk_fountain_photos_fountain is ON
+            # DELETE CASCADE) — otherwise the objects are orphaned in the private bucket with no
+            # ledger row for the sweep worker to find them by (design §3.3: no silent orphan).
+            # Includes hidden photos; the actual Spaces deletes are NOT done inline here, only
+            # enqueued for the sweep.
+            photo_keys = (
+                await session.execute(
+                    select(FountainPhoto.storage_key, FountainPhoto.thumbnail_key).where(
+                        FountainPhoto.fountain_id == fountain_id
+                    )
+                )
+            ).all()
+            for storage_key, thumbnail_key in photo_keys:
+                session.add(StorageCleanup(object_key=storage_key, reason="moderation_delete"))
+                session.add(StorageCleanup(object_key=thumbnail_key, reason="moderation_delete"))
+            # Reverse every contribution tied to this fountain BEFORE deleting it (#119
+            # anti-gaming): removing the content must not let its points persist on the
+            # leaderboard. Must run first because contribution_events.fountain_id is ON DELETE SET
+            # NULL — once the fountain row is gone the events can no longer be found by fountain_id.
+            reversed_events = await reverse_contributions(session, fountain_id)
+            await session.delete(fountain)
+            await session.flush()  # the row must be gone before its old places are recounted
+            await recompute_place_counts(session, old_place_ids)
+            await session.commit()
+    except InteractiveWriteBusy as exc:
+        raise busy_exception() from exc
     logger.info(
         "admin fountain mutation",
         extra={

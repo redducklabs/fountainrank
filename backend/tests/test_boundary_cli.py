@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import func, select
 
+import app.membership as _membership
 from app.imports.boundary_cli import run_boundary_load
 from app.models import PlaceBoundary
 
@@ -98,3 +99,22 @@ async def test_cli_rejects_maritime_twin(session, tmp_path):
     ).scalar_one_or_none()
     assert got is None
     assert await _count(session) == 4  # only the four land features
+
+
+@pytest.mark.asyncio
+async def test_cli_publish_failure_propagates_and_boundaries_persist(
+    session, tmp_path, monkeypatch
+):
+    """A publish failure during the post-load membership refresh must PROPAGATE out of the loader
+    (so the CLI exits nonzero / the loader Job fails visibly, Codex PR#245 finding 3), while the
+    boundaries the loader already committed persist — the correct-but-stale previous generation
+    awaiting an operator rerun."""
+
+    async def _boom(*_args, **_kwargs):
+        raise RuntimeError("forced publish failure")
+
+    monkeypatch.setattr(_membership, "_build_summary", _boom)
+    with pytest.raises(RuntimeError):
+        await run_boundary_load(_seqfile(tmp_path), dry_run=False)
+    # The boundaries were committed in per-batch transactions BEFORE the refresh failed.
+    assert await _count(session) == 4

@@ -4,17 +4,23 @@ import { notFound, permanentRedirect } from "next/navigation";
 import { cache } from "react";
 
 import { FountainList } from "../../../../../components/fountain/FountainList";
+import { RelatedPlaces } from "../../../../../components/place/RelatedPlaces";
+import type { RelatedPlace } from "../../../../../components/place/RelatedPlaces";
 import { SiteHeader } from "../../../../../components/SiteHeader";
 import {
   cityPath,
   countryPath,
+  fountainPath,
   getNestedCityFountainsServer,
+  getRegionCitiesServer,
+  placeTitle,
+  RELATED_PLACES_CAP,
   regionPath,
   resolvePlaceServer,
 } from "../../../../../lib/places";
 import type { CityFountainsOut, PlaceOut } from "../../../../../lib/places";
 import { log } from "../../../../../lib/server/log";
-import { jsonLdScript } from "../../../../../lib/seo/jsonld";
+import { itemListStructuredData, jsonLdScript } from "../../../../../lib/seo/jsonld";
 import { SITE_URL } from "../../../../../lib/seo/site";
 
 export const dynamic = "force-dynamic";
@@ -99,7 +105,7 @@ export async function generateMetadata({
   const { data, region: regionPlace } = await loadCity(country, region, city);
   if (!data || !regionPlace) return { robots: { index: false, follow: false } };
   const { place, indexable } = data;
-  const title = `Drinking fountains in ${place.name}`;
+  const title = placeTitle(place.name, place.fountain_count);
   const description = cityDescription(place);
   const canonical = cityPath(place.country_code, place.slug, regionPlace.slug);
   return {
@@ -167,6 +173,32 @@ export default async function CityPage({
   const structuredJson = data.indexable
     ? jsonLdScript(buildCityBreadcrumbStructuredData(place, regionPlace))
     : null;
+  // ItemList of the fountains this page lists, each linking to its detail page. Gated on
+  // indexability like the breadcrumb — no structured data for a below-gate page.
+  const itemList = data.indexable
+    ? itemListStructuredData(fountains.map((f) => `${SITE_URL}${fountainPath(String(f.id))}`))
+    : null;
+  const itemListJson = itemList ? jsonLdScript(itemList) : null;
+
+  // Sideways internal links to sibling cities in the same region (SEO #53). One cheap extra fetch;
+  // the block renders nothing on error/empty. Fetch one over the cap so excluding the current city
+  // still leaves a full row of siblings.
+  const requestId = crypto.randomUUID();
+  const siblingCities = await getRegionCitiesServer(
+    place.country_code,
+    regionPlace.slug,
+    requestId,
+    RELATED_PLACES_CAP + 1,
+  );
+  const relatedPlaces: RelatedPlace[] = siblingCities.data
+    .filter((sibling) => sibling.id !== place.id)
+    .slice(0, RELATED_PLACES_CAP)
+    .map((sibling) => ({
+      id: sibling.id,
+      name: sibling.name,
+      href: cityPath(sibling.country_code, sibling.slug, regionPlace.slug),
+      fountainCount: sibling.fountain_count,
+    }));
 
   return (
     <>
@@ -178,6 +210,9 @@ export default async function CityPage({
             __html: structuredJson,
           }}
         />
+      ) : null}
+      {itemListJson ? (
+        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: itemListJson }} />
       ) : null}
       <main className={shell}>
         <Link
@@ -204,6 +239,7 @@ export default async function CityPage({
         ) : (
           <p className="mt-6 text-muted">No public fountains are mapped here yet.</p>
         )}
+        <RelatedPlaces heading={`Other cities in ${regionPlace.name}`} places={relatedPlaces} />
       </main>
     </>
   );

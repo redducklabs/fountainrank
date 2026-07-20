@@ -1,13 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AuthSessionError } from "./auth/state";
 import {
   ApiError,
+  ApiTimeoutError,
   apiErrorStatus,
   buildAuthHeaders,
   createApiClient,
   isAuthenticatedApiRequest,
+  READ_TIMEOUT_MS,
   unwrap,
+  WRITE_TIMEOUT_MS,
   type NativeFileUpload,
 } from "./api";
 
@@ -583,5 +586,247 @@ describe("apiErrorStatus", () => {
     expect(apiErrorStatus(new Error("boom"))).toBeNull();
     expect(apiErrorStatus(null)).toBeNull();
     expect(apiErrorStatus({ status: 404 })).toBeNull();
+  });
+});
+
+describe("createApiClient — request deadlines (spec §1, Verification 1a–1i)", () => {
+  const BASE = "https://api.fountainrank.com";
+  const okJson = () =>
+    new Response(JSON.stringify({ id: "f1" }), {
+      status: 201,
+      headers: { "content-type": "application/json" },
+    });
+  const writeBody = { latitude: 0, longitude: 0 } as never;
+  // A fetch that rejects when its request's (composed) signal aborts — as a real fetch
+  // does — so the "no unhandled late rejection" paths are actually exercised.
+  const abortAwareFetch = () =>
+    vi.fn(
+      (req: Request) =>
+        new Promise<Response>((_resolve, reject) => {
+          req.signal.addEventListener("abort", () => {
+            const e = new Error("aborted");
+            e.name = "AbortError";
+            reject(e);
+          });
+        }),
+    );
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it("(1a) bounds a hanging POST at WRITE_TIMEOUT_MS exactly, not the read ceiling", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(() => new Promise<Response>(() => {}));
+    const client = createApiClient(BASE, { fetch: fetchMock as unknown as typeof fetch });
+    let settled = false;
+    const p = client.POST("/api/v1/fountains", { body: writeBody }).catch((e: unknown) => {
+      settled = true;
+      throw e;
+    });
+    const assertion = expect(p).rejects.toBeInstanceOf(ApiTimeoutError);
+    await vi.advanceTimersByTimeAsync(WRITE_TIMEOUT_MS - 1);
+    expect(settled).toBe(false); // still pending at 29_999ms (proves it is not the 15s read ceiling)
+    await vi.advanceTimersByTimeAsync(1);
+    expect(settled).toBe(true);
+    await assertion;
+  });
+
+  it("(1a) bounds a hanging GET at READ_TIMEOUT_MS exactly", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(() => new Promise<Response>(() => {}));
+    const client = createApiClient(BASE, { fetch: fetchMock as unknown as typeof fetch });
+    let settled = false;
+    const p = client.GET("/healthz").catch((e: unknown) => {
+      settled = true;
+      throw e;
+    });
+    const assertion = expect(p).rejects.toBeInstanceOf(ApiTimeoutError);
+    await vi.advanceTimersByTimeAsync(READ_TIMEOUT_MS - 1);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(settled).toBe(true);
+    await assertion;
+  });
+
+  it("(1b) clears the deadline timer and removes the inbound abort listener when the fetch settles first", async () => {
+    // openapi-fetch links the caller's signal onto its own Request signal (it is not the
+    // same object — see 1c/1d, where the caller's reason still surfaces), so the transport
+    // adds/removes its abort listener on that linked signal. Spy at the EventTarget level to
+    // assert the cleanup happened (both spies call through, so nothing is stubbed).
+    const clearSpy = vi.spyOn(globalThis, "clearTimeout");
+    const removeSpy = vi.spyOn(EventTarget.prototype, "removeEventListener");
+    const inbound = new AbortController();
+    const client = createApiClient(BASE, { fetch: async () => okJson() });
+    await client.POST("/api/v1/fountains", { body: writeBody, signal: inbound.signal });
+    expect(clearSpy).toHaveBeenCalled();
+    expect(removeSpy).toHaveBeenCalledWith("abort", expect.any(Function));
+  });
+
+  it("(1c) surfaces the caller's abort reason (never ApiTimeoutError) on a mid-flight inbound abort", async () => {
+    vi.useFakeTimers();
+    const fetchMock = abortAwareFetch();
+    const client = createApiClient(BASE, { fetch: fetchMock as unknown as typeof fetch });
+    const inbound = new AbortController();
+    const reason = new Error("caller cancelled");
+    const p = client.GET("/healthz", { signal: inbound.signal });
+    const assertion = expect(p).rejects.toBe(reason);
+    await vi.advanceTimersByTimeAsync(1); // dispatch reaches baseFetch
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    inbound.abort(reason);
+    await assertion;
+  });
+
+  it("(1d) rejects immediately without dispatching when the inbound signal is already aborted", async () => {
+    const fetchMock = vi.fn(async () => okJson());
+    const client = createApiClient(BASE, { fetch: fetchMock as unknown as typeof fetch });
+    const inbound = new AbortController();
+    const reason = new Error("already gone");
+    inbound.abort(reason);
+    await expect(client.GET("/healthz", { signal: inbound.signal })).rejects.toBe(reason);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("(1e) propagates an underlying network TypeError unchanged (never wrapped as a timeout)", async () => {
+    const err = new TypeError("Network request failed");
+    const client = createApiClient(BASE, {
+      fetch: async () => {
+        throw err;
+      },
+    });
+    await expect(client.GET("/healthz")).rejects.toBe(err);
+  });
+
+  it("(1f) dispatches a request carrying the composed signal, injected Authorization, and no x-dev", async () => {
+    let dispatched: Request | undefined;
+    const inbound = new AbortController();
+    const client = createApiClient(BASE, {
+      fetch: async (input) => {
+        dispatched = input as Request;
+        return okJson();
+      },
+      getAccessToken: async () => "token123",
+    });
+    await client.POST("/api/v1/fountains", {
+      body: writeBody,
+      params: { header: { "X-Dev-User": "evil" } } as never,
+      signal: inbound.signal,
+    });
+    expect(dispatched).toBeDefined();
+    // Composed: the request carries a NEW controller signal (deadline + inbound funnel
+    // into it), never the raw inbound signal.
+    expect(dispatched!.signal).toBeInstanceOf(AbortSignal);
+    expect(dispatched!.signal).not.toBe(inbound.signal);
+    expect(dispatched!.headers.get("authorization")).toBe("Bearer token123");
+    expect([...dispatched!.headers.keys()].some((k) => k.toLowerCase().startsWith("x-dev"))).toBe(
+      false,
+    );
+  });
+
+  it("(1g) logs one api_timeout line carrying method + path only — no query/token/body/coords", async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const client = createApiClient(BASE, {
+      fetch: () => new Promise<Response>(() => {}),
+      getAccessToken: async () => "token123",
+    });
+    const p = client.POST("/api/v1/fountains", {
+      body: { latitude: 47.6, longitude: -122.3 } as never,
+    });
+    const assertion = expect(p).rejects.toBeInstanceOf(ApiTimeoutError);
+    await vi.advanceTimersByTimeAsync(WRITE_TIMEOUT_MS);
+    await assertion;
+    expect(warn).toHaveBeenCalledTimes(1);
+    const line = warn.mock.calls[0][0] as string;
+    expect(JSON.parse(line)).toEqual({
+      level: "warn",
+      area: "api",
+      event: "api_timeout",
+      method: "POST",
+      path: "/api/v1/fountains",
+      timeout_ms: WRITE_TIMEOUT_MS,
+      source: "deadline",
+    });
+    expect(line).not.toMatch(/token123/);
+    expect(line).not.toMatch(/47\.6/);
+    expect(line).not.toMatch(/authorization/i);
+  });
+
+  it("(1h) a never-settling token rejects with ApiTimeoutError at the deadline and never dispatches", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async () => okJson());
+    const client = createApiClient(BASE, {
+      fetch: fetchMock as unknown as typeof fetch,
+      getAccessToken: () => new Promise<string>(() => {}),
+    });
+    const p = client.POST("/api/v1/fountains", { body: writeBody });
+    const assertion = expect(p).rejects.toBeInstanceOf(ApiTimeoutError);
+    await vi.advanceTimersByTimeAsync(WRITE_TIMEOUT_MS);
+    await assertion;
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("(1h) a token rejection surfaces AuthSessionError (unchanged), never a timeout", async () => {
+    const fetchMock = vi.fn(async () => okJson());
+    const client = createApiClient(BASE, {
+      fetch: fetchMock as unknown as typeof fetch,
+      getAccessToken: async () => {
+        throw new Error("expired");
+      },
+    });
+    await expect(client.POST("/api/v1/fountains", { body: writeBody })).rejects.toBeInstanceOf(
+      AuthSessionError,
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("(1h) a token resolving AFTER the deadline dispatches nothing", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async () => okJson());
+    const client = createApiClient(BASE, {
+      fetch: fetchMock as unknown as typeof fetch,
+      getAccessToken: () =>
+        new Promise<string>((resolve) =>
+          setTimeout(() => resolve("late"), WRITE_TIMEOUT_MS + 10_000),
+        ),
+    });
+    const p = client.POST("/api/v1/fountains", { body: writeBody });
+    const assertion = expect(p).rejects.toBeInstanceOf(ApiTimeoutError);
+    await vi.advanceTimersByTimeAsync(WRITE_TIMEOUT_MS);
+    await assertion;
+    await vi.advanceTimersByTimeAsync(10_000); // token resolves well after the deadline
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("(1i) inbound-abort-first yields the caller reason and logs nothing (no unhandled late rejection)", async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetchMock = abortAwareFetch();
+    const client = createApiClient(BASE, { fetch: fetchMock as unknown as typeof fetch });
+    const inbound = new AbortController();
+    const reason = new Error("caller cancelled");
+    const p = client.GET("/healthz", { signal: inbound.signal });
+    const assertion = expect(p).rejects.toBe(reason);
+    await vi.advanceTimersByTimeAsync(1);
+    inbound.abort(reason);
+    await assertion;
+    await vi.advanceTimersByTimeAsync(0); // flush the late baseFetch abort-rejection
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("(1i) deadline-first yields ApiTimeoutError, logs exactly once, and a later inbound abort is inert", async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetchMock = abortAwareFetch();
+    const client = createApiClient(BASE, { fetch: fetchMock as unknown as typeof fetch });
+    const inbound = new AbortController();
+    const p = client.GET("/healthz", { signal: inbound.signal });
+    const assertion = expect(p).rejects.toBeInstanceOf(ApiTimeoutError);
+    await vi.advanceTimersByTimeAsync(READ_TIMEOUT_MS);
+    await assertion;
+    inbound.abort(new Error("late")); // must not produce a second rejection or log
+    await vi.advanceTimersByTimeAsync(0);
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 });

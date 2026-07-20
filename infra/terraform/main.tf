@@ -13,10 +13,10 @@
 #       single-registry endpoint, incompatible with this account's multiple registries);
 #       `fountainrank` is created out-of-band via /v2/registries. See below. ✅
 #   (c) sizing/cost reviewed (cheapest defaults, owner-approved). ✅
-#   (d) Basemap Spaces bucket/CDN/CORS — live prod infra, managed unconditionally (the
-#       old manage_basemap_spaces count-gate was removed 2026-07-04); Phase 4 private
-#       photos bucket landed but GATED (var.manage_photos_spaces, default off — needs a
-#       bucket-create-capable Spaces key).
+#   (d) Basemap + private photos Spaces buckets — live prod infra, both managed
+#       unconditionally (the manage_basemap_spaces / manage_photos_spaces count-gates were
+#       removed 2026-07-04 / 2026-07-20 once each bucket was live in state; the photos
+#       bucket additionally carries lifecycle.prevent_destroy = true — see the Spaces section).
 #   (e) 🔴 DNSSEC must be OFF on the domain or DO refuses the LE cert (422) — the
 #       owner removed the GoDaddy DS record on 2026-06-18.
 
@@ -119,29 +119,23 @@ variable "basemap_cors_origins" {
   default     = ["https://fountainrank.com", "https://www.fountainrank.com", "http://localhost:3020"]
 }
 
-# --- Phase 4 private photos Spaces (gated; see the Spaces section below) ---
-variable "manage_photos_spaces" {
-  description = <<-EOT
-    Gate for the Phase 4 private photos Spaces bucket. Keep FALSE until a
-    bucket-create-capable Spaces key is wired as the apply job's SPACES_ACCESS_KEY/
-    SPACES_SECRET_KEY (the current key is TF-state-scoped and 403s on bucket create).
-    Then set TF_VAR_manage_photos_spaces=true and dispatch the Terraform apply
-    workflow. Default false keeps every other apply a no-op for this resource.
-  EOT
-  type        = bool
-  default     = false
-}
-
 variable "photos_bucket_name" {
   description = "DO Spaces bucket for user-uploaded fountain photos (private; reads are backend-presigned)."
   type        = string
   default     = "fountainrank-photos"
 }
 
-variable "kubernetes_version_prefix" {
-  description = "DOKS version prefix; the latest matching patch is selected. DO offers 1.33-1.36."
+variable "kubernetes_version" {
+  # Pinned to the EXACT live version so a full `terraform apply` is a no-op and never
+  # triggers a surprise node roll during an unrelated change. (Previously this selected
+  # "the latest matching patch" via a data source, so DO publishing a new patch silently
+  # made every apply plan an in-place cluster upgrade.) A DOKS upgrade is now a DELIBERATE
+  # maintenance event: bump this to a version DO currently offers
+  # (`doctl kubernetes options versions`; DO offers 1.33-1.36), then dispatch an apply —
+  # the cluster updates in-place (drains + replaces nodes). `auto_upgrade` stays false.
+  description = "Exact DOKS version (pinned; changing it rolls the nodes — deliberate maintenance)."
   type        = string
-  default     = "1.34."
+  default     = "1.34.8-do.2"
 }
 
 variable "node_size" {
@@ -177,13 +171,23 @@ variable "node_max" {
 }
 
 variable "db_size" {
-  description = "Managed Postgres size (minimal single-node default; tune before first apply)."
+  # Bumped 1gb->4gb: the initial db-s-1vcpu-1gb was the minimal single-node default and was never
+  # tuned. It is structurally undersized for the PostGIS workload (worldwide boundary membership +
+  # ~285k-fountain ST_Covers/ST_Area joins and the boundary-load publish), which tripped a DO
+  # low-resources alert — so 4x RAM is a workload-driven floor, not a node-parity choice. Post-resize
+  # DB telemetry (cache hit ratio, memory pressure, CPU during a publish) should drive any further
+  # sizing. db-s-2vcpu-4gb is a same-family (basic tier) 4x-RAM / 2x-vCPU bump. NOTE: applying a size
+  # change resizes the managed DB with a brief failover / connection drop — never apply while a
+  # boundary load is in flight (it would abort the publish).
+  description = "Managed Postgres size."
   type        = string
-  default     = "db-s-1vcpu-1gb"
+  default     = "db-s-2vcpu-4gb"
 }
 
 variable "db_node_count" {
-  description = "Managed Postgres node count (db-s-1vcpu-1gb supports only 1)."
+  # Single-node (no standby). db-s-2vcpu-4gb supports 1-3 nodes; HA is a separate, cost-bearing
+  # decision from this resource bump, so we stay single-node.
+  description = "Managed Postgres node count."
   type        = number
   default     = 1
 }
@@ -191,10 +195,6 @@ variable "db_node_count" {
 # ---------------------------------------------------------------------------
 # Data sources — pre-existing, owner-created (NOT managed here)
 # ---------------------------------------------------------------------------
-data "digitalocean_kubernetes_versions" "selected" {
-  version_prefix = var.kubernetes_version_prefix
-}
-
 # The FountainRank project already exists (created during the DO bootstrap).
 data "digitalocean_project" "main" {
   name = "FountainRank"
@@ -213,7 +213,7 @@ data "digitalocean_domain" "main" {
 resource "digitalocean_kubernetes_cluster" "main" {
   name         = "${var.project_name}-${var.environment}-cluster"
   region       = var.region
-  version      = data.digitalocean_kubernetes_versions.selected.latest_version
+  version      = var.kubernetes_version
   auto_upgrade = false
 
   node_pool {
@@ -332,23 +332,35 @@ resource "digitalocean_cdn" "basemap" {
   ttl    = 86400
 }
 
-# --- Phase 4 private photos bucket (GATED) ---
-# 🔴 Same prerequisite as above: gated behind `var.manage_photos_spaces` (default
-# false, wired to TF_VAR_manage_photos_spaces in .github/workflows/terraform.yml) until
-# a bucket-create-capable Spaces key is available. PRIVATE bucket — default ACL
-# (no public-read), no CORS configuration, no CDN. Fountain photos are read via
-# backend-issued presigned GET URLs, never served directly from Spaces/CDN.
+# --- Phase 4 private photos bucket (UNCONDITIONAL, live prod infra) ---
+# PRIVATE bucket — default `private` ACL (no public-read), no CORS, no CDN. Fountain
+# photos are read via backend-issued presigned GET URLs, never served directly from
+# Spaces/CDN. The backend photo feature is LIVE (`Settings.photos_enabled()` — the five
+# SPACES_* `production` secrets are set), so the bucket holds real user data.
 #
-# Once enabled, the following `production` GitHub environment secrets must be set
-# for the backend deployment (they feed config.py's spaces_* settings and the
-# k8s secretKeyRefs added alongside the upload endpoints):
-#   SPACES_ENDPOINT     - e.g. https://<region>.digitaloceanspaces.com
-#   SPACES_REGION       - the Spaces region (matches var.region)
-#   SPACES_BUCKET       - fountainrank-photos (= var.photos_bucket_name)
-#   SPACES_ACCESS_KEY   - bucket-create/read/write-capable Spaces access key
-#   SPACES_SECRET_KEY   - matching Spaces secret key
+# History: originally count-gated behind `var.manage_photos_spaces` (default false) to
+# defer creation until a bucket-create-capable Spaces key was wired. The bucket is now
+# live and IN STATE, so the gate became the exact footgun the basemap gate already hit:
+# a routine apply with the default false planned to DESTROY the live photos bucket
+# (verified 2026-07-20: a full plan showed `.photos[0]` "will be destroyed"). Reconciled
+# to UNCONDITIONAL management the same way as basemap — the `moved` block below migrates
+# the count-indexed `.photos[0]` to the unindexed resource with ZERO destroy/recreate,
+# and `prevent_destroy = true` turns any future plan-to-destroy into a loud apply-time
+# error rather than silent data loss. The current apply Spaces key can read the bucket
+# (the 2026-07-20 plan refreshed it successfully), so no new key was required.
+#
+# The `production` GitHub environment secrets that feed the backend (config.py's spaces_*
+# settings + the k8s secretKeyRefs) are already set:
+#   SPACES_ENDPOINT / SPACES_REGION / SPACES_BUCKET (= var.photos_bucket_name)
+#   SPACES_ACCESS_KEY / SPACES_SECRET_KEY
+
+# One-time state refactor (safe to keep; no-op once applied): count removal, [0] -> unindexed.
+moved {
+  from = digitalocean_spaces_bucket.photos[0]
+  to   = digitalocean_spaces_bucket.photos
+}
+
 resource "digitalocean_spaces_bucket" "photos" {
-  count  = var.manage_photos_spaces ? 1 : 0
   name   = var.photos_bucket_name
   region = var.region
   acl    = "private" # user photos; reads are backend-presigned, not public
@@ -359,6 +371,12 @@ resource "digitalocean_spaces_bucket" "photos" {
     id                                     = "abort-incomplete-mpu"
     enabled                                = true
     abort_incomplete_multipart_upload_days = 7
+  }
+
+  # Live user photos — an apply must NEVER destroy this bucket. A plan that would
+  # destroy it becomes a hard error instead of silent data loss.
+  lifecycle {
+    prevent_destroy = true
   }
 }
 
@@ -455,22 +473,21 @@ resource "digitalocean_record" "auth" {
 # Assign resources to the FountainRank DO project.
 # DO project-resource supported URN types are: app, database, domain, droplet,
 # floating IP, Kubernetes cluster, load balancer, Spaces bucket, volume. So we
-# assign the cluster, DB, LB, the (pre-existing) domain, and the basemap Spaces bucket —
-# but NOT the container registry or certificate (account/region-scoped, not
-# project-assignable). The Phase 4 photos bucket joins only when its gate
-# (var.manage_photos_spaces) is enabled (concat below). Assigning the domain only GROUPS
-# it under the project; it does not manage or alter its DNS records.
+# assign the cluster, DB, LB, the (pre-existing) domain, and both Spaces buckets (basemap
+# + photos) — but NOT the container registry or certificate (account/region-scoped, not
+# project-assignable). Assigning the domain only GROUPS it under the project; it does not
+# manage or alter its DNS records.
 # ---------------------------------------------------------------------------
 resource "digitalocean_project_resources" "main" {
   project = data.digitalocean_project.main.id
-  resources = concat([
+  resources = [
     digitalocean_kubernetes_cluster.main.urn,
     digitalocean_database_cluster.postgres.urn,
     digitalocean_loadbalancer.main.urn,
     data.digitalocean_domain.main.urn,
     digitalocean_spaces_bucket.basemap.urn,
-    # The photos bucket (splat -> [] when its gate is off) joins the project when enabled.
-  ], digitalocean_spaces_bucket.photos[*].urn)
+    digitalocean_spaces_bucket.photos.urn,
+  ]
 }
 
 # ---------------------------------------------------------------------------

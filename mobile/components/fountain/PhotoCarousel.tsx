@@ -47,6 +47,7 @@ export function PhotoCarousel({
           source={{ uri: resolvePhotoUrl(apiBaseUrl, item.url) }}
           style={StyleSheet.absoluteFill}
           contentFit="cover"
+          transition={200}
           accessibilityIgnoresInvertColors
         />
       </View>

@@ -592,3 +592,43 @@ class FountainSitemapOut(BaseModel):
 
     fountain_ids: list[uuid.UUID]
     total_count: int
+
+
+class CitySitemapItem(BaseModel):
+    """One indexable city's canonical-URL parts for the cities sitemap (#127, spec §6).
+
+    ``region_slug`` is the parent region's slug for a region-tier country (the nested
+    ``/[country]/[region]/[city]`` URL) or ``None`` for a two-level country
+    (``/[country]/[city]``), so the web builder emits the canonical path without a per-city resolve.
+    """
+
+    country_code: str
+    slug: str
+    region_slug: str | None
+
+
+class CitySitemapOut(BaseModel):
+    """The indexable cities for a cities sitemap chunk (#127, spec §6/§7).
+
+    ``cities`` are the canonical, city-routes-ready cities with ``fountain_count >= K`` (the same
+    indexability gate the city page and ``PlaceOut.indexable`` use), ordered by id for stable
+    pagination and capped by ``limit``. ``total_count`` is the full indexable total, so the sitemap
+    builder sizes the chunk URLs and logs (never silently) when a chunk nears the 50k-URL limit.
+    """
+
+    cities: list[CitySitemapItem]
+    total_count: int
+
+
+class SiteStatsOut(BaseModel):
+    """Public site-wide counts for the homepage positioning copy.
+
+    ``total_fountains`` is every non-hidden fountain (the headline "N+ fountains" number); it is a
+    live count of the fountains table, NOT a sum of per-place ``fountain_count`` (which would miss
+    fountains not assigned to any place). ``total_countries`` is the number of country places with
+    at least one non-hidden fountain — the same "countries with fountains" set the browse hub lists.
+    Both are cacheable + unauthenticated.
+    """
+
+    total_fountains: int
+    total_countries: int
