@@ -155,6 +155,27 @@ Stored in `web/public/`, copied from the source artwork in `docs/logos/`.
 
 ## Components
 
+### Admin contribution history
+
+The admin-only contributor history is an audit-log list reached from **View history** beneath a
+leaderboard contributor name. Stable internal identity is used only by confirmed-admin navigation;
+non-admin rows never render the action. Each event row shows a human-readable action, timestamp,
+explicit `awarded`/`reversed` status, signed points, and a fountain link only when the recorded
+fountain identifier is available. Awarded points use brand ink; reversed points use danger text.
+Web pagination uses a clear next-page link; mobile uses a **Load more** control with a loading label.
+Both surfaces provide distinct access-resolution, loading, error, empty, and end-of-history states,
+and never render protected cached rows while admin status is unresolved.
+
+### Leaderboard contributor avatars
+
+Leaderboard rows place a `32 × 32` circular avatar between the rank and contributor name, with the
+existing row gap providing consistent spacing. Photos use center-cropped cover sizing. A missing or
+failed image is replaced in the same fixed circle by up to two uppercase initials derived from the
+visible public display name (`?` only for an unexpectedly blank name), using the subtle accent fill
+and brand-ink text. The image/fallback is decorative and hidden from accessibility APIs because the
+adjacent contributor name is the row's accessible identity. Names still truncate independently;
+rank-one crowns, current-user treatment, and the right-aligned metric retain their existing roles.
+
 ### Landing hero (`web/app/page.tsx`)
 
 The temporary "coming soon" landing page. A full-viewport

@@ -1,23 +1,29 @@
 "use client";
 
 import { useEffect, useRef, useState, type Ref } from "react";
+import Link from "next/link";
+import { LoadableImage } from "../ui/LoadableImage";
 
 import {
   rowMetricCaption,
   rowPrimaryValue,
   type ContributorRow,
+  type AdminContributorRow,
   type LeaderboardSort,
   type YourStanding,
 } from "../../lib/leaderboard";
+import { contributorInitials } from "../../lib/leaderboard-avatar";
 
 export function LeaderboardRows({
   rows,
   you,
   sort,
+  admin = false,
 }: {
-  rows: ContributorRow[];
+  rows: (ContributorRow | AdminContributorRow)[];
   you: YourStanding | null;
   sort: LeaderboardSort;
+  admin?: boolean;
 }) {
   const youInList = rows.some((r) => r.is_you);
   const youRowRef = useRef<HTMLLIElement | null>(null);
@@ -52,6 +58,7 @@ export function LeaderboardRows({
               key={`${row.rank}-${row.display_name}`}
               row={row}
               sort={sort}
+              admin={admin}
               innerRef={row.is_you ? youRowRef : undefined}
             />
           ))}
@@ -76,10 +83,12 @@ function Row({
   row,
   sort,
   innerRef,
+  admin,
 }: {
-  row: ContributorRow;
+  row: ContributorRow | AdminContributorRow;
   sort: LeaderboardSort;
   innerRef?: Ref<HTMLLIElement>;
+  admin: boolean;
 }) {
   // Rank 1 is the leader of the active category/sort — mark it with a crown (#146).
   const isLeader = row.rank === 1;
@@ -92,16 +101,53 @@ function Row({
       }
     >
       <RankCell rank={`${row.rank}`} you={row.is_you} />
-      <span className="min-w-0 flex-1 truncate font-semibold text-foreground">
-        {isLeader ? <CrownIcon /> : null}
-        {row.display_name}
-        {row.is_you ? <YouTag /> : null}
+      <ContributorAvatar name={row.display_name} url={row.avatar_url} />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate font-semibold text-foreground">
+          {isLeader ? <CrownIcon /> : null}
+          {row.display_name}
+          {row.is_you ? <YouTag /> : null}
+        </span>
+        {admin && "user_id" in row ? (
+          <Link
+            href={`/admin/contributors/${row.user_id}`}
+            className="text-xs font-semibold text-brand-ink underline"
+          >
+            View history
+          </Link>
+        ) : null}
       </span>
       <Metric
         value={rowPrimaryValue(row.points, row.category_count, sort)}
         caption={rowMetricCaption(row.points, sort)}
       />
     </li>
+  );
+}
+
+function ContributorAvatar({ name, url }: { name: string; url: string | null }) {
+  const initials = contributorInitials(name);
+  const fallback = <span aria-hidden="true">{initials}</span>;
+  if (!url) {
+    return (
+      <span
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent-subtle text-xs font-bold text-brand-ink"
+        aria-hidden="true"
+      >
+        {initials}
+      </span>
+    );
+  }
+  return (
+    <LoadableImage
+      src={url}
+      alt=""
+      width={32}
+      height={32}
+      wrapperClassName="h-8 w-8 shrink-0 rounded-full"
+      className="h-8 w-8 object-cover"
+      fallback={fallback}
+    />
   );
 }
 

@@ -1,3 +1,6 @@
+import base64
+import binascii
+import json
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -22,6 +25,7 @@ from app.locks import ADD_FOUNTAIN_LOCK_KEY, InteractiveWriteBusy, interactive_l
 from app.membership import recompute_fountain_membership, recompute_place_counts
 from app.models import (
     ContentReport,
+    ContributionEvent,
     Fountain,
     FountainNote,
     FountainPhoto,
@@ -30,10 +34,13 @@ from app.models import (
     RatingType,
     StorageCleanup,
     User,
+    UserContributionStats,
 )
 from app.ranking import recompute_fountain_ranking
 from app.routers.fountains import BUSY_RESPONSE, busy_exception, serialize_fountain_detail
 from app.schemas import (
+    AdminContributionEventOut,
+    AdminContributorHistoryOut,
     AdminFountainDetail,
     AdminFountainPatch,
     AdminNoteOut,
@@ -43,6 +50,7 @@ from app.schemas import (
     AdminRatingOut,
     AdminSanctionOut,
     AdminSanctionRequest,
+    ContributionStatsOut,
     ModerationReasonRequest,
     PhotoReportsSummary,
     ReportDismissRequest,
@@ -59,9 +67,132 @@ router = APIRouter(
 )
 logger = logging.getLogger(__name__)
 
+_SAFE_CONTRIBUTION_METADATA = frozenset({"rating_type_id", "attribute_type_id", "status"})
+
+
+def _encode_contribution_cursor(created_at: datetime, event_id: uuid.UUID) -> str:
+    payload = json.dumps([created_at.isoformat(), str(event_id)], separators=(",", ":")).encode()
+    return base64.urlsafe_b64encode(payload).rstrip(b"=").decode()
+
+
+def _decode_contribution_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
+    try:
+        padding = "=" * (-len(cursor) % 4)
+        raw = base64.urlsafe_b64decode(cursor + padding)
+        timestamp, event_id = json.loads(raw)
+        created_at = datetime.fromisoformat(timestamp)
+        if created_at.tzinfo is None:
+            raise ValueError("cursor timestamp must have timezone")
+        return created_at, uuid.UUID(event_id)
+    except (ValueError, TypeError, json.JSONDecodeError, binascii.Error) as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="invalid cursor") from exc
+
 
 def _admin_context(admin: User) -> dict[str, str]:
     return {"admin_sub": admin.logto_user_id, "admin_user_id": str(admin.id)}
+
+
+@router.get("/contributors/{user_id}/contributions", response_model=AdminContributorHistoryOut)
+async def admin_contributor_history(
+    user_id: uuid.UUID,
+    response: Response,
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: str | None = Query(default=None, min_length=1, max_length=500),
+    session: AsyncSession = Depends(get_session),
+    admin: User = Depends(require_admin),
+) -> AdminContributorHistoryOut:
+    """Newest-first contribution-event audit log for one user, including reversals."""
+    response.headers["Cache-Control"] = "private, no-store"
+    target = (await session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if target is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="user not found")
+
+    stats = (
+        await session.execute(
+            select(UserContributionStats).where(UserContributionStats.user_id == user_id)
+        )
+    ).scalar_one_or_none()
+    statement = select(ContributionEvent).where(ContributionEvent.user_id == user_id)
+    if cursor is not None:
+        cursor_at, cursor_id = _decode_contribution_cursor(cursor)
+        # The compound predicate is evaluated by Postgres and exactly mirrors both DESC keys.
+        statement = statement.where(
+            or_(
+                ContributionEvent.created_at < cursor_at,
+                and_(
+                    ContributionEvent.created_at == cursor_at,
+                    ContributionEvent.id < cursor_id,
+                ),
+            )
+        )
+    db_events = (
+        (
+            await session.execute(
+                statement.order_by(
+                    ContributionEvent.created_at.desc(), ContributionEvent.id.desc()
+                ).limit(limit + 1)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    has_more = len(db_events) > limit
+    page = db_events[:limit]
+    events = [
+        AdminContributionEventOut(
+            id=event.id,
+            event_type=event.event_type,
+            points=event.points,
+            status=event.status,
+            fountain_id=event.fountain_id,
+            target_type=event.target_type,
+            target_id=event.target_id,
+            metadata={
+                key: value
+                for key, value in (event.event_metadata or {}).items()
+                if key in _SAFE_CONTRIBUTION_METADATA
+                and (value is None or isinstance(value, (str, int, float, bool)))
+            },
+            created_at=event.created_at,
+        )
+        for event in page
+    ]
+    next_cursor = (
+        _encode_contribution_cursor(page[-1].created_at, page[-1].id) if has_more and page else None
+    )
+    result = AdminContributorHistoryOut(
+        user_id=target.id,
+        display_name=public_display_name(
+            target.display_name, target.logto_user_id, target.nickname
+        ),
+        stats=(
+            ContributionStatsOut.model_validate(stats)
+            if stats is not None
+            else ContributionStatsOut(
+                total_points=0,
+                fountains_added=0,
+                ratings_count=0,
+                attributes_count=0,
+                conditions_reported=0,
+                verifications_count=0,
+                notes_count=0,
+            )
+        ),
+        events=events,
+        next_cursor=next_cursor,
+    )
+    logger.info(
+        "admin contributor history read",
+        extra={
+            **_admin_context(admin),
+            "target_user_id": str(user_id),
+            "cursor_present": cursor is not None,
+            "limit": limit,
+            "returned": len(events),
+            "has_more": has_more,
+        },
+    )
+    return result
 
 
 def _record_moderation_action(

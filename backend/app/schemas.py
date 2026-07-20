@@ -331,10 +331,17 @@ class BadgeOut(BaseModel):
 class ContributorRow(BaseModel):
     rank: int  # 1-based ordinal position in the active board
     display_name: str  # via public_display_name (never the raw subject)
+    avatar_url: str | None
     points: int  # total points in scope: global total_points, or the in-area sum
     # The sorted category's count when sort=<category>; null for sort=total.
     category_count: int | None = None
     is_you: bool = False  # the caller's own row — set only when it appears in `rows`
+
+
+class AdminContributorRow(ContributorRow):
+    """Leaderboard row with stable identity, available only behind ``require_admin``."""
+
+    user_id: uuid.UUID
 
 
 class YourStanding(BaseModel):
@@ -352,6 +359,31 @@ class YourStanding(BaseModel):
 class LeaderboardOut(BaseModel):
     rows: list[ContributorRow]
     you: YourStanding | None = None  # null when the caller is anonymous
+
+
+class AdminLeaderboardOut(BaseModel):
+    rows: list[AdminContributorRow]
+    you: YourStanding
+
+
+class AdminContributionEventOut(BaseModel):
+    id: uuid.UUID
+    event_type: str
+    points: int
+    status: Literal["awarded", "reversed"]
+    fountain_id: uuid.UUID | None
+    target_type: str | None
+    target_id: uuid.UUID | None
+    metadata: dict[str, str | int | float | bool | None]
+    created_at: datetime
+
+
+class AdminContributorHistoryOut(BaseModel):
+    user_id: uuid.UUID
+    display_name: str
+    stats: ContributionStatsOut
+    events: list[AdminContributionEventOut]
+    next_cursor: str | None = None
 
 
 class AddNoteRequest(BaseModel):

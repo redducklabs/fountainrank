@@ -2,6 +2,8 @@ import type { components } from "@fountainrank/api-client";
 
 export type LeaderboardOut = components["schemas"]["LeaderboardOut"];
 export type ContributorRow = components["schemas"]["ContributorRow"];
+export type AdminContributorRow = components["schemas"]["AdminContributorRow"];
+export type AdminLeaderboardOut = components["schemas"]["AdminLeaderboardOut"];
 export type YourStanding = components["schemas"]["YourStanding"];
 
 export const LEADERBOARD_SORTS = [
@@ -77,4 +79,11 @@ export function rowPrimaryValue(
 // The caption under the primary value. `points` is the user's TOTAL points (may include bonuses).
 export function rowMetricCaption(points: number, sort: LeaderboardSort): string {
   return sort === "total" ? "pts" : `${CATEGORY_NOUN[sort]} · ${points.toLocaleString()} pts`;
+}
+
+export function contributorHistoryUserId(
+  row: ContributorRow | AdminContributorRow,
+  isAdmin: boolean,
+): string | null {
+  return isAdmin && "user_id" in row ? row.user_id : null;
 }

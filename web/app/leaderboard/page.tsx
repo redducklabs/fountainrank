@@ -3,9 +3,14 @@ import Link from "next/link";
 import { LeaderboardControls } from "../../components/leaderboard/LeaderboardControls";
 import { LeaderboardRows } from "../../components/leaderboard/LeaderboardRows";
 import { SiteHeader } from "../../components/SiteHeader";
-import { getLeaderboardServer, parseLeaderboardParams } from "../../lib/leaderboard";
+import {
+  getAdminLeaderboardServer,
+  getLeaderboardServer,
+  parseLeaderboardParams,
+} from "../../lib/leaderboard";
 import { getViewerAccessToken } from "../../lib/server/api";
 import { log } from "../../lib/server/log";
+import { getViewer } from "../../lib/server/viewer";
 
 export const dynamic = "force-dynamic";
 
@@ -24,10 +29,14 @@ export default async function LeaderboardPage({
   const sp = await searchParams;
   const state = parseLeaderboardParams(sp);
   const requestId = crypto.randomUUID();
+  const viewer = await getViewer(requestId);
   // Authenticate the public read when the viewer is signed in so `you` comes back (#117);
   // anonymous visitors get the global/near board without a personal standing.
   const token = await getViewerAccessToken();
-  const { data, status } = await getLeaderboardServer(state.query, requestId, token);
+  const isAdmin = viewer.state === "authed" && viewer.isAdmin && token != null;
+  const { data, status } = isAdmin
+    ? await getAdminLeaderboardServer(state.query, requestId, token)
+    : await getLeaderboardServer(state.query, requestId, token);
   if (!data) {
     log("error", "failed to load leaderboard", { requestId, status });
   }
@@ -49,7 +58,12 @@ export default async function LeaderboardPage({
           <LeaderboardControls state={state} />
         </div>
         {data ? (
-          <LeaderboardRows rows={data.rows} you={data.you ?? null} sort={state.sort} />
+          <LeaderboardRows
+            rows={data.rows}
+            you={data.you ?? null}
+            sort={state.sort}
+            admin={isAdmin}
+          />
         ) : (
           <p className="mt-8 text-center text-muted">
             Couldn&rsquo;t load the leaderboard. Please try again.

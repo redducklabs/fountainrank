@@ -4,6 +4,8 @@ import { resolveApiBaseUrl } from "./api";
 
 export type LeaderboardOut = components["schemas"]["LeaderboardOut"];
 export type ContributorRow = components["schemas"]["ContributorRow"];
+export type AdminContributorRow = components["schemas"]["AdminContributorRow"];
+export type AdminLeaderboardOut = components["schemas"]["AdminLeaderboardOut"];
 export type YourStanding = components["schemas"]["YourStanding"];
 
 export const LEADERBOARD_SORTS = [
@@ -138,6 +140,24 @@ export async function getLeaderboardServer(
     return { data, status: response?.status ?? 0 };
   } catch {
     // status 0 = no HTTP response (network error / backend down)
+    return { data: undefined, status: 0 };
+  }
+}
+
+export async function getAdminLeaderboardServer(
+  q: LeaderboardQuery,
+  requestId: string,
+  token: string,
+): Promise<{ data: AdminLeaderboardOut | undefined; status: number }> {
+  const client = makeClient(resolveApiBaseUrl(), {
+    headers: { Authorization: `Bearer ${token}`, "X-Request-ID": requestId },
+  });
+  try {
+    const { data, response } = await client.GET("/api/v1/admin/leaderboard/contributors", {
+      params: { query: toApiQuery(q) },
+    });
+    return { data, status: response?.status ?? 0 };
+  } catch {
     return { data: undefined, status: 0 };
   }
 }
