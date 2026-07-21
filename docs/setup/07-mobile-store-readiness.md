@@ -123,7 +123,7 @@ create the app record.
    `1080x1920`, covering map discovery, fountain detail, address/city search,
    rating filter, and rankings.
 
-Store app versions default to `1.0.2` in `mobile/app.config.ts` (bump for every
+Store app versions default to `1.0.3` in `mobile/app.config.ts` (bump for every
 release — iOS rejects a duplicate `CFBundleShortVersionString`). The
 `mobile-store-release.yml` workflow sets `EXPO_APP_VERSION` for both Android and
 iOS builds: tag releases use the `vMAJOR.MINOR.PATCH` tag exactly, and manual
