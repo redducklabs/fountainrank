@@ -177,21 +177,15 @@ export function isAuthenticatedApiRequest(input: Request): boolean {
   if (path !== "/api/v1/fountains/bbox" && /^\/api\/v1\/fountains\/[^/]+$/.test(path)) {
     return true;
   }
-  // Admin fountain detail exposes hidden notes/fountain state and is never public. Match
-  // only the single-id route, boundary-safely, so future admin subresources are not
-  // accidentally force-authenticated by a loose prefix.
-  if (/^\/api\/v1\/admin\/fountains\/[^/]+$/.test(path)) {
-    return true;
-  }
-  // The admin moderation queue and its unread-count summary are staff-only surfaces
-  // (moderation queue + badge count) and must always carry a token. Both the #12 unified routes
-  // and the pre-#12 photo-only routes (still called by older app builds) are force-authenticated.
-  if (
-    path === "/api/v1/admin/reports" ||
-    path === "/api/v1/admin/reports/summary" ||
-    path === "/api/v1/admin/photo-reports" ||
-    path === "/api/v1/admin/photo-reports/summary"
-  ) {
+  // Every admin endpoint lives under `/api/v1/admin/` and is guarded server-side by
+  // `require_admin`, so an anonymous request is always a hard 401 — force-auth the WHOLE subtree.
+  // A per-route allow-list here is a standing footgun: #271 added the admin leaderboard
+  // (`/api/v1/admin/leaderboard/contributors`) without a matching entry, so the signed-in admin
+  // board shipped tokenless and 401'd ("Couldn't load the leaderboard"). A subtree match closes
+  // that class for every current and future admin GET (fountain detail, moderation queue +
+  // summary, contributor history, leaderboard, ...). Boundary-safe: a sibling like
+  // `/api/v1/administrators` shares the `admin` prefix yet is NOT the admin subtree.
+  if (path === "/api/v1/admin" || path.startsWith("/api/v1/admin/")) {
     return true;
   }
   // The per-fountain photo list is public, but attach the token when signed in so the
