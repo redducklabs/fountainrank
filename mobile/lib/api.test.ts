@@ -192,26 +192,26 @@ describe("createApiClient", () => {
     ).toBe(false);
   });
 
-  it("authenticates the admin GET fountain detail boundary-safely", () => {
-    expect(
-      isAuthenticatedApiRequest(
-        new Request(
-          "https://api.fountainrank.com/api/v1/admin/fountains/123e4567-e89b-12d3-a456-426614174000",
-        ),
-      ),
-    ).toBe(true);
-    expect(
-      isAuthenticatedApiRequest(
-        new Request(
-          "https://api.fountainrank.com/api/v1/admin/fountains/123e4567-e89b-12d3-a456-426614174000/notes",
-        ),
-      ),
-    ).toBe(false);
-    expect(
-      isAuthenticatedApiRequest(
-        new Request("https://api.fountainrank.com/api/v1/admin/fountains-extra/abc"),
-      ),
-    ).toBe(false);
+  it("force-authenticates the entire admin subtree, boundary-safely", () => {
+    // Every /api/v1/admin/* endpoint is guarded by require_admin, so the whole subtree must carry
+    // a token — the admin fountain detail (and any subresource), the moderation queue, the
+    // contributor history, and the admin leaderboard the signed-in admin board fetches (#271).
+    for (const path of [
+      "/api/v1/admin/fountains/123e4567-e89b-12d3-a456-426614174000",
+      "/api/v1/admin/fountains/123e4567-e89b-12d3-a456-426614174000/notes",
+      "/api/v1/admin/leaderboard/contributors",
+      "/api/v1/admin/contributors/123e4567-e89b-12d3-a456-426614174000/contributions",
+    ]) {
+      expect(isAuthenticatedApiRequest(new Request(`https://api.fountainrank.com${path}`))).toBe(
+        true,
+      );
+    }
+    // ...but a sibling that merely shares the `admin` prefix is NOT the admin subtree.
+    for (const path of ["/api/v1/administrators", "/api/v1/admin-extra"]) {
+      expect(isAuthenticatedApiRequest(new Request(`https://api.fountainrank.com${path}`))).toBe(
+        false,
+      );
+    }
   });
 
   it("authenticates the GET /api/v1/me/* subtree (issue #88: contributions, badges)", () => {
@@ -289,6 +289,29 @@ describe("createApiClient", () => {
       getAccessToken: async () => "token123",
     });
     await client.GET("/api/v1/me/contributions");
+    expect(authorization).toBe("Bearer token123");
+  });
+
+  it("attaches the Bearer token on GET /api/v1/admin/leaderboard/contributors (#271 regression)", async () => {
+    // #271 switched the signed-in ADMIN rankings board to this admin-only endpoint but did not
+    // add it to the allow-list, so the request shipped tokenless -> backend require_admin 401 ->
+    // "Couldn't load the leaderboard." Prove the token is attached now (the whole admin subtree is).
+    let authorization: string | null = null;
+    const fetchMock: typeof fetch = async (input) => {
+      const req = input instanceof Request ? input : new Request(String(input));
+      authorization = req.headers.get("authorization");
+      return new Response(JSON.stringify({ rows: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+    const client = createApiClient("https://api.fountainrank.com", {
+      fetch: fetchMock,
+      getAccessToken: async () => "token123",
+    });
+    await client.GET("/api/v1/admin/leaderboard/contributors", {
+      params: { query: { sort: "total" } },
+    });
     expect(authorization).toBe("Bearer token123");
   });
 
