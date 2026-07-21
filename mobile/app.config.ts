@@ -5,9 +5,9 @@ const logtoAppId = logtoNativeAuthConfirmed ? process.env.EXPO_PUBLIC_LOGTO_APP_
 // The iOS CFBundleShortVersionString / Android version name. Bump this for every store release:
 // App Store Connect rejects re-submitting an already-submitted CFBundleShortVersionString, so the
 // version must be NEW each release (Android is immune — it keys on the auto-incremented versionCode).
-// Android 1.0.0 shipped to Play production; iOS 1.0.0 was already taken, so this is 1.0.1. The CI
+// Version 1.0.1 has shipped to the stores, so the next release floor is 1.0.2. The CI
 // release (release-notes job) uses this as the version floor and passes it as EXPO_APP_VERSION.
-const defaultAppVersion = "1.0.1";
+const defaultAppVersion = "1.0.2";
 const appVersion = process.env.EXPO_APP_VERSION ?? defaultAppVersion;
 
 if (!/^\d+\.\d+\.\d+$/.test(appVersion)) {
