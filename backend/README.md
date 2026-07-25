@@ -52,13 +52,16 @@ Reads (public — no auth):
 - `GET /api/v1/fountains?lat=&lng=&radius_m=` — fountains near a point
   (`ST_DWithin`), nearest first, with `distance_m`. `radius_m` is optional
   (defaults to `nearby_default_radius_m`, capped at `nearby_max_radius_m`).
+- `GET /api/v1/fountains/nearest?lat=&lng=` — the globally nearest visible fountain using
+  index-backed spherical KNN distance, with spherical `distance_m`. Returns `404` only when no
+  visible fountain exists.
 - `GET /api/v1/fountains/bbox?min_lat=&min_lng=&max_lat=&max_lng=` — fountains in
   a viewport envelope (`ST_Intersects`). Inverted bounds (min > max) → `422`.
 - `GET /api/v1/fountains/{fountain_id}` — full detail with a per-dimension
   average/vote breakdown plus crowd-sourced `attributes` (consensus per attribute
   type, observed types only). Unknown id → `404`.
 - `GET /api/v1/attribute-types` — the seeded fountain attribute definitions
-  (bottle filler, dual-height, accessibility observations), in `sort_order`.
+  (bottle filler, dual-height, Dog bowl, accessibility observations), in `sort_order`.
 
 Authenticated read (caller's own data only):
 

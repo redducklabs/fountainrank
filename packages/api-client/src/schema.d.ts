@@ -90,6 +90,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/fountains/nearest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Nearest Fountain
+         * @description Return the globally nearest visible fountain using spherical KNN distance.
+         *
+         *     Geography's ``<->`` operator is GiST KNN-indexable and uses a spherical distance model;
+         *     ``ST_Distance(..., false)`` deliberately uses the same model for the serialized distance.
+         */
+        get: operations["nearest_fountain_api_v1_fountains_nearest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/fountains/bbox": {
         parameters: {
             query?: never;
@@ -2347,6 +2370,45 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    nearest_fountain_api_v1_fountains_nearest_get: {
+        parameters: {
+            query: {
+                lat: number;
+                lng: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FountainPin"];
+                };
+            };
+            /** @description No visible fountains have been mapped. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
             };
         };
     };

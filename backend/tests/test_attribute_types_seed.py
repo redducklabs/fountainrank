@@ -30,6 +30,10 @@ async def test_seeded_fountain_attribute_types(session):
         assert r.value_kind == "boolean" and r.allowed_values is None
         assert r.category in ("physical", "accessibility")
         assert r.is_active is True
+    dog_bowl = by_key["lower_spout"]
+    assert dog_bowl.id == 3
+    assert dog_bowl.name == "Dog bowl"
+    assert dog_bowl.description == "Has a dog-accessible drinking bowl"
 
 
 @pytest.mark.asyncio
