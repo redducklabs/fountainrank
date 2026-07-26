@@ -15,6 +15,30 @@ export type PublicFountainResult =
   | { kind: "not-found" }
   | { kind: "error"; status: number };
 
+export type NearestFountainResult =
+  { kind: "found"; fountain: FountainPin } | { kind: "empty" } | { kind: "error"; status: number };
+
+export async function fetchNearestFountain(
+  latitude: number,
+  longitude: number,
+  requestId?: string,
+): Promise<NearestFountainResult> {
+  const client = requestId
+    ? makeClient(resolveApiBaseUrl(), { headers: { "X-Request-ID": requestId } })
+    : getApiClient();
+  try {
+    const { data, response } = await client.GET("/api/v1/fountains/nearest", {
+      params: { query: { lat: latitude, lng: longitude } },
+    });
+    const status = response?.status ?? 0;
+    if (status === 404) return { kind: "empty" };
+    if (!data || !response?.ok) return { kind: "error", status };
+    return { kind: "found", fountain: data };
+  } catch {
+    return { kind: "error", status: 0 };
+  }
+}
+
 /** Anonymous browser lookup used only to resolve an exact public focused-map pin. */
 export async function fetchPublicFountain(
   id: string,
