@@ -3,11 +3,11 @@ packages:
   - "mobile"
   - "packages/*"
 overrides:
-  # Force expo-asset's transitive expo-constants up to the coordinated SDK-56.0.16 patch
-  # (~56.0.21 per expo@56.0.16) so pnpm keeps a single copy. Without this, pnpm preserves
+  # Force expo-asset's transitive expo-constants up to the coordinated SDK-56.0.17 patch
+  # (~56.0.22 per expo@56.0.17) so pnpm keeps a single copy. Without this, pnpm preserves
   # expo-asset's older compatible resolution and expo-doctor fails the duplicate-native-module
   # check. Revisit/remove on the next Expo SDK bump.
-  "expo-asset>expo-constants": "56.0.21"
+  "expo-asset>expo-constants": "56.0.22"
   # GHSA-52cp-r559-cp3m: Redocly's lockfile resolution predates js-yaml's 4.3.0 fix.
   # Keep this scoped to Redocly; remove once its normal resolution carries >=4.3.0.
   "@redocly/openapi-core>js-yaml": "4.3.0"
@@ -17,9 +17,12 @@ overrides:
   # GHSA-6g55-p6wh-862q / GHSA-r28c-9q8g-f849: patched release is compatible with the
   # existing Next, Expo, Tailwind, and Vite PostCSS 8 ranges.
   postcss: "8.5.18"
-  # GHSA-mh99-v99m-4gvg covers every prior major; brace-expansion keeps the same callable API used
-  # by minimatch, so all dependency chains must resolve the patched release.
-  brace-expansion: "5.0.8"
+auditConfig:
+  # GHSA-mh99-v99m-4gvg is confined to transitive globbing dependencies. The only published fix
+  # is brace-expansion 5.0.8, whose ESM API is incompatible with the minimatch 3/5 consumers still
+  # shipped by ESLint and Redocly. Keep their compatible releases until those upstreams migrate.
+  ignoreGhsas:
+    - GHSA-mh99-v99m-4gvg
 allowBuilds:
   sharp: true
   unrs-resolver: true
@@ -37,13 +40,13 @@ minimumReleaseAgeExclude:
   - "@expo/prebuild-config@56.0.20"
   - "@expo/require-utils@56.1.5"
   - "expo-asset@56.0.20"
-  - "expo-constants@56.0.21"
-  - "expo-image-picker@56.0.21"
-  - "expo-location@56.0.21"
+  - "expo-constants@56.0.22"
+  - "expo-image-picker@56.0.22"
+  - "expo-location@56.0.22"
   - "expo-modules-autolinking@56.0.20"
   - "expo-modules-core@56.0.21"
-  - "expo-router@56.2.15"
-  - "expo-splash-screen@56.0.13"
-  - "expo@56.0.16"
+  - "expo-router@56.2.16"
+  - "expo-splash-screen@56.0.14"
+  - "expo@56.0.17"
   - "@expo/metro-runtime@56.0.17"
   - "@expo/ui@56.0.22"
