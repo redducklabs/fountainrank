@@ -1,6 +1,7 @@
 import type { components } from "@fountainrank/api-client";
 import type React from "react";
 import { Alert, Linking, Platform, Pressable, Share, StyleSheet, Text, View } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 
 import { formatAverage, formatDate, formatVotes } from "../../lib/map/format";
 import { photosTabLabel } from "../../lib/detail/fountain-detail";
@@ -96,6 +97,25 @@ export function FountainDetail({
         />
       </View>
 
+      <View style={styles.actions}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Get directions"
+          onPress={openDirections}
+          style={styles.directions}
+        >
+          <Ionicons name="navigate-outline" size={22} color={colors.brandBlue} />
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Share this fountain"
+          onPress={onShare}
+          style={styles.share}
+        >
+          <Ionicons name="share-outline" size={22} color={colors.brandBlue} />
+        </Pressable>
+      </View>
+
       {detail.average_rating != null ? (
         <View style={styles.heroRow}>
           <Text style={styles.average}>{formatAverage(detail.average_rating)}</Text>
@@ -148,25 +168,6 @@ export function FountainDetail({
       ) : null}
 
       {infoContribution}
-
-      <View style={styles.actions}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Get directions"
-          onPress={openDirections}
-          style={styles.directions}
-        >
-          <Text style={styles.directionsText}>Directions</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Share this fountain"
-          onPress={onShare}
-          style={styles.share}
-        >
-          <Text style={styles.shareText}>Share</Text>
-        </Pressable>
-      </View>
     </View>
   );
 
@@ -293,23 +294,23 @@ const styles = StyleSheet.create({
   footer: { ...typography.meta, color: colors.textMuted },
   actions: { flexDirection: "row", alignItems: "center", gap: spacing.sm, flexWrap: "wrap" },
   directions: {
-    alignSelf: "flex-start",
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
     backgroundColor: colors.brandYellow,
     borderRadius: 999,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
   },
-  directionsText: { ...typography.body, fontWeight: "700", color: colors.brandBlue },
   share: {
-    alignSelf: "flex-start",
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
     backgroundColor: colors.surface,
     borderColor: colors.border,
     borderWidth: 1,
     borderRadius: 999,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
   },
-  shareText: { ...typography.body, fontWeight: "700", color: colors.brandBlue },
   reportFountain: { alignSelf: "flex-start", paddingVertical: spacing.xs },
   reportFountainText: { ...typography.meta, color: colors.textMuted, fontWeight: "700" },
 });

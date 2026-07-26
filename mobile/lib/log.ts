@@ -41,9 +41,20 @@ export type AddFountainOutcomeUnknownEvent = {
  */
 export type WatchStartRejectedEvent = { event: "watch_start_rejected" };
 
-export type LogEvent = ApiTimeoutEvent | AddFountainOutcomeUnknownEvent | WatchStartRejectedEvent;
+/** Nearest-fountain lookup failed. No coordinates, URL, or raw error message are carried. */
+export type NearestFountainFailedEvent = {
+  event: "nearest_fountain_failed";
+  stage: "api" | "transport";
+  status?: number;
+};
 
-type LogArea = "api" | "add_fountain" | "location";
+export type LogEvent =
+  | ApiTimeoutEvent
+  | AddFountainOutcomeUnknownEvent
+  | WatchStartRejectedEvent
+  | NearestFountainFailedEvent;
+
+type LogArea = "api" | "add_fountain" | "location" | "nearest_fountain";
 
 /** Build the single serialized JSON line for an event from its allowlist alone. */
 export function serializeEvent(event: LogEvent): string {
@@ -69,6 +80,11 @@ export function serializeEvent(event: LogEvent): string {
     case "watch_start_rejected":
       area = "location";
       fields = {};
+      break;
+    case "nearest_fountain_failed":
+      area = "nearest_fountain";
+      fields = { stage: event.stage };
+      if (event.status != null) fields.status = event.status;
       break;
   }
   return JSON.stringify({ level: "warn", area, event: event.event, ...fields });

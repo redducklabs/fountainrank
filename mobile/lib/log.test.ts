@@ -184,3 +184,24 @@ describe("serializeEvent — watch_start_rejected allowlist (spec §1)", () => {
     expect(Object.keys(parsed).sort()).toEqual(["area", "event", "level"].sort());
   });
 });
+
+describe("serializeEvent — nearest_fountain_failed allowlist", () => {
+  it("keeps only stage and numeric status", () => {
+    const parsed = JSON.parse(
+      serializeEvent({
+        event: "nearest_fountain_failed",
+        stage: "api",
+        status: 503,
+        coordinates: { latitude: 1, longitude: 2 },
+        message: "https://example.com/?lat=1",
+      } as never),
+    );
+    expect(parsed).toEqual({
+      level: "warn",
+      area: "nearest_fountain",
+      event: "nearest_fountain_failed",
+      stage: "api",
+      status: 503,
+    });
+  });
+});
