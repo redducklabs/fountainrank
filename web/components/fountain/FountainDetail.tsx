@@ -52,6 +52,29 @@ export function FountainDetail({
           now={renderNow}
         />
       </div>
+      <div className="flex gap-2">
+        <a
+          href={dir}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="Get directions"
+          title="Get directions"
+          className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-accent-gold text-brand focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+        >
+          <svg
+            aria-hidden="true"
+            viewBox="0 0 24 24"
+            className="h-5 w-5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+          >
+            <path d="M12 21V8m0 0 4 4m-4-4-4 4" />
+            <path d="M5 3h14" />
+          </svg>
+        </a>
+        <ShareButton />
+      </div>
       {detail.average_rating != null ? (
         <div className="flex items-center gap-3">
           <span className="text-3xl font-extrabold leading-none text-brand-ink">
@@ -113,17 +136,6 @@ export function FountainDetail({
         viewerAwardState={detail.viewer_award_state}
         variant="primary"
       />
-      <div className="flex gap-2">
-        <a
-          href={dir}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="rounded-full bg-accent-gold px-4 py-2 text-sm font-bold text-brand"
-        >
-          Directions
-        </a>
-        <ShareButton />
-      </div>
     </div>
   );
   const details = (

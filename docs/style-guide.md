@@ -548,18 +548,21 @@ trap focus or block the page — it is dismissed only by choosing Accept or Decl
 
 ---
 
-### Fountain share button (`web/components/fountain/ShareButton.tsx`, `mobile/components/fountain/FountainDetail.tsx`)
+### Fountain detail icon actions (`web/components/fountain/ShareButton.tsx`, `mobile/components/fountain/FountainDetail.tsx`)
 
 Lets a viewer share a fountain's public URL from its detail page (#168).
 
-- **Web:** a pill button (`rounded-full border border-[#cdd6e6] bg-white text-[#0A357E]`). On tap it
+- **Placement:** Directions and Share sit beside the fountain heading/status, before ratings and
+  contribution content. Each is an icon-only 44×44 target: a route/turn arrow for Directions and
+  the platform-standard share glyph for Share. These are distinct from both map location controls.
+- **Web:** outlined/gold circular buttons with `aria-label`, matching `title` tooltip text, visible
+  focus rings, and a decorative inline SVG (`aria-hidden`). On Share activation it
   uses the Web Share sheet when available (mobile browsers); on desktop it copies the canonical
-  fountain URL to the clipboard and **shows feedback** — the label swaps to "Link copied!" for ~2s
-  (or "Couldn't copy" on failure), so it never looks inert. `aria-live="polite"` announces the
-  change; a user-cancelled native share sheet (`AbortError`) stays silent.
-- **Mobile:** a secondary pill next to **Directions** in the detail actions row
-  (`colors.surface` fill, `colors.border` outline, `colors.brandBlue` text — the same shape as the
-  gold **Directions** button, in the secondary treatment). It invokes the native `Share.share` sheet
+  fountain URL to the clipboard. A separate `aria-live="polite"` status announces “Link copied!”
+  or “Couldn't copy” without changing the stable button name/icon; a user-cancelled native share
+  sheet (`AbortError`) stays silent.
+- **Mobile:** Ionicons `navigate-outline` and `share-outline` in 44×44 circular Pressables. It
+  invokes the native `Share.share` sheet
   with the fountain's **web** URL (`<webBaseUrl>/fountains/<id>`); the payload is platform-aware —
   `{ url }` on iOS, `{ message }` on Android (whose sheet ignores `url`). `accessibilityRole="button"`
   - `accessibilityLabel="Share this fountain"`.
@@ -603,10 +606,11 @@ layout is a vertical flex column that fills the viewport (`flex min-h-dvh flex-c
 
 MapLibre GL controls added to the `"top-right"` corner of the canvas in `MapBrowser.tsx`:
 
-| Control             | Class             | Behaviour                                                                                                                                 |
-| ------------------- | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `NavigationControl` | MapLibre built-in | Zoom-in (+) and zoom-out (−) buttons; keyboard-accessible via the GL canvas.                                                              |
-| `GeolocateControl`  | MapLibre built-in | Locate-me button (arrow icon); triggers `navigator.geolocation.getCurrentPosition`. `trackUserLocation: false`, `showUserLocation: true`. |
+| Control             | Class                | Behaviour                                                                                                                                                                                                                                                                                                                                                                                            |
+| ------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NavigationControl` | MapLibre built-in    | Zoom-in (+) and zoom-out (−) buttons; keyboard-accessible via the GL canvas.                                                                                                                                                                                                                                                                                                                         |
+| `GeolocateControl`  | MapLibre built-in    | Locate-me button (arrow icon); triggers `navigator.geolocation.getCurrentPosition`. `trackUserLocation: false`, `showUserLocation: true`.                                                                                                                                                                                                                                                            |
+| `Find nearest`      | FountainRank control | Separate 44×44 map-pin-with-search glyph and tooltip/accessibility name “Find nearest fountain”. Gets a fresh position, selects the globally nearest fountain, and opens details. It is placed outside MapLibre's native control stack so it cannot be mistaken for the crosshair-style locate-me control. Results ≤50 km open immediately; farther results require a distance-bearing confirmation. |
 
 Both controls use MapLibre's default styling (included via `maplibre-gl/dist/maplibre-gl.css`).
 On initial map load the app also fires an automatic geolocation attempt (via
@@ -1241,8 +1245,8 @@ bottom (auth-gated write controls).
 | Per-dimension list     | `<dl>` (`space-y-2 border-t border-slate-100 pt-3`); each row: dimension name `text-sm font-medium text-slate-700`, a read-only **`Stars`** row (size 14) + numeric value `font-semibold tabular-nums text-[#0A357E]` + `(votes)`, and a full-width **meter** below. Unrated dimension → "Not yet rated", no meter. |
 | Notes / comments       | `rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700`.                                                                                                                                                                                                                                        |
 | Meta line              | Added / last-rated dates, `text-xs text-slate-400`.                                                                                                                                                                                                                                                                 |
-| Directions button      | Gold pill: `rounded-full bg-[#F2C200] px-4 py-2 text-sm font-bold text-[#0A357E]`. Links to Google Maps directions.                                                                                                                                                                                                 |
-| Share button           | Outlined pill: `rounded-full border border-[#cdd6e6] bg-white px-4 py-2 text-sm font-bold text-[#0A357E]`. Uses `navigator.share` when available; falls back to `navigator.clipboard`.                                                                                                                              |
+| Directions button      | Gold 44×44 circular icon action with route/turn arrow, accessible name and tooltip. Links to Google Maps directions.                                                                                                                                                                                                |
+| Share button           | Outlined 44×44 circular icon action with the standard share glyph, stable accessible name/tooltip, and separate live feedback. Uses `navigator.share` when available; falls back to `navigator.clipboard`.                                                                                                          |
 | **Contribute section** | Bottom of panel; heading `text-base font-semibold text-[#0A357E]`; signed-out prompt or three grouped forms (see below).                                                                                                                                                                                            |
 
 #### Read-only stars, dimension meter & hero (`Stars.tsx`)
@@ -2637,6 +2641,13 @@ mapping, icon/pill selection, bounds, and filter→query logic are pure helpers 
     mentions Settings only when the OS will not re-prompt (`canAskAgain === false`).
   - On a denied-permanently press the button raises the **actionable toast** below with an
     "Open settings" action (never an automatic redirect).
+- **Find nearest fountain** — a separate 44×44 circular Pressable positioned above locate-me with
+  an Ionicons `search`/map-pin composite, explicit label “Find nearest fountain,” busy/disabled
+  state, and no coordinate logging. It requests a fresh foreground fix, then selects and opens the
+  nearest fountain. A named `FAR_NEAREST_THRESHOLD_M = 50_000` constant governs both clients:
+  `≤ 50,000 m` opens immediately and `> 50,000 m` shows a distance-bearing confirmation. The three
+  location-like glyphs stay distinct: locate-me uses a crosshair, find-nearest uses search + pin,
+  and detail Directions uses a route/turn arrow.
 - **Map overlay banner** — a centered pill at the bottom showing a single status derived from
   `resolveViewState` plus map-specific notes (a pure decision in `mobile/lib/map/overlay.ts`,
   node-tested). Priority: stale-pins > offline/error > **locating** > below-zoom > empty/capped. So:
@@ -2682,15 +2693,21 @@ are deferred to 6e-5/6e-6.
   "— {author} · {relative time}" with " · edited" when `isNoteEdited` (pure).
   Renders nothing when empty.
 - **`FountainDetail`** (`mobile/components/fountain/FountainDetail.tsx`) — the
-  composed body: title "Public drinking fountain" + `StatusBlock`; a large
+  composed body: title "Public drinking fountain" + `StatusBlock`, followed immediately by the
+  44×44 Directions and Share icon actions; a large
   brand-blue rating average + muted vote count
   (`formatAverage`/`formatVotes`); a per-dimension list (`formatDimension`,
   shown only when dimensions exist); `AttributeList`; the adder's comment/context
   card ("From the person who added this fountain", using legacy placement text only
   when comments are empty); the notes section (or its
   error row); a muted "Added … · Last rated …" footer (`formatDate`); and a
-  brand-yellow **Directions** pill (`Linking.openURL` to a Google Maps
-  directions URL, with an `Alert` on the rare failure — never a silent swallow).
+  directions URL uses `Linking.openURL`, with an `Alert` on the rare failure — never a silent swallow.
+
+### Fountain attribute terminology
+
+The stable attribute key `lower_spout` is displayed as **Dog bowl**, described as “Has a
+dog-accessible drinking bowl.” Never show the internal key or the legacy “Lower spout” label in
+current web/mobile UI; the id/key remain stable for existing observations and API compatibility.
 
 ### Existing-fountain contributions (slice 6e-6)
 

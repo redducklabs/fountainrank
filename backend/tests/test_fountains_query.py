@@ -1,7 +1,9 @@
 import pytest
+from sqlalchemy import update
 
 from app.config import Settings, get_settings
 from app.main import app
+from app.models import Fountain
 
 
 @pytest.fixture
@@ -56,6 +58,47 @@ async def test_nearby_excludes_outside_radius(client):
     )
     body = resp.json()
     assert len(body) == 1
+
+
+async def test_nearest_returns_global_closest_with_complete_pin(client, session):
+    near = await _add_rated(client, 37.7749, -122.4194)
+    await _add(client, 40.7128, -74.0060)
+    resp = await client.get("/api/v1/fountains/nearest", params={"lat": 37.7750, "lng": -122.4194})
+    assert resp.status_code == 200  # proves /nearest was not captured as a UUID route
+    pin = resp.json()
+    assert pin["id"] == near
+    assert 0 < pin["distance_m"] < 20
+    assert pin["average_rating"] is not None
+    assert pin["rating_count"] == 1
+    assert pin["ranking_score"] is not None
+    assert "current_status" in pin and "last_verified_at" in pin
+
+
+async def test_nearest_excludes_hidden_and_ignores_discovery_filters(client, session):
+    hidden = await _add(client, 0.0, 0.0)
+    visible = await _add(client, 0.01, 0.0)
+    await session.execute(update(Fountain).where(Fountain.id == hidden).values(is_hidden=True))
+    await session.commit()
+    resp = await client.get(
+        "/api/v1/fountains/nearest",
+        params={"lat": 0, "lng": 0, "min_rating": 5, "working_now": False},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["id"] == visible
+
+
+async def test_nearest_empty_invalid_and_deterministic_tie(client):
+    empty = await client.get("/api/v1/fountains/nearest", params={"lat": 0, "lng": 0})
+    assert empty.status_code == 404
+
+    invalid = await client.get("/api/v1/fountains/nearest", params={"lat": 91, "lng": 0})
+    assert invalid.status_code == 422
+
+    first = await _add(client, 0.0, -0.01)
+    second = await _add(client, 0.0, 0.01)
+    tied = await client.get("/api/v1/fountains/nearest", params={"lat": 0, "lng": 0})
+    assert tied.status_code == 200
+    assert tied.json()["id"] == min(first, second)
 
 
 async def test_bbox_returns_only_points_inside(client):

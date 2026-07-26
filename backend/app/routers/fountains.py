@@ -517,6 +517,59 @@ async def nearby_fountains(
     ]
 
 
+@router.get(
+    "/fountains/nearest",
+    response_model=FountainPin,
+    responses={404: {"description": "No visible fountains have been mapped."}},
+)
+async def nearest_fountain(
+    lat: float = Query(ge=-90.0, le=90.0),
+    lng: float = Query(ge=-180.0, le=180.0),
+    session: AsyncSession = Depends(get_session),
+) -> FountainPin:
+    """Return the globally nearest visible fountain using spherical KNN distance.
+
+    Geography's ``<->`` operator is GiST KNN-indexable and uses a spherical distance model;
+    ``ST_Distance(..., false)`` deliberately uses the same model for the serialized distance.
+    """
+    point = point_geography(lat, lng)
+    knn_distance = Fountain.location.op("<->")(point)
+    distance = func.ST_Distance(Fountain.location, point, False)
+    row = (
+        await session.execute(
+            select(
+                Fountain.id,
+                latitude_of(Fountain.location),
+                longitude_of(Fountain.location),
+                Fountain.is_working,
+                Fountain.average_rating,
+                Fountain.rating_count,
+                Fountain.ranking_score,
+                Fountain.current_status,
+                Fountain.last_verified_at,
+                distance,
+            )
+            .where(Fountain.is_hidden.is_(False))
+            .order_by(knn_distance, Fountain.id)
+            .limit(1)
+        )
+    ).one_or_none()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="fountain not found")
+    rid, rlat, rlng, working, avg, count, score, cur_status, last_verified, dist = row
+    return FountainPin(
+        id=rid,
+        location=Coordinates(latitude=float(rlat), longitude=float(rlng)),
+        is_working=working,
+        average_rating=avg,
+        rating_count=count,
+        ranking_score=score,
+        current_status=cur_status,
+        last_verified_at=last_verified,
+        distance_m=float(dist),
+    )
+
+
 # Latitude span (degrees) at/above which an envelope cast to geography risks an antipodal
 # pole-to-pole edge (PostGIS errors at exactly 180°; the 1° margin avoids float-boundary
 # surprises). At/above this, the bbox uses a planar geometry intersection instead (#20).

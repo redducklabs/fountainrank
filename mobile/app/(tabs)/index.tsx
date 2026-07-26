@@ -4,6 +4,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   AccessibilityInfo,
+  Alert,
   Animated,
   ActivityIndicator,
   BackHandler,
@@ -82,6 +83,11 @@ import {
   fountainsQueryKey,
 } from "../../lib/map/filters";
 import { resolveMapOverlay } from "../../lib/map/overlay";
+import {
+  formatNearestDistance,
+  mergeNearestPin,
+  requiresFarNearestConfirmation,
+} from "../../lib/map/nearest";
 import { pinsToFeatureCollection } from "../../lib/map/pins";
 import { shouldClearSearchMarker } from "../../lib/map-search/marker";
 import {
@@ -115,6 +121,20 @@ const FILTER_BAR_HEIGHT = 44;
 const MAP_HEADER_HEIGHT = 72;
 // Spec §7.1: debounce the geocode call ~300ms after the user stops typing.
 const SEARCH_DEBOUNCE_MS = 300;
+
+function confirmFarNearest(distanceM: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    Alert.alert(
+      "Fountain is far away",
+      `The nearest fountain is ${formatNearestDistance(distanceM)} away. Show it?`,
+      [
+        { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+        { text: "Show fountain", onPress: () => resolve(true) },
+      ],
+      { cancelable: true, onDismiss: () => resolve(false) },
+    );
+  });
+}
 
 export default function MapScreen() {
   const { client, config } = useApi();
@@ -162,6 +182,8 @@ export default function MapScreen() {
   const [addMessage, setAddMessage] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
   const [addMode, setAddMode] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
+  const [nearestPin, setNearestPin] = useState<FountainPin | null>(null);
+  const [nearestBusy, setNearestBusy] = useState(false);
   const [celebrationKey, setCelebrationKey] = useState(0);
   const [celebrationPoints, setCelebrationPoints] = useState<number | null>(null);
   const regionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -275,6 +297,69 @@ export default function MapScreen() {
     setToast({ tone, text, nonce: Date.now(), action });
   }, []);
 
+  const findNearest = useCallback(async () => {
+    if (nearestBusy) return;
+    setNearestBusy(true);
+    try {
+      const outcome = await location.refresh();
+      if (outcome.kind === "denied") {
+        if (!outcome.canAskAgain) {
+          showToast("err", "Location access is off. Open Settings to enable it.", {
+            label: OPEN_SETTINGS_ACTION_LABEL,
+            onPress: async () => {
+              const result = await location.openSettings();
+              if (result.kind === "failed") showToast("err", SETTINGS_OPEN_FAILED_TEXT);
+            },
+          });
+        } else {
+          showToast("err", "Location access is needed to find the nearest fountain.");
+        }
+        return;
+      }
+      if (outcome.kind !== "granted") {
+        showToast("err", "Your location is unavailable right now.");
+        return;
+      }
+      const result = await client.GET("/api/v1/fountains/nearest", {
+        params: {
+          query: { lat: outcome.coords.latitude, lng: outcome.coords.longitude },
+        },
+      });
+      if (result.response?.status === 404) {
+        showToast("err", "No fountains have been mapped yet.");
+        return;
+      }
+      if (!result.data || !result.response?.ok) {
+        showToast("err", "Couldn't find the nearest fountain.");
+        logEvent({
+          event: "nearest_fountain_failed",
+          stage: "api",
+          status: result.response?.status ?? 0,
+        });
+        return;
+      }
+      const distanceM = result.data.distance_m ?? 0;
+      if (requiresFarNearestConfirmation(distanceM) && !(await confirmFarNearest(distanceM))) {
+        return;
+      }
+      setNearestPin(result.data);
+      setSearchMarker(null);
+      setFlyTo({
+        center: {
+          lng: result.data.location.longitude,
+          lat: result.data.location.latitude,
+        },
+        zoom: DEFAULT_ZOOM < 14 ? 14 : DEFAULT_ZOOM,
+      });
+      router.push(`/fountains/${result.data.id}`);
+    } catch {
+      logEvent({ event: "nearest_fountain_failed", stage: "transport" });
+      showToast("err", "Couldn't find the nearest fountain.");
+    } finally {
+      setNearestBusy(false);
+    }
+  }, [client, location, nearestBusy, router, showToast]);
+
   const resetAddDraft = useCallback(() => {
     addDispatch({ type: "reset" });
     setRatings({});
@@ -342,10 +427,11 @@ export default function MapScreen() {
   // therefore the rendered clusters — don't flicker while panning. FountainPin[] is
   // directly assignable to PinInput[] (ranking_score/current_status are optional), so
   // no per-pin normalization is needed at the call site.
-  const clusterIndex = useMemo(
-    () => buildClusterIndex(pinsQuery.data?.pins ?? []),
-    [pinsQuery.data],
+  const visiblePins = useMemo(
+    () => mergeNearestPin(pinsQuery.data?.pins ?? [], nearestPin),
+    [nearestPin, pinsQuery.data],
   );
+  const clusterIndex = useMemo(() => buildClusterIndex(visiblePins), [visiblePins]);
   // Recompute the visible clusters/points whenever the index OR the viewport changes
   // (pan/zoom). Before the first region is known there is nothing to cluster.
   const featureCollection = useMemo(
@@ -641,6 +727,14 @@ export default function MapScreen() {
           }
         }}
       />
+
+      {!addMode ? (
+        <FindNearestButton
+          busy={nearestBusy}
+          bottom={insets.bottom + spacing.lg + 108}
+          onPress={findNearest}
+        />
+      ) : null}
 
       {gate.state === "ready" && addMode ? (
         <MapAddPanel
@@ -947,6 +1041,36 @@ function LocateButton({
           size={22}
           color={descriptor.visual.tone === "brand" ? colors.brandBlue : colors.textMuted}
         />
+      )}
+    </Pressable>
+  );
+}
+
+function FindNearestButton({
+  busy,
+  bottom,
+  onPress,
+}: {
+  busy: boolean;
+  bottom: number;
+  onPress: () => void | Promise<void>;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={busy ? "Finding nearest fountain" : "Find nearest fountain"}
+      accessibilityState={{ busy, disabled: busy }}
+      disabled={busy}
+      onPress={() => void onPress()}
+      style={[styles.findNearest, { bottom }, busy ? styles.controlBusy : null]}
+    >
+      {busy ? (
+        <ActivityIndicator size="small" color={colors.brandBlue} />
+      ) : (
+        <View style={styles.findNearestGlyph}>
+          <Ionicons name="location-outline" size={23} color={colors.brandBlue} />
+          <Ionicons name="search" size={12} color={colors.brandBlue} style={styles.searchGlyph} />
+        </View>
       )}
     </Pressable>
   );
@@ -1376,6 +1500,21 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderWidth: 1,
   },
+  findNearest: {
+    position: "absolute",
+    right: spacing.md,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderWidth: 1,
+  },
+  controlBusy: { opacity: 0.65 },
+  findNearestGlyph: { width: 28, height: 28, alignItems: "center", justifyContent: "center" },
+  searchGlyph: { position: "absolute", right: 0, bottom: 0 },
   addPanel: {
     position: "absolute",
     left: spacing.md,

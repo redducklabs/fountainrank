@@ -17,6 +17,7 @@ vi.mock("@fountainrank/api-client", () => ({
 
 import {
   fetchBbox,
+  fetchNearestFountain,
   fetchPublicFountain,
   getFountainDetailServer,
   getFountainNotesServer,
@@ -54,6 +55,19 @@ describe("fetchBbox", () => {
       response: { ok: false, status: 422 },
     });
     await expect(fetchBbox(PARAMS)).rejects.toThrow("422");
+  });
+});
+
+describe("fetchNearestFountain", () => {
+  it("returns a found pin", async () => {
+    bboxGet.mockResolvedValueOnce({ data: { id: "near" }, response: { ok: true, status: 200 } });
+    expect(await fetchNearestFountain(1, 2)).toEqual({ kind: "found", fountain: { id: "near" } });
+  });
+  it("classifies empty and transport outcomes", async () => {
+    bboxGet.mockResolvedValueOnce({ data: undefined, response: { ok: false, status: 404 } });
+    expect(await fetchNearestFountain(1, 2)).toEqual({ kind: "empty" });
+    bboxGet.mockRejectedValueOnce(new Error("offline"));
+    expect(await fetchNearestFountain(1, 2)).toEqual({ kind: "error", status: 0 });
   });
 });
 

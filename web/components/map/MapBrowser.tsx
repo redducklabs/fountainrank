@@ -12,7 +12,12 @@ import { useAddFountainMode } from "./useAddFountainMode";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { styleUrlFor, themedPinAssets, themedPillBg } from "../../lib/map/style";
 import { mapColorsFor } from "../../lib/map/colors";
-import { fetchBbox, fetchPublicFountain, type FountainPin } from "../../lib/fountains";
+import {
+  fetchBbox,
+  fetchNearestFountain,
+  fetchPublicFountain,
+  type FountainPin,
+} from "../../lib/fountains";
 import { resolveApiBaseUrl } from "../../lib/api";
 import { CONTRIBUTION_EVENT, contributionPoints } from "../../lib/contribution-event";
 import { pinsToFeatureCollection, type PinInput } from "../../lib/map/pins";
@@ -44,6 +49,7 @@ import {
   shouldMoveToStartupLocation,
 } from "../../lib/map/focus";
 import { logMapError } from "../../lib/map/log";
+import { formatNearestDistance, requiresFarNearestConfirmation } from "../../lib/map/nearest";
 import { deriveCameraAction, parseFlyToParam } from "../../lib/search/flyto";
 import { FountainsInViewList } from "./FountainsInViewList";
 import {
@@ -169,6 +175,10 @@ export default function MapBrowser({
   const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [status, setStatus] = useState<Status>("idle");
   const [locateStatus, setLocateStatus] = useState<"locating" | "resolved">("locating");
+  const [nearestStatus, setNearestStatus] = useState<
+    "idle" | "locating" | "loading" | "empty" | "error"
+  >("idle");
+  const nearestActiveRef = useRef(false);
   const [celebrationKey, setCelebrationKey] = useState(0);
   const [celebrationPoints, setCelebrationPoints] = useState<number | undefined>(undefined);
   const [webglOk] = useState(isWebglSupported);
@@ -242,6 +252,76 @@ export default function MapBrowser({
     },
     [clearFocus, router],
   );
+
+  const findNearest = useCallback(async () => {
+    if (nearestActiveRef.current) return;
+    if (!navigator.geolocation) {
+      setNearestStatus("error");
+      return;
+    }
+    nearestActiveRef.current = true;
+    setNearestStatus("locating");
+    try {
+      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: false,
+          timeout: GEOLOCATE_TIMEOUT_MS,
+          maximumAge: 30_000,
+        });
+      });
+      setNearestStatus("loading");
+      const requestId =
+        typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}`;
+      const result = await fetchNearestFountain(
+        position.coords.latitude,
+        position.coords.longitude,
+        requestId,
+      );
+      if (result.kind === "empty") {
+        setNearestStatus("empty");
+        return;
+      }
+      if (result.kind === "error") {
+        logMapError("nearest-fetch-failed", { status: result.status });
+        setNearestStatus("error");
+        return;
+      }
+      const distanceM = result.fountain.distance_m ?? 0;
+      if (
+        requiresFarNearestConfirmation(distanceM) &&
+        !window.confirm(
+          `The nearest fountain is ${formatNearestDistance(distanceM)} away. Show it?`,
+        )
+      ) {
+        setNearestStatus("idle");
+        return;
+      }
+      const merged = mergeFocusedPin(bboxPinsRef.current, result.fountain);
+      setPins(merged);
+      pinsRef.current = merged.map((pin) => ({
+        ...pin,
+        ranking_score: pin.ranking_score ?? null,
+      }));
+      (mapRef.current?.getSource("fountains") as GeoJSONSource | undefined)?.setData(
+        pinsToFeatureCollection(pinsRef.current, themeRef.current),
+      );
+      mapRef.current?.flyTo({
+        center: [result.fountain.location.longitude, result.fountain.location.latitude],
+        zoom: NEIGHBORHOOD_ZOOM,
+      });
+      setNearestStatus("idle");
+      openDetail(String(result.fountain.id));
+    } catch (error) {
+      const code =
+        typeof error === "object" && error !== null && "code" in error
+          ? Number((error as { code: unknown }).code)
+          : undefined;
+      logMapError("nearest-location-failed", code == null ? undefined : { code });
+      setNearestStatus("error");
+    } finally {
+      nearestActiveRef.current = false;
+    }
+  }, [openDetail]);
 
   useEffect(() => {
     if (!pendingDetailRef.current || !pathname.startsWith(`/fountains/${pendingDetailRef.current}`))
@@ -707,6 +787,44 @@ export default function MapBrowser({
   return (
     <div className="absolute inset-0">
       <div ref={ref} className="h-full w-full" />
+      {!add.active && (
+        <button
+          type="button"
+          aria-label="Find nearest fountain"
+          title="Find nearest fountain"
+          aria-busy={nearestStatus === "locating" || nearestStatus === "loading"}
+          disabled={nearestStatus === "locating" || nearestStatus === "loading"}
+          onClick={() => void findNearest()}
+          className="absolute right-2 top-28 z-30 inline-flex h-11 w-11 items-center justify-center rounded-md border border-border bg-surface-raised text-brand-ink shadow disabled:opacity-60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+        >
+          <svg
+            aria-hidden="true"
+            viewBox="0 0 24 24"
+            className="h-6 w-6"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+          >
+            <path d="M12 21s5-4.4 5-10a5 5 0 1 0-10 0c0 5.6 5 10 5 10Z" />
+            <circle cx="12" cy="11" r="1.5" />
+            <path d="m18 18 3 3m0-3-3 3" />
+          </svg>
+        </button>
+      )}
+      {nearestStatus !== "idle" && (
+        <div
+          role={nearestStatus === "error" ? "alert" : "status"}
+          className="absolute right-14 top-28 z-30 rounded-full bg-surface-raised px-3 py-2 text-sm shadow"
+        >
+          {nearestStatus === "locating"
+            ? "Finding your location…"
+            : nearestStatus === "loading"
+              ? "Finding nearest fountain…"
+              : nearestStatus === "empty"
+                ? "No fountains have been mapped yet."
+                : "Couldn't find the nearest fountain."}
+        </div>
+      )}
       {status === "loading" && <LoadingBar />}
       {status === "belowZoom" && locateStatus === "resolved" && <ZoomInHint />}
       {locateStatus === "locating" && !focusId && (

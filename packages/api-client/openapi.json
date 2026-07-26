@@ -434,6 +434,65 @@
         }
       }
     },
+    "/api/v1/fountains/nearest": {
+      "get": {
+        "tags": [
+          "fountains"
+        ],
+        "summary": "Nearest Fountain",
+        "description": "Return the globally nearest visible fountain using spherical KNN distance.\n\nGeography's ``<->`` operator is GiST KNN-indexable and uses a spherical distance model;\n``ST_Distance(..., false)`` deliberately uses the same model for the serialized distance.",
+        "operationId": "nearest_fountain_api_v1_fountains_nearest_get",
+        "parameters": [
+          {
+            "name": "lat",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "maximum": 90.0,
+              "minimum": -90.0,
+              "title": "Lat"
+            }
+          },
+          {
+            "name": "lng",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "maximum": 180.0,
+              "minimum": -180.0,
+              "title": "Lng"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FountainPin"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No visible fountains have been mapped."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/fountains/bbox": {
       "get": {
         "tags": [
