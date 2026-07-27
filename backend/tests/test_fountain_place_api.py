@@ -14,6 +14,7 @@ is_canonical invariant the real refresh produces (cities canonical, countries no
 
 from __future__ import annotations
 
+import re
 import uuid
 
 import pytest
@@ -218,8 +219,41 @@ async def test_place_returns_parent_region_for_region_tier_city(session, api):
 @pytest.mark.asyncio
 async def test_place_queries_do_not_select_boundary_geometry(session, api):
     """The public projection must not transfer multi-megabyte place polygons from Postgres."""
-    country, city = await _seed_country_city(session)
-    fid = await _add_fountain(session, city_place_id=city, country_place_id=country, rating_count=1)
+    country = await _add_place(
+        session,
+        overture_id="us-projection",
+        subtype="country",
+        country_code="us",
+        name="United States",
+        slug="united-states-projection",
+        is_canonical=False,
+    )
+    region = await _add_place(
+        session,
+        overture_id="oregon-projection",
+        subtype="region",
+        country_code="us",
+        name="Oregon",
+        slug="oregon-projection",
+        parent_id=country,
+        place_kind="region",
+    )
+    city = await _add_place(
+        session,
+        overture_id="portland-projection",
+        subtype="locality",
+        country_code="us",
+        name="Portland",
+        slug="portland-projection",
+        parent_id=region,
+    )
+    fid = await _add_fountain(
+        session,
+        city_place_id=city,
+        region_place_id=region,
+        country_place_id=country,
+        rating_count=1,
+    )
     await session.commit()
 
     statements: list[str] = []
@@ -235,9 +269,13 @@ async def test_place_queries_do_not_select_boundary_geometry(session, api):
         event.remove(sync_engine, "before_cursor_execute", capture_statement)
 
     assert resp.status_code == 200
+    assert resp.json()["region"]["slug"] == "oregon-projection"
     place_queries = [statement for statement in statements if "place_boundaries" in statement]
     assert place_queries
-    assert all("place_boundaries.boundary" not in statement for statement in place_queries)
+    assert all(
+        re.search(r"\bplace_boundaries\.boundary\b", statement) is None
+        for statement in place_queries
+    )
 
 
 @pytest.mark.asyncio
