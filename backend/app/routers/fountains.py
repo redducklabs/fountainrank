@@ -8,6 +8,7 @@ from geoalchemy2 import Geography, Geometry
 from sqlalchemy import cast, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.auth import ensure_named_user, get_current_user, get_optional_user
 from app.conditions import recompute_fountain_status
@@ -827,35 +828,44 @@ async def fountain_place(
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="fountain not found")
     fountain, indexable = row[0], bool(row[1])
 
+    # Do not load the full PlaceBoundary ORM row here. Its ``boundary`` geography can be several
+    # megabytes, while this response only needs the small public identity/count projection.
+    # Selecting the ORM entity made every crawler-visible fountain page transfer the city, region,
+    # and country multipolygons from Postgres before Pydantic discarded them.
+    place_columns = (
+        PlaceBoundary.id,
+        PlaceBoundary.parent_id,
+        PlaceBoundary.country_code,
+        PlaceBoundary.slug,
+        PlaceBoundary.name,
+        PlaceBoundary.subtype,
+        PlaceBoundary.place_kind,
+        PlaceBoundary.fountain_count,
+    )
+
+    async def load_place(*where: ColumnElement[bool]) -> PlaceOut | None:
+        place = (
+            (await session.execute(select(*place_columns).where(*where))).mappings().one_or_none()
+        )
+        return PlaceOut.model_validate(place) if place is not None else None
+
     city = (
-        (
-            await session.execute(
-                select(PlaceBoundary).where(PlaceBoundary.id == fountain.city_place_id)
-            )
-        ).scalar_one_or_none()
+        await load_place(PlaceBoundary.id == fountain.city_place_id)
         if fountain.city_place_id is not None
         else None
     )
     country = (
-        (
-            await session.execute(
-                select(PlaceBoundary).where(PlaceBoundary.id == fountain.country_place_id)
-            )
-        ).scalar_one_or_none()
+        await load_place(PlaceBoundary.id == fountain.country_place_id)
         if fountain.country_place_id is not None
         else None
     )
     region = None
     if city is not None and city.parent_id is not None:
-        region = (
-            await session.execute(
-                select(PlaceBoundary).where(
-                    PlaceBoundary.id == city.parent_id,
-                    PlaceBoundary.place_kind == "region",
-                    PlaceBoundary.is_canonical.is_(True),
-                )
-            )
-        ).scalar_one_or_none()
+        region = await load_place(
+            PlaceBoundary.id == city.parent_id,
+            PlaceBoundary.place_kind == "region",
+            PlaceBoundary.is_canonical.is_(True),
+        )
 
     ttl = settings.seo_cache_max_age_seconds
     response.headers["Cache-Control"] = f"public, max-age={ttl}, s-maxage={ttl}"
@@ -873,9 +883,9 @@ async def fountain_place(
     )
     return FountainPlaceOut(
         fountain_id=fountain.id,
-        city=PlaceOut.model_validate(city) if city is not None else None,
-        region=PlaceOut.model_validate(region) if region is not None else None,
-        country=PlaceOut.model_validate(country) if country is not None else None,
+        city=city,
+        region=region,
+        country=country,
         indexable=indexable,
     )
 

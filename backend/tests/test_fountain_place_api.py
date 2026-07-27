@@ -14,12 +14,14 @@ is_canonical invariant the real refresh produces (cities canonical, countries no
 
 from __future__ import annotations
 
+import re
 import uuid
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import text
+from sqlalchemy import event, text
 
+from app.db import get_engine
 from app.main import app
 
 _UNIT_SQUARE = "POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))"
@@ -212,6 +214,68 @@ async def test_place_returns_parent_region_for_region_tier_city(session, api):
     assert body["region"]["slug"] == "oregon"
     assert body["region"]["place_kind"] == "region"
     assert body["country"]["slug"] == "united-states"
+
+
+@pytest.mark.asyncio
+async def test_place_queries_do_not_select_boundary_geometry(session, api):
+    """The public projection must not transfer multi-megabyte place polygons from Postgres."""
+    country = await _add_place(
+        session,
+        overture_id="us-projection",
+        subtype="country",
+        country_code="us",
+        name="United States",
+        slug="united-states-projection",
+        is_canonical=False,
+    )
+    region = await _add_place(
+        session,
+        overture_id="oregon-projection",
+        subtype="region",
+        country_code="us",
+        name="Oregon",
+        slug="oregon-projection",
+        parent_id=country,
+        place_kind="region",
+    )
+    city = await _add_place(
+        session,
+        overture_id="portland-projection",
+        subtype="locality",
+        country_code="us",
+        name="Portland",
+        slug="portland-projection",
+        parent_id=region,
+    )
+    fid = await _add_fountain(
+        session,
+        city_place_id=city,
+        region_place_id=region,
+        country_place_id=country,
+        rating_count=1,
+    )
+    await session.commit()
+
+    statements: list[str] = []
+
+    def capture_statement(_conn, _cursor, statement, _parameters, _context, _executemany):
+        statements.append(statement)
+
+    sync_engine = get_engine().sync_engine
+    event.listen(sync_engine, "before_cursor_execute", capture_statement)
+    try:
+        resp = await api.get(f"/api/v1/fountains/{fid}/place")
+    finally:
+        event.remove(sync_engine, "before_cursor_execute", capture_statement)
+
+    assert resp.status_code == 200
+    assert resp.json()["region"]["slug"] == "oregon-projection"
+    place_queries = [statement for statement in statements if "place_boundaries" in statement]
+    assert place_queries
+    assert all(
+        re.search(r"\bplace_boundaries\.boundary\b", statement) is None
+        for statement in place_queries
+    )
 
 
 @pytest.mark.asyncio
