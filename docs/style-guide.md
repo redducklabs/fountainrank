@@ -1184,6 +1184,28 @@ The map page `<footer>` carries the low-emphasis utility links plus optional mob
 - Store badges use official wording (`Download on the App Store`, `Get it on Google Play`) in compact
   rounded dark badges with accessible external-link labels and `rel="noopener noreferrer"`.
 
+### Mobile app promotion banner
+
+`MobileAppPromotion`, mounted once from the root layout, offers the matching native app to iOS and
+Android web visitors when that platform's store URL is configured. It renders nothing during SSR,
+on desktop browsers, or when the site is running in standalone display mode. User-agent detection
+is progressive enhancement only and never restricts web functionality.
+
+- **Placement:** a normal-flow top banner before page content, not a fixed overlay or modal. It
+  never covers the map and cannot overlap the fixed bottom analytics-consent banner.
+- **Style:** solid `bg-brand`, `text-on-brand`, a crown-gold store action, and a compact
+  white-outline dismissal action. Narrow screens stack the copy above a right-aligned action row;
+  `sm` and wider screens use one concise row.
+- **Content:** “Take FountainRank with you” plus a platform-specific **View in App Store** or **View
+  in Google Play** action. The link opens in a new tab and uses the existing official store label as
+  its accessible name.
+- **Dismissal:** **Dismiss** hides the banner and stores `fr-mobile-app-banner-dismissed=true` in
+  `localStorage`. If storage is unavailable, the banner still dismisses for the current page
+  lifetime and logs a diagnostic warning without visitor data.
+- **Accessibility:** an `<aside>` has the accessible name “Get the FountainRank mobile app”; the
+  link and button are native interactive elements with visible focus rings. The banner does not
+  trap or move focus and does not block the rest of the page.
+
 ### `/admin` placeholder page (`web/app/admin/page.tsx`)
 
 A server-gated page that **fails closed**: any non-admin visitor never sees admin content.

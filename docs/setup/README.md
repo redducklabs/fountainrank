@@ -77,7 +77,7 @@ Names match `claude_help/github-environments.md`; some are finalized in plan 0f
 | `GOOGLE_DELEGATED_USER`                                             | `03-google-cloud.md`                               | GitHub Env **variable**                                       | Ready to create                                                          |
 | `FROM_EMAIL`                                                        | `02-dns.md` / `03-google-cloud.md`                 | GitHub Env **variable**                                       | Ready to create                                                          |
 | `LOGTO_EMAIL_WEBHOOK_TOKEN`                                         | self-generated random (≥32 chars)                  | GitHub Env **secret** + Logto HTTP email connector auth token | Ready to create                                                          |
-| `GEOCODING_API_KEY`                                                 | LocationIQ account (mobile map UX search)          | GitHub Env secret → `fountainrank-secrets.geocoding-api-key`   | ✅ set (`production`, owner-supplied 2026-07-01)                         |
+| `GEOCODING_API_KEY`                                                 | LocationIQ account (mobile map UX search)          | GitHub Env secret → `fountainrank-secrets.geocoding-api-key`  | ✅ set (`production`, owner-supplied 2026-07-01)                         |
 | `BASE_URL`                                                          | decided per environment                            | GitHub Env **variable**                                       | TBD-0f                                                                   |
 | Google OAuth client id/secret (web/iOS/Android)                     | `03-google-cloud.md`                               | **Logto** Google connector                                    | Ready to create                                                          |
 | Apple Services ID / Team ID / Key ID / `.p8` key                    | `04-apple-and-app-stores.md`                       | **Logto** Apple connector                                     | Ready to create                                                          |
@@ -246,10 +246,10 @@ the live basemap); the upload runs via the **`basemap-upload`** GitHub Actions w
   into the web client bundle at _build_ time — Next bakes `NEXT_PUBLIC_*` during `next build`).
   The planet itself is **not** a build-arg: it's served as z/x/y tiles by the go-pmtiles **tile
   server** (`fountainrank.com/tiles`), referenced from inside `style.light.json`.
-- ⏳ **Mobile-store web links** — after the public store listings exist, set web build variables
-  `NEXT_PUBLIC_APP_STORE_URL` and/or `NEXT_PUBLIC_GOOGLE_PLAY_URL` in the deployment environment.
-  Missing values intentionally hide the corresponding footer badge so the website never renders a
-  dead store link.
+- ✅ **Mobile-store web links** — `deploy.yml` passes the public App Store and Google Play listing
+  URLs as `NEXT_PUBLIC_APP_STORE_URL` and `NEXT_PUBLIC_GOOGLE_PLAY_URL` Docker build arguments.
+  Missing values still hide the corresponding footer badge and mobile promotion so preview/local
+  builds never render dead store links.
 - ⏳ **Remaining: upload the basemap data** (below), then tag the release.
 
 **Serving.** The planet is served by a **go-pmtiles tile server** in DOKS (`infra/k8s/basemap-tiles.yaml`)
@@ -313,7 +313,7 @@ that, and whenever the key is absent/misconfigured, the endpoint fails closed to
 **Quota + no-overage behavior (the actual spend guard):** LocationIQ's free tier is a
 **hard cap of 5,000 requests/day with no overage billing** — requests beyond the quota are
 `429`'d by the provider, never billed. Because DOKS runs multiple backend replicas (each
-with its own per-pod, in-process throttle/cache — never a global counter), the *provider's*
+with its own per-pod, in-process throttle/cache — never a global counter), the _provider's_
 no-overage quota is what actually bounds worst-case spend, not anything in-process. When
 the provider returns quota-exhausted, the endpoint fails closed to `503 geocoding_unavailable`
 (never a retry storm).
