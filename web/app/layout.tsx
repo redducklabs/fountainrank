@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import { AnalyticsConsent } from "../components/analytics/AnalyticsConsent";
+import { MobileAppPromotion } from "../components/mobile-app/MobileAppPromotion";
 import { SITE_URL } from "../lib/seo/site";
 import { Providers } from "./providers";
 import "./globals.css";
@@ -32,6 +33,7 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body>
         <Providers>
+          <MobileAppPromotion />
           {children}
           {modal}
           <AnalyticsConsent />
