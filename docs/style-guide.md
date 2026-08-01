@@ -1196,9 +1196,9 @@ is progressive enhancement only and never restricts web functionality.
 - **Style:** solid `bg-brand`, `text-on-brand`, a crown-gold store action, and a compact
   white-outline dismissal action. Narrow screens stack the copy above a right-aligned action row;
   `sm` and wider screens use one concise row.
-- **Content:** “Take FountainRank with you” plus a platform-specific **View in App Store** or **View
-  in Google Play** action. The link opens in a new tab and uses the existing official store label as
-  its accessible name.
+- **Content:** “Take FountainRank with you” plus the platform-specific official wording **Download
+  on the App Store** or **Get it on Google Play**. The visible wording is included in the accessible
+  name for voice-control compatibility; the link announces that it opens in a new tab.
 - **Dismissal:** **Dismiss** hides the banner and stores `fr-mobile-app-banner-dismissed=true` in
   `localStorage`. If storage is unavailable, the banner still dismisses for the current page
   lifetime and logs a diagnostic warning without visitor data.

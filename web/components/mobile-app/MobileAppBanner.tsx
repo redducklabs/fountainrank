@@ -25,7 +25,7 @@ export function MobileAppBanner({
             aria-label={`${link.label} (opens in a new tab)`}
             className="rounded-full bg-accent-gold px-4 py-2 text-xs font-semibold text-brand transition hover:bg-accent-gold-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-gold"
           >
-            {link.store === "ios" ? "View in App Store" : "View in Google Play"}
+            {link.label}
           </a>
           <button
             type="button"
