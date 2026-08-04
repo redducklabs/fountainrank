@@ -4,6 +4,48 @@ export type MobileStoreLink = {
   href: string;
 };
 
+export type MobilePlatform = MobileStoreLink["store"];
+
+export const MOBILE_APP_BANNER_DISMISSED_KEY = "fr-mobile-app-banner-dismissed";
+
+type PlatformDetectionInput = {
+  userAgent: string;
+  platform: string;
+  maxTouchPoints: number;
+};
+
+export function detectMobilePlatform({
+  userAgent,
+  platform,
+  maxTouchPoints,
+}: PlatformDetectionInput): MobilePlatform | null {
+  if (/android/i.test(userAgent)) return "android";
+  if (/iPhone|iPad|iPod/i.test(userAgent)) return "ios";
+
+  // iPadOS can request a desktop-class user agent and identify itself as a Mac.
+  if (platform === "MacIntel" && maxTouchPoints > 1) return "ios";
+
+  return null;
+}
+
+export function isStandaloneDisplayMode({
+  displayModeStandalone,
+  navigatorStandalone,
+}: {
+  displayModeStandalone: boolean;
+  navigatorStandalone: boolean;
+}): boolean {
+  return displayModeStandalone || navigatorStandalone;
+}
+
+export function selectMobileStoreLink(
+  links: MobileStoreLink[],
+  platform: MobilePlatform | null,
+): MobileStoreLink | null {
+  if (!platform) return null;
+  return links.find((link) => link.store === platform) ?? null;
+}
+
 export function resolveMobileStoreLinks(
   envOverride?: Record<string, string | undefined>,
 ): MobileStoreLink[] {

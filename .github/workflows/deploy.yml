@@ -105,6 +105,8 @@ jobs:
           docker build -f web/Dockerfile \
             --build-arg NEXT_PUBLIC_API_BASE_URL="https://api.${DOMAIN}" \
             --build-arg NEXT_PUBLIC_BASEMAP_STYLE_URL="https://${BASEMAP_CDN}/style.light.json?v=${BASEMAP_STYLE_VER}" \
+            --build-arg NEXT_PUBLIC_APP_STORE_URL="https://apps.apple.com/us/app/fountainrank/id6782199873" \
+            --build-arg NEXT_PUBLIC_GOOGLE_PLAY_URL="https://play.google.com/store/apps/details?id=com.redducklabs.fountainrank" \
             -t "$REGISTRY/fountainrank-web:$IMAGE_TAG" .
           docker push "$REGISTRY/fountainrank-web:$IMAGE_TAG"
       # Image scans are report-only (ignore-unfixed) — see Task 5's scanning policy.

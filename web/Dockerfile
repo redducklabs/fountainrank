@@ -16,6 +16,10 @@ ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
 # go-pmtiles tile server (fountainrank.com/tiles), referenced from inside the style JSON.
 ARG NEXT_PUBLIC_BASEMAP_STYLE_URL
 ENV NEXT_PUBLIC_BASEMAP_STYLE_URL=$NEXT_PUBLIC_BASEMAP_STYLE_URL
+ARG NEXT_PUBLIC_APP_STORE_URL
+ENV NEXT_PUBLIC_APP_STORE_URL=$NEXT_PUBLIC_APP_STORE_URL
+ARG NEXT_PUBLIC_GOOGLE_PLAY_URL
+ENV NEXT_PUBLIC_GOOGLE_PLAY_URL=$NEXT_PUBLIC_GOOGLE_PLAY_URL
 # Manifests first for layer caching. All workspace package.json files are needed
 # for pnpm to resolve the frozen lockfile graph.
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./

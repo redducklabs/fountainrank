@@ -204,10 +204,10 @@ Committed paths:
 | App Store 6.5 screenshots        | `mobile/assets/store/screenshots/app-store-6-5/*.png` | 1242x2688 RGB PNGs for the iPhone 6.5" Display slot when App Store Connect prompts for it. **Generated mockups** — replace with real iPhone captures.                |
 | Play phone screenshots           | `mobile/assets/store/screenshots/play-store/*.png`    | 1080x1920 RGB PNGs for Google Play phone screenshots. **Real device captures** (Android emulator, release config, San Diego).                                        |
 
-After the App Store and Google Play listings have public URLs, configure the web deployment with
-`NEXT_PUBLIC_APP_STORE_URL` and/or `NEXT_PUBLIC_GOOGLE_PLAY_URL`. The website footer hides either
-store badge until its URL is present, so it is safe for one store listing to go live before the
-other.
+The production web build is configured with the public listings through
+`NEXT_PUBLIC_APP_STORE_URL` and `NEXT_PUBLIC_GOOGLE_PLAY_URL`. The website footer and mobile app
+promotion independently hide either store until its URL is present, so preview and local builds do
+not render dead store links.
 
 Expo references:
 
