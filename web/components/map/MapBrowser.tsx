@@ -788,6 +788,8 @@ export default function MapBrowser({
     <div className="absolute inset-0">
       <div ref={ref} className="h-full w-full" />
       {!add.active && (
+        // The native top-right stack is 136px tall (navigation + geolocate, including margins).
+        // Keep this separate action below it so neither control can cover the other.
         <button
           type="button"
           aria-label="Find nearest fountain"
@@ -795,7 +797,7 @@ export default function MapBrowser({
           aria-busy={nearestStatus === "locating" || nearestStatus === "loading"}
           disabled={nearestStatus === "locating" || nearestStatus === "loading"}
           onClick={() => void findNearest()}
-          className="absolute right-2 top-28 z-30 inline-flex h-11 w-11 items-center justify-center rounded-md border border-border bg-surface-raised text-brand-ink shadow disabled:opacity-60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+          className="absolute right-2 top-40 z-30 inline-flex h-11 w-11 items-center justify-center rounded-md border border-border bg-surface-raised text-brand-ink shadow disabled:opacity-60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
         >
           <svg
             aria-hidden="true"
@@ -814,7 +816,7 @@ export default function MapBrowser({
       {nearestStatus !== "idle" && (
         <div
           role={nearestStatus === "error" ? "alert" : "status"}
-          className="absolute right-14 top-28 z-30 rounded-full bg-surface-raised px-3 py-2 text-sm shadow"
+          className="absolute right-14 top-40 z-30 rounded-full bg-surface-raised px-3 py-2 text-sm shadow"
         >
           {nearestStatus === "locating"
             ? "Finding your location…"

@@ -41,6 +41,15 @@ export async function SiteHeader({ variant }: { variant: "hero" | "bar" }) {
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-3">
           {totalPoints != null && <HeaderPoints initialTotalPoints={totalPoints} />}
+          <a
+            href="https://store.redducklabs.com/"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Visit the Red Duck Labs store (opens in a new tab)"
+            className="inline-flex min-h-10 items-center rounded-full border border-white/40 px-4 text-sm font-semibold text-white transition hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+          >
+            Store
+          </a>
           <ThemeToggle />
           <AuthControl viewer={viewer} initialPendingReportCount={pendingReportCount} />
         </div>

@@ -50,6 +50,15 @@ describe("SiteHeader", () => {
     expect(screen.getByTestId("header-search")).toBeTruthy();
   });
 
+  it("links to the Red Duck Labs store from every header", async () => {
+    render(await SiteHeader({ variant: "bar" }));
+
+    const storeLink = screen.getByRole("link", { name: /visit the red duck labs store/i });
+    expect(storeLink).toHaveAttribute("href", "https://store.redducklabs.com/");
+    expect(storeLink).toHaveAttribute("target", "_blank");
+    expect(storeLink).toHaveAttribute("rel", "noopener noreferrer");
+  });
+
   it("bar variant has no tagline", async () => {
     render(await SiteHeader({ variant: "bar" }));
     expect(screen.queryByText(/the largest community-rated guide/i)).toBeNull();
