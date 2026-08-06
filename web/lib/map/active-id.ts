@@ -11,3 +11,7 @@ export const activeIdFromPath = (p: string | null) =>
  */
 export const resolveActiveId = (focus: string | null, pathname: string | null) =>
   focus ?? activeIdFromPath(pathname);
+
+/** Resolve a map focus supplied by the URL, falling back to an SSR route seed. */
+export const resolveFocusId = (focus: string | null, initialFocusId = "") =>
+  focus ?? initialFocusId;

@@ -4,17 +4,20 @@ import { notFound } from "next/navigation";
 import { cache } from "react";
 
 import { SiteHeader } from "../../../components/SiteHeader";
+import { AreaMapPage } from "../../../components/place/AreaMapPage";
 import {
   cityPath,
   countryPath,
   getCountriesServer,
   getCountryCitiesServer,
+  getCountryFountainsServer,
   getCountryRegionsServer,
   placeTitle,
   regionPath,
 } from "../../../lib/places";
 import type { PlaceOut } from "../../../lib/places";
 import { log } from "../../../lib/server/log";
+import { getViewer } from "../../../lib/server/viewer";
 import { itemListStructuredData, jsonLdScript } from "../../../lib/seo/jsonld";
 import { SITE_URL } from "../../../lib/seo/site";
 
@@ -63,9 +66,11 @@ export default async function CountryPage({ params }: { params: Promise<{ countr
   }
 
   const requestId = crypto.randomUUID();
-  const [{ data: regions }, { data: cities }] = await Promise.all([
+  const [{ data: regions }, { data: cities }, mapResult, viewer] = await Promise.all([
     getCountryRegionsServer(place.country_code, requestId),
     getCountryCitiesServer(place.country_code, requestId),
+    getCountryFountainsServer(place.country_code, requestId),
+    getViewer(requestId),
   ]);
   const hasRegions = regions.length > 0;
   // Structured data: a BreadcrumbList plus an ItemList of the child places this page lists (regions
@@ -100,75 +105,91 @@ export default async function CountryPage({ params }: { params: Promise<{ countr
   const itemList = place.indexable ? itemListStructuredData(childUrls) : null;
   const itemListJson = itemList ? jsonLdScript(itemList) : null;
 
+  const content = (
+    <>
+      <Link href="/drinking-fountains" className="text-sm text-brand-ink underline">
+        ← All countries
+      </Link>
+      <h1 className="mt-4 text-2xl font-black text-brand-ink">
+        Drinking fountains in {place.name}
+      </h1>
+      <p className="mt-2 text-muted">
+        {place.fountain_count.toLocaleString()} public drinking fountains and bottle-refill stations
+        mapped in {place.name} on FountainRank.
+        {mapResult.data && mapResult.data.fountains.length < place.fountain_count
+          ? ` Showing ${mapResult.data.fountains.length.toLocaleString()} overview pins; zoom in for local results.`
+          : ""}
+      </p>
+
+      {hasRegions ? (
+        <section className="mt-6">
+          <h2 className="text-lg font-bold text-brand-ink">Regions</h2>
+          <ul className="mt-3 divide-y divide-border">
+            {regions.map((region) => (
+              <li key={region.id} className="flex items-center justify-between gap-3 py-2">
+                <Link
+                  href={regionPath(place.country_code, region.slug)}
+                  className="text-brand-ink underline"
+                >
+                  {region.name}
+                </Link>
+                <span className="text-right text-sm text-muted">
+                  {region.fountain_count.toLocaleString()} fountains
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : cities.length > 0 ? (
+        <section className="mt-6">
+          <h2 className="text-lg font-bold text-brand-ink">Top cities</h2>
+          <ul className="mt-3 divide-y divide-border">
+            {cities.map((city) => (
+              <li key={city.id} className="flex items-center justify-between gap-3 py-2">
+                <Link
+                  href={cityPath(place.country_code, city.slug)}
+                  className="text-brand-ink underline"
+                >
+                  {city.name}
+                </Link>
+                <span className="text-right text-sm text-muted">
+                  {city.fountain_count.toLocaleString()} fountains
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+    </>
+  );
+  if (!mapResult.data) {
+    log("error", "failed to load country map", {
+      country: place.country_code,
+      status: mapResult.status,
+    });
+  }
   return (
     <>
-      <SiteHeader variant="bar" />
       {breadcrumbJson ? (
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: breadcrumbJson }} />
       ) : null}
       {itemListJson ? (
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: itemListJson }} />
       ) : null}
-      <main className={shell}>
-        <Link href="/" className="text-sm text-brand-ink underline">
-          ← Back to the map
-        </Link>
-        <h1 className="mt-6 text-2xl font-black text-brand-ink">
-          Drinking fountains in {place.name}
-        </h1>
-        <p className="mt-2 text-muted">
-          {place.fountain_count.toLocaleString()} public drinking fountains and bottle-refill
-          stations mapped in {place.name} on FountainRank.
-        </p>
-
-        {hasRegions ? (
-          <section className="mt-8">
-            <h2 className="text-lg font-bold text-brand-ink">Regions</h2>
-            <ul className="mt-3 divide-y divide-border">
-              {regions.map((region) => (
-                <li key={region.id} className="flex items-center justify-between py-2">
-                  <Link
-                    href={regionPath(place.country_code, region.slug)}
-                    className="text-brand-ink underline"
-                  >
-                    {region.name}
-                  </Link>
-                  <span className="text-sm text-muted">
-                    {region.fountain_count.toLocaleString()} fountains
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </section>
-        ) : cities.length > 0 ? (
-          <section className="mt-8">
-            <h2 className="text-lg font-bold text-brand-ink">Top cities</h2>
-            <ul className="mt-3 divide-y divide-border">
-              {cities.map((city) => (
-                <li key={city.id} className="flex items-center justify-between py-2">
-                  <Link
-                    href={cityPath(place.country_code, city.slug)}
-                    className="text-brand-ink underline"
-                  >
-                    {city.name}
-                  </Link>
-                  <span className="text-sm text-muted">
-                    {city.fountain_count.toLocaleString()} fountains
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </section>
-        ) : (
-          <p className="mt-8 text-muted">
-            Explore the{" "}
-            <Link href="/" className="text-brand-ink underline">
-              map
-            </Link>{" "}
-            to find drinking fountains in {place.name}.
-          </p>
-        )}
-      </main>
+      {mapResult.data ? (
+        <AreaMapPage
+          bounds={mapResult.data.bounds}
+          fountains={mapResult.data.fountains}
+          isAuthenticated={viewer.state === "authed"}
+        >
+          {content}
+        </AreaMapPage>
+      ) : (
+        <>
+          <SiteHeader variant="bar" />
+          <main className={shell}>{content}</main>
+        </>
+      )}
     </>
   );
 }

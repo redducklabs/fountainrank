@@ -685,10 +685,51 @@ async def test_region_and_nested_city_endpoints(session, api):
 # --- GET /api/v1/places/{country}/{city}/fountains (Slice 3) ---
 
 
+@pytest.mark.asyncio
+async def test_country_fountains_returns_boundary_bounds_and_precomputed_members(session, api):
+    country = await _add_place(
+        session,
+        overture_id="map-us",
+        subtype="country",
+        country_code="us",
+        name="United States",
+        slug="united-states",
+        fountain_count=2,
+        is_canonical=False,
+        wkt=_sq(-125, 24, -66, 49),
+    )
+    visible = await _add_city_fountain(
+        session, None, country_place_id=country, ranking_score=0.8, rating_count=2
+    )
+    await _add_city_fountain(
+        session,
+        None,
+        country_place_id=country,
+        ranking_score=0.9,
+        rating_count=3,
+        hidden=True,
+    )
+    await session.commit()
+
+    response = await api.get("/api/v1/places/us/fountains", params={"limit": 500})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["bounds"] == {"south": 24.0, "west": -125.0, "north": 49.0, "east": -66.0}
+    assert [row["id"] for row in body["fountains"]] == [str(visible)]
+    assert "public" in response.headers["cache-control"]
+
+
+@pytest.mark.asyncio
+async def test_country_fountains_404_for_unknown_country(session, api):
+    assert (await api.get("/api/v1/places/zz/fountains")).status_code == 404
+
+
 async def _add_city_fountain(
     session,
     place_id,
     *,
+    country_place_id=None,
     ranking_score=None,
     rating_count=0,
     average_rating=None,
@@ -703,9 +744,9 @@ async def _add_city_fountain(
                 """
                 INSERT INTO fountains
                     (id, location, is_hidden, is_working, created_source,
-                     city_place_id, ranking_score, rating_count, average_rating)
+                     country_place_id, city_place_id, ranking_score, rating_count, average_rating)
                 VALUES (gen_random_uuid(), ST_SetSRID(ST_MakePoint(1.5, 1.5), 4326)::geography,
-                        :hidden, :working, 'admin_import', :pid, :score, :rc, :avg)
+                        :hidden, :working, 'admin_import', :country_pid, :pid, :score, :rc, :avg)
                 RETURNING id
                 """
             ),
@@ -713,6 +754,7 @@ async def _add_city_fountain(
                 "hidden": hidden,
                 "working": is_working,
                 "pid": place_id,
+                "country_pid": country_place_id,
                 "score": ranking_score,
                 "rc": rating_count,
                 "avg": average_rating,

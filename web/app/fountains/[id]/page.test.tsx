@@ -66,6 +66,18 @@ vi.mock("../../../components/fountain/FountainDetail", () => ({
     </div>
   ),
 }));
+vi.mock("../../../components/fountain/DetailOverlay", () => ({
+  DetailOverlay: ({ children, closeHref }: { children: ReactNode; closeHref?: string }) => (
+    <div data-testid="detail-overlay" data-close-href={closeHref}>
+      {children}
+    </div>
+  ),
+}));
+vi.mock("../../../components/map/MapBrowserLoader", () => ({
+  default: ({ initialFocusId }: { initialFocusId?: string }) => (
+    <div data-testid="map" data-focus-id={initialFocusId} />
+  ),
+}));
 vi.mock("../../../components/contributions/ContributionStatusOverlay", () => ({
   ContributionStatusOverlay: () => <div data-testid="contribution-status" />,
 }));
@@ -281,7 +293,7 @@ describe("FountainPage route (standalone)", () => {
     expect(getPlaceFn).toHaveBeenCalledWith("f1", expect.any(String));
   });
 
-  it("links an indexable fountain detail page back to its nested city page", async () => {
+  it("renders a direct fountain over a map focused on that fountain", async () => {
     getDetail.mockResolvedValue({ data: detail, status: 200 });
     getNotes.mockResolvedValue({ data: [], status: 200 });
     getPlaceFn.mockResolvedValue(
@@ -292,21 +304,8 @@ describe("FountainPage route (standalone)", () => {
       }),
     );
     render(await FountainPage({ params }));
-    expect(
-      await screen.findByRole("link", { name: /drinking fountains in Manhattan/i }),
-    ).toHaveAttribute("href", "/drinking-fountains/us/new-york/manhattan");
-  });
-
-  it("keeps two-level country fountain detail links flat", async () => {
-    getDetail.mockResolvedValue({ data: detail, status: 200 });
-    getNotes.mockResolvedValue({ data: [], status: 200 });
-    getPlaceFn.mockResolvedValue(
-      placeIn({ name: "Luxembourg", country_code: "lu", slug: "luxembourg" }, true),
-    );
-    render(await FountainPage({ params }));
-    expect(
-      await screen.findByRole("link", { name: /drinking fountains in Luxembourg/i }),
-    ).toHaveAttribute("href", "/drinking-fountains/lu/luxembourg");
+    expect(await screen.findByTestId("map")).toHaveAttribute("data-focus-id", "f1");
+    expect(screen.getByTestId("detail-overlay")).toHaveAttribute("data-close-href", "/");
   });
 
   it("renders JSON-LD for indexable public detail pages", async () => {
@@ -410,7 +409,7 @@ describe("FountainPage route (standalone)", () => {
 });
 
 describe("FountainPage generateMetadata", () => {
-  it("city + indexable: richer city title, description, canonical, no noindex override", async () => {
+  it("city + formerly indexable detail: richer metadata but area-first noindex", async () => {
     getPlaceFn.mockResolvedValue(placeIn({ name: "Manhattan", country_code: "us" }, true));
     getDetail.mockResolvedValue({ data: detail, status: 200 });
     const meta = await generateMetadata({ params });
@@ -419,7 +418,7 @@ describe("FountainPage generateMetadata", () => {
     expect(meta.description).toContain("Rated 4.5 from 8 ratings.");
     expect(meta.description).toContain("Reported features include bottle filler.");
     expect(meta.alternates?.canonical).toBe("/fountains/f1");
-    expect(meta.robots).toBeUndefined();
+    expect(meta.robots).toEqual({ index: false, follow: true });
   });
 
   it("below the §7 predicate (indexable=false): rendered but noindex, still followable", async () => {

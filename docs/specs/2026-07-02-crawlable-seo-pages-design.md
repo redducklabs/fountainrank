@@ -103,15 +103,15 @@ fixture, not only boundary-relation fixtures.
 
 ### 4.4 Page types (each an indexable, SSR route)
 
-| Route | Set from | Content | Indexable? |
-|---|---|---|---|
-| `/drinking-fountains/[country]` | admin_level=2 | Intro + count + top cities + top fountains | Yes |
-| `/drinking-fountains/[country]/[city]` | admin_level=8 (or fallback) | Intro + count + list/map, top-rated first | **Yes — primary** |
-| `/drinking-fountains/bottle-fillers`, `/wheelchair-accessible-drinking-fountains` | attribute filter (§4.5) | Curated copy + matching fountains | Yes (global; `noindex` below `K`) |
-| `/drinking-fountains-near-me` | static | Explains near-me + map deep-link + top cities | Yes |
-| `/fountains/[id]` | + containing city | `generateMetadata`, city in `<h1>`/title | **Selective** — §7 predicate; else `noindex` |
+| Route                                                                             | Set from                    | Content                                       | Indexable?                                   |
+| --------------------------------------------------------------------------------- | --------------------------- | --------------------------------------------- | -------------------------------------------- |
+| `/drinking-fountains/[country]`                                                   | admin_level=2               | Intro + count + top cities + top fountains    | Yes                                          |
+| `/drinking-fountains/[country]/[city]`                                            | admin_level=8 (or fallback) | Intro + count + list/map, top-rated first     | **Yes — primary**                            |
+| `/drinking-fountains/bottle-fillers`, `/wheelchair-accessible-drinking-fountains` | attribute filter (§4.5)     | Curated copy + matching fountains             | Yes (global; `noindex` below `K`)            |
+| `/drinking-fountains-near-me`                                                     | static                      | Explains near-me + map deep-link + top cities | Yes                                          |
+| `/fountains/[id]`                                                                 | + containing city           | `generateMetadata`, city in `<h1>`/title      | **Selective** — §7 predicate; else `noindex` |
 
-> **Superseded by §11.5:** the *Set from* column's `admin_level=2`/`admin_level=8` is OSM-native.
+> **Superseded by §11.5:** the _Set from_ column's `admin_level=2`/`admin_level=8` is OSM-native.
 > Under the Overture source, country = `subtype='country'` and city = the per-country city subtype
 > (§11.5); Overture `admin_level` (country=0, region=1, county=2, NULL at `locality`) is **not** the
 > city selector.
@@ -157,10 +157,12 @@ labels stay human-readable (`/drinking-fountains/bottle-fillers`,
 
 Next.js `generateSitemaps` emits **multiple files at `/.../sitemap/[id].xml`** — it does **not**
 turn `/sitemap.xml` into an index. Topology:
+
 - A **sitemap index** served at `/sitemap.xml` (explicit route handler) that references the chunk
   sitemaps (the `generateSitemaps` `/sitemap/[id].xml` outputs and/or explicit chunk handlers).
   `robots.ts` keeps pointing at `/sitemap.xml` (now the index). Keep each chunk < 50k URLs.
-- Chunks: countries, cities, attributes, and selectively fountains. `lastModified` from real data.
+- Chunks: countries, regions, cities, and attributes. Individual fountain URLs remain public and
+  shareable but are not sitemap/index targets; the finest indexable grain is an area page.
 - Handle Next 16's async `id` param. **Tests fetch/inspect the actual built routes**, not only the
   returned arrays.
 
@@ -168,9 +170,10 @@ turn `/sitemap.xml` into an index. Topology:
 
 - One **public indexing predicate** in a shared server helper / one backend response, computed
   from **public, non-hidden, unauthenticated** data only — auth/admin data never influences
-  indexability or SEO copy. A fountain is indexable iff: a city resolves **AND** it is not hidden
-  **AND** (`rating_count ≥ 1` **OR** (`is_working` **AND** `current_status` not a negative state)).
-  Places/attribute pages indexable iff `fountain_count ≥ K`.
+  indexability or SEO copy. Area/attribute pages are indexable iff `fountain_count ≥ K` and any
+  applicable scope-readiness gate passes. Individual fountain detail pages are always
+  `noindex, follow`: they remain shareable map-and-drawer destinations, but the finest indexable
+  grain is an area with multiple fountains and stronger search intent/content.
 - `generateMetadata` uses that predicate; `noindex` (`robots: { index: false }`) everything else.
 - `generateMetadata` on the dynamic `force-dynamic` detail page must fetch **public** data only
   (not the viewer-aware/admin path). Tests: hidden vs visible, rated vs unrated, verified vs stale.
@@ -184,7 +187,9 @@ turn `/sitemap.xml` into an index. Topology:
    point-in-polygon; **no LocationIQ**. **Now concrete (Slice 0, §11): Overture Maps Divisions
    `division_area`, keyed on the GERS `overture_id`; country = `subtype='country'`, city = the
    per-country city subtype (§11.5); Overture `admin_level` is normalized, not OSM.**
-2. **Index individual fountains — RESOLVED: yes, selectively**, under the §7 predicate.
+2. **Index individual fountains — RESOLVED: no.** Keep their canonical, shareable URLs and
+   server-rendered details, but emit `noindex, follow` and omit them from the sitemap. Area pages
+   are the finest indexable grain.
 3. **GA4 key events — EXCLUDED from this plan.** #128's repo scope is nil (GA4 already
    installed); events, if ever wanted, are a separate GA4-spec addendum + PR. #128's remaining
    work is owner-local registry config (§9).
@@ -224,6 +229,7 @@ OSM-native assumptions in §4.1 / §4.2 / §4.4 / §5 / §8 (called out inline).
 the fallback (osmium-from-Geofabrik) was compared and kept only as a per-scope escape hatch.
 
 ### 11.1 What was vetted
+
 - **Tooling:** DuckDB 1.5.4 (`spatial` + `httpfs`) reading
   `s3://overturemaps-us-west-2/release/2026-06-17.0/theme=divisions/type=division_area/*.parquet`
   **anonymously** (`SET s3_region='us-west-2'`; no credentials, no requester-pays); **PostGIS
@@ -233,10 +239,11 @@ the fallback (osmium-from-Geofabrik) was compared and kept only as a per-scope e
   San Diego area (our launch geography).
 
 ### 11.2 Evidence (why Overture)
+
 - **Geometry validity: 0.000% invalid** across 228,094 `division_area` features in 8 countries;
   Luxembourg **365/365 valid** in PostGIS 17-3.5 with `ST_MakeValid` a no-op (no
   `GEOMETRYCOLLECTION` degeneration). Overture ships pre-cleaned geometry — a major operational
-  win over raw OSM. *(Keep `ST_MakeValid` + reject/flag as a guard in the loader anyway.)*
+  win over raw OSM. _(Keep `ST_MakeValid` + reject/flag as a guard in the loader anyway.)_
 - **City-tier coverage is polygonal and rich:** US = **31,831 `locality` polygons**; the San Diego
   launch area resolves as `locality` polygons for **San Diego** and every suburb (Chula Vista,
   Carlsbad, Coronado, El Cajon, Encinitas, Escondido, La Mesa, National City, Poway, Santee…)
@@ -254,12 +261,13 @@ the fallback (osmium-from-Geofabrik) was compared and kept only as a per-scope e
   multi-island places stored as a single MultiPolygon (US alone: 59,316 land = 59,316 divisions;
   199 maritime). So keying on `division_area.id` is safe — no geometry union needed.
 - **License is workable, subject to ODbL:** sources are **ODbL-1.0** (OpenStreetMap) + **CC0-1.0**
-  (Esri Community Maps name translations) — no *incompatible* terms, but ODbL is **not
+  (Esri Community Maps name translations) — no _incompatible_ terms, but ODbL is **not
   obligation-free**: we must preserve **attribution** (`© OpenStreetMap contributors`, already
   carried) and honor ODbL's **share-alike / database** obligations for any published derived boundary
   data. Slice 1 keeps the source provenance + attribution so those obligations stay satisfiable.
 
 ### 11.3 Chosen toolchain
+
 - **Fetch/transform:** DuckDB reads the **pinned** Overture release from anon S3 with `country`
   (and/or `bbox`) **predicate pushdown** — a single-country pull is MB-scale, so **no 6 GB PBF and
   no ~87 GB planet download**. Query shape: `WHERE class='land' AND subtype IN (…)`, emit GeoJSON /
@@ -282,7 +290,7 @@ the fallback (osmium-from-Geofabrik) was compared and kept only as a per-scope e
   running backend pod from CI and run a loader CLI there, **mirroring `osm-import-pbf.yml`**,
   PostGIS-validating before the write. This is CI-only and **never** runs from a local/dev machine.
   This is the **single** write mechanism (it supersedes §4.1's earlier "never the backend pod"
-  phrasing — see the §4.1 amendment note; a dedicated Kubernetes Job would only be a *future* spec
+  phrasing — see the §4.1 amendment note; a dedicated Kubernetes Job would only be a _future_ spec
   revision if a global load outgrows pod-exec, not a second concurrent option). Emit structured logs
   of found/inserted/updated/skipped + invalid-ring reasons, as the fountain merge does.
 - **Registry + release pinning (fail-closed):** the **boundary-source registry** (its own small
@@ -296,19 +304,21 @@ the fallback (osmium-from-Geofabrik) was compared and kept only as a per-scope e
   locality coverage dropping after OSM tag edits — so pin, never chase "latest").
 
 ### 11.4 Identity + id contract — **supersedes §4.1's OSM-key mandate**
+
 - **Upsert key = the Overture GERS `division_area.id`** (designed stable across releases), stored as
   `overture_id`. **Not** an OSM id — Overture does not hand us a single clean OSM relation id per
   boundary (the per-property `sources[]` often points at a name node, and a minority of features are
   geoBoundaries-conflated with no OSM record at all).
 - **OSM provenance (best-effort, nullable):** from `sources[]` where `dataset='OpenStreetMap'`,
   **prefer relation > way > node**, decode `^([nwr])(\d+)@\d+$` → `(osm_type, osm_id)`, **discard the
-  `@version`**. Nullable; never the sole key. *(No `a<2*rel+1>` area-id parity decode needed here —
-  Overture emits `n`/`w`/`r` + id directly; that decode stays only on the osmium fallback.)*
+  `@version`**. Nullable; never the sole key. _(No `a<2*rel+1>` area-id parity decode needed here —
+  Overture emits `n`/`w`/`r` + id directly; that decode stays only on the osmium fallback.)_
 - `division_id` is stored as **optional provenance** (the link to the point `division` record);
   **`parent_id` is derived by containment (`ST_Covers`), NOT from Overture's hierarchy — so we do
   not load the point `division` feature type.**
 
 ### 11.5 Level model — **supersedes §4.2's `admin_level=8`/`=2` wording**
+
 - Overture `admin_level` is a **normalized** hierarchy, **not** OSM's: `country`→0, `region`→1,
   `county`→2, and **NULL at the `locality` tier**. **Do not select cities by `admin_level=8`.**
 - **Country page** ← `subtype='country'`.
@@ -333,6 +343,7 @@ the fallback (osmium-from-Geofabrik) was compared and kept only as a per-scope e
 
   Slice 1d **MUST** test: overlapping tiers (a `locality` inside a `county`), slug collisions across
   subtypes, a scope with **partial** locality coverage, and an **unmatched** point → country-only.
+
 - Overture's **`locality` already merges "administrative area" + "populated place,"** so §4.2's
   separate polygonal `place=city|town` fallback is **subsumed** — and every `division_area` is a
   polygon by construction, so the "exclude raw place nodes" concern is moot.
@@ -340,6 +351,7 @@ the fallback (osmium-from-Geofabrik) was compared and kept only as a per-scope e
   Overture subtypes (specificity ladder, tie-break by `fountain_count`).
 
 ### 11.6 `place_boundaries` schema deltas — refines §5 (finalized in Slice 1a)
+
 - **Add** `overture_id` (unique — the upsert key), `subtype`, `class`.
 - Keep `admin_level` **nullable** (Overture-normalized, informational only — not the city selector).
 - `osm_type` / `osm_id` **nullable** (provenance).
@@ -352,6 +364,7 @@ the fallback (osmium-from-Geofabrik) was compared and kept only as a per-scope e
   the `MULTIPOLYGON` insert.
 
 ### 11.7 Fallback (documented, not chosen): osmium-from-Geofabrik
+
 DIY generation from **per-country** Geofabrik extracts via `osmium tags-filter boundary=administrative,place=* → osmium export -u type_id`, reusing the **already-built** `a<2*rel+1>`
 area-id decode in `backend/app/imports/osmium_geojson.py`. Gives **native OSM `admin_level`
 (2/4/6/8) + relation ids** — maximal determinism — for any scope where Overture's municipal coverage
@@ -362,6 +375,7 @@ did; and Overture wins on validity, coverage, licensing, and a tiny pushdown foo
 **per-scope escape hatch**, invoked only where the coverage gate (Slice 1e) flags Overture as thin.
 
 ### 11.8 Sample artifact
+
 `docs/specs/2026-07-02-crawlable-seo-pages-slice0-sample.geojson` — 7 `class='land'` features
 (Luxembourg country + 3 communes; San Diego city + San Diego County; California). **Overture emits
 mixed geometry types — this raw sample has 4 `Polygon` + 3 `MultiPolygon`** (a faithful fixture that
@@ -373,6 +387,7 @@ extracted properties (`overture_id`, `country_code`, `region`, `subtype`, `admin
 resolution via the §11.3 DuckDB query.
 
 ### 11.9 Handoff Slice-0 checklist — resolved
+
 - **Boundary dataset/source picked** (Overture Divisions `division_area`) and vetted on a small area ✅
 - **CI input confirmed:** Overture releases are **immutable and re-fetchable** from anon S3 by pinned
   id — nothing to retain in-repo; the boundary-source registry records the pinned `overture_release_id` ✅

@@ -21,7 +21,13 @@ import {
 import { resolveApiBaseUrl } from "../../lib/api";
 import { CONTRIBUTION_EVENT, contributionPoints } from "../../lib/contribution-event";
 import { pinsToFeatureCollection, type PinInput } from "../../lib/map/pins";
-import { normalizeBounds, shouldLoadPins, isAtCap } from "../../lib/map/bounds";
+import {
+  normalizeBounds,
+  shouldLoadPins,
+  isAtCap,
+  overviewPinsBelowZoom,
+  type RawBounds,
+} from "../../lib/map/bounds";
 import {
   EMPTY_FC,
   fountainsSource,
@@ -40,7 +46,7 @@ import {
   GEOLOCATE_TIMEOUT_MS,
   NEIGHBORHOOD_ZOOM,
 } from "../../lib/map/constants";
-import { resolveActiveId } from "../../lib/map/active-id";
+import { resolveActiveId, resolveFocusId } from "../../lib/map/active-id";
 import { resolveFocusClearNavigation } from "../../lib/map/focus-url";
 import {
   detailToPin,
@@ -118,10 +124,16 @@ export default function MapBrowser({
   isAuthenticated = false,
   autoEnterAdd = false,
   hadAddParam = false,
+  initialFocusId = "",
+  initialBounds,
+  initialPins = [],
 }: {
   isAuthenticated?: boolean;
   autoEnterAdd?: boolean;
   hadAddParam?: boolean;
+  initialFocusId?: string;
+  initialBounds?: RawBounds;
+  initialPins?: FountainPin[];
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -130,7 +142,7 @@ export default function MapBrowser({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const focusId = searchParams.get("focus") ?? "";
+  const focusId = resolveFocusId(searchParams.get("focus"), initialFocusId);
   const focusIdRef = useRef(focusId);
   // eslint-disable-next-line react-hooks/refs -- native MapLibre callbacks require the latest URL owner.
   focusIdRef.current = focusId;
@@ -149,8 +161,10 @@ export default function MapBrowser({
   // Latest-value refs so the ONE-TIME map listeners and the async load()/installOverlay read the
   // current theme / pins / selection without being re-registered (which would double-fire).
   const themeRef = useRef<"light" | "dark">("light");
-  const pinsRef = useRef<PinInput[]>([]);
-  const bboxPinsRef = useRef<FountainPin[]>([]);
+  const pinsRef = useRef<PinInput[]>(
+    initialPins.map((pin) => ({ ...pin, ranking_score: pin.ranking_score ?? null })),
+  );
+  const bboxPinsRef = useRef<FountainPin[]>(initialPins);
   const focusedPinRef = useRef<FountainPin | null>(null);
   const consumedFocusRef = useRef<string | null>(null);
   const activeIdRef = useRef<string>("");
@@ -165,7 +179,7 @@ export default function MapBrowser({
   // wrong theme mid-swap.
   const styleThemeRef = useRef<"light" | "dark">("light");
   const placementRef = useRef<PlacementMap | null>(null);
-  const [pins, setPins] = useState<FountainPin[]>([]);
+  const [pins, setPins] = useState<FountainPin[]>(initialPins);
   const [focusedPin, setFocusedPin] = useState<FountainPin | null>(null);
   const [focusStatus, setFocusStatus] = useState<
     "idle" | "loading" | "found" | "not-found" | "error"
@@ -367,6 +381,15 @@ export default function MapBrowser({
         style: styleUrlFor(themeRef.current),
         center: DEFAULT_CENTER,
         zoom: DEFAULT_ZOOM,
+        ...(initialBounds
+          ? {
+              bounds: [
+                [initialBounds.west, initialBounds.south],
+                [initialBounds.east, initialBounds.north],
+              ] as [[number, number], [number, number]],
+              fitBoundsOptions: { padding: 48 },
+            }
+          : {}),
         // MapLibre defaults powerPreference to 'high-performance', which makes WebGL context
         // creation FAIL on some setups (e.g. Firefox → EGL_NO_CONFIG / "Exhausted GL driver
         // options") even when WebGL works on other sites. 'default' lets the browser pick any GPU.
@@ -467,7 +490,7 @@ export default function MapBrowser({
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           setLocateStatus("resolved");
-          if (shouldMoveToStartupLocation(focusIdRef.current)) {
+          if (!initialBounds && shouldMoveToStartupLocation(focusIdRef.current)) {
             map.flyTo({
               center: [pos.coords.longitude, pos.coords.latitude],
               zoom: NEIGHBORHOOD_ZOOM,
@@ -559,11 +582,18 @@ export default function MapBrowser({
       const seq = ++loadSeqRef.current;
       const gen = styleGenRef.current;
       if (!shouldLoadPins(m.getZoom())) {
-        (m.getSource("fountains") as GeoJSONSource | undefined)?.setData(EMPTY_FC);
-        pinsRef.current = []; // a later swap re-seeds empty, not stale (spec §6.1)
-        bboxPinsRef.current = [];
-        setPins([]);
-        setStatus("belowZoom");
+        const overview = overviewPinsBelowZoom(initialBounds, initialPins);
+        const inputs = overview.map((pin) => ({
+          ...pin,
+          ranking_score: pin.ranking_score ?? null,
+        }));
+        (m.getSource("fountains") as GeoJSONSource | undefined)?.setData(
+          overview.length > 0 ? pinsToFeatureCollection(inputs, themeRef.current) : EMPTY_FC,
+        );
+        pinsRef.current = inputs;
+        bboxPinsRef.current = overview;
+        setPins(overview);
+        setStatus(initialBounds ? (overview.length === 0 ? "empty" : "idle") : "belowZoom");
         return; // seq bump already invalidates in-flight fetches
       }
       const b = m.getBounds();

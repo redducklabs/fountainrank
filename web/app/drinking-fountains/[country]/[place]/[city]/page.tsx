@@ -5,6 +5,7 @@ import { cache } from "react";
 
 import { FountainList } from "../../../../../components/fountain/FountainList";
 import { RelatedPlaces } from "../../../../../components/place/RelatedPlaces";
+import { AreaMapPage } from "../../../../../components/place/AreaMapPage";
 import type { RelatedPlace } from "../../../../../components/place/RelatedPlaces";
 import { SiteHeader } from "../../../../../components/SiteHeader";
 import {
@@ -20,6 +21,7 @@ import {
 } from "../../../../../lib/places";
 import type { CityFountainsOut, PlaceOut } from "../../../../../lib/places";
 import { log } from "../../../../../lib/server/log";
+import { getViewer } from "../../../../../lib/server/viewer";
 import { itemListStructuredData, jsonLdScript } from "../../../../../lib/seo/jsonld";
 import { SITE_URL } from "../../../../../lib/seo/site";
 
@@ -46,6 +48,7 @@ const loadCity = cache(
         region.toLowerCase(),
         city.toLowerCase(),
         requestId,
+        500,
       ),
       resolvePlaceServer(country.toLowerCase(), region.toLowerCase(), requestId),
     ]).then(([cityRes, regionRes]) => ({
@@ -184,12 +187,10 @@ export default async function CityPage({
   // the block renders nothing on error/empty. Fetch one over the cap so excluding the current city
   // still leaves a full row of siblings.
   const requestId = crypto.randomUUID();
-  const siblingCities = await getRegionCitiesServer(
-    place.country_code,
-    regionPlace.slug,
-    requestId,
-    RELATED_PLACES_CAP + 1,
-  );
+  const [siblingCities, viewer] = await Promise.all([
+    getRegionCitiesServer(place.country_code, regionPlace.slug, requestId, RELATED_PLACES_CAP + 1),
+    getViewer(requestId),
+  ]);
   const relatedPlaces: RelatedPlace[] = siblingCities.data
     .filter((sibling) => sibling.id !== place.id)
     .slice(0, RELATED_PLACES_CAP)
@@ -202,7 +203,6 @@ export default async function CityPage({
 
   return (
     <>
-      <SiteHeader variant="bar" />
       {structuredJson ? (
         <script
           type="application/ld+json"
@@ -214,7 +214,11 @@ export default async function CityPage({
       {itemListJson ? (
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: itemListJson }} />
       ) : null}
-      <main className={shell}>
+      <AreaMapPage
+        bounds={data.bounds}
+        fountains={fountains}
+        isAuthenticated={viewer.state === "authed"}
+      >
         <Link
           href={regionPath(regionPlace.country_code, regionPlace.slug)}
           className="text-sm text-brand-ink underline"
@@ -227,7 +231,9 @@ export default async function CityPage({
         <p className="mt-2 text-muted">
           {place.fountain_count.toLocaleString()} public drinking fountains and bottle-refill
           stations in {place.name}.
-          {fountains.length < place.fountain_count ? ` Showing the top ${fountains.length}.` : ""}
+          {fountains.length < place.fountain_count
+            ? ` Showing ${fountains.length.toLocaleString()} overview pins; zoom in for local results.`
+            : ""}
         </p>
         <p className="mt-3 text-sm leading-6 text-muted">
           Use this city guide to compare nearby public water fountains by community rating, working
@@ -235,12 +241,17 @@ export default async function CityPage({
         </p>
 
         {fountains.length > 0 ? (
-          <FountainList fountains={fountains} />
+          <details className="mt-5">
+            <summary className="cursor-pointer font-semibold text-brand-ink">
+              Browse highlighted fountains
+            </summary>
+            <FountainList fountains={fountains.slice(0, 20)} />
+          </details>
         ) : (
           <p className="mt-6 text-muted">No public fountains are mapped here yet.</p>
         )}
         <RelatedPlaces heading={`Other cities in ${regionPlace.name}`} places={relatedPlaces} />
-      </main>
+      </AreaMapPage>
     </>
   );
 }

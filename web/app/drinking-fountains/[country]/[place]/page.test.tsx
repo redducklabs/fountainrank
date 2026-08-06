@@ -58,6 +58,14 @@ vi.mock("../../../../components/fountain/FountainList", () => ({
   ),
 }));
 vi.mock("../../../../lib/server/log", () => ({ log: vi.fn() }));
+vi.mock("../../../../lib/server/viewer", () => ({
+  getViewer: vi.fn().mockResolvedValue({ state: "anonymous" }),
+}));
+vi.mock("../../../../components/place/AreaMapPage", () => ({
+  AreaMapPage: ({ children }: { children: ReactNode }) => (
+    <div data-testid="area-map">{children}</div>
+  ),
+}));
 
 import PlaceResolverPage, { generateMetadata } from "./page";
 
@@ -97,6 +105,7 @@ const FOUNTAIN = {
 
 const fountainsFor = (place: typeof WASHINGTON | typeof CITY, indexable = true) => ({
   place,
+  bounds: { south: 45, west: -125, north: 50, east: -116 },
   fountains: [FOUNTAIN],
   indexable,
 });
@@ -141,7 +150,12 @@ it("renders the canonical region branch and the DC disambiguation link", async (
   render(await PlaceResolverPage({ params: params("us", "washington") }));
 
   expect((await screen.findByRole("heading", { level: 1 })).textContent).toContain("Washington");
-  expect(getRegionFountainsServer).toHaveBeenCalledWith("us", "washington", expect.any(String));
+  expect(getRegionFountainsServer).toHaveBeenCalledWith(
+    "us",
+    "washington",
+    expect.any(String),
+    500,
+  );
   expect(getCityFountainsServer).not.toHaveBeenCalled();
   expect(
     await screen.findByRole("link", { name: "Looking for Washington, District of Columbia?" }),
@@ -183,7 +197,7 @@ it("renders the two-level city branch", async () => {
   render(await PlaceResolverPage({ params: params("lu", "luxembourg") }));
 
   expect((await screen.findByRole("heading", { level: 1 })).textContent).toContain("Luxembourg");
-  expect(getCityFountainsServer).toHaveBeenCalledWith("lu", "luxembourg", expect.any(String));
+  expect(getCityFountainsServer).toHaveBeenCalledWith("lu", "luxembourg", expect.any(String), 500);
   expect(getRegionFountainsServer).not.toHaveBeenCalled();
   // Sideways links to other cities in the country, excluding Luxembourg itself.
   const related = screen.getByRole("navigation", { name: "Other cities in LU" });

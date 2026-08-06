@@ -1,7 +1,13 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-export function DetailOverlay({ children }: { children: React.ReactNode }) {
+export function DetailOverlay({
+  children,
+  closeHref,
+}: {
+  children: React.ReactNode;
+  closeHref?: string;
+}) {
   const router = useRouter();
   const ref = useRef<HTMLDivElement>(null);
   const closingRef = useRef(false);
@@ -10,8 +16,11 @@ export function DetailOverlay({ children }: { children: React.ReactNode }) {
     if (closingRef.current) return;
     closingRef.current = true;
     setOpen(false);
-    window.setTimeout(() => router.back(), 200);
-  }, [router]);
+    window.setTimeout(() => {
+      if (closeHref) router.replace(closeHref);
+      else router.back();
+    }, 200);
+  }, [closeHref, router]);
 
   useEffect(() => {
     const panel = ref.current;

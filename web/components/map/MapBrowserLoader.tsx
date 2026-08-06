@@ -1,5 +1,7 @@
 "use client";
 import dynamic from "next/dynamic";
+import type { FountainPin } from "../../lib/fountains";
+import type { RawBounds } from "../../lib/map/bounds";
 const MapBrowser = dynamic(() => import("./MapBrowser"), {
   ssr: false,
   loading: () => (
@@ -18,16 +20,25 @@ export default function MapBrowserLoader({
   isAuthenticated,
   autoEnterAdd,
   hadAddParam,
+  initialFocusId,
+  initialBounds,
+  initialPins,
 }: {
   isAuthenticated: boolean;
   autoEnterAdd: boolean;
   hadAddParam: boolean;
+  initialFocusId?: string;
+  initialBounds?: RawBounds;
+  initialPins?: FountainPin[];
 }) {
   return (
     <MapBrowser
       isAuthenticated={isAuthenticated}
       autoEnterAdd={autoEnterAdd}
       hadAddParam={hadAddParam}
+      initialFocusId={initialFocusId}
+      initialBounds={initialBounds}
+      initialPins={initialPins}
     />
   );
 }
