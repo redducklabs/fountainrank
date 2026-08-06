@@ -79,7 +79,9 @@ Ship a **public, no-auth** drinking-fountain discovery map on the web. The root 
 **Area-map routes:** country, region, and city pages remain server-rendered indexable documents with
 their existing unique heading, summary, canonical, breadcrumbs, structured data, and crawlable
 parent/child/sibling links. Their primary visual surface becomes the map. The public place-map
-response supplies authoritative boundary bounds plus a bounded set of non-hidden fountain pins;
+response supplies authoritative boundary bounds plus a bounded set of non-hidden fountain pins.
+The backend compares the normal `[-180,180]` envelope with a longitude-shifted `[0,360]` envelope
+and returns the narrower world copy, so antimeridian-spanning places do not fit nearly the globe;
 the newly mounted map fits those bounds, clusters the seed pins even below the normal browse-map
 fetch zoom, and suppresses startup geolocation so the requested area remains authoritative. Large
 areas state "Showing up to N of M on this overview; zoom in for local results." Once zoomed to the

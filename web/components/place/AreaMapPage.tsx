@@ -17,7 +17,7 @@ export function AreaMapPage({
   return (
     <div className="flex min-h-dvh flex-col">
       <SiteHeader variant="hero" />
-      <main className="relative flex-1">
+      <div className="relative flex-1">
         <MapBrowserLoader
           isAuthenticated={isAuthenticated}
           autoEnterAdd={false}
@@ -25,13 +25,13 @@ export function AreaMapPage({
           initialBounds={bounds}
           initialPins={fountains}
         />
-        <aside
+        <main
           aria-label="Selected area"
           className="absolute inset-x-3 bottom-3 z-30 max-h-[45%] overflow-y-auto rounded-xl border border-border bg-surface-raised/95 p-5 shadow-xl backdrop-blur md:inset-x-auto md:bottom-auto md:left-4 md:top-4 md:max-h-[calc(100%-2rem)] md:w-[24rem]"
         >
           {children}
-        </aside>
-      </main>
+        </main>
+      </div>
     </div>
   );
 }

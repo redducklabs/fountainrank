@@ -721,6 +721,34 @@ async def test_country_fountains_returns_boundary_bounds_and_precomputed_members
 
 
 @pytest.mark.asyncio
+async def test_country_fountains_uses_compact_bounds_across_antimeridian(session, api):
+    await _add_place(
+        session,
+        overture_id="map-fj",
+        subtype="country",
+        country_code="fj",
+        name="Fiji",
+        slug="fiji",
+        fountain_count=1,
+        is_canonical=False,
+        # In ordinary -180..180 coordinates this polygon's envelope is 340 degrees wide. Shifting
+        # negative longitudes into the adjacent world copy yields the intended compact 170..190.
+        wkt=_sq(170, -20, -170, -10),
+    )
+    await session.commit()
+
+    response = await api.get("/api/v1/places/fj/fountains")
+
+    assert response.status_code == 200
+    assert response.json()["bounds"] == {
+        "south": -20.0,
+        "west": 170.0,
+        "north": -10.0,
+        "east": 190.0,
+    }
+
+
+@pytest.mark.asyncio
 async def test_country_fountains_404_for_unknown_country(session, api):
     assert (await api.get("/api/v1/places/zz/fountains")).status_code == 404
 

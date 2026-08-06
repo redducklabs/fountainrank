@@ -624,16 +624,34 @@ async def _place_fountains_response(
     limit: int,
     offset: int,
 ) -> CityFountainsOut:
-    west, south, east, north = (
+    boundary_geometry = cast(PlaceBoundary.boundary, Geometry)
+    boxes = (
+        select(
+            func.Box2D(boundary_geometry).label("standard_box"),
+            func.Box2D(func.ST_ShiftLongitude(boundary_geometry)).label("shifted_box"),
+        )
+        .where(PlaceBoundary.id == place.id)
+        .cte("place_boxes")
+    )
+    standard_west, south, standard_east, north, shifted_west, shifted_east = (
         await session.execute(
             select(
-                func.ST_XMin(func.Box2D(cast(PlaceBoundary.boundary, Geometry))),
-                func.ST_YMin(func.Box2D(cast(PlaceBoundary.boundary, Geometry))),
-                func.ST_XMax(func.Box2D(cast(PlaceBoundary.boundary, Geometry))),
-                func.ST_YMax(func.Box2D(cast(PlaceBoundary.boundary, Geometry))),
-            ).where(PlaceBoundary.id == place.id)
+                func.ST_XMin(boxes.c.standard_box),
+                func.ST_YMin(boxes.c.standard_box),
+                func.ST_XMax(boxes.c.standard_box),
+                func.ST_YMax(boxes.c.standard_box),
+                func.ST_XMin(boxes.c.shifted_box),
+                func.ST_XMax(boxes.c.shifted_box),
+            )
         )
     ).one()
+    # A normal planar envelope is almost global for a boundary crossing the antimeridian. PostGIS'
+    # shifted longitude representation maps [-180, 0) to [180, 360), producing the compact world
+    # copy for countries such as the US and Fiji. MapLibre accepts east/west outside [-180, 180].
+    if shifted_east - shifted_west < standard_east - standard_west:
+        west, east = shifted_west, shifted_east
+    else:
+        west, east = standard_west, standard_east
     fountains = await _fountain_pins_for_place(
         session,
         place_id=place.id,

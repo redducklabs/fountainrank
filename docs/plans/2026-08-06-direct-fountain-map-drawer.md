@@ -25,6 +25,7 @@ sitemap. Area pages become the finest indexable grain.
 ## Tasks
 
 1. Add a bounded public place-map API contract for country/region/city bounds and overview pins,
+   selecting the narrower normal or longitude-shifted envelope for antimeridian-safe area bounds,
    using precomputed membership for fountain selection and the stored place boundary only for its
    envelope. Add backend tests and regenerate the tracked API client.
 2. Add tests for direct-close behavior and pure map-initialization decisions: query focus precedence,

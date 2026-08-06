@@ -228,7 +228,8 @@ Crawlable, server-rendered directory pages for organic search (#127): the **hub*
 (`/drinking-fountains`), **country** pages, **region** pages, and **city** pages.
 
 - **Map shell:** country, region, and city routes use the full live map beneath
-  `SiteHeader variant="hero"`. The map fits the selected place's authoritative boundary bounds and
+  `SiteHeader variant="hero"`. The map fits the selected place's authoritative boundary bounds
+  using the narrower normal or longitude-shifted world copy for antimeridian-spanning areas, and
   starts with up to 500 non-hidden overview pins. A raised, scrollable area panel overlays the lower
   map on narrow screens and the upper-left map on desktop. It contains the server-rendered `h1`,
   mapped count, hierarchy navigation, and related-place links. The panel is not a modal: it does not
