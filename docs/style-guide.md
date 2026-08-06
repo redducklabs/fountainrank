@@ -329,8 +329,10 @@ viewport width so the same drawer structure carries to mobile web.
 
 A direct load or refresh of `/fountains/[id]` now renders that same drawer over a newly mounted map.
 The map resolves and flies to the route fountain, showing its selected halo/pin. A hard-loaded drawer
-closes with `router.replace("/")`, since browser Back may leave the site; an intercepted drawer keeps
-the existing `router.back()` behavior so its already-mounted map and camera are restored.
+closes with `router.replace("/?focus=<id>")`, since browser Back may leave the site; the focused root
+map retains the fountain neighborhood and transitions later selections into the normal intercepted
+flow. An intercepted drawer keeps the existing `router.back()` behavior so its already-mounted map
+and camera are restored.
 
 The drawer body starts with prominent top tabs (`FountainDetailTabs`): **Info** for the primary
 status, rating summary, rating controls, add-photo control, directions, and sharing; **Details** for
