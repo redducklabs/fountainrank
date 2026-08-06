@@ -305,7 +305,7 @@ describe("FountainPage route (standalone)", () => {
     );
     render(await FountainPage({ params }));
     expect(await screen.findByTestId("map")).toHaveAttribute("data-focus-id", "f1");
-    expect(screen.getByTestId("detail-overlay")).toHaveAttribute("data-close-href", "/");
+    expect(screen.getByTestId("detail-overlay")).toHaveAttribute("data-close-href", "/?focus=f1");
   });
 
   it("renders JSON-LD for indexable public detail pages", async () => {

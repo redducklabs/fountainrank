@@ -306,7 +306,7 @@ export default async function FountainPage({ params }: { params: Promise<{ id: s
           }}
         />
       ) : null}
-      <DetailOverlay closeHref="/">
+      <DetailOverlay closeHref={`/?focus=${encodeURIComponent(id)}`}>
         <FountainDetail
           detail={data}
           notes={notes}

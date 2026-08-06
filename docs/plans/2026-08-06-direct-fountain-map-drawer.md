@@ -47,7 +47,8 @@ sitemap. Area pages become the finest indexable grain.
 
 - A hard load or refresh on a valid `/fountains/[id]` renders the map behind the existing drawer.
 - The map resolves, flies to, and highlights the route's fountain.
-- Closing the hard-loaded drawer navigates to `/`; closing an intercepted drawer still goes Back.
+- Closing the hard-loaded drawer navigates to `/?focus=<id>` so the root map retains the fountain's
+  neighborhood; closing an intercepted drawer still goes Back without unmounting the map.
 - The detail is present in server-rendered markup, retains canonical metadata and JSON-LD, emits
   `noindex, follow`, and is absent from the sitemap.
 - A missing fountain still produces Next's hard-load 404 behavior.
