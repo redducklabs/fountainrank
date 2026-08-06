@@ -8,7 +8,8 @@ server-rendered fountain-detail drawer over the live map, focused on and highlig
 `DetailOverlay`, and the existing server-rendered content. A bounded initial-focus prop gives a
 newly mounted direct-fountain map the route id; the existing public detail resolution supplies its
 coordinates and pin-level camera move. `DetailOverlay` gets an optional direct-close destination so
-hard-loaded drawers close to `/`, while intercepted drawers retain browser-Back behavior.
+hard-loaded drawers close to `/?focus=<id>` and retain the fountain neighborhood, while intercepted
+drawers retain browser-Back behavior.
 
 Area routes use a public place-map response containing the canonical place, its authoritative
 boundary bounding box, the full fountain count, and at most 500 non-hidden overview pins. Country,
