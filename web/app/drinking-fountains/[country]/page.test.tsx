@@ -3,9 +3,15 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 import { cleanup, render, screen } from "@testing-library/react";
 
-const { getCountriesServer, getCountryCitiesServer, getCountryRegionsServer } = vi.hoisted(() => ({
+const {
+  getCountriesServer,
+  getCountryCitiesServer,
+  getCountryFountainsServer,
+  getCountryRegionsServer,
+} = vi.hoisted(() => ({
   getCountriesServer: vi.fn(),
   getCountryCitiesServer: vi.fn(),
+  getCountryFountainsServer: vi.fn(),
   getCountryRegionsServer: vi.fn(),
 }));
 const { notFound } = vi.hoisted(() => ({
@@ -17,7 +23,13 @@ const { notFound } = vi.hoisted(() => ({
 // Keep the real pure path helpers (countryPath/cityPath); stub only the server fetches.
 vi.mock("../../../lib/places", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../../lib/places")>();
-  return { ...actual, getCountriesServer, getCountryCitiesServer, getCountryRegionsServer };
+  return {
+    ...actual,
+    getCountriesServer,
+    getCountryCitiesServer,
+    getCountryFountainsServer,
+    getCountryRegionsServer,
+  };
 });
 vi.mock("next/navigation", () => ({ notFound }));
 vi.mock("next/link", () => ({
@@ -27,6 +39,14 @@ vi.mock("next/link", () => ({
 }));
 vi.mock("../../../components/SiteHeader", () => ({ SiteHeader: () => <div data-testid="hdr" /> }));
 vi.mock("../../../lib/server/log", () => ({ log: vi.fn() }));
+vi.mock("../../../lib/server/viewer", () => ({
+  getViewer: vi.fn().mockResolvedValue({ state: "anonymous" }),
+}));
+vi.mock("../../../components/place/AreaMapPage", () => ({
+  AreaMapPage: ({ children }: { children: ReactNode }) => (
+    <div data-testid="area-map">{children}</div>
+  ),
+}));
 
 import CountryPage, { generateMetadata } from "./page";
 
@@ -69,7 +89,19 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+const MAP = {
+  place: US,
+  bounds: { south: 24, west: -125, north: 49, east: -66 },
+  fountains: [],
+  indexable: true,
+};
+
+function mockCountryMap() {
+  getCountryFountainsServer.mockResolvedValue({ data: MAP, status: 200 });
+}
+
 it("renders the country name, count, and links to regions when present", async () => {
+  mockCountryMap();
   getCountriesServer.mockResolvedValue({ data: [US], status: 200 });
   getCountryRegionsServer.mockResolvedValue({ data: [CALIFORNIA], status: 200 });
   getCountryCitiesServer.mockResolvedValue({ data: [SAN_DIEGO], status: 200 });
@@ -98,6 +130,7 @@ it("renders the country name, count, and links to regions when present", async (
 });
 
 it("falls back to two-level city links when a country has no regions", async () => {
+  mockCountryMap();
   getCountriesServer.mockResolvedValue({ data: [US], status: 200 });
   getCountryRegionsServer.mockResolvedValue({ data: [], status: 200 });
   getCountryCitiesServer.mockResolvedValue({ data: [SAN_DIEGO], status: 200 });
@@ -122,6 +155,7 @@ it("falls back to two-level city links when a country has no regions", async () 
 });
 
 it("emits no structured data for a rendered-but-noindex country", async () => {
+  mockCountryMap();
   getCountriesServer.mockResolvedValue({ data: [{ ...US, indexable: false }], status: 200 });
   getCountryRegionsServer.mockResolvedValue({ data: [CALIFORNIA], status: 200 });
   getCountryCitiesServer.mockResolvedValue({ data: [SAN_DIEGO], status: 200 });
@@ -135,6 +169,7 @@ it("emits no structured data for a rendered-but-noindex country", async () => {
 });
 
 it("resolves the country segment case-insensitively", async () => {
+  mockCountryMap();
   getCountriesServer.mockResolvedValue({ data: [US], status: 200 });
   getCountryRegionsServer.mockResolvedValue({ data: [], status: 200 });
   getCountryCitiesServer.mockResolvedValue({ data: [], status: 200 });

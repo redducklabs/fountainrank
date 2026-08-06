@@ -635,6 +635,7 @@ class CityFountainsOut(BaseModel):
     """
 
     place: PlaceOut
+    bounds: BoundingBox
     fountains: list[CityFountainPin]
     indexable: bool
 

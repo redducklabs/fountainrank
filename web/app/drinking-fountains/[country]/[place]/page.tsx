@@ -5,6 +5,7 @@ import { cache } from "react";
 
 import { FountainList } from "../../../../components/fountain/FountainList";
 import { RelatedPlaces } from "../../../../components/place/RelatedPlaces";
+import { AreaMapPage } from "../../../../components/place/AreaMapPage";
 import type { RelatedPlace } from "../../../../components/place/RelatedPlaces";
 import { SiteHeader } from "../../../../components/SiteHeader";
 import {
@@ -22,6 +23,7 @@ import {
 } from "../../../../lib/places";
 import type { CityFountainsOut, PlaceOut, PlaceResolveOut } from "../../../../lib/places";
 import { log } from "../../../../lib/server/log";
+import { getViewer } from "../../../../lib/server/viewer";
 import { itemListStructuredData, jsonLdScript } from "../../../../lib/seo/jsonld";
 import { SITE_URL } from "../../../../lib/seo/site";
 
@@ -49,8 +51,8 @@ const loadResolved = cache(
     }
     const fountains =
       resolved.data.kind === "region"
-        ? await getRegionFountainsServer(country.toLowerCase(), place.toLowerCase(), requestId)
-        : await getCityFountainsServer(country.toLowerCase(), place.toLowerCase(), requestId);
+        ? await getRegionFountainsServer(country.toLowerCase(), place.toLowerCase(), requestId, 500)
+        : await getCityFountainsServer(country.toLowerCase(), place.toLowerCase(), requestId, 500);
     return {
       data: { kind: resolved.data.kind, resolved: resolved.data, fountains: fountains.data },
       status: fountains.status,
@@ -184,10 +186,12 @@ export default async function PlaceResolverPage({
   // block renders nothing on error/empty. Fetch one over the cap so excluding the current place
   // still leaves a full row of siblings.
   const requestId = crypto.randomUUID();
-  const siblingsRes =
+  const [siblingsRes, viewer] = await Promise.all([
     resolved.kind === "region"
-      ? await getCountryRegionsServer(placeData.country_code, requestId, RELATED_PLACES_CAP + 1)
-      : await getCountryCitiesServer(placeData.country_code, requestId, RELATED_PLACES_CAP + 1);
+      ? getCountryRegionsServer(placeData.country_code, requestId, RELATED_PLACES_CAP + 1)
+      : getCountryCitiesServer(placeData.country_code, requestId, RELATED_PLACES_CAP + 1),
+    getViewer(requestId),
+  ]);
   const relatedPlaces: RelatedPlace[] = siblingsRes.data
     .filter((sibling) => sibling.id !== placeData.id)
     .slice(0, RELATED_PLACES_CAP)
@@ -207,14 +211,17 @@ export default async function PlaceResolverPage({
 
   return (
     <>
-      <SiteHeader variant="bar" />
       {structuredJson ? (
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: structuredJson }} />
       ) : null}
       {itemListJson ? (
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: itemListJson }} />
       ) : null}
-      <main className={shell}>
+      <AreaMapPage
+        bounds={fountains.bounds}
+        fountains={fountains.fountains}
+        isAuthenticated={viewer.state === "authed"}
+      >
         <Link
           href={countryPath(placeData.country_code)}
           className="text-sm text-brand-ink underline"
@@ -228,7 +235,7 @@ export default async function PlaceResolverPage({
           {placeData.fountain_count.toLocaleString()} public drinking fountains and bottle-refill
           stations in {placeData.name}.
           {fountains.fountains.length < placeData.fountain_count
-            ? ` Showing the top ${fountains.fountains.length}.`
+            ? ` Showing ${fountains.fountains.length.toLocaleString()} overview pins; zoom in for local results.`
             : ""}
         </p>
         {disambiguation ? (
@@ -239,12 +246,17 @@ export default async function PlaceResolverPage({
           </p>
         ) : null}
         {fountains.fountains.length > 0 ? (
-          <FountainList fountains={fountains.fountains} />
+          <details className="mt-5">
+            <summary className="cursor-pointer font-semibold text-brand-ink">
+              Browse highlighted fountains
+            </summary>
+            <FountainList fountains={fountains.fountains.slice(0, 20)} />
+          </details>
         ) : (
           <p className="mt-6 text-muted">No public fountains are mapped here yet.</p>
         )}
         <RelatedPlaces heading={relatedHeading} places={relatedPlaces} />
-      </main>
+      </AreaMapPage>
     </>
   );
 }

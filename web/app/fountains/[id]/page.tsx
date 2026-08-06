@@ -15,6 +15,8 @@ import { getViewer } from "../../../lib/server/viewer";
 import { FountainAdminControls } from "../../../components/admin/FountainAdminControls";
 import { ContributionStatusOverlay } from "../../../components/contributions/ContributionStatusOverlay";
 import { FountainDetail } from "../../../components/fountain/FountainDetail";
+import { DetailOverlay } from "../../../components/fountain/DetailOverlay";
+import MapBrowserLoader from "../../../components/map/MapBrowserLoader";
 import { SiteHeader } from "../../../components/SiteHeader";
 import {
   attributeDisplay,
@@ -211,9 +213,9 @@ export async function generateMetadata({
     title,
     description,
     alternates: { canonical },
-    // Below the §7 predicate (thin / broken-and-unrated / no city): render, but keep out of the
-    // index — still followable so crawlers reach the linked map + place pages.
-    robots: data.indexable ? undefined : { index: false, follow: true },
+    // Area pages are the finest indexable grain. Fountain URLs remain shareable and their links
+    // remain crawlable, but every individual detail is intentionally excluded from the index.
+    robots: { index: false, follow: true },
     openGraph: { title, description, url: canonical, type: "website" },
   };
 }
@@ -275,9 +277,6 @@ export default async function FountainPage({ params }: { params: Promise<{ id: s
   // The PUBLIC city label for the h1 (spec §7): cached, so this reuses generateMetadata's fetch.
   const { data: placeData } = await loadFountainPlace(id);
   const locationLabel = cityLabel(placeData?.city?.name);
-  const cityHref = placeData?.city
-    ? cityPath(placeData.city.country_code, placeData.city.slug, placeData.region?.slug)
-    : undefined;
   const structuredJson =
     placeData?.indexable && !adminRes
       ? jsonLdScript([
@@ -287,7 +286,17 @@ export default async function FountainPage({ params }: { params: Promise<{ id: s
       : null;
   return (
     <>
-      <SiteHeader variant="bar" />
+      <div className="flex min-h-dvh flex-col">
+        <SiteHeader variant="hero" />
+        <main className="relative flex-1">
+          <MapBrowserLoader
+            isAuthenticated={isAuthenticated}
+            autoEnterAdd={false}
+            hadAddParam={false}
+            initialFocusId={id}
+          />
+        </main>
+      </div>
       {isAuthenticated ? <ContributionStatusOverlay /> : null}
       {structuredJson ? (
         <script
@@ -297,30 +306,16 @@ export default async function FountainPage({ params }: { params: Promise<{ id: s
           }}
         />
       ) : null}
-      <main className={shell}>
-        <Link href="/" className="text-sm text-brand-ink underline">
-          ← Back to the map
-        </Link>
-        {cityHref && placeData?.city ? (
-          <p className="mt-3 text-sm text-muted">
-            Browse more{" "}
-            <Link href={cityHref} className="text-brand-ink underline">
-              drinking fountains in {placeData.city.name}
-            </Link>
-            .
-          </p>
-        ) : null}
-        <div className="mt-6">
-          <FountainDetail
-            detail={data}
-            notes={notes}
-            photos={photos}
-            isAuthenticated={isAuthenticated}
-            adminControls={adminRes?.data ? <FountainAdminControls detail={adminRes.data} /> : null}
-            locationLabel={locationLabel}
-          />
-        </div>
-      </main>
+      <DetailOverlay closeHref="/">
+        <FountainDetail
+          detail={data}
+          notes={notes}
+          photos={photos}
+          isAuthenticated={isAuthenticated}
+          adminControls={adminRes?.data ? <FountainAdminControls detail={adminRes.data} /> : null}
+          locationLabel={locationLabel}
+        />
+      </DetailOverlay>
     </>
   );
 }

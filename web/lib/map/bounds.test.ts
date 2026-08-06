@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { wrapLng, normalizeBounds, shouldLoadPins, isAtCap } from "./bounds";
+import { wrapLng, normalizeBounds, shouldLoadPins, isAtCap, overviewPinsBelowZoom } from "./bounds";
 import { MAX_BBOX_RESULTS } from "./constants";
 describe("wrapLng", () => {
   it("in-range", () => expect(wrapLng(20)).toBe(20));
@@ -32,4 +32,11 @@ describe("shouldLoadPins", () => {
 describe("isAtCap", () => {
   it("at", () => expect(isAtCap(MAX_BBOX_RESULTS)).toBe(true));
   it("below", () => expect(isAtCap(MAX_BBOX_RESULTS - 1)).toBe(false));
+});
+describe("overviewPinsBelowZoom", () => {
+  const bounds = { west: -118, south: 32, east: -117, north: 33 };
+  it("retains server-seeded area pins", () =>
+    expect(overviewPinsBelowZoom(bounds, ["a", "b"])).toEqual(["a", "b"]));
+  it("keeps the normal world map empty below the loading threshold", () =>
+    expect(overviewPinsBelowZoom(undefined, ["a", "b"])).toEqual([]));
 });

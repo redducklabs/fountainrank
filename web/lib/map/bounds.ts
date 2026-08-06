@@ -15,3 +15,5 @@ export function normalizeBounds(
 }
 export const shouldLoadPins = (zoom: number) => zoom >= MIN_ZOOM;
 export const isAtCap = (count: number) => count >= MAX_BBOX_RESULTS;
+export const overviewPinsBelowZoom = <T>(bounds: RawBounds | undefined, pins: T[]): T[] =>
+  bounds ? pins : [];

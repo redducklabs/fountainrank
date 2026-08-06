@@ -135,6 +135,25 @@ export function getRegionCitiesServer(
 // verdict (fountain_count >= K); the page sets `noindex` from it. status 404 => no such city.
 export type CityFountainsOut = components["schemas"]["CityFountainsOut"];
 export type PlaceResolveOut = components["schemas"]["PlaceResolveOut"];
+export const AREA_MAP_PIN_CAP = 500;
+
+export async function getCountryFountainsServer(
+  country: string,
+  requestId?: string,
+  limit = AREA_MAP_PIN_CAP,
+): Promise<{ data: CityFountainsOut | undefined; status: number }> {
+  const headers: Record<string, string> = {};
+  if (requestId) headers["X-Request-ID"] = requestId;
+  const client = makeClient(resolveApiBaseUrl(), { headers });
+  try {
+    const { data, response } = await client.GET("/api/v1/places/{country}/fountains", {
+      params: { path: { country }, query: { limit } },
+    });
+    return { data, status: response?.status ?? 0 };
+  } catch {
+    return { data: undefined, status: 0 };
+  }
+}
 
 export async function resolvePlaceServer(
   country: string,

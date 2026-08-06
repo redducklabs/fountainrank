@@ -85,11 +85,7 @@ const chunkParams = (chunk: string) => ({ params: Promise.resolve({ chunk }) });
 afterEach(() => vi.clearAllMocks());
 
 describe("sitemap index (/sitemap.xml)", () => {
-  it("is a sitemapindex referencing fixed chunks plus exactly-sized fountain + city chunks", async () => {
-    getIndexableFountainsServer.mockResolvedValue({
-      data: { fountain_ids: ["sample"], total_count: 50001 },
-      status: 200,
-    });
+  it("references area/attribute chunks but no individual-fountain chunks", async () => {
     getSitemapCitiesServer.mockResolvedValue({
       data: { cities: [], total_count: 50001 },
       status: 200,
@@ -105,50 +101,30 @@ describe("sitemap index (/sitemap.xml)", () => {
     expect(xml).toContain(`<loc>${APEX}/sitemaps/cities/1.xml</loc>`);
     expect(xml).not.toContain(`<loc>${APEX}/sitemaps/cities.xml</loc>`);
     expect(xml).toContain(`<loc>${APEX}/sitemaps/attributes.xml</loc>`);
-    expect(xml).toContain(`<loc>${APEX}/sitemaps/fountains/0.xml</loc>`);
-    expect(xml).toContain(`<loc>${APEX}/sitemaps/fountains/1.xml</loc>`);
-    expect(xml).not.toContain(`<loc>${APEX}/sitemaps/fountains.xml</loc>`);
-    expect(getIndexableFountainsServer).toHaveBeenCalledWith(expect.any(String), 1, 0);
+    expect(xml).not.toContain("/sitemaps/fountains/");
     expect(getSitemapCitiesServer).toHaveBeenCalledWith(expect.any(String), 1, 0);
   });
 
-  it("sizes fountain + city chunks exactly at 50k boundaries", async () => {
-    getIndexableFountainsServer.mockResolvedValue({
-      data: { fountain_ids: ["sample"], total_count: 50000 },
-      status: 200,
-    });
+  it("sizes city chunks exactly at 50k boundaries", async () => {
     getSitemapCitiesServer.mockResolvedValue({
       data: { cities: [], total_count: 50000 },
       status: 200,
     });
     let xml = await (await indexGET()).text();
-    expect(xml).toContain(`<loc>${APEX}/sitemaps/fountains/0.xml</loc>`);
-    expect(xml).not.toContain(`<loc>${APEX}/sitemaps/fountains/1.xml</loc>`);
     expect(xml).toContain(`<loc>${APEX}/sitemaps/cities/0.xml</loc>`);
     expect(xml).not.toContain(`<loc>${APEX}/sitemaps/cities/1.xml</loc>`);
 
     vi.clearAllMocks();
-    getIndexableFountainsServer.mockResolvedValue({
-      data: { fountain_ids: ["sample"], total_count: 100000 },
-      status: 200,
-    });
     getSitemapCitiesServer.mockResolvedValue({
       data: { cities: [], total_count: 100001 },
       status: 200,
     });
     xml = await (await indexGET()).text();
-    expect(xml).toContain(`<loc>${APEX}/sitemaps/fountains/0.xml</loc>`);
-    expect(xml).toContain(`<loc>${APEX}/sitemaps/fountains/1.xml</loc>`);
-    expect(xml).not.toContain(`<loc>${APEX}/sitemaps/fountains/2.xml</loc>`);
     expect(xml).toContain(`<loc>${APEX}/sitemaps/cities/2.xml</loc>`);
     expect(xml).not.toContain(`<loc>${APEX}/sitemaps/cities/3.xml</loc>`);
   });
 
   it("omits city chunks entirely when no city is indexable (count 0)", async () => {
-    getIndexableFountainsServer.mockResolvedValue({
-      data: { fountain_ids: ["sample"], total_count: 10 },
-      status: 200,
-    });
     getSitemapCitiesServer.mockResolvedValue({
       data: { cities: [], total_count: 0 },
       status: 200,
@@ -156,33 +132,11 @@ describe("sitemap index (/sitemap.xml)", () => {
 
     const xml = await (await indexGET()).text();
 
-    expect(xml).toContain(`<loc>${APEX}/sitemaps/fountains/0.xml</loc>`);
+    expect(xml).toContain(`<loc>${APEX}/sitemaps/attributes.xml</loc>`);
     expect(xml).not.toContain(`<loc>${APEX}/sitemaps/cities/0.xml</loc>`);
   });
 
-  it("returns an uncacheable 503 when the fountain-count fetch fails", async () => {
-    getIndexableFountainsServer.mockResolvedValue({ data: undefined, status: 0 });
-    getSitemapCitiesServer.mockResolvedValue({
-      data: { cities: [], total_count: 5 },
-      status: 200,
-    });
-
-    const res = await indexGET();
-
-    expect(res.status).toBe(503);
-    expect(res.headers.get("cache-control")).toContain("no-store");
-    expect(logFn).toHaveBeenCalledWith(
-      "error",
-      expect.stringMatching(/sitemap index/i),
-      expect.any(Object),
-    );
-  });
-
   it("returns an uncacheable 503 when the city-count fetch fails", async () => {
-    getIndexableFountainsServer.mockResolvedValue({
-      data: { fountain_ids: ["sample"], total_count: 5 },
-      status: 200,
-    });
     getSitemapCitiesServer.mockResolvedValue({ data: undefined, status: 0 });
 
     const res = await indexGET();
@@ -198,68 +152,14 @@ describe("sitemap index (/sitemap.xml)", () => {
 });
 
 describe("fountains chunks (/sitemaps/fountains/[chunk])", () => {
-  it("lists /fountains/<id> for each indexable fountain", async () => {
-    getIndexableFountainsServer.mockResolvedValue({
-      data: { fountain_ids: ["f1", "f2"], total_count: 2 },
-      status: 200,
-    });
+  it("returns 410 for retired chunk and legacy sitemap URLs", async () => {
+    const chunk = await fountainChunkGET();
+    const legacy = await legacyFountainsGET();
 
-    const xml = await (
-      await fountainChunkGET(new Request("https://example.com"), chunkParams("0.xml"))
-    ).text();
-
-    expect(xml).toContain(`<loc>${APEX}/fountains/f1</loc>`);
-    expect(xml).toContain(`<loc>${APEX}/fountains/f2</loc>`);
-    expect(getIndexableFountainsServer).toHaveBeenCalledWith(expect.any(String), 50000, 0);
-  });
-
-  it("uses zero-based chunk offsets", async () => {
-    getIndexableFountainsServer.mockResolvedValue({
-      data: { fountain_ids: ["f50001"], total_count: 50001 },
-      status: 200,
-    });
-
-    await fountainChunkGET(new Request("https://example.com"), chunkParams("1.xml"));
-
-    expect(getIndexableFountainsServer).toHaveBeenCalledWith(expect.any(String), 50000, 50000);
-  });
-
-  it("returns a transient, uncacheable 503 when the backend fails", async () => {
-    getIndexableFountainsServer.mockResolvedValue({ data: undefined, status: 0 });
-
-    const res = await fountainChunkGET(new Request("https://example.com"), chunkParams("0.xml"));
-
-    expect(res.status).toBe(503);
-    expect(res.headers.get("cache-control")).toContain("no-store");
-    expect(logFn).toHaveBeenCalledWith(
-      "error",
-      expect.stringMatching(/fountains sitemap/i),
-      expect.any(Object),
-    );
-  });
-
-  it("404s an out-of-range chunk instead of returning an empty 200", async () => {
-    getIndexableFountainsServer.mockResolvedValue({
-      data: { fountain_ids: [], total_count: 50000 },
-      status: 200,
-    });
-
-    await expect(
-      fountainChunkGET(new Request("https://example.com"), chunkParams("1.xml")),
-    ).rejects.toThrow("NEXT_NOT_FOUND");
-    expect(notFound).toHaveBeenCalledOnce();
-  });
-
-  it("404s a malformed chunk segment", async () => {
-    await expect(
-      fountainChunkGET(new Request("https://example.com"), chunkParams("latest.xml")),
-    ).rejects.toThrow("NEXT_NOT_FOUND");
+    expect(chunk.status).toBe(410);
+    expect(legacy.status).toBe(410);
+    expect(chunk.headers.get("cache-control")).toContain("max-age=86400");
     expect(getIndexableFountainsServer).not.toHaveBeenCalled();
-  });
-
-  it("308s the legacy fountains sitemap to chunk zero", async () => {
-    await expect(legacyFountainsGET()).rejects.toThrow("NEXT_REDIRECT:/sitemaps/fountains/0.xml");
-    expect(permanentRedirect).toHaveBeenCalledWith("/sitemaps/fountains/0.xml");
   });
 });
 

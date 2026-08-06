@@ -4884,6 +4884,72 @@
         }
       }
     },
+    "/api/v1/places/{country}/fountains": {
+      "get": {
+        "tags": [
+          "places"
+        ],
+        "summary": "Country Fountains",
+        "description": "Return a country's authoritative map bounds and bounded overview pins.\n\nFountain selection reads the precomputed ``country_place_id`` membership. The stored boundary\nis used only for its envelope; no request-time point-in-polygon operation is performed.",
+        "operationId": "country_fountains_api_v1_places__country__fountains_get",
+        "parameters": [
+          {
+            "name": "country",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Country"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CityFountainsOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/places/{country}/regions/{region}/fountains": {
       "get": {
         "tags": [
@@ -7130,6 +7196,9 @@
           "place": {
             "$ref": "#/components/schemas/PlaceOut"
           },
+          "bounds": {
+            "$ref": "#/components/schemas/BoundingBox"
+          },
           "fountains": {
             "items": {
               "$ref": "#/components/schemas/CityFountainPin"
@@ -7145,6 +7214,7 @@
         "type": "object",
         "required": [
           "place",
+          "bounds",
           "fountains",
           "indexable"
         ],

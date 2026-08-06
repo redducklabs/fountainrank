@@ -9,7 +9,8 @@ path reads only the precomputed membership columns on ``place_boundaries`` — i
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import and_, case, func, or_, select
+from geoalchemy2 import Geometry
+from sqlalchemy import and_, case, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -18,6 +19,7 @@ from app.db import get_session
 from app.geo import latitude_of, longitude_of
 from app.models import Fountain, FountainPhoto, PlaceBoundary, PlaceScopeConfig
 from app.schemas import (
+    BoundingBox,
     CityFountainPin,
     CityFountainsOut,
     CitySitemapItem,
@@ -622,6 +624,34 @@ async def _place_fountains_response(
     limit: int,
     offset: int,
 ) -> CityFountainsOut:
+    boundary_geometry = cast(PlaceBoundary.boundary, Geometry)
+    boxes = (
+        select(
+            func.Box2D(boundary_geometry).label("standard_box"),
+            func.Box2D(func.ST_ShiftLongitude(boundary_geometry)).label("shifted_box"),
+        )
+        .where(PlaceBoundary.id == place.id)
+        .cte("place_boxes")
+    )
+    standard_west, south, standard_east, north, shifted_west, shifted_east = (
+        await session.execute(
+            select(
+                func.ST_XMin(boxes.c.standard_box),
+                func.ST_YMin(boxes.c.standard_box),
+                func.ST_XMax(boxes.c.standard_box),
+                func.ST_YMax(boxes.c.standard_box),
+                func.ST_XMin(boxes.c.shifted_box),
+                func.ST_XMax(boxes.c.shifted_box),
+            )
+        )
+    ).one()
+    # A normal planar envelope is almost global for a boundary crossing the antimeridian. PostGIS'
+    # shifted longitude representation maps [-180, 0) to [180, 360), producing the compact world
+    # copy for countries such as the US and Fiji. MapLibre accepts east/west outside [-180, 180].
+    if shifted_east - shifted_west < standard_east - standard_west:
+        west, east = shifted_west, shifted_east
+    else:
+        west, east = standard_west, standard_east
     fountains = await _fountain_pins_for_place(
         session,
         place_id=place.id,
@@ -637,9 +667,62 @@ async def _place_fountains_response(
     _set_cache(response, settings)
     return CityFountainsOut(
         place=await _place_out(session, place, settings),
+        bounds=BoundingBox(south=south, west=west, north=north, east=east),
         fountains=fountains,
         indexable=indexable,
     )
+
+
+@router.get("/places/{country}/fountains", response_model=CityFountainsOut)
+async def country_fountains(
+    response: Response,
+    country: str,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> CityFountainsOut:
+    """Return a country's authoritative map bounds and bounded overview pins.
+
+    Fountain selection reads the precomputed ``country_place_id`` membership. The stored boundary
+    is used only for its envelope; no request-time point-in-polygon operation is performed.
+    """
+    cc = country.lower()
+    place = (
+        await session.execute(
+            select(PlaceBoundary)
+            .where(
+                PlaceBoundary.country_code == cc,
+                PlaceBoundary.place_kind == "country",
+            )
+            .order_by(PlaceBoundary.overture_id.asc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if place is None or place.fountain_count < 1:
+        _set_cache(response, settings)
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="No such country")
+    out = await _place_fountains_response(
+        response=response,
+        session=session,
+        settings=settings,
+        place=place,
+        membership_column=Fountain.country_place_id,
+        limit=limit,
+        offset=offset,
+    )
+    logger.info(
+        "country fountains served",
+        extra={
+            "country": cc,
+            "place_id": str(place.id),
+            "rows": len(out.fountains),
+            "indexable": out.indexable,
+            "limit": limit,
+            "offset": offset,
+        },
+    )
+    return out
 
 
 @router.get("/places/{country}/regions/{region}/fountains", response_model=CityFountainsOut)

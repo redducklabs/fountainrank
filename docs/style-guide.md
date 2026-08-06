@@ -227,9 +227,15 @@ Static, readable policy pages for app-store and OAuth registration URLs.
 Crawlable, server-rendered directory pages for organic search (#127): the **hub**
 (`/drinking-fountains`), **country** pages, **region** pages, and **city** pages.
 
-- **Shell:** the slim `SiteHeader variant="bar"` + a constrained raised surface
-  (`mx-auto min-h-dvh max-w-2xl bg-surface-raised px-6 py-10`) — the same reading shell as the
-  leaderboard and fountain-detail pages.
+- **Map shell:** country, region, and city routes use the full live map beneath
+  `SiteHeader variant="hero"`. The map fits the selected place's authoritative boundary bounds
+  using the narrower normal or longitude-shifted world copy for antimeridian-spanning areas, and
+  starts with up to 500 non-hidden overview pins. A raised, scrollable area panel overlays the lower
+  map on narrow screens and the upper-left map on desktop. It contains the server-rendered `h1`,
+  mapped count, hierarchy navigation, and related-place links. The panel is not a modal: it does not
+  trap focus or dim/disable the map. Large-area copy explicitly says when the overview is capped and
+  asks the visitor to zoom for local results. Below-WebGL/error fallbacks retain the prior readable
+  raised-surface shell.
 - **Hub country grid:** `/drinking-fountains` lists ready countries in a two-column responsive grid.
   Each country is one simple bordered item (`rounded-lg border border-border p-3`) with the country
   name as a brand-colored underlined link and a muted fountain count. The hub does not use marketing
@@ -305,11 +311,10 @@ viewer/admin detail path, so a signed-in or admin viewer can't change the SEO ou
 
 - **Title / canonical:** `Drinking fountain in {city}` (or `Public drinking fountain` when no city
   resolves) + `alternates.canonical = /fountains/[id]`, plus a matching description + OpenGraph.
-- **Indexability:** the backend's single §7 predicate (a city resolves, not hidden, and rated OR
-  working-and-not-broken) drives `noindex` — below the predicate is `{ index: false, follow: true }`
-  (rendered but out of the index); a hidden / unknown / backend-down page is `{ index: false,
-follow: false }`. Indexable fountains are listed in `/sitemaps/fountains/0.xml` and later chunk
-  files; `/sitemaps/fountains.xml` is only a legacy redirect.
+- **Indexability:** individual fountain pages are always `noindex, follow`; area pages are the
+  finest indexable grain and fountain chunks are omitted from the sitemap index. Hidden, unknown,
+  or backend-down pages remain `noindex, nofollow`. The prior public predicate still gates whether
+  public JSON-LD can be emitted safely.
 - **`h1`:** the shared `FountainDetail` takes an optional `locationLabel` so the heading reads
   "Public drinking fountain in {city}" on the public page; it falls back to "Public drinking
   fountain" when no city resolves or on the admin path (which doesn't fetch the public place).
@@ -321,6 +326,11 @@ drawer over the map, not a centered modal. The drawer is `h-dvh`, slides in/out 
 transform transition, and closes from Escape, the close button, or a click/tap on the map backdrop.
 On desktop it anchors to the right at a readable fixed width; on narrow screens it occupies the full
 viewport width so the same drawer structure carries to mobile web.
+
+A direct load or refresh of `/fountains/[id]` now renders that same drawer over a newly mounted map.
+The map resolves and flies to the route fountain, showing its selected halo/pin. A hard-loaded drawer
+closes with `router.replace("/")`, since browser Back may leave the site; an intercepted drawer keeps
+the existing `router.back()` behavior so its already-mounted map and camera are restored.
 
 The drawer body starts with prominent top tabs (`FountainDetailTabs`): **Info** for the primary
 status, rating summary, rating controls, add-photo control, directions, and sharing; **Details** for

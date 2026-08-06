@@ -45,6 +45,14 @@ vi.mock("../../../../../components/fountain/FountainList", () => ({
   ),
 }));
 vi.mock("../../../../../lib/server/log", () => ({ log: vi.fn() }));
+vi.mock("../../../../../lib/server/viewer", () => ({
+  getViewer: vi.fn().mockResolvedValue({ state: "anonymous" }),
+}));
+vi.mock("../../../../../components/place/AreaMapPage", () => ({
+  AreaMapPage: ({ children }: { children: ReactNode }) => (
+    <div data-testid="area-map">{children}</div>
+  ),
+}));
 
 import CityPage, { buildCityBreadcrumbStructuredData, generateMetadata } from "./page";
 
@@ -81,7 +89,12 @@ const FOUNTAIN = {
   last_verified_at: null,
   distance_m: null,
 };
-const CITY = { place: PLACE, fountains: [FOUNTAIN], indexable: true };
+const CITY = {
+  place: PLACE,
+  bounds: { south: 32.5, west: -117.3, north: 33, east: -116.8 },
+  fountains: [FOUNTAIN],
+  indexable: true,
+};
 // Sibling cities in the same region (California) for the RelatedPlaces block; includes the current
 // city (San Diego) so the test proves it is excluded from its own sibling list.
 const SIBLING_CITIES = [
@@ -121,6 +134,7 @@ it("renders the nested city page with parent-region breadcrumbs", async () => {
     "california",
     "san-diego",
     expect.any(String),
+    500,
   );
   expect(await screen.findByText(/12 public drinking fountains/)).toBeTruthy();
   expect(await screen.findByRole("link", { name: /All of California/ })).toHaveAttribute(

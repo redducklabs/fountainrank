@@ -885,6 +885,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/places/{country}/fountains": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Country Fountains
+         * @description Return a country's authoritative map bounds and bounded overview pins.
+         *
+         *     Fountain selection reads the precomputed ``country_place_id`` membership. The stored boundary
+         *     is used only for its envelope; no request-time point-in-polygon operation is performed.
+         */
+        get: operations["country_fountains_api_v1_places__country__fountains_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/places/{country}/regions/{region}/fountains": {
         parameters: {
             query?: never;
@@ -1499,6 +1522,7 @@ export interface components {
          */
         CityFountainsOut: {
             place: components["schemas"]["PlaceOut"];
+            bounds: components["schemas"]["BoundingBox"];
             /** Fountains */
             fountains: components["schemas"]["CityFountainPin"][];
             /** Indexable */
@@ -4001,6 +4025,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PlaceOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    country_fountains_api_v1_places__country__fountains_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                country: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CityFountainsOut"];
                 };
             };
             /** @description Validation Error */

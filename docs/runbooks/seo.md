@@ -45,7 +45,7 @@ contains it. That assignment is precomputed (never a live query on a page load).
 | `/drinking-fountains/[country]/[city]`                                            | list/map, top-rated first                     | **Yes — the primary SEO payoff**, gated (A.5) |
 | `/drinking-fountains/bottle-fillers`, `/wheelchair-accessible-drinking-fountains` | attribute-filtered list                       | Yes; `noindex` below `K_attr`                 |
 | `/drinking-fountains-near-me`                                                     | static explainer + map deep-link + top cities | Yes                                           |
-| `/fountains/[id]`                                                                 | detail, city in `<h1>`/title                  | **Selective** — §7 predicate; else `noindex`  |
+| `/fountains/[id]`                                                                 | map + shareable detail drawer                 | No — always `noindex, follow`                 |
 
 Titles/descriptions/`canonical` are unique per page (`generateMetadata`). Slugs are **sticky**; a
 renamed boundary keeps the old URL as a 301 to the canonical slug.
@@ -55,12 +55,13 @@ renamed boundary keeps the old URL as a 301 to the canonical slug.
 - **`/robots.txt`** (`web/app/robots.ts`) — allows crawling, disallows `/account` + `/admin`, points
   at `/sitemap.xml`.
 - **`/sitemap.xml`** (`web/app/sitemap.xml/route.ts`) — an explicit **sitemap index** (Next's
-  `generateSitemaps` does not produce one) referencing five chunks under `/sitemaps/`:
+  `generateSitemaps` does not produce one) referencing the area/content chunks under `/sitemaps/`:
   - `core.xml` — static pages (home, leaderboard, legal)
   - `countries.xml` — loaded countries ≥ `K`
-  - `cities.xml` — canonical cities ≥ `K` **in ready scopes only** (A.5)
+  - `regions.xml` — canonical regions ≥ `K` in ready scopes
+  - `cities/<chunk>.xml` — canonical cities ≥ `K` **in ready scopes only** (A.5)
   - `attributes.xml` — attribute pages ≥ `K_attr`
-  - `fountains.xml` — selectively-indexable fountain detail pages
+  - Individual fountain URLs are intentionally omitted; area pages are the finest indexable grain.
 - Chunks are `force-dynamic` so they reflect live data; each stays < 50k URLs (warns before the cap).
 
 ### A.4 Indexability rules (the thin-content policy, spec §7)
@@ -69,8 +70,8 @@ One predicate, computed from **public, non-hidden** data only (auth/admin data n
 
 - **Places** (country/city) indexable iff `fountain_count ≥ K` (`seo_place_min_fountains`, default 3).
 - **Attribute pages** indexable iff matching count `≥ K_attr` (`seo_attribute_min_fountains`).
-- **A fountain** indexable iff a city resolves **AND** not hidden **AND** (`rating_count ≥ 1` **OR**
-  (`is_working` **AND** `current_status` not negative)).
+- **Individual fountains are not indexable.** Their public URLs remain shareable, server-rendered,
+  and followable, and open the selected fountain in a drawer over the map.
 - Everything below its gate renders but is `noindex` — reachable, just not promoted.
 
 ### A.5 The per-scope readiness gate (Slice 1e)
