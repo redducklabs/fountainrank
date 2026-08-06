@@ -71,8 +71,10 @@ Ship a **public, no-auth** drinking-fountain discovery map on the web. The root 
 - `app/fountains/[id]/page.tsx` renders the same server-rendered detail content inside the drawer,
   with a fresh map page beneath it (used on hard navigation, refresh, direct link, and by crawlers).
   The map resolves the route id through the public detail endpoint, flies to the fountain, and draws
-  the selected pin/halo. Closing this hard-loaded drawer replaces the route with `/`; it must not
-  rely on browser Back because a direct visit may have no in-site history entry. The SSR detail,
+  the selected pin/halo. Closing this hard-loaded drawer replaces the route with `/?focus=<id>` so
+  the root map restores the same neighborhood and converts subsequent fountain selections into the
+  normal persistent-map/intercepted-drawer flow. It must not rely on browser Back because a direct
+  visit may have no in-site history entry. The SSR detail,
   metadata, canonical, JSON-LD, indexability decision, authenticated contribution controls, and
   direct-load 404 behavior remain unchanged.
 
