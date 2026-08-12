@@ -1,4 +1,4 @@
-import maplibregl from "maplibre-gl";
+import * as maplibregl from "maplibre-gl";
 import { PLACE_MIN_ZOOM } from "../../lib/map/constants";
 import {
   ringFeatureCollection,

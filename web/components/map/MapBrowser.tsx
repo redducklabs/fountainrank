@@ -2,11 +2,8 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
-import maplibregl, {
-  type LayerSpecification,
-  type MapLayerMouseEvent,
-  type GeoJSONSource,
-} from "maplibre-gl";
+import * as maplibregl from "maplibre-gl";
+import { type LayerSpecification, type MapLayerMouseEvent, type GeoJSONSource } from "maplibre-gl";
 import { createPlacementMap, type PlacementMap } from "./placement-map";
 import { useAddFountainMode } from "./useAddFountainMode";
 import "maplibre-gl/dist/maplibre-gl.css";
@@ -70,7 +67,7 @@ import {
 
 type Status = "idle" | "loading" | "empty" | "error" | "belowZoom" | "capped";
 
-// MapLibre v5 needs a WebGL2 context. Probe once with default attributes (matching the map's
+// MapLibre needs a WebGL2 context. Probe once with default attributes (matching the map's
 // powerPreference:'default' below) so we can render a graceful hint instead of throwing/crashing.
 function isWebglSupported(): boolean {
   if (typeof window === "undefined" || !("WebGL2RenderingContext" in window)) return false;
@@ -456,7 +453,7 @@ export default function MapBrowser({
       const f = map.queryRenderedFeatures(e.point, { layers: ["clusters"] })[0];
       const cid = f?.properties?.cluster_id as number | undefined;
       const src = map.getSource("fountains") as GeoJSONSource;
-      // v5: GeoJSONSource.getClusterExpansionZoom returns Promise<number>.
+      // GeoJSONSource.getClusterExpansionZoom returns Promise<number>.
       if (cid != null)
         src.getClusterExpansionZoom(cid).then((z) =>
           map.easeTo({
