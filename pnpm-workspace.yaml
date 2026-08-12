@@ -8,9 +8,15 @@ overrides:
   # expo-asset's older compatible resolution and expo-doctor fails the duplicate-native-module
   # check. Revisit/remove on the next Expo SDK bump.
   "expo-asset>expo-constants": "56.0.23"
-  # GHSA-52cp-r559-cp3m: Redocly's lockfile resolution predates js-yaml's 4.3.0 fix.
-  # Keep this scoped to Redocly; remove once its normal resolution carries >=4.3.0.
-  "@redocly/openapi-core>js-yaml": "4.3.0"
+  # GHSA-52cp-r559-cp3m / GHSA-5p4m-2wfm-xmqj: Redocly's lockfile resolution
+  # predates the latest js-yaml fixes. Remove once its normal resolution carries >=4.3.1.
+  "@redocly/openapi-core>js-yaml": "4.3.1"
+  # GHSA-5p4m-2wfm-xmqj: patched 4.x release is compatible with Expo CLI's range.
+  # Remove once all transitive consumers normally resolve js-yaml >=4.3.1.
+  "js-yaml@>=4.0.0 <4.3.1": "4.3.1"
+  # GHSA-28wg-ghj8-5hjv / GHSA-2v37-7h3g-55p8: keep Expo's nanoid 3.x
+  # consumers on the patched compatible release. Remove once upstream resolves >=3.3.17.
+  "nanoid@>=3.0.0 <3.3.17": "3.3.17"
   # GHSA-f88m-g3jw-g9cj: Next's compatible optional range still resolves sharp 0.34.x.
   # Remove once Next normally resolves sharp >=0.35.0.
   sharp: "0.35.0"
@@ -31,6 +37,11 @@ auditConfig:
   # shipped by ESLint and Redocly. Keep their compatible releases until those upstreams migrate.
   ignoreGhsas:
     - GHSA-mh99-v99m-4gvg
+    # Metro uses image-size only in the local/native build toolchain. The advisories name
+    # 2.0.3 as patched, but npm currently publishes only 2.0.2. Remove these exceptions and
+    # pin >=2.0.3 as soon as that release exists or Expo/Metro carries the fix.
+    - GHSA-w3rx-r6r6-pgpr
+    - GHSA-5p2g-fcmc-qvqq
 allowBuilds:
   sharp: true
   unrs-resolver: true
