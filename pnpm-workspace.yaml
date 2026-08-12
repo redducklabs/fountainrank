@@ -3,11 +3,11 @@ packages:
   - "mobile"
   - "packages/*"
 overrides:
-  # Force expo-asset's transitive expo-constants up to the coordinated SDK-56.0.18 patch
-  # (~56.0.22 per expo@56.0.18) so pnpm keeps a single copy. Without this, pnpm preserves
+  # Force expo-asset's transitive expo-constants up to the coordinated SDK-56.0.19 patch
+  # (~56.0.23 per expo@56.0.19) so pnpm keeps a single copy. Without this, pnpm preserves
   # expo-asset's older compatible resolution and expo-doctor fails the duplicate-native-module
   # check. Revisit/remove on the next Expo SDK bump.
-  "expo-asset>expo-constants": "56.0.22"
+  "expo-asset>expo-constants": "56.0.23"
   # GHSA-52cp-r559-cp3m: Redocly's lockfile resolution predates js-yaml's 4.3.0 fix.
   # Keep this scoped to Redocly; remove once its normal resolution carries >=4.3.0.
   "@redocly/openapi-core>js-yaml": "4.3.0"
