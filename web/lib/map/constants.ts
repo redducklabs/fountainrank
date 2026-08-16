@@ -5,6 +5,9 @@ export const MIN_ZOOM = 10; // below this we don't fetch (spec §6.1)
 export const PILL_MIN_ZOOM = 13; // rating pill appears at/above this zoom
 export const DEBOUNCE_MS = 300;
 export const GEOLOCATE_TIMEOUT_MS = 8000;
+/** Startup geolocation is armed on the map's `load`. Cap the wait so a map that never finishes
+ *  loading (e.g. its worker fails to start) can't pin the "Locating you…" toast on screen. */
+export const MAP_LOAD_TIMEOUT_MS = 15000;
 export const NEIGHBORHOOD_ZOOM = 14;
 export const DEFAULT_CENTER: [number, number] = [-98.5, 39.8]; // continental US [lng, lat]
 export const DEFAULT_ZOOM = 3.5;

@@ -14,7 +14,7 @@
     },
     "build": {
       "dependsOn": ["generate", "^generate"],
-      "outputs": [".next/**", "!.next/cache/**"]
+      "outputs": [".next/**", "!.next/cache/**", "public/maplibre/**"]
     }
   }
 }
