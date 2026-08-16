@@ -1,7 +1,7 @@
 import { mkdtempSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
+import { dirname, join, posix } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   WORKER_ENTRY,
@@ -34,9 +34,10 @@ describe("collectWorkerGraph", () => {
     const files = collectWorkerGraph(distDir);
     expect(files).toContain(WORKER_ENTRY);
     for (const file of files) {
-      // Nothing in the graph may import a module outside the copied set.
+      // Nothing in the graph may import a module outside the copied set. Resolve exactly as the
+      // copy does — relative to the importer's own directory — so a nested graph stays correct.
       for (const spec of relativeSpecifiers(readFileSync(join(distDir, file), "utf8"))) {
-        expect(files).toContain(spec.replace(/^\.\//, ""));
+        expect(files).toContain(posix.normalize(posix.join(posix.dirname(file), spec)));
       }
     }
   });
@@ -47,6 +48,17 @@ describe("collectWorkerGraph", () => {
     writeFileSync(join(dir, "one.mjs"), 'export{b}from"./two.mjs"');
     writeFileSync(join(dir, "two.mjs"), "export const b=1");
     expect(collectWorkerGraph(dir).sort()).toEqual([WORKER_ENTRY, "one.mjs", "two.mjs"].sort());
+  });
+
+  it("resolves a nested import relative to its importer, not the root", () => {
+    const dir = mkdtempSync(join(tmpdir(), "mlw-"));
+    mkdirSync(join(dir, "chunks"), { recursive: true });
+    writeFileSync(join(dir, WORKER_ENTRY), 'import{a}from"./chunks/a.mjs"');
+    writeFileSync(join(dir, "chunks", "a.mjs"), 'export{b}from"./b.mjs"');
+    writeFileSync(join(dir, "chunks", "b.mjs"), "export const b=1");
+    expect(collectWorkerGraph(dir).sort()).toEqual(
+      [WORKER_ENTRY, "chunks/a.mjs", "chunks/b.mjs"].sort(),
+    );
   });
 
   it("fails loudly when an imported module is missing instead of shipping a broken worker", () => {
