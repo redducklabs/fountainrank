@@ -84,3 +84,7 @@ infra/terraform/crash.*.log
 mobile/ios/
 mobile/android/
 builds/
+
+# MapLibre worker copied into public/ at build time by web/scripts/copy-maplibre-worker.mjs
+# (see web/lib/map/worker.ts) — generated, never committed.
+web/public/maplibre/

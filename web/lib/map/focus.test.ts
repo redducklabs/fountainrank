@@ -6,6 +6,7 @@ import {
   focusZoomClearsClusters,
   mergeFocusedPin,
   shouldMoveToStartupLocation,
+  shouldStartupGeolocate,
 } from "./focus";
 
 const detail = {
@@ -50,5 +51,15 @@ describe("focused fountain map contract", () => {
   it("never lets startup geolocation clobber an explicit focused fountain", () => {
     expect(shouldMoveToStartupLocation("fountain-id")).toBe(false);
     expect(shouldMoveToStartupLocation("")).toBe(true);
+  });
+});
+
+describe("shouldStartupGeolocate", () => {
+  it("runs startup geolocation on a normal map load", () => {
+    expect(shouldStartupGeolocate(false)).toBe(true);
+  });
+
+  it("skips it once the map-load wait was abandoned, so a late load can't move the camera", () => {
+    expect(shouldStartupGeolocate(true)).toBe(false);
   });
 });

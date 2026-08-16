@@ -8,6 +8,7 @@ import { createPlacementMap, type PlacementMap } from "./placement-map";
 import { useAddFountainMode } from "./useAddFountainMode";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { styleUrlFor, themedPinAssets, themedPillBg } from "../../lib/map/style";
+import { configureMapWorker } from "../../lib/map/worker";
 import { mapColorsFor } from "../../lib/map/colors";
 import {
   fetchBbox,
@@ -41,6 +42,7 @@ import {
   DEFAULT_CENTER,
   DEFAULT_ZOOM,
   GEOLOCATE_TIMEOUT_MS,
+  MAP_LOAD_TIMEOUT_MS,
   NEIGHBORHOOD_ZOOM,
 } from "../../lib/map/constants";
 import { resolveActiveId, resolveFocusId } from "../../lib/map/active-id";
@@ -50,6 +52,7 @@ import {
   focusCameraAction,
   mergeFocusedPin,
   shouldMoveToStartupLocation,
+  shouldStartupGeolocate,
 } from "../../lib/map/focus";
 import { logMapError } from "../../lib/map/log";
 import { formatNearestDistance, requiresFarNearestConfirmation } from "../../lib/map/nearest";
@@ -371,6 +374,7 @@ export default function MapBrowser({
     // The basemap source is now a normal vector TileJSON (go-pmtiles at /tiles) — MapLibre
     // fetches it natively; no client-side pmtiles protocol needed.
     themeRef.current = resolveTheme(resolvedTheme);
+    configureMapWorker(); // MUST precede the first `new Map()` — see lib/map/worker.ts
     let map: maplibregl.Map;
     try {
       map = new maplibregl.Map({
@@ -478,7 +482,22 @@ export default function MapBrowser({
 
     // Geolocate ONCE at startup (not on style swaps): map.once("load") fires only on the initial
     // load; setStyle emits style.load, never load again.
+    // `load` waits on the first tiles, so a basemap that never paints would otherwise leave
+    // locateStatus pinned at "locating" (a permanent "Locating you…" toast) forever. Cap the
+    // wait and ABANDON startup location for this map: a late `load` must not prompt for
+    // location and fly a camera the user has been looking at (and possibly panning) meanwhile.
+    let mapLoadAbandoned = false;
+    const loadTimer = setTimeout(() => {
+      mapLoadAbandoned = true;
+      logMapError("startup-map-load-timeout", { ms: MAP_LOAD_TIMEOUT_MS });
+      setLocateStatus("resolved");
+    }, MAP_LOAD_TIMEOUT_MS);
     map.once("load", () => {
+      clearTimeout(loadTimer);
+      if (!shouldStartupGeolocate(mapLoadAbandoned)) {
+        logMapError("startup-geolocation-skipped-late-load", { ms: MAP_LOAD_TIMEOUT_MS });
+        return;
+      }
       if (!navigator.geolocation) {
         logMapError("startup-geolocation-unavailable");
         setLocateStatus("resolved");
@@ -642,6 +661,7 @@ export default function MapBrowser({
 
     return () => {
       clearTimeout(timer);
+      clearTimeout(loadTimer);
       placementRef.current?.teardown();
       placementRef.current = null;
       map.remove();
@@ -960,8 +980,8 @@ export default function MapBrowser({
       {debug && (
         <div className="absolute left-2 top-2 z-[60] max-h-[45%] w-[92%] overflow-auto rounded bg-black/85 p-2 font-mono text-[10px] leading-tight text-emerald-300">
           <div>
-            dpr {typeof window !== "undefined" ? window.devicePixelRatio : "?"} · maplibre 5.24 ·
-            webglOk {String(webglOk)} · status {status}
+            dpr {typeof window !== "undefined" ? window.devicePixelRatio : "?"} · maplibre{" "}
+            {maplibregl.getVersion()} · webglOk {String(webglOk)} · status {status}
           </div>
           <div>webgl: {diag.webgl || "…"}</div>
           <div>api: {diag.apiBase}</div>
