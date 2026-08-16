@@ -34,3 +34,16 @@ export const focusZoomClearsClusters = FOCUSED_PIN_ZOOM > CLUSTER_MAX_ZOOM;
 export function shouldMoveToStartupLocation(focusId: string): boolean {
   return focusId === "";
 }
+
+/**
+ * Should startup geolocation still run when the map finally fires `load`?
+ *
+ * Startup location is armed on `load`, which waits on the first tiles. MapBrowser caps that
+ * wait (`MAP_LOAD_TIMEOUT_MS`) so a basemap that never paints can't pin the "Locating you…"
+ * toast on screen. Once that cap is hit the startup-location lifecycle is over: the toast is
+ * already gone, so a late `load` must not ask for location and fly the camera — by then the
+ * user has been looking at the map and may have moved it themselves.
+ */
+export function shouldStartupGeolocate(mapLoadAbandoned: boolean): boolean {
+  return !mapLoadAbandoned;
+}

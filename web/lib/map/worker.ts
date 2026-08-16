@@ -40,8 +40,11 @@ export function configureMapWorker(): void {
   configured = true;
   const url = mapWorkerUrl(getVersion());
   setWorkerUrl(url);
-  // If the copy step ever fails to run, the only symptom is a permanently blank basemap with
-  // nothing in the console. Probe the asset so the cause is greppable instead of invisible.
+  // Narrow check: is the worker ENTRY actually being served? That covers the copy step not
+  // running and a version/path mismatch — the failure modes that otherwise show up only as a
+  // blank basemap with nothing in the console. It does NOT validate the worker's import graph;
+  // that is enforced at build time by scripts/copy-maplibre-worker.mjs, which derives the graph
+  // and fails the build if any module is unresolvable.
   void fetch(url, { method: "HEAD" }).then(
     (res) => {
       if (!res.ok) logMapError("map-worker-asset-missing", { url, status: res.status });

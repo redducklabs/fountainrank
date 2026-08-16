@@ -52,6 +52,7 @@ import {
   focusCameraAction,
   mergeFocusedPin,
   shouldMoveToStartupLocation,
+  shouldStartupGeolocate,
 } from "../../lib/map/focus";
 import { logMapError } from "../../lib/map/log";
 import { formatNearestDistance, requiresFarNearestConfirmation } from "../../lib/map/nearest";
@@ -482,13 +483,21 @@ export default function MapBrowser({
     // Geolocate ONCE at startup (not on style swaps): map.once("load") fires only on the initial
     // load; setStyle emits style.load, never load again.
     // `load` waits on the first tiles, so a basemap that never paints would otherwise leave
-    // locateStatus pinned at "locating" (a permanent "Locating you…" toast) forever. Cap it.
+    // locateStatus pinned at "locating" (a permanent "Locating you…" toast) forever. Cap the
+    // wait and ABANDON startup location for this map: a late `load` must not prompt for
+    // location and fly a camera the user has been looking at (and possibly panning) meanwhile.
+    let mapLoadAbandoned = false;
     const loadTimer = setTimeout(() => {
+      mapLoadAbandoned = true;
       logMapError("startup-map-load-timeout", { ms: MAP_LOAD_TIMEOUT_MS });
       setLocateStatus("resolved");
     }, MAP_LOAD_TIMEOUT_MS);
     map.once("load", () => {
       clearTimeout(loadTimer);
+      if (!shouldStartupGeolocate(mapLoadAbandoned)) {
+        logMapError("startup-geolocation-skipped-late-load", { ms: MAP_LOAD_TIMEOUT_MS });
+        return;
+      }
       if (!navigator.geolocation) {
         logMapError("startup-geolocation-unavailable");
         setLocateStatus("resolved");
