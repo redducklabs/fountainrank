@@ -37,7 +37,7 @@
     "react-native": "0.85.3",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "~4.26.0",
-    "supercluster": "8.0.1"
+    "supercluster": "9.0.0"
   },
   "devDependencies": {
     "@types/geojson": "^7946.0.0",
