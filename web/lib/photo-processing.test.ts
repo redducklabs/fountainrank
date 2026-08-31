@@ -17,6 +17,9 @@ type TestDependencies = PhotoProcessingDependencies & {
 
 type Matrix = [number, number, number, number, number, number];
 
+const GENUINE_EXIF_6_JPEG_BASE64 =
+  "/9j/4QAiRXhpZgAATU0AKgAAAAgAAQESAAMAAAABAAYAAAAAAAD/2wBDAAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH/2wBDAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH/wAARCAASAAwDAREAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAACgn/xAAuEAAAAwYDBAsAAAAAAAAAAAAFBxQDBAYIExYAFRgJFzWmIyQlJjhXZoa21ub/xAAXAQEBAQEAAAAAAAAAAAAAAAAKCAsJ/8QANxEAAAMHAQIIDwAAAAAAAAAABgcIAAQFFBUWFwklNgMZGiQmaKfnChgnNzlWV4WIpai2uNXX/9oADAMBAAIRAxEAPwCaWzyioBOWcIoS2LZ/uSNYkv8AyUFSvoOtycr42HhHtEedwsJd04SFv731t/YVqFBhVeWrFi0j5eWmotdJ6UDVP8/yWsEpADY12i3IxTCmk3SZIPBUB2CCh2IxM/z4mEcGhuzYM+Ss5OPkvD3d6euA7Da06y02rj0zlKpcS4Y+UD2NDDljAazx6Cq5ZR/FWYgm6TGIFwkDoZTAcEhDGNsCGHztPp8Pm4o9uLi8p10eTGeXfN0C/Z8HIziV3rR8kEX6lgQ8Vuu32GdppO/0FjvbKSVvThP0Qpz31eVm70u7dsW7mVxEuYsKcYuEcRo88X8KelCVL0FdSx1HNXsM+Pzp2qFSZO4oyvibp/LX1QLFPEszK3VmAdVarZ1F3kh0jUajzyTkHpd690VcV6k0110ZLzjg6xfJdZuM7oyYZQOJ/fa6jAolEyBcW6MXqVIpHMJ+puTLdVXoPmj87gQ/Jk+u19Nvf2xvOUOdUHt/7lGMPKD4iS892/Bomw6I6fNmJfc33BCmZd4S16E1anw5floQ7W8xBLZPrf/Z";
+
 function multiply(matrix: Matrix, next: Matrix): Matrix {
   const [a, b, c, d, e, f] = matrix;
   const [na, nb, nc, nd, ne, nf] = next;
@@ -30,14 +33,25 @@ function multiply(matrix: Matrix, next: Matrix): Matrix {
   ];
 }
 
-function createSoftwareCanvasDependencies(orientation: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8) {
-  const source = {
-    pixels: [
+function createSoftwareCanvasDependencies(
+  orientation: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8,
+  {
+    sourcePixels = [
       ["A", "B"],
       ["C", "D"],
       ["E", "F"],
     ],
+    decoderHonorsExifOrientation = false,
+  }: {
+    sourcePixels?: string[][];
+    decoderHonorsExifOrientation?: boolean;
+  } = {},
+) {
+  const source = {
+    pixels: sourcePixels,
   } as unknown as CanvasImageSource;
+  const sourceWidth = sourcePixels[0].length;
+  const sourceHeight = sourcePixels.length;
   const dependencies: PhotoProcessingDependencies = {
     createCanvas: (width, height) => {
       let matrix: Matrix = [1, 0, 0, 1, 0, 0];
@@ -90,9 +104,18 @@ function createSoftwareCanvasDependencies(orientation: 1 | 2 | 3 | 4 | 5 | 6 | 7
       } as unknown as HTMLCanvasElement;
     },
     createFile: (parts, name, options) => new File(parts, name, options),
-    loadImage: async () => ({ source, width: 2, height: 3, close: vi.fn() }),
-    readJpegMetadata: async () => ({ orientation, width: 2, height: 3 }),
-    imageElementHonorsExifOrientation: async () => false,
+    loadImage: async () => ({
+      source,
+      width: sourceWidth,
+      height: sourceHeight,
+      close: vi.fn(),
+    }),
+    readJpegMetadata: async () => ({
+      orientation,
+      width: sourceWidth,
+      height: sourceHeight,
+    }),
+    imageElementHonorsExifOrientation: async () => decoderHonorsExifOrientation,
   };
   return dependencies;
 }
@@ -257,6 +280,62 @@ describe("preparePhotoForUpload", () => {
     const result = await preparePhotoForUpload(file, dependencies);
 
     await expect(result.text()).resolves.toBe("ECA/FDB");
+  });
+
+  it("parses a genuine EXIF-6 JPEG and applies its transform to decoded fallback pixels", async () => {
+    const bytes = Uint8Array.from(atob(GENUINE_EXIF_6_JPEG_BASE64), (value) => value.charCodeAt(0));
+    expect(parseJpegMetadataBytes(bytes)).toEqual({ orientation: 6, width: 12, height: 18 });
+    const file = new File([bytes], "genuine-oriented.jpg", { type: "image/jpeg" });
+    Object.defineProperty(file, "arrayBuffer", { value: async () => bytes.buffer });
+    const dependencies = createSoftwareCanvasDependencies(6, {
+      // The real JPEG contains 6x6 red/green, blue/yellow, and magenta/cyan blocks.
+      // jsdom cannot decode JPEGs, so only that browser boundary is represented by labels.
+      sourcePixels: [
+        ["R", "G"],
+        ["B", "Y"],
+        ["M", "C"],
+      ],
+      decoderHonorsExifOrientation: false,
+    });
+    dependencies.readJpegMetadata = undefined;
+
+    const result = await preparePhotoForUpload(file, dependencies);
+
+    await expect(result.text()).resolves.toBe("MBR/CYG");
+  });
+
+  it("applies EXIF orientation to square raw pixels when decoder calibration is false", async () => {
+    const dependencies = createSoftwareCanvasDependencies(6, {
+      sourcePixels: [
+        ["A", "B"],
+        ["C", "D"],
+      ],
+      decoderHonorsExifOrientation: false,
+    });
+
+    const result = await preparePhotoForUpload(
+      new File([orientedJpegBytes()], "square-raw.jpg", { type: "image/jpeg" }),
+      dependencies,
+    );
+
+    await expect(result.text()).resolves.toBe("CA/DB");
+  });
+
+  it("leaves already-oriented square pixels unchanged when decoder calibration is true", async () => {
+    const dependencies = createSoftwareCanvasDependencies(6, {
+      sourcePixels: [
+        ["C", "A"],
+        ["D", "B"],
+      ],
+      decoderHonorsExifOrientation: true,
+    });
+
+    const result = await preparePhotoForUpload(
+      new File([orientedJpegBytes()], "square-oriented.jpg", { type: "image/jpeg" }),
+      dependencies,
+    );
+
+    await expect(result.text()).resolves.toBe("CA/DB");
   });
 
   it.each([
