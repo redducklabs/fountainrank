@@ -11,6 +11,7 @@ import {
   type ForegroundLocationEvent,
   type LocationStatus,
   type RawPosition,
+  type StoredFix,
 } from "./location";
 import {
   createWatchController,
@@ -77,6 +78,8 @@ export type LocationSessionPlatformDeps = {
    * consistent with the store and lets a granted-but-rejected fix still exit "locating".
    */
   latestStoredCoords: () => Coords | null;
+  /** The ordering-newest record after publication, including its effective timestamp. */
+  latestStoredFix: () => StoredFix | null;
   resetStore: () => void;
   /** The platform "Open settings" adapter (`Linking.openSettings`); its rejection is handled. */
   openSettings: () => Promise<void>;
@@ -136,9 +139,14 @@ export function createLocationSession(
   function publishAndDispatch(pos: RawPosition): Coords {
     if (disposed) return pickCoords(pos);
     platform.publishFix(pos);
-    const coords = platform.latestStoredCoords() ?? pickCoords(pos);
+    const storedFix = platform.latestStoredFix();
+    const coords = storedFix?.coords ?? platform.latestStoredCoords() ?? pickCoords(pos);
     knownCoords = coords;
-    react.dispatch({ type: "positionResolved", coords });
+    react.dispatch({
+      type: "positionResolved",
+      coords,
+      ...(storedFix ? { lastSuccessfulFixAtMs: storedFix.effectiveTimestampMs } : {}),
+    });
     return coords;
   }
 

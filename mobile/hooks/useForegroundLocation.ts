@@ -24,6 +24,8 @@ const REFRESH_IN_FLIGHT: RefreshOutcome = { kind: "unavailable" };
 export type ForegroundLocation = {
   status: LocationStatus;
   coords: Coords | null;
+  /** The effective timestamp of the store-newest successful location publication, if any. */
+  lastSuccessfulFixAtMs: number | null;
   /** True while a `refresh()` call is in flight (spec §3 - guards overlapping presses). */
   refreshing: boolean;
   /**
@@ -126,6 +128,7 @@ export function useForegroundLocation(): ForegroundLocation {
   return {
     status: state.status,
     coords: state.coords,
+    lastSuccessfulFixAtMs: state.lastSuccessfulFixAtMs,
     refreshing,
     canAskAgain,
     refresh,

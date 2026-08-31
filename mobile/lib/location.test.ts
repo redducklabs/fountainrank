@@ -60,18 +60,28 @@ describe("pickCoords", () => {
 
 describe("foregroundLocationReducer", () => {
   it("started clears any prior coords while the fetch is pending", () => {
-    const granted: ForegroundLocationState = { status: "granted", coords: COORDS };
+    const granted: ForegroundLocationState = {
+      status: "granted",
+      coords: COORDS,
+      lastSuccessfulFixAtMs: null,
+    };
     expect(foregroundLocationReducer(granted, { type: "started" })).toEqual({
       status: "locating",
       coords: null,
+      lastSuccessfulFixAtMs: null,
     });
   });
 
   it("permissionDenied clears coords", () => {
-    const granted: ForegroundLocationState = { status: "granted", coords: COORDS };
+    const granted: ForegroundLocationState = {
+      status: "granted",
+      coords: COORDS,
+      lastSuccessfulFixAtMs: null,
+    };
     expect(foregroundLocationReducer(granted, { type: "permissionDenied" })).toEqual({
       status: "denied",
       coords: null,
+      lastSuccessfulFixAtMs: null,
     });
   });
 
@@ -81,15 +91,44 @@ describe("foregroundLocationReducer", () => {
         type: "positionResolved",
         coords: COORDS,
       }),
-    ).toEqual({ status: "granted", coords: COORDS });
+    ).toEqual({ status: "granted", coords: COORDS, lastSuccessfulFixAtMs: null });
   });
 
   it("failed clears coords and marks unavailable", () => {
-    const granted: ForegroundLocationState = { status: "granted", coords: COORDS };
+    const granted: ForegroundLocationState = {
+      status: "granted",
+      coords: COORDS,
+      lastSuccessfulFixAtMs: null,
+    };
     expect(foregroundLocationReducer(granted, { type: "failed" })).toEqual({
       status: "unavailable",
       coords: null,
+      lastSuccessfulFixAtMs: null,
     });
+  });
+
+  it("preserves a prior successful timestamp through initial, denied, and failed transitions", () => {
+    const granted: ForegroundLocationState = {
+      status: "granted",
+      coords: COORDS,
+      lastSuccessfulFixAtMs: 12_000,
+    };
+
+    const locating = foregroundLocationReducer(granted, { type: "started" });
+    const denied = foregroundLocationReducer(locating, { type: "permissionDenied" });
+    const unavailable = foregroundLocationReducer(denied, { type: "failed" });
+
+    expect(unavailable.lastSuccessfulFixAtMs).toBe(12_000);
+  });
+
+  it("records the store-newest successful effective timestamp on position resolution", () => {
+    expect(
+      foregroundLocationReducer(initialForegroundLocationState, {
+        type: "positionResolved",
+        coords: COORDS,
+        lastSuccessfulFixAtMs: 12_000,
+      }),
+    ).toMatchObject({ status: "granted", coords: COORDS, lastSuccessfulFixAtMs: 12_000 });
   });
 });
 
@@ -165,25 +204,39 @@ describe("fetchForegroundPosition (rich outcomes, spec §3)", () => {
 
 describe("foregroundLocationReducer — retry + unavailable transitions (spec §3)", () => {
   it("retry-denied: a denied retry from a granted state clears coords and marks denied", () => {
-    const granted: ForegroundLocationState = { status: "granted", coords: COORDS };
+    const granted: ForegroundLocationState = {
+      status: "granted",
+      coords: COORDS,
+      lastSuccessfulFixAtMs: null,
+    };
     expect(foregroundLocationReducer(granted, { type: "permissionDenied" })).toEqual({
       status: "denied",
       coords: null,
+      lastSuccessfulFixAtMs: null,
     });
   });
 
   it("retry-granted: a granted retry from a denied state restores coords", () => {
-    const denied: ForegroundLocationState = { status: "denied", coords: null };
+    const denied: ForegroundLocationState = {
+      status: "denied",
+      coords: null,
+      lastSuccessfulFixAtMs: null,
+    };
     expect(foregroundLocationReducer(denied, { type: "positionResolved", coords: COORDS })).toEqual(
-      { status: "granted", coords: COORDS },
+      { status: "granted", coords: COORDS, lastSuccessfulFixAtMs: null },
     );
   });
 
   it("unavailable-without-known-coords: 'failed' clears coords and marks unavailable", () => {
-    const granted: ForegroundLocationState = { status: "granted", coords: COORDS };
+    const granted: ForegroundLocationState = {
+      status: "granted",
+      coords: COORDS,
+      lastSuccessfulFixAtMs: null,
+    };
     expect(foregroundLocationReducer(granted, { type: "failed" })).toEqual({
       status: "unavailable",
       coords: null,
+      lastSuccessfulFixAtMs: null,
     });
     // The hook/session's keep-known-good policy (NOT dispatching 'failed' when coords are known)
     // is what preserves coords on a transient unavailable; that decision is verified at the
@@ -381,6 +434,19 @@ describe("createFixStore — freshness + ordering (spec §2)", () => {
     expect(store.latestStoredCoords()).toEqual(COORDS);
     store.resetLatestFix();
     expect(store.latestStoredCoords()).toBeNull();
+  });
+
+  it("exposes the ordering-newest effective timestamp for successful-publication consumers", () => {
+    const clock = makeClock(1_000);
+    const store = createFixStore(clock);
+    store.publishFix(fixAt(5_000)); // future source is bounded by receipt
+    clock.set(3_000);
+    store.publishFix(fixAt(500)); // older effective is rejected
+
+    expect(store.latestStoredFix()).toMatchObject({
+      coords: COORDS,
+      effectiveTimestampMs: 1_000,
+    });
   });
 
   it("never logs coordinates", () => {

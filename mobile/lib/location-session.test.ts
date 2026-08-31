@@ -1,6 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createFixStore, type Coords, type FetchOutcome, type RawPosition } from "./location";
+import {
+  createFixStore,
+  foregroundLocationReducer,
+  initialForegroundLocationState,
+  type Coords,
+  type FetchOutcome,
+  type ForegroundLocationState,
+  type RawPosition,
+} from "./location";
 import {
   createLocationSession,
   openSettingsEffect,
@@ -11,6 +19,10 @@ import type { StartWatch, TimerId, WatchHandle, WatchTimer } from "./location-wa
 
 const POS: RawPosition = { coords: { latitude: 1, longitude: 2, accuracy: 3 }, timestamp: 1_000 };
 const GRANTED: FetchOutcome = { kind: "granted", position: POS };
+
+function fix(timestamp: number): RawPosition {
+  return { coords: POS.coords, timestamp };
+}
 
 const focusedActiveGranted: LocationSessionInputs = {
   focused: true,
@@ -73,6 +85,7 @@ function makeSession() {
   // fix's own coords. Ordering/cross-session tests use a real `createFixStore` instead.
   const publishFix = vi.fn<(pos: RawPosition) => boolean>().mockReturnValue(true);
   const latestStoredCoords = vi.fn<() => Coords | null>().mockReturnValue(null);
+  const latestStoredFix = vi.fn().mockReturnValue(null);
   const resetStore = vi.fn();
   const openSettings = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
   const dispatch = vi.fn();
@@ -86,6 +99,7 @@ function makeSession() {
       fetchOutcome,
       publishFix,
       latestStoredCoords,
+      latestStoredFix,
       resetStore,
       openSettings,
       diagnostics,
@@ -376,7 +390,10 @@ const OLD_COORDS: Coords = { latitude: 30, longitude: 40, accuracy: 1 };
 /** A session wired to a REAL fix store so acceptance/ordering is genuine (a vi.fn cannot expose the
  *  split-brain). Returns the store + a `dispatch` spy + a controllable `fetchOutcome`. */
 function makeStoreBackedSession(store: ReturnType<typeof createFixStore>) {
-  const dispatch = vi.fn();
+  let state: ForegroundLocationState = initialForegroundLocationState;
+  const dispatch = vi.fn((event) => {
+    state = foregroundLocationReducer(state, event);
+  });
   const { startWatch, starts } = makeStartHarness();
   const { timer } = makeFakeTimer();
   const fetchOutcome = vi.fn<() => Promise<FetchOutcome>>();
@@ -387,6 +404,7 @@ function makeStoreBackedSession(store: ReturnType<typeof createFixStore>) {
       fetchOutcome,
       publishFix: store.publishFix,
       latestStoredCoords: store.latestStoredCoords,
+      latestStoredFix: store.latestStoredFix,
       resetStore: store.resetLatestFix,
       openSettings: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
       diagnostics,
@@ -405,6 +423,7 @@ function makeStoreBackedSession(store: ReturnType<typeof createFixStore>) {
     dispatch,
     dispatchTypes: () => dispatch.mock.calls.map(([e]) => e.type),
     dispatchedLatitudes,
+    state: () => state,
   };
 }
 
@@ -420,7 +439,11 @@ describe("createLocationSession — reducer stays consistent with the store (no 
     h.starts[0].resolve();
     await flush();
     h.starts[0].onFix({ coords: NEW_COORDS, timestamp: 2_000 });
-    expect(h.dispatch).toHaveBeenCalledWith({ type: "positionResolved", coords: NEW_COORDS });
+    expect(h.dispatch).toHaveBeenCalledWith({
+      type: "positionResolved",
+      coords: NEW_COORDS,
+      lastSuccessfulFixAtMs: 2_000,
+    });
 
     // A slow refresh with an OLDER source (1000) settles second → the store rejects it.
     clock.set(3_000);
@@ -434,6 +457,7 @@ describe("createLocationSession — reducer stays consistent with the store (no 
     // store-newest fix, not the stale-ordered one.
     expect(h.dispatchedLatitudes()).not.toContain(OLD_COORDS.latitude);
     expect(outcome).toEqual({ kind: "granted", coords: NEW_COORDS });
+    expect(h.state().lastSuccessfulFixAtMs).toBe(2_000);
   });
 
   it("cross-session: a fresh session whose OLDER initial fix is rejected still resolves to the store-newest and EXITS locating", async () => {
@@ -455,9 +479,14 @@ describe("createLocationSession — reducer stays consistent with the store (no 
     // Acquisition MUST exit "locating": positionResolved dispatched with the store-newest coords,
     // and the rich outcome returns those — never the stale older fix, never a stuck "locating".
     expect(h.dispatchTypes()).toEqual(["started", "positionResolved"]);
-    expect(h.dispatch).toHaveBeenCalledWith({ type: "positionResolved", coords: NEW_COORDS });
+    expect(h.dispatch).toHaveBeenCalledWith({
+      type: "positionResolved",
+      coords: NEW_COORDS,
+      lastSuccessfulFixAtMs: 2_000,
+    });
     expect(h.dispatchedLatitudes()).not.toContain(OLD_COORDS.latitude);
     expect(outcome).toEqual({ kind: "granted", coords: NEW_COORDS });
+    expect(h.state().lastSuccessfulFixAtMs).toBe(2_000);
   });
 
   it("a granted fix with a non-finite timestamp (store empty) still exits locating via the raw position", async () => {
@@ -475,6 +504,53 @@ describe("createLocationSession — reducer stays consistent with the store (no 
     // granted fix leaves "locating".
     expect(h.dispatchTypes()).toEqual(["started", "positionResolved"]);
     expect(outcome).toEqual({ kind: "granted", coords: RAW });
+  });
+});
+
+describe("createLocationSession — successful publication freshness (Task 3)", () => {
+  it("records initial, Locate, Find-nearest, and watch fixes at the store-newest effective timestamp", async () => {
+    const clock = makeClock(1_000);
+    const store = createFixStore(clock);
+    const h = makeStoreBackedSession(store);
+
+    h.fetchOutcome.mockResolvedValueOnce({ kind: "granted", position: fix(1_000) });
+    await h.session.acquireInitialFix();
+    expect(h.state().lastSuccessfulFixAtMs).toBe(1_000);
+
+    clock.set(2_000);
+    h.fetchOutcome.mockResolvedValueOnce({ kind: "granted", position: fix(2_000) });
+    await h.session.refresh(); // Locate me
+    expect(h.state().lastSuccessfulFixAtMs).toBe(2_000);
+
+    clock.set(3_000);
+    h.fetchOutcome.mockResolvedValueOnce({ kind: "granted", position: fix(3_000) });
+    await h.session.refresh(); // Find nearest uses this same refresh path
+    expect(h.state().lastSuccessfulFixAtMs).toBe(3_000);
+
+    h.session.setInputs(focusedActiveGranted);
+    h.starts[0].resolve();
+    await flush();
+    clock.set(4_000);
+    h.starts[0].onFix(fix(4_000));
+    expect(h.state().lastSuccessfulFixAtMs).toBe(4_000);
+  });
+
+  it("preserves freshness through repeated denied resets and an unavailable refresh", async () => {
+    const clock = makeClock(1_000);
+    const store = createFixStore(clock);
+    const h = makeStoreBackedSession(store);
+    h.fetchOutcome.mockResolvedValueOnce({ kind: "granted", position: fix(1_000) });
+    await h.session.acquireInitialFix();
+
+    h.fetchOutcome.mockResolvedValueOnce(DENIED_REPROMPTABLE);
+    await h.session.refresh();
+    h.fetchOutcome.mockResolvedValueOnce(DENIED_REPROMPTABLE);
+    await h.session.refresh();
+    h.fetchOutcome.mockResolvedValueOnce(UNAVAILABLE);
+    await h.session.refresh();
+
+    expect(store.latestStoredFix()).toBeNull();
+    expect(h.state().lastSuccessfulFixAtMs).toBe(1_000);
   });
 });
 
