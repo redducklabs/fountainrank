@@ -3,12 +3,14 @@ import { useEffect } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-const { uploadPhoto, submitRating, refresh } = vi.hoisted(() => ({
+const { uploadPhoto, submitRating, preparePhotoForUpload, refresh } = vi.hoisted(() => ({
   uploadPhoto: vi.fn(),
   submitRating: vi.fn(),
+  preparePhotoForUpload: vi.fn(),
   refresh: vi.fn(),
 }));
 vi.mock("../../app/actions/contribute", () => ({ uploadPhoto, submitRating }));
+vi.mock("../../lib/photo-processing", () => ({ preparePhotoForUpload }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
 
 import { PhotoUpload } from "./PhotoUpload";
@@ -53,6 +55,8 @@ afterEach(() => {
 describe("PhotoUpload", () => {
   it("calls uploadPhoto with a FormData carrying the selected file on change", async () => {
     uploadPhoto.mockResolvedValue({ ok: true, pointsAwarded: 5 });
+    const prepared = new File(["processed"], "photo.jpg", { type: "image/jpeg" });
+    preparePhotoForUpload.mockResolvedValue(prepared);
     renderUpload();
     const input = screen.getByLabelText(/add a photo/i) as HTMLInputElement;
     const file = new File(["bytes"], "photo.jpg", { type: "image/jpeg" });
@@ -60,11 +64,15 @@ describe("PhotoUpload", () => {
     await waitFor(() => expect(uploadPhoto).toHaveBeenCalledTimes(1));
     const [fountainId, formData] = uploadPhoto.mock.calls[0];
     expect(fountainId).toBe("fid");
-    expect(formData.get("file")).toBe(file);
+    expect(preparePhotoForUpload).toHaveBeenCalledWith(file);
+    expect(formData.get("file")).toBe(prepared);
   });
 
   it("does NOT submit a rating when the draft is clean", async () => {
     uploadPhoto.mockResolvedValue({ ok: true, pointsAwarded: 5 });
+    preparePhotoForUpload.mockResolvedValue(
+      new File(["processed"], "a.jpg", { type: "image/jpeg" }),
+    );
     renderUpload(DIMS); // no seeded edit -> clean
     selectFile(screen.getByLabelText(/add a photo/i) as HTMLInputElement, new File(["b"], "a.jpg"));
     await waitFor(() => expect(uploadPhoto).toHaveBeenCalledTimes(1));
@@ -81,6 +89,9 @@ describe("PhotoUpload", () => {
       order.push("upload");
       return { ok: true };
     });
+    preparePhotoForUpload.mockResolvedValue(
+      new File(["processed"], "a.jpg", { type: "image/jpeg" }),
+    );
     renderUpload(DIMS, { ratingTypeId: 1, value: 5 });
     selectFile(screen.getByLabelText(/add a photo/i) as HTMLInputElement, new File(["b"], "a.jpg"));
     await waitFor(() => expect(uploadPhoto).toHaveBeenCalledTimes(1));
@@ -91,6 +102,9 @@ describe("PhotoUpload", () => {
   it("still uploads the photo when the rating is rejected as too_far (#1)", async () => {
     submitRating.mockResolvedValue({ ok: false, error: "too_far" });
     uploadPhoto.mockResolvedValue({ ok: true, pointsAwarded: 5 });
+    preparePhotoForUpload.mockResolvedValue(
+      new File(["processed"], "a.jpg", { type: "image/jpeg" }),
+    );
     renderUpload(DIMS, { ratingTypeId: 1, value: 5 });
     selectFile(screen.getByLabelText(/add a photo/i) as HTMLInputElement, new File(["b"], "a.jpg"));
     await waitFor(() => expect(uploadPhoto).toHaveBeenCalledTimes(1));
@@ -102,6 +116,9 @@ describe("PhotoUpload", () => {
 
   it("success shows a confirmation and refreshes the route", async () => {
     uploadPhoto.mockResolvedValue({ ok: true, pointsAwarded: 5 });
+    preparePhotoForUpload.mockResolvedValue(
+      new File(["processed"], "photo.jpg", { type: "image/jpeg" }),
+    );
     renderUpload();
     selectFile(
       screen.getByLabelText(/add a photo/i) as HTMLInputElement,
@@ -114,6 +131,7 @@ describe("PhotoUpload", () => {
   it("maps photo_limit / rate_limited / file_invalid to friendly messages", async () => {
     renderUpload();
     const input = screen.getByLabelText(/add a photo/i) as HTMLInputElement;
+    preparePhotoForUpload.mockImplementation(async (file: File) => file);
 
     uploadPhoto.mockResolvedValueOnce({ ok: false, error: "photo_limit" });
     selectFile(input, new File(["bytes"], "a.jpg", { type: "image/jpeg" }));
@@ -130,10 +148,23 @@ describe("PhotoUpload", () => {
 
   it("resets the input value after each attempt so re-selecting the same file re-fires", async () => {
     uploadPhoto.mockResolvedValue({ ok: true, pointsAwarded: 5 });
+    preparePhotoForUpload.mockImplementation(async (file: File) => file);
     renderUpload();
     const input = screen.getByLabelText(/add a photo/i) as HTMLInputElement;
     selectFile(input, new File(["bytes"], "photo.jpg", { type: "image/jpeg" }));
     await waitFor(() => expect(uploadPhoto).toHaveBeenCalledTimes(1));
     expect(input.value).toBe("");
+  });
+
+  it("submits a pending rating but skips photo transport when preparation fails", async () => {
+    submitRating.mockResolvedValue({ ok: true, pointsAwarded: 4 });
+    preparePhotoForUpload.mockRejectedValue(new Error("unavailable"));
+    renderUpload(DIMS, { ratingTypeId: 1, value: 5 });
+
+    selectFile(screen.getByLabelText(/add a photo/i) as HTMLInputElement, new File(["b"], "a.jpg"));
+
+    await waitFor(() => expect(submitRating).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/couldn't prepare/i));
+    expect(uploadPhoto).not.toHaveBeenCalled();
   });
 });
