@@ -56,6 +56,12 @@ import {
 } from "../../lib/map/focus";
 import { logMapError } from "../../lib/map/log";
 import { formatNearestDistance, requiresFarNearestConfirmation } from "../../lib/map/nearest";
+import {
+  formatLocationFreshness,
+  nextSuccessfulFixTimestamp,
+  startLocationFreshnessTicker,
+  type LocationFixSource,
+} from "../../lib/map/location-freshness";
 import { deriveCameraAction, parseFlyToParam } from "../../lib/search/flyto";
 import { FountainsInViewList } from "./FountainsInViewList";
 import {
@@ -189,6 +195,8 @@ export default function MapBrowser({
   const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [status, setStatus] = useState<Status>("idle");
   const [locateStatus, setLocateStatus] = useState<"locating" | "resolved">("locating");
+  const [lastSuccessfulFixAtMs, setLastSuccessfulFixAtMs] = useState<number | null>(null);
+  const [locationFreshnessNowMs, setLocationFreshnessNowMs] = useState(() => Date.now());
   const [nearestStatus, setNearestStatus] = useState<
     "idle" | "locating" | "loading" | "empty" | "error"
   >("idle");
@@ -211,6 +219,16 @@ export default function MapBrowser({
     autoEnter: autoEnterAdd,
     hadAddParam,
   });
+
+  const recordSuccessfulLocationFix = useCallback((source: LocationFixSource) => {
+    const atMs = Date.now();
+    setLastSuccessfulFixAtMs((previous) =>
+      nextSuccessfulFixTimestamp(previous, { kind: "success", source, atMs }),
+    );
+    setLocationFreshnessNowMs(atMs);
+  }, []);
+
+  useEffect(() => startLocationFreshnessTicker(() => setLocationFreshnessNowMs(Date.now())), []);
 
   const clearFocus = useCallback(
     (beforeDetailNavigation = false) => {
@@ -283,6 +301,7 @@ export default function MapBrowser({
           maximumAge: 30_000,
         });
       });
+      recordSuccessfulLocationFix("nearest");
       setNearestStatus("loading");
       const requestId =
         typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}`;
@@ -335,7 +354,7 @@ export default function MapBrowser({
     } finally {
       nearestActiveRef.current = false;
     }
-  }, [openDetail]);
+  }, [openDetail, recordSuccessfulLocationFix]);
 
   useEffect(() => {
     if (!pendingDetailRef.current || !pathname.startsWith(`/fountains/${pendingDetailRef.current}`))
@@ -432,14 +451,14 @@ export default function MapBrowser({
       });
     }
     map.addControl(new maplibregl.NavigationControl(), "top-right");
-    map.addControl(
-      new maplibregl.GeolocateControl({
-        positionOptions: { enableHighAccuracy: false, timeout: GEOLOCATE_TIMEOUT_MS },
-        trackUserLocation: false,
-        showUserLocation: true,
-      }),
-      "top-right",
-    );
+    const geolocateControl = new maplibregl.GeolocateControl({
+      positionOptions: { enableHighAccuracy: false, timeout: GEOLOCATE_TIMEOUT_MS },
+      trackUserLocation: false,
+      showUserLocation: true,
+    });
+    const onGeolocate = () => recordSuccessfulLocationFix("maplibre-geolocate");
+    geolocateControl.on("geolocate", onGeolocate);
+    map.addControl(geolocateControl, "top-right");
 
     let timer: ReturnType<typeof setTimeout>;
     const onMoveEnd = () => {
@@ -506,6 +525,7 @@ export default function MapBrowser({
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           setLocateStatus("resolved");
+          recordSuccessfulLocationFix("startup");
           if (!initialBounds && shouldMoveToStartupLocation(focusIdRef.current)) {
             map.flyTo({
               center: [pos.coords.longitude, pos.coords.latitude],
@@ -662,6 +682,7 @@ export default function MapBrowser({
     return () => {
       clearTimeout(timer);
       clearTimeout(loadTimer);
+      geolocateControl.off("geolocate", onGeolocate);
       placementRef.current?.teardown();
       placementRef.current = null;
       map.remove();
@@ -672,7 +693,7 @@ export default function MapBrowser({
     // in place (the setStyle effect below), never rebuilds the map — a rebuild would drop the
     // camera + re-trigger geolocation. It is read via themeRef at build time instead.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [router, webglOk, debug, mounted, openDetail]);
+  }, [router, webglOk, debug, mounted, openDetail, recordSuccessfulLocationFix]);
 
   // Theme change → swap the basemap style in place (camera preserved; no rebuild, no geolocation
   // re-trigger). Bumping styleGenRef first makes any in-flight installOverlay/load() from the prior
@@ -834,9 +855,17 @@ export default function MapBrowser({
   return (
     <div className="absolute inset-0">
       <div ref={ref} className="h-full w-full" />
+      {webglOk && mounted && !add.active && (
+        <div
+          aria-live="off"
+          className="pointer-events-none absolute right-2 top-40 z-30 rounded-md border border-border bg-surface-raised px-2 py-1 text-xs tabular-nums text-muted shadow"
+        >
+          {formatLocationFreshness(lastSuccessfulFixAtMs, locationFreshnessNowMs)}
+        </div>
+      )}
       {!add.active && (
-        // The native top-right stack is 136px tall (navigation + geolocate, including margins).
-        // Keep this separate action below it so neither control can cover the other.
+        // The app-owned freshness label sits below MapLibre's top-right control stack at top-40.
+        // Keep this separate action below that label so neither control can cover the other.
         <button
           type="button"
           aria-label="Find nearest fountain"
@@ -844,7 +873,7 @@ export default function MapBrowser({
           aria-busy={nearestStatus === "locating" || nearestStatus === "loading"}
           disabled={nearestStatus === "locating" || nearestStatus === "loading"}
           onClick={() => void findNearest()}
-          className="absolute right-2 top-40 z-30 inline-flex h-11 w-11 items-center justify-center rounded-md border border-border bg-surface-raised text-brand-ink shadow disabled:opacity-60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+          className="absolute right-2 top-52 z-30 inline-flex h-11 w-11 items-center justify-center rounded-md border border-border bg-surface-raised text-brand-ink shadow disabled:opacity-60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
         >
           <svg
             aria-hidden="true"
@@ -863,7 +892,7 @@ export default function MapBrowser({
       {nearestStatus !== "idle" && (
         <div
           role={nearestStatus === "error" ? "alert" : "status"}
-          className="absolute right-14 top-40 z-30 rounded-full bg-surface-raised px-3 py-2 text-sm shadow"
+          className="absolute right-14 top-52 z-30 rounded-full bg-surface-raised px-3 py-2 text-sm shadow"
         >
           {nearestStatus === "locating"
             ? "Finding your location…"
