@@ -168,6 +168,7 @@ function createDependencies({
     createImageBitmap: vi.fn(async () => ({ width, height, close: vi.fn() })),
     createCanvas: vi.fn(() => canvas),
     createFile: (parts, name, options) => new File(parts, name, options),
+    readJpegMetadata: vi.fn(async () => ({ orientation: 1 as const, width, height })),
     draws,
     fillRects,
   };
@@ -279,6 +280,22 @@ describe("preparePhotoForUpload", () => {
 
     const result = await preparePhotoForUpload(file, dependencies);
 
+    await expect(result.text()).resolves.toBe("ECA/FDB");
+  });
+
+  it("does not trust createImageBitmap for a JPEG with non-default EXIF orientation", async () => {
+    const file = new File([orientedJpegBytes()], "oriented.jpg", { type: "image/jpeg" });
+    const dependencies = createSoftwareCanvasDependencies(6);
+    const createImageBitmap = vi.fn(async () => ({
+      width: 2,
+      height: 3,
+      close: vi.fn(),
+    }));
+    dependencies.createImageBitmap = createImageBitmap;
+
+    const result = await preparePhotoForUpload(file, dependencies);
+
+    expect(createImageBitmap).not.toHaveBeenCalled();
     await expect(result.text()).resolves.toBe("ECA/FDB");
   });
 

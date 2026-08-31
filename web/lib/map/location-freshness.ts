@@ -9,8 +9,8 @@ export type IntervalScheduler<Handle> = {
 };
 
 const defaultScheduler: IntervalScheduler<ReturnType<typeof setInterval>> = {
-  setInterval,
-  clearInterval,
+  setInterval: (callback, delayMs) => setInterval(callback, delayMs),
+  clearInterval: (handle) => clearInterval(handle),
 };
 
 /** The copy is deliberately derived from a successful fix only; errors preserve it. */
@@ -35,6 +35,7 @@ export function startLocationFreshnessTicker<Handle = ReturnType<typeof setInter
   onTick: () => void,
   scheduler: IntervalScheduler<Handle> = defaultScheduler as IntervalScheduler<Handle>,
 ): () => void {
+  onTick();
   const handle = scheduler.setInterval(onTick, 1_000);
   return () => scheduler.clearInterval(handle);
 }

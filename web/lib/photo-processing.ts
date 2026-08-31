@@ -289,7 +289,14 @@ async function decodePhoto(
   file: File,
   dependencies: PhotoProcessingDependencies,
 ): Promise<DecodedPhoto> {
-  if (dependencies.createImageBitmap) {
+  // Read metadata before choosing the fast path. Some browsers expose createImageBitmap but
+  // ignore imageOrientation; non-default JPEG orientation therefore uses the calibrated image
+  // element path. WebP also stays on that path because this JPEG parser cannot inspect WebP EXIF.
+  let metadata = dependencies.readJpegMetadata
+    ? await dependencies.readJpegMetadata(file)
+    : undefined;
+  const bitmapOrientationIsSafe = metadata?.orientation !== undefined && metadata.orientation === 1;
+  if (dependencies.createImageBitmap && bitmapOrientationIsSafe && file.type !== "image/webp") {
     try {
       const bitmap = await dependencies.createImageBitmap(file, { imageOrientation: "from-image" });
       return {
@@ -303,7 +310,7 @@ async function decodePhoto(
       // Some browser versions expose createImageBitmap but cannot decode every supported input.
     }
   }
-  const metadata = await (dependencies.readJpegMetadata ?? readJpegMetadata)(file);
+  metadata ??= await readJpegMetadata(file);
   const image = await (dependencies.loadImage ?? loadImage)(file);
   const decoderAlreadyOriented =
     metadata.orientation === 1 ||
@@ -323,10 +330,10 @@ async function readJpegMetadata(file: Blob): Promise<JpegMetadata> {
 }
 
 /**
- * Pixel-roundtrip a photo before transfer. Decoding with `from-image` applies
- * EXIF orientation before the canvas is encoded as JPEG, which leaves no source
- * metadata in the upload payload. The image-element fallback parses and applies
- * JPEG EXIF orientation when the fallback decoder leaves raw pixels unchanged.
+ * Pixel-roundtrip a photo before transfer. The bitmap fast path is limited to inputs whose
+ * parsed JPEG orientation is already the default. Oriented JPEGs and WebP use the calibrated
+ * image-element path so a browser cannot silently ignore `imageOrientation: "from-image"`.
+ * Canvas encoding leaves no source metadata in the upload payload.
  */
 export async function preparePhotoForUpload(
   file: File,

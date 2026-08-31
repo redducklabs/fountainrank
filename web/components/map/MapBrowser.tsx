@@ -57,13 +57,12 @@ import {
 import { logMapError } from "../../lib/map/log";
 import { formatNearestDistance, requiresFarNearestConfirmation } from "../../lib/map/nearest";
 import {
-  formatLocationFreshness,
   nextSuccessfulFixTimestamp,
-  startLocationFreshnessTicker,
   type LocationFixSource,
 } from "../../lib/map/location-freshness";
 import { deriveCameraAction, parseFlyToParam } from "../../lib/search/flyto";
 import { FountainsInViewList } from "./FountainsInViewList";
+import { LocationFreshnessLabel } from "./LocationFreshnessLabel";
 import {
   CapHint,
   EmptyHint,
@@ -196,7 +195,6 @@ export default function MapBrowser({
   const [status, setStatus] = useState<Status>("idle");
   const [locateStatus, setLocateStatus] = useState<"locating" | "resolved">("locating");
   const [lastSuccessfulFixAtMs, setLastSuccessfulFixAtMs] = useState<number | null>(null);
-  const [locationFreshnessNowMs, setLocationFreshnessNowMs] = useState(() => Date.now());
   const [nearestStatus, setNearestStatus] = useState<
     "idle" | "locating" | "loading" | "empty" | "error"
   >("idle");
@@ -225,10 +223,7 @@ export default function MapBrowser({
     setLastSuccessfulFixAtMs((previous) =>
       nextSuccessfulFixTimestamp(previous, { kind: "success", source, atMs }),
     );
-    setLocationFreshnessNowMs(atMs);
   }, []);
-
-  useEffect(() => startLocationFreshnessTicker(() => setLocationFreshnessNowMs(Date.now())), []);
 
   const clearFocus = useCallback(
     (beforeDetailNavigation = false) => {
@@ -856,12 +851,7 @@ export default function MapBrowser({
     <div className="absolute inset-0">
       <div ref={ref} className="h-full w-full" />
       {webglOk && mounted && !add.active && (
-        <div
-          aria-live="off"
-          className="pointer-events-none absolute right-2 top-40 z-30 rounded-md border border-border bg-surface-raised px-2 py-1 text-xs tabular-nums text-muted shadow"
-        >
-          {formatLocationFreshness(lastSuccessfulFixAtMs, locationFreshnessNowMs)}
-        </div>
+        <LocationFreshnessLabel lastSuccessfulFixAtMs={lastSuccessfulFixAtMs} />
       )}
       {!add.active && (
         // The app-owned freshness label sits below MapLibre's top-right control stack at top-40.

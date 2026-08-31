@@ -20,9 +20,9 @@ const ACCEPTED_TYPES = "image/jpeg,image/png,image/webp";
 function logPhotoPreparationFailure(error: unknown): void {
   const errorName =
     error instanceof Error && error.name === "PhotoPreparationError" ? error.name : "UnknownError";
-  console.error(
+  console.warn(
     JSON.stringify({
-      level: "error",
+      level: "warn",
       area: "photo_upload",
       event: "photo_preparation_failed",
       stage: "prepare",

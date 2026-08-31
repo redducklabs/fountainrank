@@ -39,7 +39,7 @@ describe("successful location fix state", () => {
 });
 
 describe("location freshness ticker", () => {
-  it("updates display state on its interval and clears it during cleanup", () => {
+  it("updates display state immediately, on its interval, and clears it during cleanup", () => {
     let tick: (() => void) | undefined;
     const clearInterval = vi.fn();
     const handle = { id: "location-freshness" };
@@ -54,10 +54,11 @@ describe("location freshness ticker", () => {
     const onTick = vi.fn();
 
     const stop = startLocationFreshnessTicker(onTick, scheduler);
+    expect(onTick).toHaveBeenCalledOnce();
     tick?.();
     stop();
 
-    expect(onTick).toHaveBeenCalledOnce();
+    expect(onTick).toHaveBeenCalledTimes(2);
     expect(clearInterval).toHaveBeenCalledWith(handle);
   });
 
