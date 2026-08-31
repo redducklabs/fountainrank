@@ -151,7 +151,8 @@ export function FountainMap({
         data={featureCollection}
         // Clustering is computed in JS (supercluster, see lib/map/cluster.ts) and fed
         // to this NON-clustered source. Native clustering is broken on this stack
-        // (Expo 56 / RN 0.85 / maplibre-react-native 11.3.6, New Architecture):
+        // (Expo 57 / RN 0.86 / maplibre-react-native 11.3.7, New Architecture;
+        // pending repeat device validation after the SDK upgrade):
         // verified on-device, a CLUSTERED GeoJSONSource renders nothing below
         // clusterMaxZoom AND never repaints on a data update, while a non-clustered
         // source renders and updates correctly. The cluster/cluster-count layers

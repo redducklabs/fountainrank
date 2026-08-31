@@ -9,6 +9,7 @@ import * as Linking from "expo-linking";
 import {
   fetchForegroundPosition,
   latestStoredCoords,
+  latestStoredFix,
   publishFix,
   resetLatestFix,
 } from "./location";
@@ -95,6 +96,7 @@ export function createForegroundLocationSessionDeps(): LocationSessionPlatformDe
     fetchOutcome: () => fetchForegroundPosition(requestPermission, getCurrentPosition),
     publishFix,
     latestStoredCoords,
+    latestStoredFix,
     resetStore: resetLatestFix,
     openSettings: () => Linking.openSettings(),
     diagnostics: isDevBuild() ? createDevDiagnostics() : createProductionDiagnostics(),

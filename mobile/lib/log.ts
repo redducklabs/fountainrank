@@ -48,13 +48,21 @@ export type NearestFountainFailedEvent = {
   status?: number;
 };
 
+/** A photo was not prepared for upload. Only stable diagnostic labels are allowed. */
+export type PhotoPreparationFailedEvent = {
+  event: "photo_preparation_failed";
+  stage: "prepare";
+  error_name: "PhotoPreparationError";
+};
+
 export type LogEvent =
   | ApiTimeoutEvent
   | AddFountainOutcomeUnknownEvent
   | WatchStartRejectedEvent
-  | NearestFountainFailedEvent;
+  | NearestFountainFailedEvent
+  | PhotoPreparationFailedEvent;
 
-type LogArea = "api" | "add_fountain" | "location" | "nearest_fountain";
+type LogArea = "api" | "add_fountain" | "location" | "nearest_fountain" | "photo_upload";
 
 /** Build the single serialized JSON line for an event from its allowlist alone. */
 export function serializeEvent(event: LogEvent): string {
@@ -85,6 +93,10 @@ export function serializeEvent(event: LogEvent): string {
       area = "nearest_fountain";
       fields = { stage: event.stage };
       if (event.status != null) fields.status = event.status;
+      break;
+    case "photo_preparation_failed":
+      area = "photo_upload";
+      fields = { stage: event.stage, error_name: event.error_name };
       break;
   }
   return JSON.stringify({ level: "warn", area, event: event.event, ...fields });

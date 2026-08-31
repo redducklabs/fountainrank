@@ -8,8 +8,9 @@ import { type PinInput, type PinProps, pinsToFeatureCollection } from "./pins";
 /**
  * JS clustering for the native map.
  *
- * Native clustering is broken on this stack (Expo 56 / RN 0.85 /
- * @maplibre/maplibre-react-native 11.3.6 on the New Architecture): a clustered
+ * Native clustering is broken on this stack (Expo 57 / RN 0.86 /
+ * @maplibre/maplibre-react-native 11.3.7 on the New Architecture, pending repeat
+ * device validation after the SDK upgrade): a clustered
  * `<GeoJSONSource>` renders nothing below clusterMaxZoom and never repaints on a
  * data update. So the source runs with `cluster={false}` and we compute clusters
  * here with supercluster, feeding the result to that same non-clustered source —

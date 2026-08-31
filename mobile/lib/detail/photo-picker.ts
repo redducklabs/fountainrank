@@ -23,7 +23,9 @@ export type PhotoSelectionResult =
 /** Both native sources intentionally share one policy and the caller's existing upload path. */
 export const PHOTO_PICKER_OPTIONS = {
   mediaTypes: "images" as const,
-  quality: 0.9,
+  // Preserve the selected source's quality; upload preparation performs the one intentional JPEG
+  // encode needed for dimensions, orientation, metadata removal, and the byte limit.
+  quality: 1,
 };
 
 export async function selectPhoto(
@@ -42,6 +44,6 @@ export async function selectPhoto(
       : await picker.launchImageLibraryAsync(PHOTO_PICKER_OPTIONS);
   if (result.canceled || !result.assets || result.assets.length === 0) return { kind: "canceled" };
 
-  const { uri, fileName, mimeType } = result.assets[0];
-  return { kind: "picked", asset: { uri, fileName, mimeType } };
+  const { uri, fileName, mimeType, width, height } = result.assets[0];
+  return { kind: "picked", asset: { uri, fileName, mimeType, width, height } };
 }

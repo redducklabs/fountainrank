@@ -1,11 +1,20 @@
 import { Ionicons } from "@expo/vector-icons";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useFocusEffect, useRouter } from "expo-router";
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useFocusEffect, useIsFocused, useRouter } from "expo-router";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   AccessibilityInfo,
   Alert,
   Animated,
+  AppState,
   ActivityIndicator,
   BackHandler,
   Image,
@@ -72,6 +81,11 @@ import { buildClusterIndex, clustersForViewport } from "../../lib/map/cluster";
 import { BBOX_STALE_TIME_MS, DEFAULT_ZOOM, PLACE_MIN_ZOOM } from "../../lib/map/constants";
 import { locateButtonDescriptor, type LocateButtonDescriptor } from "../../lib/map/locate-button";
 import {
+  createLocationFreshnessTicker,
+  formatLocationFreshness,
+  type LocationFreshnessTimer,
+} from "../../lib/map/location-freshness";
+import {
   OPEN_SETTINGS_ACTION_LABEL,
   SETTINGS_OPEN_FAILED_TEXT,
   toastAutoDismissMs,
@@ -121,6 +135,20 @@ const FILTER_BAR_HEIGHT = 44;
 const MAP_HEADER_HEIGHT = 72;
 // Spec §7.1: debounce the geocode call ~300ms after the user stops typing.
 const SEARCH_DEBOUNCE_MS = 300;
+
+const locationFreshnessTimer: LocationFreshnessTimer = {
+  setInterval: (fn, ms) => setInterval(fn, ms),
+  clearInterval: (id) => clearInterval(id),
+};
+
+function subscribeToAppState(onStoreChange: () => void): () => void {
+  const subscription = AppState.addEventListener("change", onStoreChange);
+  return () => subscription.remove();
+}
+
+function isAppActive(): boolean {
+  return AppState.currentState === "active";
+}
 
 function confirmFarNearest(distanceM: number): Promise<boolean> {
   return new Promise((resolve) => {
@@ -727,6 +755,12 @@ export default function MapScreen() {
           }
         }}
       />
+      {!addMode ? (
+        <LocationFreshnessLabel
+          lastSuccessfulFixAtMs={location.lastSuccessfulFixAtMs}
+          bottom={insets.bottom + spacing.lg + 56}
+        />
+      ) : null}
 
       {!addMode ? (
         <FindNearestButton
@@ -1043,6 +1077,36 @@ function LocateButton({
         />
       )}
     </Pressable>
+  );
+}
+
+function LocationFreshnessLabel({
+  lastSuccessfulFixAtMs,
+  bottom,
+}: {
+  lastSuccessfulFixAtMs: number | null;
+  bottom: number;
+}) {
+  const focused = useIsFocused();
+  const appActive = useSyncExternalStore(subscribeToAppState, isAppActive, isAppActive);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!focused || !appActive) return;
+    const ticker = createLocationFreshnessTicker(locationFreshnessTimer, () =>
+      setNowMs(Date.now()),
+    );
+    ticker.start();
+    return () => ticker.dispose();
+  }, [focused, appActive]);
+
+  return (
+    <Text
+      pointerEvents="none"
+      style={[styles.locationFreshness, { bottom: bottom - spacing.md - 16 }]}
+    >
+      {formatLocationFreshness(lastSuccessfulFixAtMs, nowMs)}
+    </Text>
   );
 }
 
@@ -1499,6 +1563,15 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     borderColor: colors.border,
     borderWidth: 1,
+  },
+  locationFreshness: {
+    position: "absolute",
+    right: spacing.sm,
+    minWidth: 44,
+    maxWidth: 160,
+    textAlign: "right",
+    ...typography.meta,
+    color: colors.textMuted,
   },
   findNearest: {
     position: "absolute",

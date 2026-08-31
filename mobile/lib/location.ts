@@ -13,17 +13,20 @@ export type Coords = { latitude: number; longitude: number; accuracy: number | n
 export type ForegroundLocationState = {
   status: LocationStatus;
   coords: Coords | null;
+  /** The ordering-safe effective timestamp of the most recently published successful fix. */
+  lastSuccessfulFixAtMs: number | null;
 };
 
 export const initialForegroundLocationState: ForegroundLocationState = {
   status: "idle",
   coords: null,
+  lastSuccessfulFixAtMs: null,
 };
 
 export type ForegroundLocationEvent =
   | { type: "started" }
   | { type: "permissionDenied" }
-  | { type: "positionResolved"; coords: Coords }
+  | { type: "positionResolved"; coords: Coords; lastSuccessfulFixAtMs?: number }
   | { type: "failed" };
 
 /**
@@ -41,13 +44,25 @@ export function foregroundLocationReducer(
 ): ForegroundLocationState {
   switch (event.type) {
     case "started":
-      return { status: "locating", coords: null };
+      return {
+        status: "locating",
+        coords: null,
+        lastSuccessfulFixAtMs: state.lastSuccessfulFixAtMs,
+      };
     case "permissionDenied":
-      return { status: "denied", coords: null };
+      return { status: "denied", coords: null, lastSuccessfulFixAtMs: state.lastSuccessfulFixAtMs };
     case "positionResolved":
-      return { status: "granted", coords: event.coords };
+      return {
+        status: "granted",
+        coords: event.coords,
+        lastSuccessfulFixAtMs: event.lastSuccessfulFixAtMs ?? state.lastSuccessfulFixAtMs,
+      };
     case "failed":
-      return { status: "unavailable", coords: null };
+      return {
+        status: "unavailable",
+        coords: null,
+        lastSuccessfulFixAtMs: state.lastSuccessfulFixAtMs,
+      };
   }
 }
 
@@ -191,11 +206,20 @@ export function createFixStore(now: () => number) {
     return latest ? latest.coords : null;
   }
 
+  /**
+   * The ordering-newest stored fix, ignoring the reuse freshness window. Successful-publication
+   * consumers use its effective timestamp so a late older fix can never make displayed freshness
+   * appear newer than the store's actual newest record.
+   */
+  function latestStoredFix(): StoredFix | null {
+    return latest;
+  }
+
   function resetLatestFix(): void {
     latest = null;
   }
 
-  return { publishFix, latestFix, latestStoredCoords, resetLatestFix };
+  return { publishFix, latestFix, latestStoredCoords, latestStoredFix, resetLatestFix };
 }
 
 /**
@@ -207,6 +231,7 @@ const fixStore = createFixStore(() => Date.now());
 export const publishFix = fixStore.publishFix;
 export const latestFix = fixStore.latestFix;
 export const latestStoredCoords = fixStore.latestStoredCoords;
+export const latestStoredFix = fixStore.latestStoredFix;
 export const resetLatestFix = fixStore.resetLatestFix;
 
 /**

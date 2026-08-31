@@ -205,3 +205,25 @@ describe("serializeEvent — nearest_fountain_failed allowlist", () => {
     });
   });
 });
+
+describe("serializeEvent — photo_preparation_failed allowlist", () => {
+  it("keeps only the stable stage and error name", () => {
+    const line = serializeEvent({
+      event: "photo_preparation_failed",
+      stage: "prepare",
+      error_name: "PhotoPreparationError",
+      uri: "file:///private/photo.jpg",
+      coordinates: { latitude: 47.6062, longitude: -122.3321 },
+      exif: { GPSLatitude: 47.6062 },
+      message: "file:///private/photo.jpg",
+    } as never);
+    expect(JSON.parse(line)).toEqual({
+      level: "warn",
+      area: "photo_upload",
+      event: "photo_preparation_failed",
+      stage: "prepare",
+      error_name: "PhotoPreparationError",
+    });
+    expect(line).not.toMatch(/private|47\.6062|GPSLatitude/i);
+  });
+});

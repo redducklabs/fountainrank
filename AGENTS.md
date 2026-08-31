@@ -28,6 +28,10 @@ Read only the file relevant to the task at hand.
 - **No state-mutating Terraform locally** (`apply`/`destroy`/`import`/`state`).
   Read-only `init`/`validate`/`fmt`/`plan` only. Deploy via CI.
 - Use **Docker Compose** + the `./run.ps1` workflows for local dev.
+- When the host invokes `run.ps1` from Windows, use Windows PowerShell
+  (`powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\run.ps1 ...`).
+  PowerShell 7 (`pwsh`) parses the backtick-formatted help text as an invalid
+  Unicode escape before the workflow can start.
 - **`gh`-first** for all GitHub operations; verify `gh auth status`.
 - **Don't commit** without an explicit request and task context. No AI attribution
   in commits/PRs. No time estimates in any artifact.

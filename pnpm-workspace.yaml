@@ -3,17 +3,12 @@ packages:
   - "mobile"
   - "packages/*"
 overrides:
-  # Force expo-asset's transitive expo-constants up to the coordinated SDK-56.0.19 patch
-  # (~56.0.23 per expo@56.0.19) so pnpm keeps a single copy. Without this, pnpm preserves
-  # expo-asset's older compatible resolution and expo-doctor fails the duplicate-native-module
-  # check. Revisit/remove on the next Expo SDK bump.
-  "expo-asset>expo-constants": "56.0.23"
   # GHSA-52cp-r559-cp3m / GHSA-5p4m-2wfm-xmqj: patched 4.x release is compatible
   # with Redocly and Expo CLI. Remove once all consumers normally resolve >=4.3.1.
   "js-yaml@>=4.0.0 <4.3.1": "4.3.1"
   # GHSA-28wg-ghj8-5hjv / GHSA-2v37-7h3g-55p8: keep Expo's nanoid 3.x
-  # consumers on the patched compatible release. Remove once upstream resolves >=3.3.17.
-  "nanoid@>=3.0.0 <3.3.17": "3.3.17"
+  # consumers on the patched compatible release. Remove once upstream resolves >=3.3.18.
+  "nanoid@>=3.0.0 <3.3.18": "3.3.18"
   # GHSA-f88m-g3jw-g9cj: Next's compatible optional range still resolves sharp 0.34.x.
   # Remove once Next normally resolves sharp >=0.35.0.
   sharp: "0.35.0"

@@ -169,7 +169,7 @@ then verify `pnpm --filter mobile exec expo config --type prebuild` exits 0.
 
 ## RN New-Architecture (Fabric) layout gotchas
 
-The mobile app runs on the **New Architecture / Fabric** (Expo SDK 56 / RN 0.85);
+The mobile app runs on the **New Architecture / Fabric** (Expo SDK 57 / RN 0.86);
 `newArchEnabled: false` is a silently-ignored no-op (it can't be disabled). Two
 non-obvious traps when building "mounted-but-hidden" tab panels (preserve form
 input / scroll across a tab switch):

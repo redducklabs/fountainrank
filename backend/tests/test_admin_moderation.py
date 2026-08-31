@@ -27,7 +27,7 @@ from app.models import (
     UserContributionStats,
 )
 
-pytestmark = pytest.mark.anyio
+pytestmark = pytest.mark.asyncio
 
 
 @pytest.fixture

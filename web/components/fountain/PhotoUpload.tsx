@@ -9,12 +9,27 @@ import {
 import { submitRating, uploadPhoto, type ContributeError } from "../../app/actions/contribute";
 import { dispatchContribution } from "../../lib/contribution-event";
 import { getCurrentPositionSafe } from "../../lib/geo/current-position";
+import { preparePhotoForUpload } from "../../lib/photo-processing";
 import { PointsPreview } from "../contributions/PointsPreview";
 import { Spinner } from "../ui/Spinner";
 import { errorText } from "./contributeError";
 import { useRatingDraft } from "./RatingDraftContext";
 
 const ACCEPTED_TYPES = "image/jpeg,image/png,image/webp";
+
+function logPhotoPreparationFailure(error: unknown): void {
+  const errorName =
+    error instanceof Error && error.name === "PhotoPreparationError" ? error.name : "UnknownError";
+  console.warn(
+    JSON.stringify({
+      level: "warn",
+      area: "photo_upload",
+      event: "photo_preparation_failed",
+      stage: "prepare",
+      error_name: errorName,
+    }),
+  );
+}
 
 export function PhotoUpload({
   fountainId,
@@ -33,49 +48,65 @@ export function PhotoUpload({
     const file = e.target.files?.[0];
     if (!file) return;
     setMsg(null);
-    const formData = new FormData();
-    formData.set("file", file);
     start(async () => {
-      // #1 (spec §4.1): flush an unsaved rating first, but a rating failure — including the 50 mi
-      // proximity 403 — must NEVER block the ungated photo upload. The two are independent.
-      let ratingError: ContributeError | null = null;
-      if (isRatingDraftDirty(dimensions, edits)) {
-        const ratings = dimensions
-          .map((d) => ({
-            rating_type_id: d.rating_type_id,
-            stars: edits[d.rating_type_id] ?? d.your_rating ?? 0,
-          }))
-          .filter((r) => r.stars > 0);
-        const coords = await getCurrentPositionSafe();
-        const rres = await submitRating(fountainId, ratings, coords ?? undefined);
-        if (rres.ok) {
-          clear();
-          dispatchContribution(rres.pointsAwarded); // the server's award, gated on > 0 (#204)
-        } else {
-          ratingError = rres.error;
+      try {
+        // #1 (spec §4.1): flush an unsaved rating first, but a rating failure — including the 50 mi
+        // proximity 403 — must NEVER block the ungated photo upload. The two are independent.
+        let ratingError: ContributeError | null = null;
+        if (isRatingDraftDirty(dimensions, edits)) {
+          const ratings = dimensions
+            .map((d) => ({
+              rating_type_id: d.rating_type_id,
+              stars: edits[d.rating_type_id] ?? d.your_rating ?? 0,
+            }))
+            .filter((r) => r.stars > 0);
+          const coords = await getCurrentPositionSafe();
+          const rres = await submitRating(fountainId, ratings, coords ?? undefined);
+          if (rres.ok) {
+            clear();
+            dispatchContribution(rres.pointsAwarded); // the server's award, gated on > 0 (#204)
+          } else {
+            ratingError = rres.error;
+          }
         }
+
+        let prepared: File;
+        try {
+          prepared = await preparePhotoForUpload(file);
+        } catch (error) {
+          logPhotoPreparationFailure(error);
+          setMsg({
+            tone: "err",
+            text: "We couldn't prepare this photo. Choose it again to retry.",
+          });
+          return;
+        }
+
+        const formData = new FormData();
+        formData.set("file", prepared);
+        const res = await uploadPhoto(fountainId, formData);
+        if (res.ok) {
+          // `photo_first` is per-FOUNTAIN: a 2nd photo awards 0, and used to celebrate anyway (#204).
+          dispatchContribution(res.pointsAwarded);
+          router.refresh();
+          setMsg(
+            ratingError
+              ? {
+                  tone: "ok",
+                  text:
+                    ratingError === "too_far"
+                      ? "Photo uploaded. Your rating wasn't saved — you're too far from this fountain to rate it."
+                      : `Photo uploaded, but your rating wasn't saved: ${errorText(ratingError)}`,
+                }
+              : { tone: "ok", text: "Photo uploaded — thanks!" },
+          );
+        } else {
+          setMsg({ tone: "err", text: errorText(res.error) });
+        }
+      } finally {
+        // Always reset the input so re-selecting the same file re-fires onChange.
+        if (inputRef.current) inputRef.current.value = "";
       }
-      const res = await uploadPhoto(fountainId, formData);
-      if (res.ok) {
-        // `photo_first` is per-FOUNTAIN: a 2nd photo awards 0, and used to celebrate anyway (#204).
-        dispatchContribution(res.pointsAwarded);
-        router.refresh();
-        setMsg(
-          ratingError
-            ? {
-                tone: "ok",
-                text:
-                  ratingError === "too_far"
-                    ? "Photo uploaded. Your rating wasn't saved — you're too far from this fountain to rate it."
-                    : `Photo uploaded, but your rating wasn't saved: ${errorText(ratingError)}`,
-              }
-            : { tone: "ok", text: "Photo uploaded — thanks!" },
-        );
-      } else {
-        setMsg({ tone: "err", text: errorText(res.error) });
-      }
-      // Always reset the input so re-selecting the same file re-fires onChange.
-      if (inputRef.current) inputRef.current.value = "";
     });
   }
 
@@ -109,7 +140,7 @@ export function PhotoUpload({
           className="mt-1 inline-flex items-center gap-2 text-xs text-muted"
         >
           <Spinner className="h-4 w-4" />
-          Uploading…
+          Preparing and uploading…
         </p>
       )}
       {!pending && msg && (

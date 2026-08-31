@@ -1,6 +1,6 @@
 # FountainRank Mobile
 
-Expo SDK 56 / React Native app. **Expo Router** (file-based `app/` tree) for
+Expo SDK 57 / React Native app. **Expo Router** (file-based `app/` tree) for
 navigation, **TanStack Query** over `@fountainrank/api-client` for server state.
 Release builds target the deployed production services
 (`https://api.fountainrank.com`, `https://auth.fountainrank.com`).
@@ -82,8 +82,8 @@ detail navigation.
   Metro against it. **CI does not render the map** — it only type-checks, lints,
   runs `expo-doctor`, and runs the pure-helper unit tests. The map render is
   verified on a device (owner-gated; no Mac → EAS).
-- **Native SDK targets.** MapLibre RN 11.3.4 inherits the host project's Android
-  SDK levels and iOS `min_ios_version_supported`; the Expo SDK 56 / RN 0.85
+- **Native SDK targets.** MapLibre RN 11.3.7 inherits the host project's Android
+  SDK levels and iOS `min_ios_version_supported`; the Expo SDK 57 / RN 0.86
   defaults govern (no `expo-build-properties` override is needed), and
   `expo-doctor` confirms compatibility.
 - **🔑 Clean reinstall before any `expo prebuild` / `eas` command.** Incremental
