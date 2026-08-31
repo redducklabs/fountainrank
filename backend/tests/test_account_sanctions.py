@@ -13,7 +13,7 @@ from app.config import Settings, get_settings
 from app.main import app
 from app.models import ModerationAction, User
 
-pytestmark = pytest.mark.anyio
+pytestmark = pytest.mark.asyncio
 
 
 @pytest.fixture

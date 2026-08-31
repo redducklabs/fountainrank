@@ -28,7 +28,7 @@ from app.geo import point_geography
 from app.main import app
 from app.models import ContentReport, Fountain, FountainNote, FountainPhoto, User
 
-pytestmark = pytest.mark.anyio
+pytestmark = pytest.mark.asyncio
 
 _SENTINEL_NOTE = "SECRET_PII_NOTE_do_not_log_12q"
 

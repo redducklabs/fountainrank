@@ -40,7 +40,7 @@ from app.models import (
     UserContributionStats,
 )
 
-pytestmark = pytest.mark.anyio
+pytestmark = pytest.mark.asyncio
 
 _SENTINEL_NOTE = "SECRET_PII_NOTE_do_not_log_9f3a"
 
