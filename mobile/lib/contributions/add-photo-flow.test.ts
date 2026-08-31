@@ -33,6 +33,17 @@ describe("flushRatingThenUpload (#1)", () => {
     expect(uploadPhoto).toHaveBeenCalledOnce();
     expect(r).toEqual({ ratingOutcome: "failed", uploaded: true });
   });
+
+  it("photo preparation failure does not undo an independent submitted rating", async () => {
+    const submitRating = vi.fn(async () => ({ ok: true as const }));
+    const uploadPhoto = vi.fn().mockRejectedValue(new Error("PhotoPreparationError"));
+
+    await expect(
+      flushRatingThenUpload({ isDirty: true, submitRating, uploadPhoto }),
+    ).rejects.toThrow("PhotoPreparationError");
+    expect(submitRating).toHaveBeenCalledOnce();
+    expect(uploadPhoto).toHaveBeenCalledOnce();
+  });
 });
 
 describe("singleFlight (#1)", () => {

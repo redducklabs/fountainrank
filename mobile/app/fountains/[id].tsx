@@ -3,6 +3,8 @@ import { isRatingDraftDirty, type AwardedPoints } from "@fountainrank/contributi
 
 import { awardedPoints } from "../../lib/awarded-points";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import * as FileSystem from "expo-file-system/legacy";
+import * as ImageManipulator from "expo-image-manipulator";
 import { Stack, router, useLocalSearchParams } from "expo-router";
 import { useRef, useState, type ReactNode } from "react";
 import {
@@ -36,10 +38,13 @@ import type { ContributionError } from "../../lib/contributions/state";
 import { contributionErrorText, mapContributionError } from "../../lib/contributions/state";
 import { normalizeFountainId } from "../../lib/detail/id";
 import {
-  buildPhotoUpload,
   mapPhotoUploadError,
+  preparePhotoForUpload,
+  PhotoPreparationError,
   PhotoUploadError,
+  type PickedPhotoAsset,
 } from "../../lib/detail/photo-upload";
+import { logEvent } from "../../lib/log";
 import { requestCurrentCoords } from "../../lib/location-request";
 import { REPORT_CATEGORIES, reportContent, type ReportContentType } from "../../lib/detail/report";
 import { useApi } from "../../providers/api-provider";
@@ -225,7 +230,7 @@ export default function FountainDetailScreen() {
   };
 
   const pickAndUploadPhoto = async (
-    asset: { uri: string; fileName?: string | null; mimeType?: string | null },
+    asset: PickedPhotoAsset,
     dimensions: FountainDetailT["dimensions"],
   ) => {
     // Single-flight guard (#1): the rating flush + location fetch run BEFORE photoUploadMutation
@@ -281,7 +286,14 @@ export default function FountainDetailScreen() {
         });
       }
     } catch (error) {
-      handlePhotoUploadError(error);
+      if (error instanceof PhotoPreparationError) {
+        setPhotoUploadMessage({
+          tone: "err",
+          text: "We couldn't prepare this photo. Please choose it again and try again.",
+        });
+      } else {
+        handlePhotoUploadError(error);
+      }
     } finally {
       addPhotoInFlight.current = false;
       setAddingPhoto(false);
@@ -388,13 +400,31 @@ export default function FountainDetailScreen() {
   });
 
   const photoUploadMutation = useMutation({
-    mutationFn: async (asset: {
-      uri: string;
-      fileName?: string | null;
-      mimeType?: string | null;
-    }): Promise<PhotoOut> => {
+    mutationFn: async (asset: PickedPhotoAsset): Promise<PhotoOut> => {
       if (fountainId == null) throw new Error("missing fountain id");
-      const upload = buildPhotoUpload(asset);
+      let upload: { uri: string; type: "image/jpeg" };
+      try {
+        upload = await preparePhotoForUpload(asset, {
+          manipulateAsync: async (uri, actions, options) =>
+            ImageManipulator.manipulateAsync(uri, actions, {
+              compress: options.compress,
+              format: ImageManipulator.SaveFormat.JPEG,
+            }),
+          getInfoAsync: async (uri) => {
+            const info = await FileSystem.getInfoAsync(uri);
+            return { exists: info.exists, size: info.exists ? info.size : undefined };
+          },
+          deleteAsync: (uri, options) => FileSystem.deleteAsync(uri, options),
+        });
+      } catch (error) {
+        // Allowlist-only diagnostic: no URI, coordinates, EXIF, file bytes, or raw error text.
+        logEvent({
+          event: "photo_preparation_failed",
+          stage: "prepare",
+          error_name: "PhotoPreparationError",
+        });
+        throw error;
+      }
       const result = await client.uploadMultipart(`/api/v1/fountains/${fountainId}/photos`, upload);
       if (result.status < 200 || result.status >= 300) {
         throw new PhotoUploadError(result.status, result.detail);

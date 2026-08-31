@@ -42,6 +42,6 @@ export async function selectPhoto(
       : await picker.launchImageLibraryAsync(PHOTO_PICKER_OPTIONS);
   if (result.canceled || !result.assets || result.assets.length === 0) return { kind: "canceled" };
 
-  const { uri, fileName, mimeType } = result.assets[0];
-  return { kind: "picked", asset: { uri, fileName, mimeType } };
+  const { uri, fileName, mimeType, width, height } = result.assets[0];
+  return { kind: "picked", asset: { uri, fileName, mimeType, width, height } };
 }

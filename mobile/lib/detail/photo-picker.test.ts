@@ -8,11 +8,27 @@ function dependencies(): PhotoPickerDependencies {
     requestMediaLibraryPermissionsAsync: vi.fn().mockResolvedValue({ granted: true }),
     launchCameraAsync: vi.fn().mockResolvedValue({
       canceled: false,
-      assets: [{ uri: "file:///camera.jpg", fileName: "camera.jpg", mimeType: "image/jpeg" }],
+      assets: [
+        {
+          uri: "file:///camera.jpg",
+          fileName: "camera.jpg",
+          mimeType: "image/jpeg",
+          width: 4032,
+          height: 3024,
+        },
+      ],
     }),
     launchImageLibraryAsync: vi.fn().mockResolvedValue({
       canceled: false,
-      assets: [{ uri: "file:///library.jpg", fileName: "library.jpg", mimeType: "image/jpeg" }],
+      assets: [
+        {
+          uri: "file:///library.jpg",
+          fileName: "library.jpg",
+          mimeType: "image/jpeg",
+          width: 3024,
+          height: 4032,
+        },
+      ],
     }),
   };
 }
@@ -22,7 +38,13 @@ describe("selectPhoto", () => {
     const deps = dependencies();
     await expect(selectPhoto("camera", deps)).resolves.toEqual({
       kind: "picked",
-      asset: { uri: "file:///camera.jpg", fileName: "camera.jpg", mimeType: "image/jpeg" },
+      asset: {
+        uri: "file:///camera.jpg",
+        fileName: "camera.jpg",
+        mimeType: "image/jpeg",
+        width: 4032,
+        height: 3024,
+      },
     });
     expect(deps.requestCameraPermissionsAsync).toHaveBeenCalledOnce();
     expect(deps.requestMediaLibraryPermissionsAsync).not.toHaveBeenCalled();
