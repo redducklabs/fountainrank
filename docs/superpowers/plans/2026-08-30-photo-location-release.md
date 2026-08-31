@@ -6,13 +6,14 @@
 
 **Architecture:** Each platform gets a focused photo-processing adapter that applies the same 2048-pixel/1.5-MB policy before the existing transport. Location timestamps are captured at the existing successful-fix convergence points and rendered by isolated one-second display components; failures never erase a known successful timestamp and timers never request GPS. Existing backend image validation remains authoritative.
 
-**Tech Stack:** Next.js 16, React 19, browser Canvas APIs, Expo SDK 56, React Native, Expo Image Manipulator, MapLibre GL/RN, TypeScript, Vitest, GitHub Actions, EAS Build/Submit.
+**Tech Stack:** Next.js 16, React 19, browser Canvas APIs, Expo SDK 57, React Native 0.86, Expo Image Manipulator, MapLibre GL/RN, TypeScript, Vitest, GitHub Actions, EAS Build/Submit.
 
 **Spec:** This plan is the owner-approved implementation spec for the two prepared ticket descriptions from 2026-08-30. It remains under `docs/superpowers/plans/` because the required execution skill owns that location; the PR description will link it directly for repository discoverability.
 
 ## Global Constraints
 
 - Both features, relevant Dependabot updates, and the mobile version bump land on `feat/photo-location-release` and one PR.
+- The release also carries the coordinated Expo SDK 57 / React Native 0.86 migration required to clear the authoritative mobile-doctor gate; it must pass the same native device verification before store dispatch and no gate may be suppressed.
 - Photo uploads use a 2048-pixel maximum long edge, never enlarge, pixel-roundtrip to JPEG, bake EXIF orientation into upright pixels before stripping metadata, and target at most 1,500,000 bytes through bounded quality attempts.
 - Client processing failure starts no upload. The backend 10-MB limit, validation, normalization, metadata stripping, thumbnailing, quotas, and storage behavior remain unchanged.
 - Location copy is `Location refreshed <N>s ago`; before any successful fix it is `Location unavailable`.
