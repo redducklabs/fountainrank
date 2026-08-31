@@ -34,6 +34,10 @@ function dependencies(): PhotoPickerDependencies {
 }
 
 describe("selectPhoto", () => {
+  it("requests the uncompressed picker source because upload preparation performs the JPEG encode", () => {
+    expect(PHOTO_PICKER_OPTIONS.quality).toBe(1);
+  });
+
   it("routes camera selection through camera permission and forwards its asset", async () => {
     const deps = dependencies();
     await expect(selectPhoto("camera", deps)).resolves.toEqual({

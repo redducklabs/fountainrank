@@ -7,6 +7,7 @@ import {
   mapPhotoUploadError,
   PhotoUploadError,
   preparePhotoForUpload,
+  prepareAndUploadPhoto,
   type PhotoPreparationDependencies,
 } from "./photo-upload";
 
@@ -138,6 +139,46 @@ describe("preparePhotoForUpload", () => {
     await expect(preparePhotoForUpload(source, deps)).rejects.toMatchObject({
       name: "PhotoPreparationError",
     });
+  });
+});
+
+describe("prepareAndUploadPhoto", () => {
+  it("deletes the accepted generated JPEG after a successful upload", async () => {
+    const deps = preparationDependencies({ "file:///generated-1.jpg": 1_400_000 });
+    const upload = vi.fn(async () => "uploaded");
+
+    await expect(prepareAndUploadPhoto(source, deps, upload)).resolves.toBe("uploaded");
+
+    expect(upload).toHaveBeenCalledWith({
+      uri: "file:///generated-1.jpg",
+      type: "image/jpeg",
+    });
+    expect(deps.deleteAsync).toHaveBeenCalledWith("file:///generated-1.jpg", {
+      idempotent: true,
+    });
+    expect(deps.deleteAsync).not.toHaveBeenCalledWith(source.uri, expect.anything());
+  });
+
+  it("deletes the accepted generated JPEG and preserves the upload error after failure", async () => {
+    const deps = preparationDependencies({ "file:///generated-1.jpg": 1_400_000 });
+    const failure = new Error("upload failed");
+    const upload = vi.fn().mockRejectedValue(failure);
+
+    await expect(prepareAndUploadPhoto(source, deps, upload)).rejects.toBe(failure);
+
+    expect(deps.deleteAsync).toHaveBeenCalledWith("file:///generated-1.jpg", {
+      idempotent: true,
+    });
+    expect(deps.deleteAsync).not.toHaveBeenCalledWith(source.uri, expect.anything());
+  });
+
+  it("does not let a cache cleanup failure replace a settled upload result", async () => {
+    const deps = preparationDependencies({ "file:///generated-1.jpg": 1_400_000 });
+    vi.mocked(deps.deleteAsync).mockRejectedValue(new Error("cleanup failed"));
+
+    await expect(prepareAndUploadPhoto(source, deps, async () => "uploaded")).resolves.toBe(
+      "uploaded",
+    );
   });
 });
 

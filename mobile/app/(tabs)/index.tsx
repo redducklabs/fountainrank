@@ -755,10 +755,12 @@ export default function MapScreen() {
           }
         }}
       />
-      <LocationFreshnessLabel
-        lastSuccessfulFixAtMs={location.lastSuccessfulFixAtMs}
-        bottom={insets.bottom + spacing.lg + 56}
-      />
+      {!addMode ? (
+        <LocationFreshnessLabel
+          lastSuccessfulFixAtMs={location.lastSuccessfulFixAtMs}
+          bottom={insets.bottom + spacing.lg + 56}
+        />
+      ) : null}
 
       {!addMode ? (
         <FindNearestButton

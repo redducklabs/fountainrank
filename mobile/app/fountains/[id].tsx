@@ -39,7 +39,7 @@ import { contributionErrorText, mapContributionError } from "../../lib/contribut
 import { normalizeFountainId } from "../../lib/detail/id";
 import {
   mapPhotoUploadError,
-  preparePhotoForUpload,
+  prepareAndUploadPhoto,
   PhotoPreparationError,
   PhotoUploadError,
   type PickedPhotoAsset,
@@ -402,35 +402,44 @@ export default function FountainDetailScreen() {
   const photoUploadMutation = useMutation({
     mutationFn: async (asset: PickedPhotoAsset): Promise<PhotoOut> => {
       if (fountainId == null) throw new Error("missing fountain id");
-      let upload: { uri: string; type: "image/jpeg" };
       try {
-        upload = await preparePhotoForUpload(asset, {
-          manipulateAsync: async (uri, actions, options) =>
-            ImageManipulator.manipulateAsync(uri, actions, {
-              compress: options.compress,
-              format: ImageManipulator.SaveFormat.JPEG,
-            }),
-          getInfoAsync: async (uri) => {
-            const info = await FileSystem.getInfoAsync(uri);
-            return { exists: info.exists, size: info.exists ? info.size : undefined };
+        return await prepareAndUploadPhoto(
+          asset,
+          {
+            manipulateAsync: async (uri, actions, options) =>
+              ImageManipulator.manipulateAsync(uri, actions, {
+                compress: options.compress,
+                format: ImageManipulator.SaveFormat.JPEG,
+              }),
+            getInfoAsync: async (uri) => {
+              const info = await FileSystem.getInfoAsync(uri);
+              return { exists: info.exists, size: info.exists ? info.size : undefined };
+            },
+            deleteAsync: (uri, options) => FileSystem.deleteAsync(uri, options),
           },
-          deleteAsync: (uri, options) => FileSystem.deleteAsync(uri, options),
-        });
+          async (upload) => {
+            const result = await client.uploadMultipart(
+              `/api/v1/fountains/${fountainId}/photos`,
+              upload,
+            );
+            if (result.status < 200 || result.status >= 300) {
+              throw new PhotoUploadError(result.status, result.detail);
+            }
+            // The facade now parses the success body (#204) so we can read the real award.
+            return result.data as PhotoOut;
+          },
+        );
       } catch (error) {
-        // Allowlist-only diagnostic: no URI, coordinates, EXIF, file bytes, or raw error text.
-        logEvent({
-          event: "photo_preparation_failed",
-          stage: "prepare",
-          error_name: "PhotoPreparationError",
-        });
+        if (error instanceof PhotoPreparationError) {
+          // Allowlist-only diagnostic: no URI, coordinates, EXIF, file bytes, or raw error text.
+          logEvent({
+            event: "photo_preparation_failed",
+            stage: "prepare",
+            error_name: "PhotoPreparationError",
+          });
+        }
         throw error;
       }
-      const result = await client.uploadMultipart(`/api/v1/fountains/${fountainId}/photos`, upload);
-      if (result.status < 200 || result.status >= 300) {
-        throw new PhotoUploadError(result.status, result.detail);
-      }
-      // The facade now parses the success body (#204) so we can read the real award.
-      return result.data as PhotoOut;
     },
     onSuccess: (photo) => {
       // `photo_first` is per-FOUNTAIN: only a fountain's first photo earns, so say so when it

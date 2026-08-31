@@ -113,12 +113,32 @@ export async function preparePhotoForUpload(
   }
 }
 
+/** Prepare a generated JPEG, keep it alive for the native upload, then release only that generated
+ * cache file after the upload settles. Cleanup is best-effort so a cache deletion failure cannot
+ * replace the upload's success value or its actionable transport error. */
+export async function prepareAndUploadPhoto<T>(
+  asset: PickedPhotoAsset,
+  dependencies: PhotoPreparationDependencies,
+  upload: (prepared: { uri: string; type: "image/jpeg" }) => Promise<T>,
+): Promise<T> {
+  const prepared = await preparePhotoForUpload(asset, dependencies);
+  try {
+    return await upload(prepared);
+  } finally {
+    try {
+      await dependencies.deleteAsync(prepared.uri, { idempotent: true });
+    } catch {
+      // The upload has already settled; cache cleanup must not change its observable outcome.
+    }
+  }
+}
+
 /** Build the `{ uri, type }` descriptor for `client.uploadMultipart(...)`, which streams the file
  *  via the native `expo-file-system` uploader (see `mobile/lib/api.ts`). We deliberately do NOT
  *  build a `FormData` here: React Native's New Architecture rejects the `{ uri, name, type }`
  *  FormData file-part shape (`Error: Unsupported FormDataPart implementation`), so a `fetch`-based
  *  multipart upload throws before the request leaves the device. Falls back to a generic JPEG mime
- *  type when the picker didn't supply one (`launchImageLibraryAsync({ quality: 0.9 })` without
+ *  type when the picker didn't supply one (`launchImageLibraryAsync({ quality: 1 })` without
  *  `allowsEditing` always emits JPEG); the native uploader derives the filename from the `uri`. */
 export function buildPhotoUpload(asset: PhotoUploadAsset): { uri: string; type: string } {
   const type = asset.mimeType?.trim() || "image/jpeg";
