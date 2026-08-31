@@ -115,7 +115,7 @@ fountainrank/
 | Backend        | Python 3.13, FastAPI, Uvicorn, SQLAlchemy 2, Alembic               |
 | Database       | PostgreSQL 17 + PostGIS                                            |
 | Web            | Next.js App Router, React 19, TypeScript, Tailwind CSS             |
-| Mobile         | Expo SDK 56, React Native, TypeScript                              |
+| Mobile         | Expo SDK 57, React Native, TypeScript                              |
 | Maps           | MapLibre, Protomaps tiles, OpenStreetMap-derived fountain data     |
 | Auth           | Self-hosted Logto with Google, Apple, and email magic-link support |
 | Monorepo       | pnpm, Turborepo, uv                                                |
