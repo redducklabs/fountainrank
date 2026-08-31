@@ -4,6 +4,7 @@ import { describe, expect, it, vi, type Mock } from "vitest";
 import {
   JPEG_QUALITY_ATTEMPTS,
   MAX_UPLOAD_BYTES,
+  parseJpegMetadataBytes,
   preparePhotoForUpload,
   type PhotoProcessingDependencies,
 } from "./photo-processing";
@@ -13,6 +14,15 @@ type TestDependencies = PhotoProcessingDependencies & {
   createCanvas: Mock;
   createImageBitmap: Mock;
 };
+
+function orientedJpegBytes(): Uint8Array<ArrayBuffer> {
+  return new Uint8Array([
+    0xff, 0xd8, 0xff, 0xe1, 0x00, 0x22, 0x45, 0x78, 0x69, 0x66, 0x00, 0x00, 0x4d, 0x4d, 0x00, 0x2a,
+    0x00, 0x00, 0x00, 0x08, 0x00, 0x01, 0x01, 0x12, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01, 0x00, 0x06,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x00, 0x01, 0x00, 0x02, 0x03,
+    0x01, 0x11, 0x00, 0x02, 0x11, 0x00, 0x03, 0x11, 0x00, 0xff, 0xd9,
+  ]);
+}
 
 function createDependencies({
   width,
@@ -30,6 +40,11 @@ function createDependencies({
     fillRect: vi.fn((x: number, y: number, canvasWidth: number, canvasHeight: number) => {
       fillRects.push([x, y, canvasWidth, canvasHeight]);
     }),
+    save: vi.fn(),
+    restore: vi.fn(),
+    translate: vi.fn(),
+    rotate: vi.fn(),
+    scale: vi.fn(),
     drawImage: vi.fn(
       (image: unknown, x: number, y: number, canvasWidth: number, canvasHeight: number) => {
         draws.push({ image, x, y, width: canvasWidth, height: canvasHeight });
@@ -141,6 +156,67 @@ describe("preparePhotoForUpload", () => {
     expect(deps.draws[0]).toMatchObject({ width: 400, height: 200 });
   });
 
+  it("parses a non-default EXIF JPEG orientation and its raw pixel dimensions", async () => {
+    expect(parseJpegMetadataBytes(orientedJpegBytes())).toEqual({
+      orientation: 6,
+      width: 2,
+      height: 1,
+    });
+  });
+
+  it("uses the parsed EXIF orientation to emit upright fallback pixels without createImageBitmap", async () => {
+    const file = new File([orientedJpegBytes()], "oriented.jpg", { type: "image/jpeg" });
+    const deps = createDependencies({
+      width: 2,
+      height: 1,
+      blobs: [],
+    });
+    deps.createImageBitmap = undefined as unknown as Mock;
+    deps.loadImage = vi.fn(async () => ({
+      source: { pixels: ["R", "G"] } as unknown as CanvasImageSource,
+      width: 2,
+      height: 1,
+      close: vi.fn(),
+    }));
+    deps.readJpegMetadata = vi.fn(async () => ({ orientation: 6 as const, width: 2, height: 1 }));
+    const context = {
+      fillStyle: "",
+      fillRect: vi.fn(),
+      save: vi.fn(),
+      restore: vi.fn(),
+      translate: vi.fn(),
+      rotate: vi.fn(),
+      scale: vi.fn(),
+      drawImage: vi.fn(),
+    };
+    deps.createCanvas = vi.fn(
+      (width, height) =>
+        ({
+          width,
+          height,
+          getContext: vi.fn(() => context),
+          toBlob: vi.fn((callback: BlobCallback) => {
+            const orientationWasBaked =
+              width === 1 &&
+              height === 2 &&
+              context.translate.mock.calls.some(([x, y]) => x === 1 && y === 0) &&
+              context.rotate.mock.calls.some(([angle]) => angle === Math.PI / 2) &&
+              context.drawImage.mock.calls.some(
+                ([, , , drawWidth, drawHeight]) => drawWidth === 2 && drawHeight === 1,
+              );
+            callback(new Blob([orientationWasBaked ? "R\nG" : "R,G"], { type: "image/jpeg" }));
+          }),
+        }) as unknown as HTMLCanvasElement,
+    );
+
+    const result = await preparePhotoForUpload(file, deps);
+
+    expect(deps.createCanvas).toHaveBeenCalledWith(1, 2);
+    expect(context.translate).toHaveBeenCalledWith(1, 0);
+    expect(context.rotate).toHaveBeenCalledWith(Math.PI / 2);
+    await expect(result.text()).resolves.toBe("R\nG");
+  });
+
   it("fails after the bounded quality attempts when every JPEG exceeds the byte target", async () => {
     const tooLarge = new Blob([new Uint8Array(MAX_UPLOAD_BYTES + 1)], { type: "image/jpeg" });
     const deps = createDependencies({
@@ -163,6 +239,9 @@ describe("preparePhotoForUpload", () => {
       blobs: [new Blob(["small"], { type: "image/jpeg" })],
     });
     deps.createImageBitmap.mockRejectedValue(new Error("decoder details must not reach the UI"));
+    deps.loadImage = vi.fn(async () => {
+      throw new Error("fallback decoder details must not reach the UI");
+    });
 
     await expect(preparePhotoForUpload(new File(["source"], "camera.jpg"), deps)).rejects.toEqual(
       expect.objectContaining({ name: "PhotoPreparationError" }),
