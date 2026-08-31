@@ -15,6 +15,88 @@ type TestDependencies = PhotoProcessingDependencies & {
   createImageBitmap: Mock;
 };
 
+type Matrix = [number, number, number, number, number, number];
+
+function multiply(matrix: Matrix, next: Matrix): Matrix {
+  const [a, b, c, d, e, f] = matrix;
+  const [na, nb, nc, nd, ne, nf] = next;
+  return [
+    a * na + c * nb,
+    b * na + d * nb,
+    a * nc + c * nd,
+    b * nc + d * nd,
+    a * ne + c * nf + e,
+    b * ne + d * nf + f,
+  ];
+}
+
+function createSoftwareCanvasDependencies(orientation: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8) {
+  const source = {
+    pixels: [
+      ["A", "B"],
+      ["C", "D"],
+      ["E", "F"],
+    ],
+  } as unknown as CanvasImageSource;
+  const dependencies: PhotoProcessingDependencies = {
+    createCanvas: (width, height) => {
+      let matrix: Matrix = [1, 0, 0, 1, 0, 0];
+      let saved: Matrix = matrix;
+      const pixels = Array.from({ length: height }, () => Array.from({ length: width }, () => "?"));
+      const context = {
+        fillStyle: "",
+        fillRect: vi.fn(),
+        save: vi.fn(() => {
+          saved = [...matrix] as Matrix;
+        }),
+        restore: vi.fn(() => {
+          matrix = saved;
+        }),
+        translate: vi.fn((x: number, y: number) => {
+          matrix = multiply(matrix, [1, 0, 0, 1, x, y]);
+        }),
+        rotate: vi.fn((angle: number) => {
+          matrix = multiply(matrix, [
+            Math.cos(angle),
+            Math.sin(angle),
+            -Math.sin(angle),
+            Math.cos(angle),
+            0,
+            0,
+          ]);
+        }),
+        scale: vi.fn((x: number, y: number) => {
+          matrix = multiply(matrix, [x, 0, 0, y, 0, 0]);
+        }),
+        drawImage: vi.fn((image: typeof source, x: number, y: number) => {
+          const sourcePixels = (image as unknown as { pixels: string[][] }).pixels;
+          for (let sourceY = 0; sourceY < sourcePixels.length; sourceY += 1) {
+            for (let sourceX = 0; sourceX < sourcePixels[0].length; sourceX += 1) {
+              const pointX = x + sourceX + 0.5;
+              const pointY = y + sourceY + 0.5;
+              const outputX = Math.floor(matrix[0] * pointX + matrix[2] * pointY + matrix[4]);
+              const outputY = Math.floor(matrix[1] * pointX + matrix[3] * pointY + matrix[5]);
+              pixels[outputY][outputX] = sourcePixels[sourceY][sourceX];
+            }
+          }
+        }),
+      };
+      return {
+        width,
+        height,
+        getContext: () => context,
+        toBlob: (callback: BlobCallback) =>
+          callback(new Blob([pixels.map((row) => row.join("")).join("/")], { type: "image/jpeg" })),
+      } as unknown as HTMLCanvasElement;
+    },
+    createFile: (parts, name, options) => new File(parts, name, options),
+    loadImage: async () => ({ source, width: 2, height: 3, close: vi.fn() }),
+    readJpegMetadata: async () => ({ orientation, width: 2, height: 3 }),
+    imageElementHonorsExifOrientation: async () => false,
+  };
+  return dependencies;
+}
+
 function orientedJpegBytes(): Uint8Array<ArrayBuffer> {
   return new Uint8Array([
     0xff, 0xd8, 0xff, 0xe1, 0x00, 0x22, 0x45, 0x78, 0x69, 0x66, 0x00, 0x00, 0x4d, 0x4d, 0x00, 0x2a,
@@ -164,58 +246,40 @@ describe("preparePhotoForUpload", () => {
     });
   });
 
-  it("uses the parsed EXIF orientation to emit upright fallback pixels without createImageBitmap", async () => {
+  it("renders upright fallback pixels from a JPEG carrying EXIF orientation 6", async () => {
     const file = new File([orientedJpegBytes()], "oriented.jpg", { type: "image/jpeg" });
-    const deps = createDependencies({
-      width: 2,
-      height: 1,
-      blobs: [],
+    Object.defineProperty(file, "arrayBuffer", {
+      value: async () => orientedJpegBytes().buffer,
     });
-    deps.createImageBitmap = undefined as unknown as Mock;
-    deps.loadImage = vi.fn(async () => ({
-      source: { pixels: ["R", "G"] } as unknown as CanvasImageSource,
-      width: 2,
-      height: 1,
-      close: vi.fn(),
-    }));
-    deps.readJpegMetadata = vi.fn(async () => ({ orientation: 6 as const, width: 2, height: 1 }));
-    const context = {
-      fillStyle: "",
-      fillRect: vi.fn(),
-      save: vi.fn(),
-      restore: vi.fn(),
-      translate: vi.fn(),
-      rotate: vi.fn(),
-      scale: vi.fn(),
-      drawImage: vi.fn(),
-    };
-    deps.createCanvas = vi.fn(
-      (width, height) =>
-        ({
-          width,
-          height,
-          getContext: vi.fn(() => context),
-          toBlob: vi.fn((callback: BlobCallback) => {
-            const orientationWasBaked =
-              width === 1 &&
-              height === 2 &&
-              context.translate.mock.calls.some(([x, y]) => x === 1 && y === 0) &&
-              context.rotate.mock.calls.some(([angle]) => angle === Math.PI / 2) &&
-              context.drawImage.mock.calls.some(
-                ([, , , drawWidth, drawHeight]) => drawWidth === 2 && drawHeight === 1,
-              );
-            callback(new Blob([orientationWasBaked ? "R\nG" : "R,G"], { type: "image/jpeg" }));
-          }),
-        }) as unknown as HTMLCanvasElement,
-    );
+    const dependencies = createSoftwareCanvasDependencies(6);
+    dependencies.readJpegMetadata = undefined;
 
-    const result = await preparePhotoForUpload(file, deps);
+    const result = await preparePhotoForUpload(file, dependencies);
 
-    expect(deps.createCanvas).toHaveBeenCalledWith(1, 2);
-    expect(context.translate).toHaveBeenCalledWith(1, 0);
-    expect(context.rotate).toHaveBeenCalledWith(Math.PI / 2);
-    await expect(result.text()).resolves.toBe("R\nG");
+    await expect(result.text()).resolves.toBe("ECA/FDB");
   });
+
+  it.each([
+    [1, "AB/CD/EF"],
+    [2, "BA/DC/FE"],
+    [3, "FE/DC/BA"],
+    [4, "EF/CD/AB"],
+    [5, "ACE/BDF"],
+    [6, "ECA/FDB"],
+    [7, "FDB/ECA"],
+    [8, "BDF/ACE"],
+  ] as const)(
+    "emits upright pixels for EXIF orientation %i",
+    async (orientation, expectedPixels) => {
+      const file = new File([orientedJpegBytes()], "oriented.jpg", { type: "image/jpeg" });
+      const result = await preparePhotoForUpload(
+        file,
+        createSoftwareCanvasDependencies(orientation),
+      );
+
+      await expect(result.text()).resolves.toBe(expectedPixels);
+    },
+  );
 
   it("fails after the bounded quality attempts when every JPEG exceeds the byte target", async () => {
     const tooLarge = new Blob([new Uint8Array(MAX_UPLOAD_BYTES + 1)], { type: "image/jpeg" });

@@ -25,6 +25,7 @@ export type PhotoProcessingDependencies = {
   createFile: (bits: BlobPart[], name: string, options: FilePropertyBag) => File;
   loadImage?: (file: File) => Promise<LoadedImage>;
   readJpegMetadata?: (file: Blob) => Promise<JpegMetadata>;
+  imageElementHonorsExifOrientation?: () => Promise<boolean>;
 };
 
 export class PhotoPreparationError extends Error {
@@ -34,7 +35,7 @@ export class PhotoPreparationError extends Error {
   }
 }
 
-function loadImage(file: File): Promise<LoadedImage> {
+function loadImage(file: Blob): Promise<LoadedImage> {
   return new Promise((resolve, reject) => {
     const image = new Image();
     const url = URL.createObjectURL(file);
@@ -52,6 +53,85 @@ function loadImage(file: File): Promise<LoadedImage> {
     };
     image.src = url;
   });
+}
+
+let imageElementExifProbe: Promise<boolean> | undefined;
+
+function exifOrientationSegment(orientation: Orientation): Uint8Array<ArrayBuffer> {
+  return new Uint8Array([
+    0xff,
+    0xe1,
+    0x00,
+    0x22,
+    0x45,
+    0x78,
+    0x69,
+    0x66,
+    0x00,
+    0x00,
+    0x4d,
+    0x4d,
+    0x00,
+    0x2a,
+    0x00,
+    0x00,
+    0x00,
+    0x08,
+    0x00,
+    0x01,
+    0x01,
+    0x12,
+    0x00,
+    0x03,
+    0x00,
+    0x00,
+    0x00,
+    0x01,
+    0x00,
+    orientation,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+  ]);
+}
+
+function canvasBlob(canvas: HTMLCanvasElement): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => (blob ? resolve(blob) : reject(new PhotoPreparationError())),
+      "image/jpeg",
+      1,
+    );
+  });
+}
+
+function imageElementHonorsExifOrientation(): Promise<boolean> {
+  imageElementExifProbe ??= (async () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 2;
+    canvas.height = 1;
+    const context = canvas.getContext("2d");
+    if (!context) throw new PhotoPreparationError();
+    context.fillStyle = "#f00";
+    context.fillRect(0, 0, 1, 1);
+    context.fillStyle = "#0f0";
+    context.fillRect(1, 0, 1, 1);
+    const jpeg = await canvasBlob(canvas);
+    const bytes = await jpeg.arrayBuffer();
+    const oriented = new Blob([bytes.slice(0, 2), exifOrientationSegment(6), bytes.slice(2)], {
+      type: "image/jpeg",
+    });
+    const image = await loadImage(oriented);
+    try {
+      return image.width === 1 && image.height === 2;
+    } finally {
+      image.close();
+    }
+  })();
+  return imageElementExifProbe;
 }
 
 const DEFAULT_DEPENDENCIES: PhotoProcessingDependencies = {
@@ -186,9 +266,9 @@ function applyOrientation(
       context.rotate(Math.PI / 2);
       break;
     case 7:
-      context.translate(width, 0);
-      context.rotate(Math.PI / 2);
-      context.scale(-1, 1);
+      context.translate(width, height);
+      context.rotate(-Math.PI / 2);
+      context.scale(1, -1);
       break;
     case 8:
       context.translate(0, height);
@@ -226,11 +306,8 @@ async function decodePhoto(
   const metadata = await (dependencies.readJpegMetadata ?? readJpegMetadata)(file);
   const image = await (dependencies.loadImage ?? loadImage)(file);
   const decoderAlreadyOriented =
-    swapsDimensions(metadata.orientation) &&
-    metadata.width !== null &&
-    metadata.height !== null &&
-    image.width === metadata.height &&
-    image.height === metadata.width;
+    metadata.orientation === 1 ||
+    (await (dependencies.imageElementHonorsExifOrientation ?? imageElementHonorsExifOrientation)());
   const orientation = decoderAlreadyOriented ? 1 : metadata.orientation;
   return {
     source: image.source,
