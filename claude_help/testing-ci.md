@@ -86,6 +86,15 @@ CI does not have your local `.env`. Any new setting/env var must:
 - Be **documented** (env-var name only — never commit a value, never write a
   `.env`). Reference it in `backend/README.md` and/or the relevant doc.
 
+### Deployed-system test account
+
+The owner-authorized account for testing the deployed web app, production API,
+or a mobile app connected to the production API is stored only in the root,
+gitignored `.env` as `FOUNTAINRANK_TEST_EMAIL` and
+`FOUNTAINRANK_TEST_PASSWORD`. Never copy either value into source, committed
+documentation, commands that print their arguments, CI, logs, screenshots, or
+test output. Do not use this account against local or preview systems.
+
 **🚨 Comma-separated list settings: use `str` + a split, NOT `list[str]`.**
 `pydantic-settings` parses a complex (list/dict) field from the environment as
 **JSON**. So a `list[str]` setting fed the natural `FOO=https://a.com,https://b.com`
