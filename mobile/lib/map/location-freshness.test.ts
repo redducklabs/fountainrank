@@ -38,16 +38,17 @@ describe("formatLocationFreshness", () => {
 });
 
 describe("createLocationFreshnessTicker", () => {
-  it("ticks only the supplied display callback once per second", () => {
+  it("refreshes immediately on activation, then ticks the display once per second", () => {
     const { timer, count, fire } = makeTimer();
     const updateDisplay = vi.fn();
     const ticker = createLocationFreshnessTicker(timer, updateDisplay);
 
     ticker.start();
     expect(count()).toBe(1);
+    expect(updateDisplay).toHaveBeenCalledTimes(1);
     fire();
 
-    expect(updateDisplay).toHaveBeenCalledTimes(1);
+    expect(updateDisplay).toHaveBeenCalledTimes(2);
   });
 
   it("disposes its timer and remains inert after disposal", () => {
@@ -61,6 +62,6 @@ describe("createLocationFreshnessTicker", () => {
     ticker.start();
     fire();
 
-    expect(onTick).not.toHaveBeenCalled();
+    expect(onTick).toHaveBeenCalledTimes(1);
   });
 });

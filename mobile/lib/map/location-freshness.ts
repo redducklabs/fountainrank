@@ -39,6 +39,7 @@ export function createLocationFreshnessTicker(
 
   function start(): void {
     if (disposed || interval !== null) return;
+    onTick();
     interval = timer.setInterval(onTick, LOCATION_FRESHNESS_TICK_MS);
   }
 
