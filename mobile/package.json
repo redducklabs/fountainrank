@@ -16,9 +16,9 @@
     "@fountainrank/api-client": "workspace:*",
     "@fountainrank/contributions": "workspace:*",
     "@logto/rn": "1.2.0",
-    "@maplibre/maplibre-react-native": "11.3.6",
+    "@maplibre/maplibre-react-native": "11.3.7",
     "@react-native-async-storage/async-storage": "2.2.0",
-    "@tanstack/react-query": "5.101.4",
+    "@tanstack/react-query": "5.102.0",
     "expo": "~56.0.19",
     "expo-constants": "~56.0.23",
     "expo-crypto": "~56.0.4",
@@ -38,7 +38,7 @@
     "react-native": "0.85.3",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "~4.26.0",
-    "supercluster": "8.0.1"
+    "supercluster": "9.0.0"
   },
   "devDependencies": {
     "@types/geojson": "^7946.0.0",
@@ -49,7 +49,7 @@
     "eslint": "9.39.5",
     "eslint-config-expo": "56.0.4",
     "typescript": "6.0.3",
-    "vitest": "4.1.10"
+    "vitest": "4.1.11"
   },
   "expo": {
     "doctor": {

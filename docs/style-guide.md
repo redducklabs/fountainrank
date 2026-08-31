@@ -630,6 +630,28 @@ On initial map load the app also fires an automatic geolocation attempt (via
 (`NEIGHBORHOOD_ZOOM`) if permission is granted; on denial the default continental-US view
 (`DEFAULT_CENTER = [-98.5, 39.8]`, `DEFAULT_ZOOM = 3.5`) is kept silently.
 
+### Location freshness
+
+Both map clients keep a display-only record of the last successful location fix. It is a status
+label, not a location request: its timer never wakes GPS, retrying, or tracking.
+
+- **Placement:** Web renders the compact label immediately below the Locate me / MapLibre
+  geolocate control, with surrounding controls offset so labels cannot overlap. Mobile renders
+  the same status beneath the 44×44 Locate button in the bottom-right control stack, below the
+  Find nearest control. It remains adjacent to location actions rather than map data or the
+  header.
+- **States:** Before a successful fix, show "Location unavailable". After one, show the existing
+  relative freshness label and update it as time elapses; a denied or failed refresh preserves the
+  last successful timestamp rather than replacing it with an error. The label is removed with its
+  control when the map is unavailable.
+- **Theme and responsive behavior:** Use existing semantic muted text (`text-muted` on web;
+  `colors.textMuted` on mobile) over the existing surface/background tokens. Keep the label in a
+  compact, wrapping-safe container that clears the safe area and other floating controls at narrow
+  widths; desktop preserves the top-right MapLibre stack spacing.
+- **Accessibility:** The status is plain, non-live text. It has no `aria-live` / RN live-region
+  announcement and does not steal focus or repeatedly announce timer ticks. The Locate control
+  retains its own accessible name and busy/unavailable state.
+
 ### Map pins
 
 Fountain pins are MapLibre symbol layers driven by raster sprite assets (loaded at map
