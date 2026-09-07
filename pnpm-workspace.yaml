@@ -2,6 +2,11 @@ packages:
   - "web"
   - "mobile"
   - "packages/*"
+
+# Enforce the supply-chain maturity gate on every install, including GitHub-hosted CI.
+minimumReleaseAge: 1440
+minimumReleaseAgeStrict: true
+
 overrides:
   # GHSA-52cp-r559-cp3m / GHSA-5p4m-2wfm-xmqj: patched 4.x release is compatible
   # with Redocly and Expo CLI. Remove once all consumers normally resolve >=4.3.1.

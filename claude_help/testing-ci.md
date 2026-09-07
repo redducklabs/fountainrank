@@ -135,14 +135,20 @@ manual dispatch) and do not run on routine pushes.
 Two classes of CI jobs, by whether they touch secrets:
 
 - **Class A — no secrets** (lint, type-check, unit/integration tests, build):
-  run on **`redducklabs-runners`** (the self-hosted fleet).
+  normally run on **`redducklabs-runners`** (the self-hosted fleet).
 - **Class B — secret-handling** (image push, DOKS deploy, anything with cloud
   credentials / tokens): run on **`ubuntu-latest`**, isolated off the shared
   fleet to limit blast radius.
 
-**Do not change any job's `runs-on` without an explicit decision.** "Use Red Duck
-Labs runners where possible" means: Class A on the fleet, Class B pinned to
-`ubuntu-latest`.
+**Hosted-runner decision (PR #304).** The following public, no-secret Class A jobs
+intentionally run on **`ubuntu-latest`** rather than the self-hosted fleet:
+`ci.yml` (`backend`, `workspace-js`, `mobile-doctor`), `security-audit.yml`
+(`pip-audit`, `pnpm-audit`, `trivy-fs`, `image-scan`), and `terraform.yml`
+(`validate`). This is an explicit exception to the default Class A placement;
+all triggers, least-privilege permissions, audit/Trivy gates, and secret-handling
+boundaries remain unchanged. Class B jobs remain isolated on `ubuntu-latest`.
+
+**Do not change any job's `runs-on` without an explicit decision.**
 
 ## Supply-chain checks
 
@@ -151,23 +157,18 @@ scans. A daily scheduled audit catches CVEs on unchanged dependencies. Trivy
 suppressions go in `.trivyignore` and require a justification + revisit
 condition.
 
-**pnpm `minimumReleaseAge` gate (CI-only, runner-level).** CI's
-`pnpm install --frozen-lockfile` (on the self-hosted `redducklabs-runners`)
-enforces a pnpm **`minimumReleaseAge` supply-chain policy (~24h)**: any lockfile
-entry published < 24h ago fails the install with
-`ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION` ("Lockfile failed supply-chain policy
-check"). This gate is **configured at the runner/global level — it is in no
-committed repo file** (not in `pnpm-workspace.yaml`, not in an `.npmrc`), so you
-will only ever see it as a CI failure, never locally. Consequence: the moment
-Expo (or any dep) publishes fresh releases that `expo-doctor`/the lockfile then
-demand, a *correct* dependency-bump PR is **un-mergeable until those packages are
-> 24h old** — just re-run CI after the aging window. **Do NOT add a
-`minimumReleaseAgeExclude` to force a < 24h install** — that bypasses a deliberate
-security control (owner-only decision). A local, skip-worktree
-`minimumReleaseAgeExclude` never reaches CI regardless. Note: a `mobile-doctor`
-failure is not *always* the age gate — it can also be a genuine duplicate native
-module needing a scoped `overrides` fix in `pnpm-workspace.yaml`; read the log
-before assuming it will "self-resolve." (Trapping detail: `local-dev.md`.)
+**pnpm `minimumReleaseAge` gate (repository-owned).** `pnpm-workspace.yaml`
+commits `minimumReleaseAge: 1440` and `minimumReleaseAgeStrict: true`, so every
+`pnpm install --frozen-lockfile` verifies every direct and transitive lockfile
+entry is at least 24 hours old on local, self-hosted, and GitHub-hosted runners.
+An entry that is too new fails with `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION`.
+`mobile-doctor` is a locked exact dev dependency and runs through `pnpm exec`; CI
+does not fetch an unbounded latest tool. Do **not** add `minimumReleaseAgeExclude`,
+disable strict mode, or set `trustLockfile: true`: each bypasses this supply-chain
+control. If Expo or another dependency is too new, wait for the policy window and
+then rerun CI. A `mobile-doctor` failure can also be a genuine duplicate native
+module needing a scoped `overrides` fix in `pnpm-workspace.yaml`; inspect the log
+before assuming it will self-resolve. (Trapping detail: `local-dev.md`.)
 
 ## PR gate
 
