@@ -33,7 +33,7 @@ jobs:
   # Class A: read-only, no secrets, no backend. Runs on infra PRs.
   validate:
     if: github.event_name == 'pull_request'
-    runs-on: redducklabs-runners
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: hashicorp/setup-terraform@v4

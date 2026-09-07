@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   backend:
-    runs-on: redducklabs-runners
+    runs-on: ubuntu-latest
     services:
       postgres:
         image: postgis/postgis:17-3.5
@@ -59,7 +59,7 @@ jobs:
   # Whole JS/TS workspace: web + mobile + api-client + packages. The workspace-wide
   # turbo run enforces mobile lint+typecheck here (mobile-doctor only adds expo-doctor).
   workspace-js:
-    runs-on: redducklabs-runners
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -80,7 +80,7 @@ jobs:
         run: pnpm exec turbo run build --filter=web
 
   mobile-doctor:
-    runs-on: redducklabs-runners
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
