@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   pip-audit:
-    runs-on: redducklabs-runners
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v9.0.0
@@ -32,7 +32,7 @@ jobs:
         run: uvx pip-audit --requirement requirements.txt --no-deps --strict
 
   pnpm-audit:
-    runs-on: redducklabs-runners
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -49,7 +49,7 @@ jobs:
         run: timeout 120 corepack pnpm@11.21.0 audit --audit-level high
 
   trivy-fs:
-    runs-on: redducklabs-runners
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       security-events: write
@@ -87,7 +87,7 @@ jobs:
     # Report-only (ignore-unfixed) — see Task 5's scanning policy. Active on push +
     # daily, NOT every PR (image builds are heavy — web needs codegen + a full Next build).
     if: github.event_name != 'pull_request'
-    runs-on: redducklabs-runners
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       security-events: write

@@ -2,6 +2,11 @@ packages:
   - "web"
   - "mobile"
   - "packages/*"
+
+# Enforce the supply-chain maturity gate on every install, including GitHub-hosted CI.
+minimumReleaseAge: 1440
+minimumReleaseAgeStrict: true
+
 overrides:
   # GHSA-52cp-r559-cp3m / GHSA-5p4m-2wfm-xmqj: patched 4.x release is compatible
   # with Redocly and Expo CLI. Remove once all consumers normally resolve >=4.3.1.
@@ -15,6 +20,9 @@ overrides:
   # GHSA-6g55-p6wh-862q / GHSA-r28c-9q8g-f849: patched release is compatible with the
   # existing Next, Expo, Tailwind, and Vite PostCSS 8 ranges.
   postcss: "8.5.18"
+  # GHSA-c83g-rgw3-j3cx / GHSA-73wf-gq98-2v4g: the patched 4.x release is compatible
+  # with Expo CLI's existing browserslist range.
+  browserslist: "4.28.7"
   # GHSA-rgw5-rvv9-x895: keep each transitive consumer on its compatible major while
   # forcing the patched release for that line. Remove once upstream ranges resolve these.
   "brace-expansion@<1.1.18": "1.1.18"
