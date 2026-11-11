@@ -13,9 +13,9 @@
   "dependencies": {
     "@fountainrank/api-client": "workspace:*",
     "@fountainrank/contributions": "workspace:*",
-    "@logto/next": "4.2.10",
-    "maplibre-gl": "6.5.0",
-    "next": "16.3.2",
+    "@logto/next": "5.0.2",
+    "maplibre-gl": "6.17.0",
+    "next": "16.4.5",
     "next-themes": "0.4.6",
     "pmtiles": "4.5.0",
     "react": "19.2.7",
@@ -23,20 +23,20 @@
     "server-only": "0.0.1"
   },
   "devDependencies": {
-    "@maplibre/maplibre-gl-style-spec": "26.2.1",
-    "@tailwindcss/postcss": "4.3.3",
+    "@maplibre/maplibre-gl-style-spec": "26.5.1",
+    "@tailwindcss/postcss": "4.3.5",
     "@testing-library/jest-dom": "7.0.1",
-    "@testing-library/react": "16.3.2",
+    "@testing-library/react": "16.3.3",
     "@types/geojson": "7946.0.16",
-    "@types/node": "22.20.1",
+    "@types/node": "22.20.5",
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
     "eslint": "9.39.5",
-    "eslint-config-next": "16.3.2",
-    "jsdom": "30.0.1",
-    "tailwindcss": "4.3.3",
+    "eslint-config-next": "16.4.5",
+    "jsdom": "31.0.0",
+    "tailwindcss": "4.3.5",
     "typescript": "6.0.3",
-    "vite": "8.2.2",
-    "vitest": "4.1.11"
+    "vite": "8.3.6",
+    "vitest": "5.1.0"
   }
 }
