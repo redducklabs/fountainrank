@@ -56,6 +56,11 @@ auditConfig:
     # drops or patches the dependency.
     - GHSA-w3rx-r6r6-pgpr
     - GHSA-5p2g-fcmc-qvqq
+    # GHSA-qr28-fpjm-wq7f (decode-uri-component quadratic DoS): the only fix, 0.5.1, is ESM-only
+    # and breaks query-string 7's require(), which expo-router (latest included) pins. It only
+    # parses the app's own deep links on-device; no server path uses it. Remove when expo-router
+    # drops or upgrades query-string.
+    - GHSA-qr28-fpjm-wq7f
 allowBuilds:
   sharp: true
   unrs-resolver: true
