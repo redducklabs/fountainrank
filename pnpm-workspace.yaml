@@ -17,9 +17,9 @@ overrides:
   # GHSA-f88m-g3jw-g9cj / GHSA-rgj7-g3m4-5g8c / GHSA-wq5f-xc86-pv6w: Next's compatible optional range still resolves sharp 0.34.x.
   # Remove once Next normally resolves sharp >=0.35.5.
   sharp: "0.35.5"
-  # GHSA-6g55-p6wh-862q / GHSA-r28c-9q8g-f849: patched release is compatible with the
+  # GHSA-6g55-p6wh-862q / GHSA-r28c-9q8g-f849 / CVE-2026-69153: patched release is compatible with the
   # existing Next, Expo, Tailwind, and Vite PostCSS 8 ranges.
-  postcss: "8.5.18"
+  postcss: "8.5.29"
   # GHSA-c83g-rgw3-j3cx / GHSA-73wf-gq98-2v4g: the patched 4.x release is compatible
   # with Expo CLI's existing browserslist range.
   browserslist: "4.28.7"
