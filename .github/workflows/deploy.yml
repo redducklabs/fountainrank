@@ -165,6 +165,8 @@ jobs:
           version: v3.21.1
       - name: Install/upgrade ingress-nginx (NodePort 30080/30443)
         run: |
+          # use-http2=false: CVE-2026-123633 / CVE-2026-123007 (NGINX HTTP/2 RCE). ingress-nginx
+          # is retired and ships no patched NGINX; keep HTTP/2 off until the controller is replaced.
           helm upgrade --install ingress-nginx ingress-nginx \
             --repo https://kubernetes.github.io/ingress-nginx \
             --version 4.15.1 \
@@ -175,6 +177,7 @@ jobs:
             --set controller.config.use-forwarded-headers="true" \
             --set controller.config.compute-full-forwarded-for="true" \
             --set controller.config.use-proxy-protocol="false" \
+            --set-string controller.config.use-http2=false \
             --wait
       - name: Render + apply namespace first
         run: |
