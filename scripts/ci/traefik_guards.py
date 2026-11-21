@@ -12,9 +12,9 @@ Stdlib-only so they run on a bare GitHub runner.
       Check with doctl that no public source can reach the given TCP ports on ANY node of the
       cluster. DigitalOcean Cloud Firewalls are allow-lists and an unfirewalled droplet accepts
       everything, so for every node (from `doctl kubernetes cluster node-pool list`):
-        * at least one firewall must apply to it, by the `k8s:<cluster-id>` tag (only if the
-          droplet really carries the tag, per `doctl compute droplet list --tag-name`) or by
-          droplet ID;
+        * its real tags are read (`doctl compute droplet list`); a firewall applies to it via ANY
+          of those tags or via its droplet ID, and at least one must apply. A node whose
+          droplet can't be found fails (its firewalls can't be determined);
         * no inbound TCP rule of an applied firewall that covers a port may allow a source other
           than an RFC 1918 IPv4 range. Resource selectors (droplet IDs, tags, load balancers,
           clusters) can't be proven VPC-only, so they count as public, as do IPv6 and
@@ -89,9 +89,8 @@ def _sources_are_private(sources: dict | None) -> bool:
 
 @dataclass(frozen=True)
 class Cluster:
-    tag: str  # k8s:<cluster-id>
-    nodes: frozenset[str]  # node droplet IDs
-    tagged: frozenset[str]  # droplet IDs that carry `tag`
+    # Node droplet ID -> that droplet's tags (None: the droplet wasn't found).
+    nodes: dict[str, frozenset[str] | None]
 
 
 def check_firewalls(
@@ -101,9 +100,12 @@ def check_firewalls(
     wanted = set(ports)
     if not cluster.nodes:
         return EXPOSED, "no node droplets to check"
+    unknown = sorted(n for n, tags in cluster.nodes.items() if tags is None)
+    if unknown:
+        return EXPOSED, f"node droplet(s) {unknown} not found: their firewalls can't be checked"
 
     def applies(fw: dict, node: str) -> bool:
-        by_tag = cluster.tag in (fw.get("tags") or []) and node in cluster.tagged
+        by_tag = bool(set(fw.get("tags") or []) & (cluster.nodes[node] or frozenset()))
         return by_tag or node in {str(d) for d in fw.get("droplet_ids") or []}
 
     applied = [fw for fw in firewalls if any(applies(fw, n) for n in cluster.nodes)]
@@ -155,9 +157,13 @@ def doctl_cluster(cluster_name: str, cluster_id: str) -> Cluster:
         for node in pool.get("nodes") or []
         if node.get("droplet_id")
     }
-    tag = f"k8s:{cluster_id}"
-    tagged = _as_list(_doctl_json("compute", "droplet", "list", "--tag-name", tag), "droplets")
-    return Cluster(tag, frozenset(nodes), frozenset(str(d["id"]) for d in tagged))
+    droplets = _as_list(_doctl_json("compute", "droplet", "list"), "droplets")
+    tags = {str(d["id"]): frozenset(d.get("tags") or []) for d in droplets}
+    # cluster_id is only used to sanity-check that these really are this cluster's nodes.
+    for node in nodes:
+        if node in tags and f"k8s:{cluster_id}" not in tags[node]:
+            raise ValueError(f"node droplet {node} doesn't carry k8s:{cluster_id}")
+    return Cluster({node: tags.get(node) for node in nodes})
 
 
 def doctl_firewalls() -> list[dict]:

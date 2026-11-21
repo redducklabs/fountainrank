@@ -210,9 +210,12 @@ PUBLIC = {"addresses": ["0.0.0.0/0", "::/0"]}
 VPC = {"addresses": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]}
 
 
-def _cluster(nodes=("111", "222"), tagged=None):
-    guards = _guards()
-    return guards.Cluster(TAG, frozenset(nodes), frozenset(nodes if tagged is None else tagged))
+def _cluster(nodes=("111", "222"), tags=None):
+    """Nodes -> real droplet tags (default: every node carries the cluster tag + k8s)."""
+    tags = tags or {}
+    return _guards().Cluster(
+        {n: (tags[n] if n in tags else frozenset({TAG, "k8s"})) for n in nodes}
+    )
 
 
 def _fw(name, rules, tags=(TAG,), droplets=(), status="succeeded", pending=()):
@@ -297,14 +300,58 @@ def test_nodeport_firewall_guard_requires_every_node_to_be_covered():
     partial = [_fw("only-111", [], tags=(), droplets=("111",))]
     verdict, detail = guards.check_firewalls(partial, _cluster(), PORTS)
     assert verdict == "exposed" and "'222'" in detail
-    # The cluster-tag firewalls only cover nodes that really carry the tag.
-    verdict, detail = guards.check_firewalls(_cluster_firewalls(), _cluster(tagged=("111",)), PORTS)
+    # Tag firewalls only cover nodes that really carry the tag.
+    untagged = _cluster(tags={"222": frozenset({"k8s"})})
+    verdict, detail = guards.check_firewalls(_cluster_firewalls(), untagged, PORTS)
     assert verdict == "exposed" and "'222'" in detail
     # ...unless that node has its own (clean) firewall by droplet ID.
     own = [*_cluster_firewalls(), _fw("own-222", [], tags=(), droplets=("222",))]
-    assert guards.check_firewalls(own, _cluster(tagged=("111",)), PORTS)[0] == "ok"
+    assert guards.check_firewalls(own, untagged, PORTS)[0] == "ok"
+    # A node droplet that can't be found can't be checked.
+    missing = _cluster(tags={"222": None})
+    verdict, detail = guards.check_firewalls(_cluster_firewalls(), missing, PORTS)
+    assert verdict == "exposed" and "'222'" in detail
     # No nodes at all is a failure, not a vacuous pass.
     assert guards.check_firewalls(_cluster_firewalls(), _cluster(nodes=()), PORTS)[0] == "exposed"
+
+
+def test_nodeport_firewall_guard_follows_every_tag_a_node_carries():
+    guards = _guards()
+    # Node 222 also carries `public-workers`; a firewall attached through that tag opens 31443.
+    tags = {"222": frozenset({TAG, "k8s", "public-workers"})}
+    extra = _fw("public-workers-fw", [_rule("31443")], tags=("public-workers",))
+    verdict, detail = guards.check_firewalls(
+        [*_cluster_firewalls(), extra], _cluster(tags=tags), PORTS
+    )
+    assert verdict == "exposed" and "public-workers-fw" in detail
+    # The same firewall doesn't matter when no node carries its tag.
+    assert guards.check_firewalls([*_cluster_firewalls(), extra], _cluster(), PORTS)[0] == "ok"
+
+
+def test_doctl_cluster_reads_real_node_tags(monkeypatch):
+    guards = _guards()
+    responses = {
+        ("kubernetes", "cluster", "node-pool", "list", "c"): [
+            {"nodes": [{"droplet_id": "111"}, {"droplet_id": 222}, {"droplet_id": ""}]}
+        ],
+        ("compute", "droplet", "list"): [
+            {"id": 111, "tags": [TAG, "k8s"]},
+            {"id": 222, "tags": [TAG, "public-workers"]},
+            {"id": 999, "tags": ["other"]},
+        ],
+    }
+    monkeypatch.setattr(guards, "_doctl_json", lambda *args: responses[args])
+    cluster = guards.doctl_cluster("c", "abc")
+    assert cluster.nodes == {
+        "111": frozenset({TAG, "k8s"}),
+        "222": frozenset({TAG, "public-workers"}),
+    }
+    # A "node" that doesn't carry this cluster's tag means the wrong cluster id: fail closed.
+    with pytest.raises(ValueError):
+        guards.doctl_cluster("c", "other-id")
+    responses[("compute", "droplet", "list")] = {"not": "a list"}
+    with pytest.raises(ValueError):
+        guards.doctl_cluster("c", "abc")
 
 
 def test_nodeport_firewall_guard_waits_for_reconciliation_then_decides():
@@ -372,6 +419,10 @@ def test_nodeport_firewall_guard_cli_fails_closed(get_cluster, fetch, args, code
 
 
 # --- install-traefik.sh, end to end against fake doctl/helm/kubectl --------------------------
+#
+# The fakes keep the cluster's state in files: deploy.json is the live traefik Deployment (its
+# container args carry the trust flags exactly as the chart renders them), so every test asserts
+# the END STATE of the trust, not just which commands ran.
 
 FAKE_DOCTL = r"""#!/usr/bin/env bash
 echo "doctl $*" >> "$FAKE/log"
@@ -391,12 +442,26 @@ cat "$FAKE/$f.json"
 
 FAKE_HELM = r"""#!/usr/bin/env bash
 echo "helm $*" >> "$FAKE/log"
+deploy() {  # $1: the trust args (JSON array)
+  jq -n --argjson args "$1" \
+    '{spec: {replicas: 1, template: {spec: {containers: [{args: (["--x"] + $args)}]}}},
+      status: {replicas: 1}}' > "$FAKE/deploy.json"
+}
 case "$1" in
-  status) [ -e "$FAKE/release" ] ;;
+  pull)
+    [ -e "$FAKE/pull-fails" ] && exit 1
+    while [ $# -gt 0 ]; do [ "$1" = --destination ] && dest="$2"; shift; done
+    touch "$dest/traefik-42.4.1.tgz" ;;
   upgrade)
     if [ "$2" = "--install" ]; then
-      touch "$FAKE/release" "$FAKE/installed"
+      touch "$FAKE/installed"
+      cidr="$(sed -n 's/.*ports\.web\.forwardedHeaders\.trustedIPs={\([^}]*\)}.*/\1/p' <<<"$*")"
+      deploy "[\"--entryPoints.web.forwardedHeaders.trustedIPs=$cidr\",
+               \"--entryPoints.websecure.forwardedHeaders.trustedIPs=$cidr\"]"
       [ ! -e "$FAKE/helm-fails" ]
+    else
+      [ -e "$FAKE/withdraw-helm-fails" ] && exit 1
+      deploy '[]'
     fi ;;
   *) exit 2 ;;
 esac
@@ -404,75 +469,124 @@ esac
 
 FAKE_KUBECTL = r"""#!/usr/bin/env bash
 echo "kubectl $*" >> "$FAKE/log"
-cat "$FAKE/annotation"
+[ -e "$FAKE/kubectl-fails" ] && exit 1
+case "$*" in
+  *"get service traefik"*) cat "$FAKE/annotation" ;;
+  *"get deployment traefik --ignore-not-found"*)
+    [ ! -e "$FAKE/deploy.json" ] || cat "$FAKE/deploy.json" ;;
+  *"get deployment traefik"*) [ -e "$FAKE/deploy.json" ] && cat "$FAKE/deploy.json" ;;
+  "replace -f -")
+    [ -e "$FAKE/replace-fails" ] && exit 1
+    cat > "$FAKE/deploy.json" ;;
+  *"rollout status"*) : ;;
+  *"scale deployment traefik --replicas=0"*)
+    [ -e "$FAKE/scale-fails" ] && exit 1
+    jq '.spec.replicas = 0 | .status.replicas = 0' "$FAKE/deploy.json" > "$FAKE/d.tmp"
+    mv "$FAKE/d.tmp" "$FAKE/deploy.json" ;;
+  *) echo "unexpected kubectl $*" >&2; exit 2 ;;
+esac
 """
 
 _BASH = os.environ.get("TRAEFIK_TEST_BASH") or (None if os.name == "nt" else shutil.which("bash"))
+TRUSTED = [
+    "--entryPoints.web.forwardedHeaders.trustedIPs=10.124.0.0/20",
+    "--entryPoints.websecure.forwardedHeaders.trustedIPs=10.124.0.0/20",
+]
 
 
-@pytest.fixture
-def fake(tmp_path):
-    if not _BASH:
-        pytest.skip("needs a POSIX bash (set TRAEFIK_TEST_BASH on Windows)")
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    for name, body in (("doctl", FAKE_DOCTL), ("helm", FAKE_HELM), ("kubectl", FAKE_KUBECTL)):
-        path = bin_dir / name
-        path.write_text(body, newline="\n")
-        path.chmod(0o755)
-    state = tmp_path / "state"
-    state.mkdir()
+class _Fake:
+    def __init__(self, tmp_path):
+        self.tmp = tmp_path
+        self.bin = tmp_path / "bin"
+        self.state = tmp_path / "state"
+        self.bin.mkdir()
+        self.state.mkdir()
+        for name, body in (("doctl", FAKE_DOCTL), ("helm", FAKE_HELM), ("kubectl", FAKE_KUBECTL)):
+            path = self.bin / name
+            path.write_text(body, newline="\n")
+            path.chmod(0o755)
+        self.write("cluster.json", {"id": "abc", "vpc_uuid": "vpc-1"})
+        self.write("vpc.json", {"ip_range": "10.124.0.0/20"})
+        self.write("pools.json", [{"nodes": [{"droplet_id": "111"}, {"droplet_id": "222"}]}])
+        self.write("droplets.json", [{"id": 111, "tags": [TAG]}, {"id": 222, "tags": [TAG]}])
+        self.write("firewalls.json", _cluster_firewalls())
+        self.write("annotation", "false")
 
-    def write(name, data):
-        (state / name).write_text(data if isinstance(data, str) else json.dumps(data))
+    def write(self, name, data):
+        (self.state / name).write_text(data if isinstance(data, str) else json.dumps(data))
 
-    write("cluster.json", {"id": "abc", "vpc_uuid": "vpc-1"})
-    write("vpc.json", {"ip_range": "10.124.0.0/20"})
-    write("pools.json", [{"nodes": [{"droplet_id": "111"}, {"droplet_id": "222"}]}])
-    write("droplets.json", [{"id": 111}, {"id": 222}])
-    write("firewalls.json", _cluster_firewalls())
-    write("annotation", "false")
+    def touch(self, name):
+        (self.state / name).touch()
 
-    def run():
+    def running_with_trust(self):
+        """A previously deployed Traefik that trusts the VPC."""
+        self.write(
+            "deploy.json",
+            {
+                "spec": {"replicas": 1, "template": {"spec": {"containers": [{"args": TRUSTED}]}}},
+                "status": {"replicas": 1},
+            },
+        )
+
+    def trust_live(self):
+        path = self.state / "deploy.json"
+        if not path.exists():
+            return False
+        deploy = json.loads(path.read_text())
+        if deploy["spec"]["replicas"] == 0 and deploy["status"].get("replicas", 0) == 0:
+            return False
+        args = deploy["spec"]["template"]["spec"]["containers"][0]["args"]
+        return any("forwardedHeaders." in a for a in args)
+
+    def run(self):
         env = {
             **os.environ,
-            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
-            "FAKE": str(state),
+            "PATH": f"{self.bin}{os.pathsep}{os.environ['PATH']}",
+            "FAKE": str(self.state),
             "CLUSTER_NAME": "c",
             "PYTHON": sys.executable,
-            "RUNNER_TEMP": str(tmp_path),
+            "RUNNER_TEMP": str(self.tmp),
         }
         res = subprocess.run(
             [_BASH, str(INSTALL)], cwd=ROOT, env=env, capture_output=True, text=True
         )
-        log = (state / "log").read_text() if (state / "log").exists() else ""
-        helm = [line for line in log.splitlines() if line.startswith("helm upgrade")]
-        installs = [line for line in helm if line.startswith("helm upgrade --install")]
-        withdrawals = [line for line in helm if "--reuse-values" in line]
-        return res, installs, withdrawals
+        log_path = self.state / "log"
+        self.log = log_path.read_text().splitlines() if log_path.exists() else []
+        self.installs = [line for line in self.log if line.startswith("helm upgrade --install")]
+        self.withdrawals = [line for line in self.log if "--reuse-values" in line]
+        return res
 
-    run.write = write
-    run.state = state
-    run.tmp = tmp_path
-    return run
+
+@pytest.fixture
+def fake(tmp_path):
+    if not _BASH or not shutil.which("jq"):
+        pytest.skip("needs a POSIX bash + jq (set TRAEFIK_TEST_BASH on Windows)")
+    return _Fake(tmp_path)
 
 
 def test_install_script_happy_path_installs_with_vpc_trust(fake):
-    res, installs, withdrawals = fake()
+    res = fake.run()
     assert res.returncode == 0, res.stderr
-    assert len(installs) == 1 and not withdrawals
-    assert "--set ports.web.forwardedHeaders.trustedIPs={10.124.0.0/20}" in installs[0]
-    assert "--set ports.websecure.forwardedHeaders.trustedIPs={10.124.0.0/20}" in installs[0]
-    assert "--version 42.4.1" in installs[0]
+    assert len(fake.installs) == 1 and not fake.withdrawals
+    install = fake.installs[0]
+    assert "--set ports.web.forwardedHeaders.trustedIPs={10.124.0.0/20}" in install
+    assert "--set ports.websecure.forwardedHeaders.trustedIPs={10.124.0.0/20}" in install
+    assert "traefik-chart/traefik-42.4.1.tgz" in install  # the pulled, pinned chart
+    assert any(
+        "helm pull traefik --repo https://traefik.github.io/charts --version 42.4.1" in line
+        for line in fake.log
+    )
+    assert fake.trust_live()  # the happy path keeps the (verified) trust
 
 
-def test_install_script_pre_check_failure_withdraws_trust_from_existing_release(fake):
-    (fake.state / "release").touch()
+def test_install_script_pre_check_failure_withdraws_trust_from_running_traefik(fake):
+    fake.running_with_trust()
     fake.write("firewalls.json", _cluster_firewalls(_rule("31443")))
-    res, installs, withdrawals = fake()
+    res = fake.run()
     assert res.returncode == 1
-    assert not installs  # trust never goes live behind a public NodePort
-    assert len(withdrawals) == 1
+    assert not fake.installs  # trust never (re)goes live behind a public NodePort
+    assert len(fake.withdrawals) == 1 and "traefik-no-trust.yaml" in fake.withdrawals[0]
+    assert not fake.trust_live()
     no_trust = yaml.safe_load((fake.tmp / "traefik-no-trust.yaml").read_text())
     assert no_trust == {
         "ports": {
@@ -480,23 +594,33 @@ def test_install_script_pre_check_failure_withdraws_trust_from_existing_release(
             "websecure": {"forwardedHeaders": {"trustedIPs": []}},
         }
     }
-    assert "--version 42.4.1" in withdrawals[0] and "traefik-no-trust.yaml" in withdrawals[0]
 
 
-def test_install_script_pre_check_failure_without_release_installs_nothing(fake):
+def test_install_script_pre_check_failure_without_traefik_changes_nothing(fake):
     fake.write("firewalls.json", _cluster_firewalls(_rule("31080")))
-    res, installs, withdrawals = fake()
-    assert res.returncode == 1 and not installs and not withdrawals
+    res = fake.run()
+    assert res.returncode == 1
+    assert not fake.installs and not fake.withdrawals
+    assert not (fake.state / "deploy.json").exists()
 
 
 @pytest.mark.parametrize(
     "breakage",
-    ["helm-fails", "annotation", "after-firewall", "bad-vpc", "no-cluster", "no-nodes"],
+    [
+        "helm-fails",
+        "annotation",
+        "after-firewall",
+        "bad-vpc",
+        "no-cluster",
+        "no-nodes",
+        "untagged-node",
+        "pull-fails",
+    ],
 )
-def test_install_script_every_failure_withdraws_trust(fake, breakage):
-    (fake.state / "release").touch()  # a previously deployed release is running
-    if breakage == "helm-fails":
-        (fake.state / "helm-fails").touch()
+def test_install_script_every_failure_ends_without_live_trust(fake, breakage):
+    fake.running_with_trust()
+    if breakage in ("helm-fails", "pull-fails"):
+        fake.touch(breakage)
     elif breakage == "annotation":
         fake.write("annotation", "")
     elif breakage == "after-firewall":
@@ -507,8 +631,62 @@ def test_install_script_every_failure_withdraws_trust(fake, breakage):
         (fake.state / "cluster.json").unlink()
     elif breakage == "no-nodes":
         fake.write("pools.json", [])
-    res, installs, withdrawals = fake()
+    elif breakage == "untagged-node":
+        fake.write("droplets.json", [{"id": 111, "tags": [TAG]}, {"id": 222, "tags": []}])
+    res = fake.run()
     assert res.returncode == 1, res.stdout
-    assert len(withdrawals) == 1, (res.stdout, res.stderr)
-    if breakage in ("bad-vpc", "no-cluster", "no-nodes"):
-        assert not installs
+    assert not fake.trust_live(), (res.stdout, res.stderr)
+    if breakage not in ("helm-fails", "annotation", "after-firewall"):
+        assert not fake.installs
+    if breakage == "pull-fails":
+        # No chart to helm-withdraw with: the live Deployment is patched directly.
+        assert not fake.withdrawals
+        assert "kubectl replace -f -" in fake.log
+
+
+def test_install_script_falls_back_to_patching_the_deployment(fake):
+    fake.running_with_trust()
+    fake.write("firewalls.json", _cluster_firewalls(_rule("31443")))
+    fake.touch("withdraw-helm-fails")  # e.g. the API rejects the upgrade
+    res = fake.run()
+    assert res.returncode == 1
+    assert "kubectl replace -f -" in fake.log
+    assert not fake.trust_live()
+    deploy = json.loads((fake.state / "deploy.json").read_text())
+    assert deploy["spec"]["replicas"] == 1  # still serving, just without the trust
+    assert deploy["spec"]["template"]["spec"]["containers"][0]["args"] == []
+
+
+def test_install_script_scales_to_zero_as_last_resort(fake):
+    fake.running_with_trust()
+    fake.write("firewalls.json", _cluster_firewalls(_rule("31443")))
+    fake.touch("withdraw-helm-fails")
+    fake.touch("replace-fails")
+    res = fake.run()
+    assert res.returncode == 1
+    assert any("scale deployment traefik --replicas=0" in line for line in fake.log)
+    assert not fake.trust_live()
+    assert "scaled to 0" in res.stdout
+
+
+def test_install_script_reports_when_containment_is_impossible(fake):
+    fake.running_with_trust()
+    fake.write("firewalls.json", _cluster_firewalls(_rule("31443")))
+    for marker in ("withdraw-helm-fails", "replace-fails", "scale-fails"):
+        fake.touch(marker)
+    res = fake.run()
+    assert res.returncode == 1
+    assert fake.trust_live()
+    assert "COULD NOT CONTAIN" in res.stdout
+
+
+def test_install_script_treats_an_unreadable_cluster_as_trusted(fake):
+    # The API can't be read (not "no release"): containment is attempted and its failure reported.
+    fake.running_with_trust()
+    fake.write("firewalls.json", _cluster_firewalls(_rule("31443")))
+    fake.touch("kubectl-fails")
+    fake.touch("withdraw-helm-fails")
+    res = fake.run()
+    assert res.returncode == 1
+    assert "state: unknown" in res.stdout
+    assert "COULD NOT CONTAIN" in res.stdout

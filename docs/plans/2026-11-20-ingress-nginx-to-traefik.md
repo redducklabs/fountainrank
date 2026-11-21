@@ -38,8 +38,8 @@ and the DOKS-managed `k8s-<cluster-id>-worker` firewall allows all TCP from RFC 
 failure path is handled in one place. It resolves and validates the VPC range, then runs
 `scripts/ci/traefik_guards.py nodeports-not-public`, which reads with `doctl`:
 
-- the cluster's nodes (node-pool list) and which droplets really carry the `k8s:<cluster-id>` tag,
-- every Cloud Firewall, keeping those applied to a node by that tag or by droplet ID.
+- the cluster's nodes (node-pool list) and each node droplet's real tags (droplet list),
+- every Cloud Firewall, keeping those applied to a node through ANY of its tags or its droplet ID.
 
 It fails if any node has no firewall at all (an unfirewalled droplet accepts everything), if any
 applied inbound TCP rule covering 31080/31443 allows a source other than an RFC 1918 IPv4 range
@@ -52,11 +52,20 @@ script runs it:
    public NodePort (for example a stale or hand-made rule).
 2. **After the install**, together with a check that the live Service carries the annotation.
 
-**Any** failure in the script (VPC lookup, either check, the Helm install itself) first withdraws
-the trust from an existing release (`helm upgrade --reuse-values` with both `trustedIPs` set to
-`[]`, so Traefik overwrites `X-Forwarded-*` itself and only the client IP degrades to the LB/node
-address), then fails the deploy. A failure in an earlier deploy step leaves Traefik untouched in
-its last verified state.
+**Any** failure in the script (chart fetch, VPC lookup, either check, the Helm install itself)
+withdraws the trust from whatever Traefik is running, then fails the deploy. It verifies the
+result against the live Deployment (no `forwardedHeaders.trustedIPs`/`insecure` flags in its pod
+template, or scaled to zero; an unreadable API counts as still trusted) and escalates until that
+holds:
+
+1. `helm upgrade --reuse-values` with both `trustedIPs` set to `[]`, from the chart the script
+   already pulled (no chart-repo round trip). Traefik then overwrites `X-Forwarded-*` itself; only
+   the client IP degrades to the LB/node address.
+2. Strip the trust flags from the live Deployment (`kubectl replace`), still serving.
+3. Scale Traefik to 0: in Phase B and later that is an outage, which beats forgeable forwarded
+   headers. If even that fails the log says `COULD NOT CONTAIN` and someone has to act.
+
+A failure in an earlier deploy step leaves Traefik untouched in its last verified state.
 
 The annotation is the primary control; the firewall read is the backstop (the cloud-controller
 reconciles asynchronously, so a rule it adds later would be caught by the next deploy's
