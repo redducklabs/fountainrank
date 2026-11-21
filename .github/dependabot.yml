@@ -65,6 +65,15 @@ updates:
     commit-message:
       prefix: "build"
 
+  # Digest-pinned container images (e.g. the nginx default backend in infra/k8s/ingress.yaml)
+  # never move on their own; let Dependabot propose tag+digest bumps.
+  - package-ecosystem: docker
+    directories: ["/backend", "/web", "/infra/k8s"]
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "build"
+
   - package-ecosystem: github-actions
     directory: "/"
     schedule:

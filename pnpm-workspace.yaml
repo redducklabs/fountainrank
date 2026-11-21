@@ -40,14 +40,15 @@ overrides:
   # node-forge (eight advisories fixed in 1.4.1), source-map-js GHSA-68fv-2mgg-jv7q and
   # compression GHSA-vc2v-76pw-4v95 are transitive via Expo CLI / Metro; the patched releases
   # are compatible minors. Remove once Expo resolves them normally.
-  "node-forge@<1.4.1": "1.4.3"
+  "node-forge@>=1.0.0 <1.4.1": "1.4.3"
   "source-map-js@>=1.0.0 <1.2.2": "1.2.4"
   "compression@<1.8.2": "1.8.2"
   # GHSA-mrhx-c7xc-m3w5: ESLint's React Hooks plugin accepts zod ^4; force the patched 4.x.
   "zod@>=4.0.0 <4.6.6": "4.6.7"
-  # CVE-2026-118764 (minimatch globparts DoS) is fixed only in 11.0.1+. The 10.x consumer is
-  # @expo/fingerprint, which loads it via require(); Node >=22.12 loads the ESM-only 11.x that
-  # way, and its Minimatch export is unchanged. Remove once Expo resolves minimatch >=11.0.1.
+  # CVE-2026-118764 (minimatch globparts DoS) is fixed only in 11.0.1+. 11.x is a dual
+  # CJS/ESM package, so require() consumers keep working. The 10.x consumers are
+  # @expo/fingerprint (Minimatch class) and @typescript-eslint/typescript-estree (minimatch());
+  # 11.x drops the makeRe/AST exports, which neither uses. Remove once both resolve >=11.0.1.
   "minimatch@>=10.0.0 <11.0.1": "11.0.9"
 auditConfig:
   # GHSA-mh99-v99m-4gvg is confined to transitive globbing dependencies. The only published fix
@@ -61,9 +62,10 @@ auditConfig:
     - GHSA-w3rx-r6r6-pgpr
     - GHSA-5p2g-fcmc-qvqq
     # GHSA-qr28-fpjm-wq7f (decode-uri-component quadratic DoS): the only fix, 0.5.1, is ESM-only
-    # and breaks query-string 7's require(), which expo-router (latest included) pins. It only
-    # parses the app's own deep links on-device; no server path uses it. Remove when expo-router
-    # drops or upgrades query-string.
+    # and breaks query-string 7's require(). query-string 7 comes from expo-router 57 (SDK 57);
+    # expo-router 58 (SDK 58) no longer depends on it. Deep links are attacker-supplied, but the
+    # impact is an on-device DoS of the app only; no server path uses it. Remove with the Expo
+    # SDK 58 upgrade.
     - GHSA-qr28-fpjm-wq7f
 allowBuilds:
   sharp: true
