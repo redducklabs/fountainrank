@@ -179,6 +179,40 @@ jobs:
             --set controller.config.use-proxy-protocol="false" \
             --set-string controller.config.use-http2=false \
             --wait
+      # ingress-nginx -> Traefik migration, Phase A (docs/plans/2026-11-20-ingress-nginx-to-traefik.md):
+      # Traefik runs ALONGSIDE ingress-nginx on NodePorts 31080/31443 and reads the same Ingress
+      # objects. The DO LB still forwards to ingress-nginx (30080/30443), so no live traffic moves.
+      # Traefik trusts X-Forwarded-* only from the cluster's VPC range (the DO LB + nodes), resolved
+      # here rather than hardcoded. Fail closed: no range, or anything but a private IPv4 CIDR,
+      # stops the deploy instead of installing Traefik with a wider (or empty) trust list.
+      - name: Resolve cluster VPC range (Traefik forwarded-header trust)
+        id: vpc
+        run: |
+          set -euo pipefail
+          vpc_uuid="$(doctl kubernetes cluster get "$CLUSTER_NAME" --output json \
+            | jq -r 'if type == "array" then .[0] else . end | .vpc_uuid // empty')"
+          if [ -z "$vpc_uuid" ]; then
+            echo "::error::could not resolve the VPC of $CLUSTER_NAME"; exit 1
+          fi
+          vpc_cidr="$(doctl vpcs get "$vpc_uuid" --output json \
+            | jq -r 'if type == "array" then .[0] else . end | .ip_range // empty')"
+          if ! printf '%s' "$vpc_cidr" | grep -Eq '^(10|172\.(1[6-9]|2[0-9]|3[01])|192\.168)\.[0-9.]+/(8|9|[12][0-9]|3[0-2])$'; then
+            echo "::error::unexpected VPC range '$vpc_cidr' for $CLUSTER_NAME (want a private IPv4 CIDR)"; exit 1
+          fi
+          echo "Cluster VPC $vpc_uuid range $vpc_cidr"
+          echo "cidr=$vpc_cidr" >> "$GITHUB_OUTPUT"
+      - name: Install/upgrade Traefik (NodePort 31080/31443, alongside ingress-nginx)
+        env:
+          VPC_CIDR: ${{ steps.vpc.outputs.cidr }}
+        run: |
+          helm upgrade --install traefik traefik \
+            --repo https://traefik.github.io/charts \
+            --version 42.4.1 \
+            --namespace traefik --create-namespace \
+            --values infra/helm/traefik-values.yaml \
+            --set "ports.web.forwardedHeaders.trustedIPs={$VPC_CIDR}" \
+            --set "ports.websecure.forwardedHeaders.trustedIPs={$VPC_CIDR}" \
+            --wait
       - name: Render + apply namespace first
         run: |
           export NAMESPACE ENVIRONMENT IMAGE_TAG REGISTRY DOMAIN

@@ -1,0 +1,143 @@
+# Helm values for Traefik, the replacement for the retired ingress-nginx controller.
+# Chart traefik/traefik 42.4.1 (Traefik v3.7.19), installed by .github/workflows/deploy.yml
+# into its own `traefik` namespace. NOT a Kubernetes manifest: it lives outside infra/k8s/ so
+# the envsubst + kubeconform loop there doesn't pick it up.
+#
+# Traefik reads the EXISTING Ingress objects (ingressClassName: nginx) through its Kubernetes
+# Ingress NGINX provider, which translates the nginx.ingress.kubernetes.io/* annotations we use
+# (ssl-redirect, force-ssl-redirect, proxy-body-size, use-regex, rewrite-target). The one
+# annotation with no provider equivalent, use-forwarded-headers, is reproduced with the
+# entryPoint forwardedHeaders.trustedIPs below.
+#
+# Rollout (docs/plans/2026-11-20-ingress-nginx-to-traefik.md):
+#   Phase A: Traefik runs ALONGSIDE ingress-nginx on its own NodePorts (31080/31443); the DO LB
+#            still forwards to ingress-nginx (30080/30443), so no traffic reaches Traefik yet.
+#   Phase B: Terraform flips the LB forwarding rules + health check to 31080/31443.
+#   Phase C: ingress-nginx is uninstalled.
+
+deployment:
+  # Same as the ingress-nginx controller today (single replica on a small autoscaled pool).
+  # updateStrategy (chart default maxUnavailable 0 / maxSurge 1) keeps a pod serving during
+  # rollouts; the fixed NodePort is a Service property, so a surge pod doesn't conflict.
+  replicas: 1
+
+# The chart would otherwise create a `traefik` IngressClass marked as the cluster DEFAULT class,
+# which would change how any class-less Ingress is admitted. We only serve the existing `nginx`
+# class, so create no IngressClass at all.
+ingressClass:
+  enabled: false
+
+# No dashboard (it would only be reachable on the unexposed `traefik` port anyway). /ping stays on
+# the internal `traefik` entryPoint for the kubelet probes.
+api:
+  dashboard: false
+
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+providers:
+  # Only needed for the `default` TLSOption below. Nothing in the repo uses IngressRoute CRDs.
+  kubernetesCRD:
+    enabled: true
+    allowCrossNamespace: false
+    allowExternalNameServices: false
+    # The cluster-wide `default` TLSOption/TLSStore may only be defined in Traefik's namespace,
+    # so an object in any other namespace can't weaken the default TLS settings.
+    defaultTLSResourcesNamespace: traefik
+  # The standard Ingress provider would also read Ingresses (and write their status). Off: the
+  # Ingress NGINX provider below is the only one that reads Ingress objects.
+  kubernetesIngress:
+    enabled: false
+  kubernetesIngressNGINX:
+    enabled: true
+    # Defaults spelled out: satisfy IngressClass objects whose controller is
+    # k8s.io/ingress-nginx (the `nginx` class), and ignore class-less Ingresses.
+    controllerClass: "k8s.io/ingress-nginx"
+    ingressClass: "nginx"
+    watchIngressWithoutClass: false
+    # While ingress-nginx is still installed it owns the Ingress status (load-balancer address).
+    # Traefik must not write it too, or the two controllers would fight over it.
+    publishService:
+      enabled: false
+    # ingress-nginx buffers request bodies by default (proxy_request_buffering on) and enforces
+    # proxy-body-size (25m web/auth, 12m api, 1m default). In the Traefik provider, proxy-body-size
+    # is ONLY enforced through the Buffering middleware, which it only adds when request buffering
+    # is on. Without this, the body-size limits in infra/k8s/ingress.yaml would silently stop
+    # applying. Bodies above the 16 KiB in-memory buffer spill to the /tmp emptyDir.
+    proxyRequestBuffering: true
+    # Kept at the default (true): a Prefix/Exact path containing regex characters is rejected.
+    # The only regex path (basemap-tiles /tiles(/|$)(.*)) is ImplementationSpecific, which is allowed.
+    strictValidatePathType: true
+    # Defaults, spelled out: non-TLS routers on `web`, TLS routers on `websecure`.
+    httpEntryPoint: web
+    httpsEntryPoint: websecure
+
+ports:
+  web:
+    nodePort: 31080
+    # Today ingress-nginx runs with use-forwarded-headers=true behind the DO LB and no
+    # proxy-real-ip-cidr, i.e. it trusts X-Forwarded-* from ANY source. Traefik trusts them only
+    # from the cluster's VPC range (where the DO LB and the nodes live). CI fills this in at
+    # deploy time from the cluster's VPC (doctl), so the CIDR isn't hardcoded here and the
+    # deploy fails closed if it can't be resolved. Never 0.0.0.0/0, never `insecure: true`.
+    forwardedHeaders:
+      trustedIPs: []
+      insecure: false
+  websecure:
+    nodePort: 31443
+    # The DO LB terminates public TLS with the Let's Encrypt cert and re-encrypts to this
+    # NodePort. Like ingress-nginx's "Kubernetes Ingress Controller Fake Certificate", Traefik
+    # presents its self-signed default certificate here; the DO LB does not verify backend certs.
+    http:
+      tls:
+        enabled: true
+    forwardedHeaders:
+      trustedIPs: []
+      insecure: false
+
+# TLS 1.2+ on the LB -> Traefik hop. The LB connects by node IP without a matching SNI, so the
+# handshake uses this `default` option. (Per-host options the NGINX provider generates also
+# default to TLS 1.2+.)
+tlsOptions:
+  default:
+    minVersion: VersionTLS12
+    sniStrict: false
+
+service:
+  spec:
+    type: NodePort
+
+# Structured logs to stdout (repo logging standard). Access logs carry ClientHost, which is how
+# Phase A verifies the source addresses Traefik sees before the LB is flipped. Headers are not
+# logged (chart/Traefik default drops them).
+log:
+  format: json
+  level: INFO
+accessLog:
+  enabled: true
+  format: json
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "128Mi"
+  limits:
+    cpu: "500m"
+    memory: "256Mi"
+
+# Chart defaults, spelled out so the hardening is visible in review: non-root UID 65532,
+# read-only root filesystem, no privilege escalation, all capabilities dropped, RuntimeDefault
+# seccomp. Traefik listens on unprivileged container ports (8000/8443), so it needs no
+# NET_BIND_SERVICE.
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+  readOnlyRootFilesystem: true
+podSecurityContext:
+  runAsGroup: 65532
+  runAsNonRoot: true
+  runAsUser: 65532
+  seccompProfile:
+    type: RuntimeDefault
