@@ -34,18 +34,29 @@ Service opts out with `kubernetes.digitalocean.com/firewall-managed: "false"`, s
 no public rule and are reachable only over the VPC. The DO LB still reaches them: it connects to
 the nodes from a private VPC address (ingress-nginx logs the LB health check from `10.124.0.x`),
 and the DOKS-managed `k8s-<cluster-id>-worker` firewall allows all TCP from RFC 1918 sources.
-`deploy.yml` enforces this with `scripts/ci/traefik_guards.py nodeports-not-public`, which reads
-every Cloud Firewall applied to the nodes (by the `k8s:<cluster-id>` tag or by droplet ID) and
-fails if any lets a non-RFC 1918 source reach 31080/31443, if no firewall applies at all, or if a
-firewall failed or never finishes applying (it re-reads while `status` isn't `succeeded` or
-`pending_changes` is non-empty):
+`deploy.yml` installs Traefik through one script, `scripts/ci/install-traefik.sh`, so every
+failure path is handled in one place. It resolves and validates the VPC range, then runs
+`scripts/ci/traefik_guards.py nodeports-not-public`, which reads with `doctl`:
+
+- the cluster's nodes (node-pool list) and which droplets really carry the `k8s:<cluster-id>` tag,
+- every Cloud Firewall, keeping those applied to a node by that tag or by droplet ID.
+
+It fails if any node has no firewall at all (an unfirewalled droplet accepts everything), if any
+applied inbound TCP rule covering 31080/31443 allows a source other than an RFC 1918 IPv4 range
+(resource selectors such as droplet IDs, tags or load balancers can't be proven VPC-only, so they
+count as public, as do IPv6 and unparseable addresses), or if a firewall failed or never finishes
+applying (it re-reads while `status` isn't `succeeded` or `pending_changes` is non-empty). The
+script runs it:
 
 1. **Before the install**, so Traefik with VPC trust is never installed or upgraded behind a
    public NodePort (for example a stale or hand-made rule).
-2. **After the install**, together with a check that the live Service carries the annotation. If
-   either fails, the step first withdraws the trust (`helm upgrade --reuse-values` with empty
-   `trustedIPs`, so Traefik overwrites `X-Forwarded-*` itself and only the client IP degrades to
-   the LB/node address), then fails the deploy.
+2. **After the install**, together with a check that the live Service carries the annotation.
+
+**Any** failure in the script (VPC lookup, either check, the Helm install itself) first withdraws
+the trust from an existing release (`helm upgrade --reuse-values` with both `trustedIPs` set to
+`[]`, so Traefik overwrites `X-Forwarded-*` itself and only the client IP degrades to the LB/node
+address), then fails the deploy. A failure in an earlier deploy step leaves Traefik untouched in
+its last verified state.
 
 The annotation is the primary control; the firewall read is the backstop (the cloud-controller
 reconciles asynchronously, so a rule it adds later would be caught by the next deploy's
@@ -132,8 +143,8 @@ Merge only after Phase B has carried production traffic cleanly.
   Ingresses. Confirm the rendered args carry the VPC CIDR in
   `--entryPoints.web.forwardedHeaders.trustedIPs`.
 - `kubectl get ingress -A -o wide`: the ADDRESS column is unchanged (still ingress-nginx's).
-- NodePorts are VPC-only: the deploy's *Check ... (before install)* and *Verify ... (after
-  install)* steps passed; `kubectl -n traefik get svc traefik -o yaml` shows
+- NodePorts are VPC-only: the deploy log of `install-traefik.sh` shows both firewall checks
+  passed (`no public rule for [31080, 31443] on nodes ...`); `kubectl -n traefik get svc traefik -o yaml` shows
   `kubernetes.digitalocean.com/firewall-managed: "false"` and `externalTrafficPolicy: Cluster`;
   `doctl compute firewall list` shows no 31080/31443 rule on `k8s-public-access-<cluster-id>`. From outside DO, `curl -m 5 -k
   https://<node-public-ip>:31443/healthz` and `curl -m 5 http://<node-public-ip>:31080/healthz`

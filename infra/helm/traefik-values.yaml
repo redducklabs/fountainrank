@@ -1,5 +1,5 @@
 # Helm values for Traefik, the replacement for the retired ingress-nginx controller.
-# Chart traefik/traefik 42.4.1 (Traefik v3.7.19), installed by .github/workflows/deploy.yml
+# Chart traefik/traefik 42.4.1 (Traefik v3.7.19), installed by scripts/ci/install-traefik.sh
 # into its own `traefik` namespace. NOT a Kubernetes manifest: it lives outside infra/k8s/ so
 # the envsubst + kubeconform loop there doesn't pick it up.
 #
@@ -118,8 +118,8 @@ tlsOptions:
 # externalTrafficPolicy stays Cluster (explicit). With the public path closed, every caller that
 # can reach the NodePort is already inside the trusted range, so Local would not narrow the
 # trust; it would only make a single-replica Traefik drop LB traffic on nodes without the pod
-# and open a gap on every rollout. deploy.yml checks the node firewalls before the install and
-# the annotation + firewalls after it, withdrawing the trust if the check fails.
+# and open a gap on every rollout. scripts/ci/install-traefik.sh checks the node firewalls before
+# the install and the annotation + firewalls after it, withdrawing the trust on any failure.
 # Residual: other droplets in the same VPC are trusted (narrowing to the LB's own private
 # address isn't possible: the DO API doesn't expose it).
 service:

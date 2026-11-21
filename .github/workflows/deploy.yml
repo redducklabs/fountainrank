@@ -182,92 +182,13 @@ jobs:
       # ingress-nginx -> Traefik migration, Phase A (docs/plans/2026-11-20-ingress-nginx-to-traefik.md):
       # Traefik runs ALONGSIDE ingress-nginx on NodePorts 31080/31443 and reads the same Ingress
       # objects. The DO LB still forwards to ingress-nginx (30080/30443), so no live traffic moves.
-      # Traefik trusts X-Forwarded-* only from the cluster's VPC range (the DO LB + nodes), resolved
-      # here rather than hardcoded. Fail closed: no range, or anything but an IPv4 network inside
-      # an RFC 1918 block (scripts/ci/traefik_guards.py), stops the deploy instead of installing
-      # Traefik with a wider (or empty) trust list.
-      - name: Resolve cluster VPC range (Traefik forwarded-header trust)
-        id: vpc
-        run: |
-          set -euo pipefail
-          cluster_json="$(doctl kubernetes cluster get "$CLUSTER_NAME" --output json \
-            | jq -c 'if type == "array" then .[0] else . end')"
-          cluster_id="$(jq -r '.id // empty' <<<"$cluster_json")"
-          vpc_uuid="$(jq -r '.vpc_uuid // empty' <<<"$cluster_json")"
-          if [ -z "$cluster_id" ] || [ -z "$vpc_uuid" ]; then
-            echo "::error::could not resolve the id/VPC of $CLUSTER_NAME"; exit 1
-          fi
-          vpc_cidr="$(doctl vpcs get "$vpc_uuid" --output json \
-            | jq -r 'if type == "array" then .[0] else . end | .ip_range // empty')"
-          vpc_cidr="$(python3 scripts/ci/traefik_guards.py private-cidr "$vpc_cidr")"
-          node_droplets="$(doctl kubernetes cluster node-pool list "$CLUSTER_NAME" --output json \
-            | jq -r '[.[].nodes[]? | .droplet_id | select(. != null and . != "")] | join(",")')"
-          if [ -z "$node_droplets" ]; then
-            echo "::error::could not resolve the node droplets of $CLUSTER_NAME"; exit 1
-          fi
-          echo "Cluster $cluster_id VPC $vpc_uuid range $vpc_cidr nodes $node_droplets"
-          echo "cidr=$vpc_cidr" >> "$GITHUB_OUTPUT"
-          echo "cluster_id=$cluster_id" >> "$GITHUB_OUTPUT"
-          echo "node_droplets=$node_droplets" >> "$GITHUB_OUTPUT"
-      # The VPC trust is only sound while 31080/31443 are NOT publicly reachable: with
-      # externalTrafficPolicy Cluster a public caller can be SNATed to a node IP inside the VPC
-      # range. The Traefik Service opts out of the DOKS-managed public firewall
-      # (infra/helm/traefik-values.yaml). Check before the install that no Cloud Firewall on the
-      # nodes opens either port to a public source (a stale or hand-made rule), so a Traefik with
-      # VPC trust is never installed behind a public NodePort.
-      - name: Check Traefik NodePorts are VPC-only (before install)
-        env:
-          CLUSTER_ID: ${{ steps.vpc.outputs.cluster_id }}
-          NODE_DROPLETS: ${{ steps.vpc.outputs.node_droplets }}
-        run: |
-          python3 scripts/ci/traefik_guards.py nodeports-not-public \
-            "k8s:$CLUSTER_ID" "$NODE_DROPLETS" 31080 31443
+      # Traefik trusts X-Forwarded-* only from the cluster's VPC range (the DO LB + nodes), which is
+      # only sound while those NodePorts are VPC-only. One script, so every failure path is covered:
+      # it resolves + validates the VPC range, checks the node firewalls BEFORE the install, installs,
+      # re-checks the live Service + firewalls AFTER, and on ANY failure withdraws the trust from an
+      # existing release before failing the deploy.
       - name: Install/upgrade Traefik (NodePort 31080/31443, alongside ingress-nginx)
-        env:
-          VPC_CIDR: ${{ steps.vpc.outputs.cidr }}
-        run: |
-          helm upgrade --install traefik traefik \
-            --repo https://traefik.github.io/charts \
-            --version 42.4.1 \
-            --namespace traefik --create-namespace \
-            --values infra/helm/traefik-values.yaml \
-            --set "ports.web.forwardedHeaders.trustedIPs={$VPC_CIDR}" \
-            --set "ports.websecure.forwardedHeaders.trustedIPs={$VPC_CIDR}" \
-            --wait
-      # Re-check after the install: the live Service must carry the opt-out annotation, and the
-      # firewalls (re-read until they settle) must still open neither port. If either fails,
-      # withdraw the forwarded-header trust before failing the deploy: Traefik then overwrites
-      # X-Forwarded-* itself (proto stays correct, only the client IP becomes the LB/node), so a
-      # public caller can't forge them while someone looks at the failure.
-      - name: Verify Traefik NodePorts are VPC-only (after install)
-        env:
-          CLUSTER_ID: ${{ steps.vpc.outputs.cluster_id }}
-          NODE_DROPLETS: ${{ steps.vpc.outputs.node_droplets }}
-        run: |
-          set -euo pipefail
-          revoke_trust() {
-            echo "::error::$1; withdrawing Traefik's forwarded-header trust"
-            printf '%s\n' 'ports:' '  web:' '    forwardedHeaders:' '      trustedIPs: []' \
-              '  websecure:' '    forwardedHeaders:' '      trustedIPs: []' \
-              > "$RUNNER_TEMP/traefik-no-trust.yaml"
-            helm upgrade traefik traefik \
-              --repo https://traefik.github.io/charts \
-              --version 42.4.1 \
-              --namespace traefik \
-              --reuse-values \
-              --values "$RUNNER_TEMP/traefik-no-trust.yaml" \
-              --wait
-            exit 1
-          }
-          managed="$(kubectl -n traefik get service traefik \
-            -o jsonpath='{.metadata.annotations.kubernetes\.digitalocean\.com/firewall-managed}')" \
-            || managed="<unreadable>"
-          if [ "$managed" != "false" ]; then
-            revoke_trust "traefik Service is not firewall-managed=false (got '$managed')"
-          fi
-          python3 scripts/ci/traefik_guards.py nodeports-not-public \
-            "k8s:$CLUSTER_ID" "$NODE_DROPLETS" 31080 31443 \
-            || revoke_trust "a Cloud Firewall opens a Traefik NodePort to a public source"
+        run: bash scripts/ci/install-traefik.sh
       - name: Render + apply namespace first
         run: |
           export NAMESPACE ENVIRONMENT IMAGE_TAG REGISTRY DOMAIN

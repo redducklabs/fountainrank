@@ -25,7 +25,8 @@ locally everything here is read-only / dry-run (see `claude_help/kubernetes-infr
   (chart `traefik/traefik` 42.4.1, namespace `traefik`, NodePort 31080/31443). It reads the
   same `nginx`-class Ingresses through its Ingress NGINX provider. CI injects the
   forwarded-header trust CIDR (the cluster VPC) at deploy time; the NodePorts are VPC-only
-  (`firewall-managed: "false"`, checked by `scripts/ci/traefik_guards.py`). Migration phases:
+  (`firewall-managed: "false"`). `scripts/ci/install-traefik.sh` does the install and checks
+  the node firewalls (`scripts/ci/traefik_guards.py`) before and after it. Migration phases:
   `docs/plans/2026-11-20-ingress-nginx-to-traefik.md`.
 
   `account-deletion-cleanup.yaml` is an hourly **CronJob** on the backend image that drains the
@@ -49,8 +50,9 @@ locally everything here is read-only / dry-run (see `claude_help/kubernetes-infr
 ## Deploy flow (CI, Phase 0f)
 
 `doctl auth` → `doctl kubernetes cluster kubeconfig save <cluster>` →
-`helm upgrade --install ingress-nginx … (NodePort 30080/30443)` → resolve the cluster VPC
-CIDR → `helm upgrade --install traefik … (NodePort 31080/31443)` → create secrets
+`helm upgrade --install ingress-nginx … (NodePort 30080/30443)` →
+`scripts/ci/install-traefik.sh` (resolve the cluster VPC CIDR → check the NodePorts are
+VPC-only → `helm upgrade --install traefik … (NodePort 31080/31443)` → re-check) → create secrets
 imperatively (`fountainrank-secrets`, `regcred`) → `envsubst < manifest | kubectl apply -f -`
 for the apply set → `kubectl rollout status`. Migrations run via `kubectl exec` into the
 backend pod (`alembic upgrade head`).

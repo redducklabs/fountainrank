@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed deploy guards for the Traefik ingress controller (.github/workflows/deploy.yml).
+"""Fail-closed deploy guards for the Traefik ingress controller (scripts/ci/install-traefik.sh).
 
 Stdlib-only so they run on a bare GitHub runner.
 
@@ -8,18 +8,23 @@ Stdlib-only so they run on a bare GitHub runner.
       a strict IPv4 network (no host bits set) that lies entirely inside one RFC 1918 block.
       Prints the normalized CIDR on success; exits 1 otherwise.
 
-  nodeports-not-public <droplet-tag> <droplet-ids> <port> [<port> ...]
-      Check, with `doctl compute firewall list --output json`, that no DigitalOcean Cloud
-      Firewall applied to the cluster's nodes (by the `k8s:<cluster-id>` droplet tag, or by
-      droplet ID from the comma-separated <droplet-ids>) lets a non-RFC 1918 source reach any of
-      the given TCP ports. Cloud firewalls are allow-lists, so
-      that is exactly "the port is not publicly reachable", whatever the firewall is called. It
-      also fails when no firewall applies at all (an unfirewalled droplet accepts everything).
-      Firewalls still reconciling (status other than "succeeded", or pending_changes) are
-      re-read for a bounded time; a "failed" firewall, or one that never settles, fails.
+  nodeports-not-public <cluster-name> <cluster-id> <port> [<port> ...]
+      Check with doctl that no public source can reach the given TCP ports on ANY node of the
+      cluster. DigitalOcean Cloud Firewalls are allow-lists and an unfirewalled droplet accepts
+      everything, so for every node (from `doctl kubernetes cluster node-pool list`):
+        * at least one firewall must apply to it, by the `k8s:<cluster-id>` tag (only if the
+          droplet really carries the tag, per `doctl compute droplet list --tag-name`) or by
+          droplet ID;
+        * no inbound TCP rule of an applied firewall that covers a port may allow a source other
+          than an RFC 1918 IPv4 range. Resource selectors (droplet IDs, tags, load balancers,
+          clusters) can't be proven VPC-only, so they count as public, as do IPv6 and
+          unparseable addresses;
+        * every applied firewall must have status "succeeded" and no pending_changes. While one is
+          still applying it is re-read for a bounded time; "failed", or never settling, fails.
+      Any doctl/parse error fails closed. Exits 0 only when every node passes.
 
 The forwarded-header trust in infra/helm/traefik-values.yaml is only sound while the Traefik
-NodePorts are reachable from the VPC alone, so the second check backs up the Service's
+NodePorts are reachable from the VPC alone, so this backs up the Service's
 `kubernetes.digitalocean.com/firewall-managed: "false"` annotation.
 """
 
@@ -31,12 +36,13 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 
 RFC1918 = tuple(
     ipaddress.IPv4Network(block) for block in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
 )
 
-# Exit codes / verdicts of the firewall check.
+# Verdicts of the firewall check.
 OK, EXPOSED, PENDING = "ok", "exposed", "pending"
 
 
@@ -62,10 +68,10 @@ def _rule_ports(spec: str) -> range:
     return range(int(low), int(high if sep else low) + 1)
 
 
-def _is_private_source(address: str) -> bool:
+def _is_private_address(address: object) -> bool:
     """True only for an IPv4 address/network inside an RFC 1918 block (anything else: public)."""
     try:
-        network = ipaddress.ip_network(address, strict=False)
+        network = ipaddress.ip_network(str(address), strict=False)
     except ValueError:
         return False
     return isinstance(network, ipaddress.IPv4Network) and any(
@@ -73,57 +79,94 @@ def _is_private_source(address: str) -> bool:
     )
 
 
+def _sources_are_private(sources: dict | None) -> bool:
+    """A rule's sources are VPC-only iff they are non-empty RFC 1918 addresses and nothing else."""
+    sources = sources or {}
+    addresses = sources.get("addresses") or []
+    selectors = {k: v for k, v in sources.items() if k != "addresses" and v}
+    return bool(addresses) and not selectors and all(_is_private_address(a) for a in addresses)
+
+
+@dataclass(frozen=True)
+class Cluster:
+    tag: str  # k8s:<cluster-id>
+    nodes: frozenset[str]  # node droplet IDs
+    tagged: frozenset[str]  # droplet IDs that carry `tag`
+
+
 def check_firewalls(
-    firewalls: list[dict], tag: str, droplets: Iterable[str], ports: Iterable[int]
+    firewalls: list[dict], cluster: Cluster, ports: Iterable[int]
 ) -> tuple[str, str]:
-    """Verdict (OK / EXPOSED / PENDING) for the firewalls applied to the cluster's nodes."""
+    """Verdict (OK / EXPOSED / PENDING) for every node of `cluster`."""
     wanted = set(ports)
-    nodes = {str(d) for d in droplets}
-    applied = [
-        fw
-        for fw in firewalls
-        if tag in (fw.get("tags") or []) or nodes & {str(d) for d in fw.get("droplet_ids") or []}
-    ]
-    if not applied:
-        return EXPOSED, f"no Cloud Firewall applies to tag {tag}: every port is open"
-    exposed: set[int] = set()
+    if not cluster.nodes:
+        return EXPOSED, "no node droplets to check"
+
+    def applies(fw: dict, node: str) -> bool:
+        by_tag = cluster.tag in (fw.get("tags") or []) and node in cluster.tagged
+        return by_tag or node in {str(d) for d in fw.get("droplet_ids") or []}
+
+    applied = [fw for fw in firewalls if any(applies(fw, n) for n in cluster.nodes)]
+    uncovered = sorted(n for n in cluster.nodes if not any(applies(fw, n) for fw in applied))
+    if uncovered:
+        return EXPOSED, f"no Cloud Firewall applies to node(s) {uncovered}: every port is open"
     for fw in applied:
-        name = fw.get("name", "?")
-        status = fw.get("status")
+        name, status = fw.get("name", "?"), fw.get("status")
         if status == "failed":
             return EXPOSED, f"firewall {name} failed to apply"
         if status != "succeeded" or fw.get("pending_changes"):
             return PENDING, f"firewall {name} is still applying (status {status!r})"
+    exposed: dict[int, list[str]] = {}
+    for fw in applied:
         for rule in fw.get("inbound_rules") or []:
             if rule.get("protocol") not in ("tcp", "all"):
                 continue
-            addresses = (rule.get("sources") or {}).get("addresses") or []
-            if all(_is_private_source(a) for a in addresses):
+            if _sources_are_private(rule.get("sources")):
                 continue
-            exposed |= wanted.intersection(_rule_ports(str(rule.get("ports", ""))))
+            for port in wanted.intersection(_rule_ports(str(rule.get("ports", "")))):
+                exposed.setdefault(port, []).append(fw.get("name", "?"))
     if exposed:
-        return EXPOSED, f"port(s) {sorted(exposed)} are open to a non-RFC 1918 source"
+        detail = "; ".join(f"{p} via {', '.join(sorted(n))}" for p, n in sorted(exposed.items()))
+        return EXPOSED, f"port(s) open to a non-RFC 1918 or unverifiable source: {detail}"
     names = ", ".join(sorted(fw.get("name", "?") for fw in applied))
-    return OK, f"no public rule for {sorted(wanted)} on {names}"
+    return OK, f"no public rule for {sorted(wanted)} on nodes {sorted(cluster.nodes)} ({names})"
 
 
-def _doctl_firewalls() -> list[dict]:
+def _doctl_json(*args: str) -> object:
     out = subprocess.run(
-        ["doctl", "compute", "firewall", "list", "--output", "json"],
-        check=True,
-        capture_output=True,
-        text=True,
+        ["doctl", *args, "--output", "json"], check=True, capture_output=True, text=True
     ).stdout
-    firewalls = json.loads(out)
-    if not isinstance(firewalls, list):
-        raise ValueError("doctl returned something other than a JSON list of firewalls")
-    return firewalls
+    return json.loads(out)
+
+
+def _as_list(value: object, what: str) -> list:
+    if not isinstance(value, list):
+        raise ValueError(f"doctl {what}: expected a JSON list")
+    return value
+
+
+def doctl_cluster(cluster_name: str, cluster_id: str) -> Cluster:
+    pools = _as_list(
+        _doctl_json("kubernetes", "cluster", "node-pool", "list", cluster_name), "pools"
+    )
+    nodes = {
+        str(node["droplet_id"])
+        for pool in pools
+        for node in pool.get("nodes") or []
+        if node.get("droplet_id")
+    }
+    tag = f"k8s:{cluster_id}"
+    tagged = _as_list(_doctl_json("compute", "droplet", "list", "--tag-name", tag), "droplets")
+    return Cluster(tag, frozenset(nodes), frozenset(str(d["id"]) for d in tagged))
+
+
+def doctl_firewalls() -> list[dict]:
+    return _as_list(_doctl_json("compute", "firewall", "list"), "firewalls")
 
 
 def poll_firewalls(
     fetch: Callable[[], list[dict]],
-    tag: str,
-    droplets: list[str],
+    cluster: Cluster,
     ports: list[int],
     attempts: int = 18,
     delay: float = 10.0,
@@ -132,7 +175,7 @@ def poll_firewalls(
     """Re-read while firewalls are reconciling; give up (as EXPOSED) after `attempts` reads."""
     detail = ""
     for attempt in range(attempts):
-        verdict, detail = check_firewalls(fetch(), tag, droplets, ports)
+        verdict, detail = check_firewalls(fetch(), cluster, ports)
         if verdict != PENDING:
             return verdict, detail
         if attempt + 1 < attempts:
@@ -140,7 +183,12 @@ def poll_firewalls(
     return EXPOSED, f"firewalls never settled: {detail}"
 
 
-def main(argv: list[str], fetch: Callable[[], list[dict]] = _doctl_firewalls) -> int:
+def main(
+    argv: list[str],
+    get_cluster: Callable[[str, str], Cluster] = doctl_cluster,
+    fetch: Callable[[], list[dict]] = doctl_firewalls,
+    sleep: Callable[[float], None] = time.sleep,
+) -> int:
     if len(argv) == 2 and argv[0] == "private-cidr":
         try:
             print(validate_private_cidr(argv[1]))
@@ -150,13 +198,16 @@ def main(argv: list[str], fetch: Callable[[], list[dict]] = _doctl_firewalls) ->
         return 0
     if len(argv) >= 4 and argv[0] == "nodeports-not-public":
         try:
-            droplets = [d for d in argv[2].split(",") if d]
-            if not droplets:
-                raise ValueError("no node droplet IDs given")
+            if not argv[1] or not argv[2]:
+                raise ValueError("cluster name and id are required")
             ports = [int(p) for p in argv[3:]]
-            verdict, detail = poll_firewalls(fetch, argv[1], droplets, ports)
-        except (subprocess.CalledProcessError, ValueError, TypeError, AttributeError) as exc:
+            verdict, detail = poll_firewalls(
+                fetch, get_cluster(argv[1], argv[2]), ports, sleep=sleep
+            )
+        except (subprocess.CalledProcessError, OSError, ValueError, TypeError, KeyError) as exc:
             verdict, detail = EXPOSED, f"could not check the firewalls: {exc}"
+        except AttributeError as exc:
+            verdict, detail = EXPOSED, f"unexpected doctl output: {exc}"
         if verdict != OK:
             print(
                 f"::error::Traefik NodePorts are not VPC-only: {detail}. The forwarded-header "
