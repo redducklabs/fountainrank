@@ -45,6 +45,10 @@ overrides:
   "compression@<1.8.2": "1.8.2"
   # GHSA-mrhx-c7xc-m3w5: ESLint's React Hooks plugin accepts zod ^4; force the patched 4.x.
   "zod@>=4.0.0 <4.6.6": "4.6.7"
+  # CVE-2026-118764 (minimatch globparts DoS) is fixed only in 11.0.1+. The 10.x consumer is
+  # @expo/fingerprint, which loads it via require(); Node >=22.12 loads the ESM-only 11.x that
+  # way, and its Minimatch export is unchanged. Remove once Expo resolves minimatch >=11.0.1.
+  "minimatch@>=10.0.0 <11.0.1": "11.0.9"
 auditConfig:
   # GHSA-mh99-v99m-4gvg is confined to transitive globbing dependencies. The only published fix
   # is brace-expansion 5.0.8, whose ESM API is incompatible with the minimatch 3/5 consumers still
