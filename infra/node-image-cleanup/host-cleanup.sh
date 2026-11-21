@@ -90,11 +90,13 @@ fi
 log "removing $count refs:"
 failed=0
 while read -r ref; do
-  if ctr -n "$NS" images rm --sync "$ref" > /dev/null 2>&1; then
+  if err="$(ctr -n "$NS" images rm --sync "$ref" 2>&1 > /dev/null)"; then
     echo "  removed $ref"
   else
-    echo "  FAILED to remove $ref" >&2
+    echo "  FAILED to remove $ref: $err" >&2
     failed=$((failed + 1))
   fi
 done < "$tmp/rm_refs"
 log "disk after: $(df -h --output=pcent,avail /var/lib/containerd | tail -1); failed=$failed"
+# Non-zero so run.sh reports the pass as FAILED (after every candidate was attempted).
+[ "$failed" -eq 0 ]
