@@ -10,6 +10,9 @@
 #   - its ref starts with IMAGE_PREFIX (our own registry; system images are never touched)
 #   - its manifest digest is not used by any container on the node (running OR exited)
 #   - it was pulled more than MIN_AGE_SECONDS ago (protects a deploy mid-rollout)
+# Known, accepted race: on a rollback to an older image that is still cached, a pass that
+# lands between the old pod's deletion and the new container's creation removes the image;
+# kubelet then re-pulls it (a brief CreateContainerError), nothing worse.
 # The untagged `sha256:<id>` refs CRI keeps for those same digests are removed too,
 # otherwise they keep the layers alive.
 #
@@ -43,10 +46,13 @@ awk 'NR > 1 { print $2 }' "$tmp/containers" | sort -u > "$tmp/inuse_refs"
 awk 'NR == FNR { u[$1] = 1; next } FNR > 1 && ($1 in u) { print $3 }' \
   "$tmp/inuse_refs" "$tmp/images" | sort -u > "$tmp/inuse_digests"
 
-# Fail closed: a node always runs containers, so an empty in-use set means ctr output
-# was not what we expect. Never delete on a guess.
-if [ ! -s "$tmp/inuse_digests" ]; then
-  log "no in-use image digests resolved; refusing to remove anything" >&2
+# Fail closed: every container's image ref must resolve to an image row, otherwise that
+# container's digest would be missing from the in-use set. Never delete on a guess.
+awk 'NR == FNR { if (FNR > 1) r[$1] = 1; next } !($1 in r) { print }' \
+  "$tmp/images" "$tmp/inuse_refs" > "$tmp/unresolved"
+if [ ! -s "$tmp/inuse_digests" ] || [ -s "$tmp/unresolved" ]; then
+  log "in-use image refs did not all resolve; refusing to remove anything:" >&2
+  sed 's/^/  /' "$tmp/unresolved" >&2
   exit 1
 fi
 
@@ -79,6 +85,16 @@ if [ "$DRY_RUN" = "1" ]; then
   exit 0
 fi
 
-log "removing $count refs"
-xargs ctr -n "$NS" images rm --sync < "$tmp/rm_refs" > /dev/null
-log "disk after: $(df -h --output=pcent,avail /var/lib/containerd | tail -1)"
+# One ref at a time so a ref that vanished meanwhile (e.g. kubelet GC) is logged and
+# skipped instead of aborting the pass.
+log "removing $count refs:"
+failed=0
+while read -r ref; do
+  if ctr -n "$NS" images rm --sync "$ref" > /dev/null 2>&1; then
+    echo "  removed $ref"
+  else
+    echo "  FAILED to remove $ref" >&2
+    failed=$((failed + 1))
+  fi
+done < "$tmp/rm_refs"
+log "disk after: $(df -h --output=pcent,avail /var/lib/containerd | tail -1); failed=$failed"

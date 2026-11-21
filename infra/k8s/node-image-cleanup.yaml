@@ -42,6 +42,9 @@ spec:
       tolerations:
         - operator: Exists
       terminationGracePeriodSeconds: 5
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       volumes:
         - name: scripts
           configMap:
@@ -66,8 +69,12 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
+          # privileged + hostPID are inherent (setns into PID 1's mount namespace and drive the
+          # node's containerd); Trivy KSV-0010/0017/0012/0001/0118 for this file are dismissed in
+          # code scanning with this justification rather than suppressed repo-wide in .trivyignore.
           securityContext:
             privileged: true
+            readOnlyRootFilesystem: true
           volumeMounts:
             - name: scripts
               mountPath: /scripts

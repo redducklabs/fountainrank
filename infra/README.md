@@ -41,7 +41,7 @@ locally everything here is read-only / dry-run (see `claude_help/kubernetes-infr
 | `${IMAGE_TAG}` | git SHA | build job |
 | `${REGISTRY}` | `registry.digitalocean.com/fountainrank` | `DO_REGISTRY` |
 | `${DOMAIN}` | `fountainrank.com` | deploy workflow |
-| `${NODE_IMAGE_CLEANUP_SHA}` | sha256 hex | deploy workflow (hash of `infra/node-image-cleanup/*.sh`) |
+| `${NODE_IMAGE_CLEANUP_SHA}` | sha256 hex | deploy workflow (hash of every file in `infra/node-image-cleanup/`) |
 | `${GOOGLE_DELEGATED_USER}` | `noreply@fountainrank.com` | `GOOGLE_DELEGATED_USER` var (email) |
 | `${FROM_EMAIL}` | `noreply@fountainrank.com` | `FROM_EMAIL` var (email) |
 | `${LOGTO_MANAGEMENT_RESOURCE}` | `https://default.logto.app/api` | optional `LOGTO_MANAGEMENT_RESOURCE` var |
