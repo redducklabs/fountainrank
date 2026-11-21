@@ -420,9 +420,26 @@ def test_nodeport_firewall_guard_cli_fails_closed(get_cluster, fetch, args, code
 
 # --- install-traefik.sh, end to end against fake doctl/helm/kubectl --------------------------
 #
-# The fakes keep the cluster's state in files: deploy.json is the live traefik Deployment (its
-# container args carry the trust flags exactly as the chart renders them), so every test asserts
-# the END STATE of the trust, not just which commands ran.
+# The fakes keep the cluster's state in files, with the Deployment and its pods modelled
+# separately: deploy.json is the traefik Deployment (template args carry the trust flags exactly
+# as the chart renders them) and pods.json the pods actually running. A rollout replaces the pods
+# from the template unless the `stall` marker is set (an unschedulable replacement: old pods keep
+# serving, `rollout status` / `helm --wait` fail). Every test asserts the END STATE of the trust in
+# the running pods, not just which commands ran.
+
+FAKE_LIB = r"""
+write_deploy() {  # $1: template args (JSON array), $2: replicas
+  jq -n --argjson args "$1" --argjson n "$2" \
+    '{spec: {replicas: $n, template: {spec: {containers: [{args: $args}]}}}}' \
+    > "$FAKE/deploy.json"
+}
+rollout() {  # pods follow the template unless the rollout stalls
+  [ -e "$FAKE/stall" ] && return 1
+  jq '{items: [range(.spec.replicas) as $_
+                | {spec: .spec.template.spec, status: {phase: "Running"}}]}' \
+    "$FAKE/deploy.json" > "$FAKE/pods.json"
+}
+"""
 
 FAKE_DOCTL = r"""#!/usr/bin/env bash
 echo "doctl $*" >> "$FAKE/log"
@@ -440,13 +457,12 @@ esac
 cat "$FAKE/$f.json"
 """
 
-FAKE_HELM = r"""#!/usr/bin/env bash
+FAKE_HELM = (
+    r"""#!/usr/bin/env bash
 echo "helm $*" >> "$FAKE/log"
-deploy() {  # $1: the trust args (JSON array)
-  jq -n --argjson args "$1" \
-    '{spec: {replicas: 1, template: {spec: {containers: [{args: (["--x"] + $args)}]}}},
-      status: {replicas: 1}}' > "$FAKE/deploy.json"
-}
+"""
+    + FAKE_LIB
+    + r"""
 case "$1" in
   pull)
     [ -e "$FAKE/pull-fails" ] && exit 1
@@ -456,42 +472,59 @@ case "$1" in
     if [ "$2" = "--install" ]; then
       touch "$FAKE/installed"
       cidr="$(sed -n 's/.*ports\.web\.forwardedHeaders\.trustedIPs={\([^}]*\)}.*/\1/p' <<<"$*")"
-      deploy "[\"--entryPoints.web.forwardedHeaders.trustedIPs=$cidr\",
-               \"--entryPoints.websecure.forwardedHeaders.trustedIPs=$cidr\"]"
+      write_deploy "[\"--x\", \"--entryPoints.web.forwardedHeaders.trustedIPs=$cidr\",
+                     \"--entryPoints.websecure.forwardedHeaders.trustedIPs=$cidr\"]" 1
+      rollout || exit 1
       [ ! -e "$FAKE/helm-fails" ]
     else
       [ -e "$FAKE/withdraw-helm-fails" ] && exit 1
-      deploy '[]'
+      write_deploy '["--x"]' 1
+      rollout  # --wait: fails if the rollout stalls
     fi ;;
   *) exit 2 ;;
 esac
 """
+)
 
-FAKE_KUBECTL = r"""#!/usr/bin/env bash
+FAKE_KUBECTL = (
+    r"""#!/usr/bin/env bash
 echo "kubectl $*" >> "$FAKE/log"
 [ -e "$FAKE/kubectl-fails" ] && exit 1
+"""
+    + FAKE_LIB
+    + r"""
 case "$*" in
   *"get service traefik"*) cat "$FAKE/annotation" ;;
   *"get deployment traefik --ignore-not-found"*)
     [ ! -e "$FAKE/deploy.json" ] || cat "$FAKE/deploy.json" ;;
   *"get deployment traefik"*) [ -e "$FAKE/deploy.json" ] && cat "$FAKE/deploy.json" ;;
+  *"get pods -l app.kubernetes.io/name=traefik,app.kubernetes.io/instance=traefik-traefik "*)
+    if [ -e "$FAKE/pods.json" ]; then cat "$FAKE/pods.json"; else echo '{"items": []}'; fi ;;
   "replace -f -")
     [ -e "$FAKE/replace-fails" ] && exit 1
-    cat > "$FAKE/deploy.json" ;;
-  *"rollout status"*) : ;;
+    cat > "$FAKE/deploy.json"
+    rollout || true ;;
+  *"rollout status"*) [ ! -e "$FAKE/stall" ] ;;
   *"scale deployment traefik --replicas=0"*)
     [ -e "$FAKE/scale-fails" ] && exit 1
-    jq '.spec.replicas = 0 | .status.replicas = 0' "$FAKE/deploy.json" > "$FAKE/d.tmp"
-    mv "$FAKE/d.tmp" "$FAKE/deploy.json" ;;
+    jq '.spec.replicas = 0' "$FAKE/deploy.json" > "$FAKE/d.tmp"
+    mv "$FAKE/d.tmp" "$FAKE/deploy.json"
+    echo '{"items": []}' > "$FAKE/pods.json" ;;  # scaling down removes even stalled pods
   *) echo "unexpected kubectl $*" >&2; exit 2 ;;
 esac
 """
+)
 
 _BASH = os.environ.get("TRAEFIK_TEST_BASH") or (None if os.name == "nt" else shutil.which("bash"))
 TRUSTED = [
+    "--x",
     "--entryPoints.web.forwardedHeaders.trustedIPs=10.124.0.0/20",
     "--entryPoints.websecure.forwardedHeaders.trustedIPs=10.124.0.0/20",
 ]
+
+
+def _pod(args, phase="Running"):
+    return {"spec": {"containers": [{"args": list(args)}]}, "status": {"phase": phase}}
 
 
 class _Fake:
@@ -515,28 +548,35 @@ class _Fake:
     def write(self, name, data):
         (self.state / name).write_text(data if isinstance(data, str) else json.dumps(data))
 
+    def read(self, name):
+        return json.loads((self.state / name).read_text())
+
     def touch(self, name):
         (self.state / name).touch()
 
-    def running_with_trust(self):
-        """A previously deployed Traefik that trusts the VPC."""
+    def running(self, template_args=TRUSTED, pod_args=TRUSTED, replicas=1):
+        """A previously deployed Traefik: its Deployment template and its running pods."""
         self.write(
             "deploy.json",
             {
-                "spec": {"replicas": 1, "template": {"spec": {"containers": [{"args": TRUSTED}]}}},
-                "status": {"replicas": 1},
+                "spec": {
+                    "replicas": replicas,
+                    "template": {"spec": {"containers": [{"args": list(template_args)}]}},
+                }
             },
         )
+        self.write("pods.json", {"items": [_pod(pod_args)] if pod_args is not None else []})
 
     def trust_live(self):
-        path = self.state / "deploy.json"
-        if not path.exists():
+        """Does any running pod carry a trust flag (or will the Deployment create one)?"""
+        pods = self.read("pods.json")["items"] if (self.state / "pods.json").exists() else []
+        if any("forwardedHeaders." in a for p in pods for a in p["spec"]["containers"][0]["args"]):
+            return True
+        if not (self.state / "deploy.json").exists():
             return False
-        deploy = json.loads(path.read_text())
-        if deploy["spec"]["replicas"] == 0 and deploy["status"].get("replicas", 0) == 0:
-            return False
+        deploy = self.read("deploy.json")
         args = deploy["spec"]["template"]["spec"]["containers"][0]["args"]
-        return any("forwardedHeaders." in a for a in args)
+        return deploy["spec"]["replicas"] > 0 and any("forwardedHeaders." in a for a in args)
 
     def run(self):
         env = {
@@ -546,6 +586,8 @@ class _Fake:
             "CLUSTER_NAME": "c",
             "PYTHON": sys.executable,
             "RUNNER_TEMP": str(self.tmp),
+            "TRAEFIK_CONTAIN_ATTEMPTS": "2",
+            "TRAEFIK_CONTAIN_POLL": "0",
         }
         res = subprocess.run(
             [_BASH, str(INSTALL)], cwd=ROOT, env=env, capture_output=True, text=True
@@ -580,7 +622,7 @@ def test_install_script_happy_path_installs_with_vpc_trust(fake):
 
 
 def test_install_script_pre_check_failure_withdraws_trust_from_running_traefik(fake):
-    fake.running_with_trust()
+    fake.running()
     fake.write("firewalls.json", _cluster_firewalls(_rule("31443")))
     res = fake.run()
     assert res.returncode == 1
@@ -618,7 +660,7 @@ def test_install_script_pre_check_failure_without_traefik_changes_nothing(fake):
     ],
 )
 def test_install_script_every_failure_ends_without_live_trust(fake, breakage):
-    fake.running_with_trust()
+    fake.running()
     if breakage in ("helm-fails", "pull-fails"):
         fake.touch(breakage)
     elif breakage == "annotation":
@@ -645,7 +687,7 @@ def test_install_script_every_failure_ends_without_live_trust(fake, breakage):
 
 
 def test_install_script_falls_back_to_patching_the_deployment(fake):
-    fake.running_with_trust()
+    fake.running()
     fake.write("firewalls.json", _cluster_firewalls(_rule("31443")))
     fake.touch("withdraw-helm-fails")  # e.g. the API rejects the upgrade
     res = fake.run()
@@ -654,11 +696,11 @@ def test_install_script_falls_back_to_patching_the_deployment(fake):
     assert not fake.trust_live()
     deploy = json.loads((fake.state / "deploy.json").read_text())
     assert deploy["spec"]["replicas"] == 1  # still serving, just without the trust
-    assert deploy["spec"]["template"]["spec"]["containers"][0]["args"] == []
+    assert deploy["spec"]["template"]["spec"]["containers"][0]["args"] == ["--x"]
 
 
 def test_install_script_scales_to_zero_as_last_resort(fake):
-    fake.running_with_trust()
+    fake.running()
     fake.write("firewalls.json", _cluster_firewalls(_rule("31443")))
     fake.touch("withdraw-helm-fails")
     fake.touch("replace-fails")
@@ -670,7 +712,7 @@ def test_install_script_scales_to_zero_as_last_resort(fake):
 
 
 def test_install_script_reports_when_containment_is_impossible(fake):
-    fake.running_with_trust()
+    fake.running()
     fake.write("firewalls.json", _cluster_firewalls(_rule("31443")))
     for marker in ("withdraw-helm-fails", "replace-fails", "scale-fails"):
         fake.touch(marker)
@@ -682,7 +724,7 @@ def test_install_script_reports_when_containment_is_impossible(fake):
 
 def test_install_script_treats_an_unreadable_cluster_as_trusted(fake):
     # The API can't be read (not "no release"): containment is attempted and its failure reported.
-    fake.running_with_trust()
+    fake.running()
     fake.write("firewalls.json", _cluster_firewalls(_rule("31443")))
     fake.touch("kubectl-fails")
     fake.touch("withdraw-helm-fails")
@@ -690,3 +732,41 @@ def test_install_script_treats_an_unreadable_cluster_as_trusted(fake):
     assert res.returncode == 1
     assert "state: unknown" in res.stdout
     assert "COULD NOT CONTAIN" in res.stdout
+
+
+def test_install_script_judges_trust_by_running_pods_not_the_template(fake):
+    # An earlier withdrawal was interrupted: the template is clean, but the replacement pod never
+    # became ready, so the OLD pod still serves with trust. The rollout is still stalled.
+    fake.running(template_args=["--x"], pod_args=TRUSTED)
+    fake.touch("stall")
+    fake.write("firewalls.json", _cluster_firewalls(_rule("31443")))
+    res = fake.run()
+    assert res.returncode == 1
+    assert "state: trusted" in res.stdout  # not "nothing to withdraw"
+    # helm --wait and the patch's rollout both stall, so it escalates to scaling to 0.
+    assert len(fake.withdrawals) == 1
+    assert "kubectl replace -f -" in fake.log
+    assert any("scale deployment traefik --replicas=0" in line for line in fake.log)
+    assert not fake.trust_live()
+    assert fake.read("pods.json") == {"items": []}
+
+
+def test_install_script_ignores_finished_pods_and_scaled_down_templates(fake):
+    # Trust flags only on a Failed pod and on a template scaled to 0: nothing runs with trust.
+    fake.running(pod_args=None, replicas=0)
+    fake.write("pods.json", {"items": [_pod(TRUSTED, phase="Failed")]})
+    fake.write("firewalls.json", _cluster_firewalls(_rule("31443")))
+    res = fake.run()
+    assert res.returncode == 1
+    assert "nothing to withdraw" in res.stdout
+    assert not fake.withdrawals
+
+
+def test_install_script_treats_a_trusted_template_with_replicas_as_trusted(fake):
+    # No pod yet, but the Deployment is about to create a trusted one.
+    fake.running(pod_args=None)
+    fake.write("firewalls.json", _cluster_firewalls(_rule("31443")))
+    res = fake.run()
+    assert res.returncode == 1
+    assert "state: trusted" in res.stdout
+    assert not fake.trust_live()

@@ -11,7 +11,7 @@
 #   4. helm upgrade --install with that trust,
 #   5. check the live Service opted out of the DOKS-managed public firewall, and re-check (3).
 # ANY failure withdraws the trust from whatever Traefik is running before exiting non-zero, and
-# verifies it against the live Deployment, escalating until it holds:
+# verifies it against the live pods (not just the template), escalating until it holds:
 #   a. helm upgrade --reuse-values with both trustedIPs = [] (the chart then renders no trust
 #      flags; Traefik overwrites X-Forwarded-* itself, only the client IP degrades),
 #   b. if that fails or doesn't take: strip the trust flags from the live Deployment directly,
@@ -30,24 +30,48 @@ NAMESPACE="traefik"
 PORTS=(31080 31443)
 TRUST_FLAGS='forwardedHeaders\.(trustedIPs|insecure)'
 
-# Prints `contained` (no Deployment, no trust flags in its pod template, or scaled to zero),
-# `trusted`, or `unknown` (the API couldn't be read).
+# The chart's pod selector labels (traefik.labelselector: name + "<release>-<namespace>").
+POD_SELECTOR="app.kubernetes.io/name=traefik,app.kubernetes.io/instance=traefik-$NAMESPACE"
+CONTAIN_ATTEMPTS="${TRAEFIK_CONTAIN_ATTEMPTS:-24}"
+CONTAIN_POLL="${TRAEFIK_CONTAIN_POLL:-5}"
+
+# Prints `contained`, `trusted`, or `unknown` (the API couldn't be read or parsed). Judged on
+# what actually runs, not on the desired template: it is `contained` only when NO existing
+# Traefik pod (old, new or terminating; anything not Succeeded/Failed) carries a trust flag
+# AND the Deployment won't create one (its template has no trust flag, or it's scaled to 0).
 trust_state() {
-  local out
-  out="$(kubectl --namespace "$NAMESPACE" get deployment traefik --ignore-not-found -o json)" \
+  local deploy pods
+  deploy="$(kubectl --namespace "$NAMESPACE" get deployment traefik --ignore-not-found -o json)" \
     || { echo unknown; return 0; }
-  if [ -z "$out" ]; then echo contained; return 0; fi
-  jq -r --arg re "$TRUST_FLAGS" '
-    ([.spec.template.spec.containers[].args[]? | select(test($re))] | length) as $flags
-    | if $flags == 0 or ((.spec.replicas == 0) and ((.status.replicas // 0) == 0))
-      then "contained" else "trusted" end' <<<"$out" || echo unknown
+  pods="$(kubectl --namespace "$NAMESPACE" get pods -l "$POD_SELECTOR" -o json)" \
+    || { echo unknown; return 0; }
+  jq -rn --arg re "$TRUST_FLAGS" --argjson pods "$pods" --argjson deploy "${deploy:-null}" '
+    def trusting: [.containers[]?.args[]? | select(test($re))] | length > 0;
+    ([$pods.items[]
+      | select(.status.phase != "Succeeded" and .status.phase != "Failed")
+      | select(.spec | trusting)] | length) as $live
+    | (if $deploy == null then false
+       else ($deploy.spec.template.spec | trusting) and (($deploy.spec.replicas // 1) > 0)
+       end) as $will_create
+    | if $live == 0 and ($will_create | not) then "contained" else "trusted" end' \
+    || echo unknown
+}
+
+# Poll until trust_state says contained (terminating pods take a grace period to go).
+wait_contained() {
+  local i
+  for ((i = 0; i < CONTAIN_ATTEMPTS; i++)); do
+    [ "$(trust_state)" = contained ] && return 0
+    sleep "$CONTAIN_POLL"
+  done
+  return 1
 }
 
 withdraw_trust() {
   local state
   state="$(trust_state)"
   if [ "$state" = contained ]; then
-    echo "No forwarded-header trust is live: nothing to withdraw."
+    echo "No Traefik pod runs with forwarded-header trust: nothing to withdraw."
     return 0
   fi
   echo "::warning::Withdrawing Traefik's forwarded-header trust (state: $state)."
@@ -57,11 +81,11 @@ withdraw_trust() {
       > "$TMP_DIR/traefik-no-trust.yaml"
     if helm upgrade traefik "$CHART_TGZ" --namespace "$NAMESPACE" --reuse-values \
       --values "$TMP_DIR/traefik-no-trust.yaml" --wait --timeout 5m \
-      && [ "$(trust_state)" = contained ]; then
+      && wait_contained; then
       echo "Trust withdrawn via helm."
       return 0
     fi
-    echo "::warning::helm could not withdraw the trust; patching the live Deployment."
+    echo "::warning::helm did not withdraw the trust; patching the live Deployment."
   fi
   local deploy
   if deploy="$(kubectl --namespace "$NAMESPACE" get deployment traefik -o json)" \
@@ -69,14 +93,12 @@ withdraw_trust() {
       '.spec.template.spec.containers |= map(.args |= ((. // []) | map(select(test($re) | not))))' \
       <<<"$deploy" | kubectl replace -f - \
     && kubectl --namespace "$NAMESPACE" rollout status deployment traefik --timeout 5m \
-    && [ "$(trust_state)" = contained ]; then
+    && wait_contained; then
     echo "Trust withdrawn by patching the Deployment (the next deploy reconciles it via helm)."
     return 0
   fi
-  echo "::error::could not strip the trust flags; scaling Traefik to 0 as a last resort."
-  if kubectl --namespace "$NAMESPACE" scale deployment traefik --replicas=0 \
-    && kubectl --namespace "$NAMESPACE" rollout status deployment traefik --timeout 5m \
-    && [ "$(trust_state)" = contained ]; then
+  echo "::error::could not get trust-free pods running; scaling Traefik to 0 as a last resort."
+  if kubectl --namespace "$NAMESPACE" scale deployment traefik --replicas=0 && wait_contained; then
     echo "::error::Traefik is scaled to 0: it serves no traffic until the next good deploy."
     return 0
   fi
