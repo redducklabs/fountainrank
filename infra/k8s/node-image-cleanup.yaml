@@ -1,0 +1,81 @@
+# Node image cleanup: removes stale FountainRank app images from every node's containerd store.
+#
+# Why: each deploy pulls new fountainrank-web/-backend images and old tags are never removed,
+# because kubelet's image GC only starts at 85% disk usage and DOKS does not let us lower that.
+# The DO "Node Disk Utilization" alert fires at 70%, so the node alerted long before GC ran
+# (Nov 2026: ~35 stale versions, 74% disk). The scripts live in infra/node-image-cleanup/ and
+# are shipped as the `node-image-cleanup-scripts` ConfigMap by the deploy workflow.
+#
+# Scope is deliberately narrow: only refs under ${REGISTRY}/ that no container on the node uses
+# (running or exited) and that were pulled more than MIN_AGE_SECONDS ago. System images are
+# never touched.
+#
+# Security: this pod is node-root (privileged + hostPID, to nsenter the host mount namespace
+# and run the node's own `ctr`). It runs a digest-pinned busybox, mounts no service-account
+# token, has no Service, and runs only the scripts from the ConfigMap.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-image-cleanup
+  namespace: ${NAMESPACE}
+  labels:
+    app: node-image-cleanup
+    component: ops
+spec:
+  selector:
+    matchLabels:
+      app: node-image-cleanup
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: node-image-cleanup
+        component: ops
+      annotations:
+        # Changes whenever the scripts change, so a ConfigMap update rolls the pods.
+        fountainrank.com/scripts-sha256: "${NODE_IMAGE_CLEANUP_SHA}"
+    spec:
+      hostPID: true
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      tolerations:
+        - operator: Exists
+      terminationGracePeriodSeconds: 5
+      volumes:
+        - name: scripts
+          configMap:
+            name: node-image-cleanup-scripts
+            defaultMode: 0555
+      containers:
+        - name: cleanup
+          # DigitalOcean's busybox mirror (already used by DOKS), pinned by digest.
+          image: ghcr.io/digitalocean-packages/busybox:1.36@sha256:907ca53d7e2947e849b839b1cd258c98fd3916c60f2e6e70c30edbf741ab6754
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "/scripts/run.sh"]
+          env:
+            - name: IMAGE_PREFIX
+              value: "${REGISTRY}/"
+            - name: MIN_AGE_SECONDS
+              value: "3600"
+            - name: INTERVAL_SECONDS
+              value: "21600"
+            - name: DRY_RUN
+              value: "0"
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+          resources:
+            requests:
+              memory: "16Mi"
+              cpu: "5m"
+            limits:
+              memory: "128Mi"
+              cpu: "200m"

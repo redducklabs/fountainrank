@@ -291,8 +291,20 @@ jobs:
       # pre-migration schema.
       - name: Apply write-attempt cleanup after migrations
         run: envsubst < infra/k8s/write-attempt-cleanup.yaml | kubectl apply -f -
+      # Removes stale app images from each node (kubelet image GC only starts at 85% disk).
+      # The scripts ship as a ConfigMap built from files (NOT envsubst-ed: they use shell
+      # variables); the DaemonSet carries their hash so a script change rolls the pods.
+      - name: Apply node image cleanup
+        run: |
+          kubectl -n "$NAMESPACE" create configmap node-image-cleanup-scripts \
+            --from-file=infra/node-image-cleanup/ \
+            --dry-run=client -o yaml | kubectl apply -f -
+          NODE_IMAGE_CLEANUP_SHA="$(cat infra/node-image-cleanup/*.sh | sha256sum | cut -c1-64)"
+          export NAMESPACE REGISTRY NODE_IMAGE_CLEANUP_SHA
+          envsubst < infra/k8s/node-image-cleanup.yaml | kubectl apply -f -
       - name: Wait for rollouts
         run: |
+          kubectl -n "$NAMESPACE" rollout status ds/node-image-cleanup --timeout=120s
           kubectl -n "$NAMESPACE" rollout status deploy/fountainrank-backend --timeout=180s
           kubectl -n "$NAMESPACE" rollout status deploy/fountainrank-web --timeout=180s
           kubectl -n "$NAMESPACE" rollout status deploy/logto --timeout=180s

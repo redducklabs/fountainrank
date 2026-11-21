@@ -22,6 +22,12 @@ locally everything here is read-only / dry-run (see `claude_help/kubernetes-infr
   - `ingress-nginx.yaml` — 📄 documents the **Helm** install command (NodePort 30080/30443
     + `controller.config.*`); ingress-nginx is Helm-installed, not `kubectl apply`-ed.
 
+  `node-image-cleanup.yaml` is a **DaemonSet** that removes stale `${REGISTRY}/` images from
+  each node every 6h (kubelet image GC only starts at 85% disk; the DO disk alert fires at
+  70%). It runs `infra/node-image-cleanup/host-cleanup.sh`, which the deploy workflow ships
+  as the `node-image-cleanup-scripts` ConfigMap (built from files, not `envsubst`-ed). It
+  never removes an image any container on the node uses, or one pulled within the last hour.
+
   `account-deletion-cleanup.yaml` is an hourly **CronJob** on the backend image that drains the
   `deleted_accounts` / `storage_cleanup` pending ledgers left by `DELETE /api/v1/me`. It exits
   non-zero while any row still fails, so a persistent failure shows up as a Failed Job.
@@ -35,6 +41,7 @@ locally everything here is read-only / dry-run (see `claude_help/kubernetes-infr
 | `${IMAGE_TAG}` | git SHA | build job |
 | `${REGISTRY}` | `registry.digitalocean.com/fountainrank` | `DO_REGISTRY` |
 | `${DOMAIN}` | `fountainrank.com` | deploy workflow |
+| `${NODE_IMAGE_CLEANUP_SHA}` | sha256 hex | deploy workflow (hash of `infra/node-image-cleanup/*.sh`) |
 | `${GOOGLE_DELEGATED_USER}` | `noreply@fountainrank.com` | `GOOGLE_DELEGATED_USER` var (email) |
 | `${FROM_EMAIL}` | `noreply@fountainrank.com` | `FROM_EMAIL` var (email) |
 | `${LOGTO_MANAGEMENT_RESOURCE}` | `https://default.logto.app/api` | optional `LOGTO_MANAGEMENT_RESOURCE` var |
