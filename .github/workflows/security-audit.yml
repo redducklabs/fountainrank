@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v9.0.0
+      - uses: astral-sh/setup-uv@v10.0.1
       - name: Export locked backend deps (no hashes; pip-audit --no-deps audits the pinned set)
         working-directory: backend
         # --no-hashes: `uv export` emits a cross-platform hash SUBSET that pip's
@@ -38,7 +38,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
-      - uses: pnpm/action-setup@v6.0.10
+      - uses: pnpm/action-setup@v6.1.0
       - name: Install workspace deps
         run: pnpm install --frozen-lockfile
       - name: pnpm audit (GATE — fail on high/critical)
@@ -96,8 +96,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
-      - uses: pnpm/action-setup@v6.0.10
-      - uses: astral-sh/setup-uv@v9.0.0
+      - uses: pnpm/action-setup@v6.1.0
+      - uses: astral-sh/setup-uv@v10.0.1
       - run: uv sync --frozen
         working-directory: backend
       - run: pnpm install --frozen-lockfile
