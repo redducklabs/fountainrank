@@ -44,11 +44,18 @@ no IngressClass, and has the standard Ingress provider turned off.
 **Phase B: flip the LB (Terraform).** The LB forwarding rules and health check move to
 31080/31443. Merge only after Phase A is deployed and verified.
 
-**Phase C: remove ingress-nginx.** `deploy.yml` uninstalls the release, then applies a repo-owned
-`nginx` IngressClass (controller `k8s.io/ingress-nginx`). The Traefik provider only serves
-Ingresses whose class matches an IngressClass object with that controller, and the IngressClass
-is deleted with the ingress-nginx release. Merge only after Phase B has carried production
-traffic cleanly.
+**Phase C: remove ingress-nginx.** The Traefik provider serves an Ingress only when its class
+names an IngressClass object whose controller is `k8s.io/ingress-nginx`. That `nginx`
+IngressClass belongs to the ingress-nginx release, so a plain `helm uninstall` would delete it
+and Traefik would drop every route. `deploy.yml` hands the object over with no gap:
+
+1. Annotate the live object `helm.sh/resource-policy=keep`.
+2. `helm upgrade` the release with `controller.ingressClassResource.enabled=false`. Helm skips
+   deleting a live object marked keep.
+3. `kubectl apply` the repo-owned `infra/k8s/ingressclass-nginx.yaml`.
+4. `helm uninstall` the release.
+
+Merge only after Phase B has carried production traffic cleanly.
 
 ## Behavior mapping and differences
 
@@ -106,7 +113,8 @@ Sign-in through `auth.` works, and the issuer is https. `http://` redirects with
 - **B:** revert the Terraform change and run `terraform.yml` apply. ingress-nginx is still
   running, so traffic goes straight back to 30080/30443.
 - **C:** revert the PR and redeploy. That reinstalls ingress-nginx (the Phase B state), and the
-  Phase B revert can then point the LB back. Because the repo-owned `nginx` IngressClass has no
-  Helm ownership metadata, the reinstall must either delete it first or run with
-  `--set controller.ingressClassResource.enabled=false`. Without one of those, Helm refuses to
-  adopt it.
+  Phase B revert can then point the LB back. The live `nginx` IngressClass still carries the old
+  release's Helm ownership metadata, so the reinstall should adopt it. If Helm refuses
+  ("invalid ownership metadata"), reinstall with
+  `--set controller.ingressClassResource.enabled=false`. Don't delete the IngressClass: Traefik
+  would drop every route.
