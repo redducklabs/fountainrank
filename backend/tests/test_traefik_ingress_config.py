@@ -107,3 +107,37 @@ def test_deploy_pins_the_traefik_chart():
         r"--repo https://traefik\.github\.io/charts \\\n\s+--version 42\.4\.1 \\", workflow
     )
     assert "--values infra/helm/traefik-values.yaml" in workflow
+
+
+INGRESS_CLASS = ROOT / "infra/k8s/ingressclass-nginx.yaml"
+
+
+def test_ingress_nginx_is_no_longer_installed():
+    workflow = DEPLOY.read_text()
+    assert "helm upgrade --install ingress-nginx" not in workflow
+    assert "use-http2" not in workflow
+    assert not (ROOT / "infra/k8s/ingress-nginx.yaml").exists()
+
+
+def test_nginx_ingress_class_is_repo_owned_and_handed_over_without_a_gap():
+    ic = yaml.safe_load(INGRESS_CLASS.read_text())
+    assert ic["kind"] == "IngressClass"
+    assert ic["metadata"]["name"] == "nginx"
+    # What Traefik's Ingress NGINX provider keys on (providers.kubernetesIngressNGINX).
+    assert (
+        ic["spec"]["controller"]
+        == _values()["providers"]["kubernetesIngressNGINX"]["controllerClass"]
+    )
+    assert ic["metadata"]["annotations"]["helm.sh/resource-policy"] == "keep"
+    assert "is-default-class" not in str(ic["metadata"])
+
+    workflow = DEPLOY.read_text()
+    traefik = workflow.index("helm upgrade --install traefik traefik")
+    keep = workflow.index("kubectl annotate ingressclass nginx helm.sh/resource-policy=keep")
+    drop = workflow.index("--set controller.ingressClassResource.enabled=false")
+    adopt = workflow.index("kubectl apply -f infra/k8s/ingressclass-nginx.yaml")
+    uninstall = workflow.index("helm uninstall ingress-nginx --namespace ingress-nginx")
+    apps = workflow.index("envsubst < infra/k8s/namespace.yaml")
+    # Traefik is up before ingress-nginx goes; the class is kept, released, and adopted before
+    # the uninstall; all of it before the app manifests apply.
+    assert traefik < keep < drop < adopt < uninstall < apps

@@ -400,9 +400,8 @@ resource "digitalocean_certificate" "main" {
 
 # ---------------------------------------------------------------------------
 # Load Balancer — targets DOKS nodes; Traefik listens on NodePorts 31080/31443
-# (infra/helm/traefik-values.yaml). Before the ingress-nginx -> Traefik migration these were
-# ingress-nginx's 30080/30443; ingress-nginx stays installed until migration phase C, so
-# reverting these three ports is the rollback (docs/plans/2026-11-20-ingress-nginx-to-traefik.md).
+# (infra/helm/traefik-values.yaml), which replaced the retired ingress-nginx (formerly on
+# 30080/30443; docs/plans/2026-11-20-ingress-nginx-to-traefik.md).
 # ---------------------------------------------------------------------------
 resource "digitalocean_loadbalancer" "main" {
   name   = "${var.project_name}-${var.environment}-lb"

@@ -4,8 +4,10 @@ metadata:
   name: fountainrank-ingress
   namespace: ${NAMESPACE}
   annotations:
-    # TLS is terminated at the DO Load Balancer; force https via X-Forwarded-Proto.
-    nginx.ingress.kubernetes.io/use-forwarded-headers: "true"
+    # TLS is terminated at the DO Load Balancer. Plain-HTTP requests arrive on Traefik's `web`
+    # entryPoint and get a 308 to https. Forwarded-header trust is set on the Traefik entryPoints
+    # (infra/helm/traefik-values.yaml); the old use-forwarded-headers annotation has no
+    # Traefik equivalent.
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
     nginx.ingress.kubernetes.io/proxy-body-size: "25m"
@@ -69,7 +71,6 @@ metadata:
   name: fountainrank-backend-ingress
   namespace: ${NAMESPACE}
   annotations:
-    nginx.ingress.kubernetes.io/use-forwarded-headers: "true"
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
     nginx.ingress.kubernetes.io/proxy-body-size: "12m"

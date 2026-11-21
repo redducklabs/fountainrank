@@ -19,11 +19,12 @@ locally everything here is read-only / dry-run (see `claude_help/kubernetes-infr
     and `doctl registry kubernetes-manifest fountainrank --name regcred --namespace "$NAMESPACE" | kubectl apply -f -`
     (the Secret name `regcred` must match `imagePullSecrets`). Applying the committed
     placeholders would overwrite real secrets with empties.
-  - `ingress-nginx.yaml` — 📄 documents the **Helm** install command (NodePort 30080/30443
-    + `controller.config.*`); ingress-nginx is Helm-installed, not `kubectl apply`-ed.
-- **`helm/traefik-values.yaml`**: Helm values for **Traefik**, the ingress-nginx replacement
-  (chart `traefik/traefik` 42.4.1, namespace `traefik`, NodePort 31080/31443). It reads the
-  same `nginx`-class Ingresses through its Ingress NGINX provider. CI injects the
+  - `ingressclass-nginx.yaml` — the repo-owned `nginx` IngressClass (controller
+    `k8s.io/ingress-nginx`) that Traefik's Ingress NGINX provider keys on. Applied by its own deploy
+    step, not the envsubst apply loop.
+- **`helm/traefik-values.yaml`**: Helm values for **Traefik**, the ingress controller
+  (chart `traefik/traefik` 42.4.1, namespace `traefik`, NodePort 31080/31443; it replaced the
+  retired ingress-nginx). It reads the `nginx`-class Ingresses through its Ingress NGINX provider. CI injects the
   forwarded-header trust CIDR (the cluster VPC) at deploy time. Migration phases:
   `docs/plans/2026-11-20-ingress-nginx-to-traefik.md`.
 
@@ -48,8 +49,8 @@ locally everything here is read-only / dry-run (see `claude_help/kubernetes-infr
 ## Deploy flow (CI, Phase 0f)
 
 `doctl auth` → `doctl kubernetes cluster kubeconfig save <cluster>` →
-`helm upgrade --install ingress-nginx … (NodePort 30080/30443)` → resolve the cluster VPC
-CIDR → `helm upgrade --install traefik … (NodePort 31080/31443)` → create secrets
+resolve the cluster VPC CIDR → `helm upgrade --install traefik … (NodePort 31080/31443)` →
+remove any leftover ingress-nginx release, keeping the `nginx` IngressClass → create secrets
 imperatively (`fountainrank-secrets`, `regcred`) → `envsubst < manifest | kubectl apply -f -`
 for the apply set → `kubectl rollout status`. Migrations run via `kubectl exec` into the
 backend pod (`alembic upgrade head`).

@@ -115,7 +115,8 @@ spec:
   type: ClusterIP
 ---
 # SEPARATE Ingress — the regex/rewrite annotations are Ingress-object-scoped, so they must NOT
-# live on the shared fountainrank-ingress (they'd affect web/API/auth/healthz). ingress-nginx
+# live on the shared fountainrank-ingress (they'd affect web/API/auth/healthz). The controller
+# (Traefik's Ingress NGINX provider, which mirrors ingress-nginx here; regex is host-wide)
 # merges this with the shared object for host fountainrank.com, applying the rewrite only to the
 # /tiles paths. No Cache-Control snippet (allow-snippet-annotations is off in this cluster);
 # go-pmtiles sets ETag → browsers revalidate (304). max-age caching is a future edge-cache concern.
@@ -127,7 +128,6 @@ metadata:
   annotations:
     nginx.ingress.kubernetes.io/use-regex: "true"
     nginx.ingress.kubernetes.io/rewrite-target: /$2
-    nginx.ingress.kubernetes.io/use-forwarded-headers: "true"
   labels:
     app: basemap-tiles
 spec:
