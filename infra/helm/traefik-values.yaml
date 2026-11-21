@@ -119,8 +119,9 @@ tlsOptions:
 # can reach the NodePort is already inside the trusted range, so Local would not narrow the
 # trust; it would only make a single-replica Traefik drop LB traffic on nodes without the pod
 # and open a gap on every rollout. deploy.yml checks the node firewalls before the install and
-# the annotation + firewalls after it, withdrawing the trust if the check fails. Residual: other droplets in the same VPC are trusted (narrowing to the LB's own
-# private address isn't possible: the DO API doesn't expose it).
+# the annotation + firewalls after it, withdrawing the trust if the check fails.
+# Residual: other droplets in the same VPC are trusted (narrowing to the LB's own private
+# address isn't possible: the DO API doesn't expose it).
 service:
   annotations:
     kubernetes.digitalocean.com/firewall-managed: "false"
