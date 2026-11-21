@@ -24,7 +24,8 @@ locally everything here is read-only / dry-run (see `claude_help/kubernetes-infr
 - **`helm/traefik-values.yaml`**: Helm values for **Traefik**, the ingress-nginx replacement
   (chart `traefik/traefik` 42.4.1, namespace `traefik`, NodePort 31080/31443). It reads the
   same `nginx`-class Ingresses through its Ingress NGINX provider. CI injects the
-  forwarded-header trust CIDR (the cluster VPC) at deploy time. Migration phases:
+  forwarded-header trust CIDR (the cluster VPC) at deploy time; the NodePorts are VPC-only
+  (`firewall-managed: "false"`, checked by `scripts/ci/traefik_guards.py`). Migration phases:
   `docs/plans/2026-11-20-ingress-nginx-to-traefik.md`.
 
   `account-deletion-cleanup.yaml` is an hourly **CronJob** on the backend image that drains the

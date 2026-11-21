@@ -28,8 +28,15 @@ The DO LB doesn't verify backend certificates, so a self-signed cert on the re-e
 the same way it does today. TLS 1.2+ is enforced on that hop by the `default` TLSOption.
 
 NodePort firewalling: Terraform manages no firewall. The DOKS cloud-controller-manager opens the
-nodePorts of every `NodePort` Service on the cluster's public-access firewall, so 31080/31443
-open the same way 30080/30443 did. No Terraform firewall change is needed.
+nodePorts of every `NodePort` Service to `0.0.0.0/0` on the cluster's
+`k8s-public-access-<cluster-id>` firewall; that is why 30080/30443 are public today. The Traefik
+Service opts out with `kubernetes.digitalocean.com/firewall-managed: "false"`, so 31080/31443 get
+no public rule and are reachable only over the VPC. The DO LB still reaches them: it connects to
+the nodes from a private VPC address (ingress-nginx logs the LB health check from `10.124.0.x`),
+and the DOKS-managed `k8s-<cluster-id>-worker` firewall allows all TCP from RFC 1918 sources.
+`deploy.yml` checks after the install that the live Service carries the annotation and that the
+public-access firewall opens neither port, and fails the deploy otherwise. No Terraform firewall
+change is needed.
 
 ## Phases
 
@@ -64,11 +71,22 @@ Merge only after Phase B has carried production traffic cleanly.
   That means ingress-nginx trusts `X-Forwarded-*` from **any** source, including direct hits on
   the publicly reachable NodePorts. Traefik trusts them only from the **cluster VPC CIDR**
   (`ports.{web,websecure}.forwardedHeaders.trustedIPs`). CI resolves the CIDR with `doctl` at
-  deploy time and fails closed. From LB traffic, the app sees the same leftmost
-  `X-Forwarded-For` (the client, as appended by the DO LB) and the same `X-Forwarded-Proto`.
-  Direct NodePort hits can no longer spoof it. Difference: `X-Real-IP` is the LB/node address
-  under Traefik, not the client. Nothing in the repo reads `X-Real-IP` (Logto uses
-  `X-Forwarded-For` via `TRUST_PROXY_HEADER`).
+  deploy time and fails closed: `scripts/ci/traefik_guards.py` accepts only a strict IPv4 network
+  inside an RFC 1918 block. From LB traffic, the app sees the same leftmost `X-Forwarded-For`
+  (the client, as appended by the DO LB) and the same `X-Forwarded-Proto`. Difference:
+  `X-Real-IP` is the LB/node address under Traefik, not the client. Nothing in the repo reads
+  `X-Real-IP` (Logto uses `X-Forwarded-For` via `TRUST_PROXY_HEADER`).
+
+  The VPC trust is sound only because the NodePorts are **VPC-only** (see *NodePort
+  firewalling*). The Service keeps `externalTrafficPolicy: Cluster`, under which kube-proxy /
+  Cilium may SNAT a caller to a node IP; a public caller would then look like a trusted VPC
+  address and could forge `X-Forwarded-*`. With the public path closed, every caller that can
+  reach the NodePort is already inside the trusted range, so `Local` would not narrow the trust.
+  It would only make the single Traefik replica drop LB traffic on nodes without the pod and open
+  a gap on every rollout (the LB needs three failed checks to drop a node). **Residual:** the
+  region's default VPC is shared with other droplets in the account, and they are trusted too.
+  Narrowing to the LB's own address isn't possible (the DO API doesn't expose its private IP). A
+  dedicated cluster VPC would shrink the boundary but means recreating the cluster.
 - **`ssl-redirect` / `force-ssl-redirect`.** Non-TLS routers get a RedirectScheme to https with
   `ForcePermanentRedirect`, matching ingress-nginx's 308. HTTP from the LB lands on `web`, so it
   redirects. HTTPS lands on `websecure`, so it doesn't.
@@ -84,6 +102,11 @@ Merge only after Phase B has carried production traffic cleanly.
   check works unchanged on the new port.
 - **Timeouts / retries.** The provider defaults mirror nginx: 60s connect/read/send, and
   `proxy-next-upstream "error timeout"` with 3 tries.
+- **Access logs.** JSON to stdout with request headers dropped and **query strings dropped** from
+  `RequestPath` (`accessLog.fields.queryParameters.defaultMode: drop`, Traefik >= v3.7.3). Query
+  strings carry secrets such as the OAuth `code` on the `/callback` redirects, which
+  `web/app/callback/route.ts` deliberately never logs. (ingress-nginx's access log still records
+  them until Phase C removes it.)
 - **HTTP/2.** Traefik negotiates h2 via ALPN on `websecure`. It's Go's HTTP/2 stack, not NGINX's,
   so the CVEs above don't apply.
 
@@ -96,13 +119,22 @@ Merge only after Phase B has carried production traffic cleanly.
   Ingresses. Confirm the rendered args carry the VPC CIDR in
   `--entryPoints.web.forwardedHeaders.trustedIPs`.
 - `kubectl get ingress -A -o wide`: the ADDRESS column is unchanged (still ingress-nginx's).
+- NodePorts are VPC-only: the deploy's *Verify Traefik NodePorts are VPC-only* step passed;
+  `kubectl -n traefik get svc traefik -o yaml` shows `kubernetes.digitalocean.com/firewall-managed:
+  "false"` and `externalTrafficPolicy: Cluster`; `doctl compute firewall list` shows no 31080/31443
+  rule on `k8s-public-access-<cluster-id>`. From outside DO, `curl -m 5 -k
+  https://<node-public-ip>:31443/healthz` and `curl -m 5 http://<node-public-ip>:31080/healthz`
+  time out (while `:30443` still answers, until Phase C).
+- Access logs: after a request to `/callback?code=x&state=y` (or any query), Traefik's
+  `RequestPath` shows `/callback` with no query string.
 - From a pod in the cluster: `curl -sk https://traefik.traefik.svc/healthz` returns 200, and
   `curl -sk -H 'Host: fountainrank.com' https://traefik.traefik.svc/` returns 200.
   `curl -s -H 'Host: api.fountainrank.com' http://traefik.traefik.svc/` returns a 308 to https.
   `curl -sk -H 'Host: fountainrank.com' https://traefik.traefik.svc/tiles/planet.json` returns
   200. A 13 MB POST to `api.` returns 413.
 
-**After Phase B apply:** the LB shows all nodes healthy. `/readyz` and home return 200. Traefik
+**After Phase B apply:** the LB shows all nodes healthy (this also proves the LB reaches the
+VPC-only NodePort 31443; if it doesn't, roll back B). `/readyz` and home return 200. Traefik
 access logs show real client IPs (`ClientHost` / `X-Forwarded-For`) and `RequestScheme` https.
 Sign-in through `auth.` works, and the issuer is https. `http://` redirects with 308.
 

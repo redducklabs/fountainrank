@@ -183,24 +183,26 @@ jobs:
       # Traefik runs ALONGSIDE ingress-nginx on NodePorts 31080/31443 and reads the same Ingress
       # objects. The DO LB still forwards to ingress-nginx (30080/30443), so no live traffic moves.
       # Traefik trusts X-Forwarded-* only from the cluster's VPC range (the DO LB + nodes), resolved
-      # here rather than hardcoded. Fail closed: no range, or anything but a private IPv4 CIDR,
-      # stops the deploy instead of installing Traefik with a wider (or empty) trust list.
+      # here rather than hardcoded. Fail closed: no range, or anything but an IPv4 network inside
+      # an RFC 1918 block (scripts/ci/traefik_guards.py), stops the deploy instead of installing
+      # Traefik with a wider (or empty) trust list.
       - name: Resolve cluster VPC range (Traefik forwarded-header trust)
         id: vpc
         run: |
           set -euo pipefail
-          vpc_uuid="$(doctl kubernetes cluster get "$CLUSTER_NAME" --output json \
-            | jq -r 'if type == "array" then .[0] else . end | .vpc_uuid // empty')"
-          if [ -z "$vpc_uuid" ]; then
-            echo "::error::could not resolve the VPC of $CLUSTER_NAME"; exit 1
+          cluster_json="$(doctl kubernetes cluster get "$CLUSTER_NAME" --output json \
+            | jq -c 'if type == "array" then .[0] else . end')"
+          cluster_id="$(jq -r '.id // empty' <<<"$cluster_json")"
+          vpc_uuid="$(jq -r '.vpc_uuid // empty' <<<"$cluster_json")"
+          if [ -z "$cluster_id" ] || [ -z "$vpc_uuid" ]; then
+            echo "::error::could not resolve the id/VPC of $CLUSTER_NAME"; exit 1
           fi
           vpc_cidr="$(doctl vpcs get "$vpc_uuid" --output json \
             | jq -r 'if type == "array" then .[0] else . end | .ip_range // empty')"
-          if ! printf '%s' "$vpc_cidr" | grep -Eq '^(10|172\.(1[6-9]|2[0-9]|3[01])|192\.168)\.[0-9.]+/(8|9|[12][0-9]|3[0-2])$'; then
-            echo "::error::unexpected VPC range '$vpc_cidr' for $CLUSTER_NAME (want a private IPv4 CIDR)"; exit 1
-          fi
-          echo "Cluster VPC $vpc_uuid range $vpc_cidr"
+          vpc_cidr="$(python3 scripts/ci/traefik_guards.py private-cidr "$vpc_cidr")"
+          echo "Cluster $cluster_id VPC $vpc_uuid range $vpc_cidr"
           echo "cidr=$vpc_cidr" >> "$GITHUB_OUTPUT"
+          echo "cluster_id=$cluster_id" >> "$GITHUB_OUTPUT"
       - name: Install/upgrade Traefik (NodePort 31080/31443, alongside ingress-nginx)
         env:
           VPC_CIDR: ${{ steps.vpc.outputs.cidr }}
@@ -213,6 +215,24 @@ jobs:
             --set "ports.web.forwardedHeaders.trustedIPs={$VPC_CIDR}" \
             --set "ports.websecure.forwardedHeaders.trustedIPs={$VPC_CIDR}" \
             --wait
+      # The VPC trust above is only sound while 31080/31443 are NOT publicly reachable: with
+      # externalTrafficPolicy Cluster a public caller can be SNATed to a node IP inside the VPC
+      # range. Verify the live Service opted out of the DOKS-managed public firewall
+      # (infra/helm/traefik-values.yaml) and that the cluster's public-access firewall opens
+      # neither port. Fail the deploy otherwise.
+      - name: Verify Traefik NodePorts are VPC-only
+        env:
+          CLUSTER_ID: ${{ steps.vpc.outputs.cluster_id }}
+        run: |
+          set -euo pipefail
+          managed="$(kubectl -n traefik get service traefik \
+            -o jsonpath='{.metadata.annotations.kubernetes\.digitalocean\.com/firewall-managed}')"
+          if [ "$managed" != "false" ]; then
+            echo "::error::traefik Service is not firewall-managed=false (got '$managed')"; exit 1
+          fi
+          doctl compute firewall list --output json \
+            | python3 scripts/ci/traefik_guards.py nodeports-not-public \
+                "k8s-public-access-$CLUSTER_ID" 31080 31443
       - name: Render + apply namespace first
         run: |
           export NAMESPACE ENVIRONMENT IMAGE_TAG REGISTRY DOMAIN

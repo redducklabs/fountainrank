@@ -81,6 +81,9 @@ ports:
     # from the cluster's VPC range (where the DO LB and the nodes live). CI fills this in at
     # deploy time from the cluster's VPC (doctl), so the CIDR isn't hardcoded here and the
     # deploy fails closed if it can't be resolved. Never 0.0.0.0/0, never `insecure: true`.
+    # This trust is only sound because the NodePorts are NOT publicly reachable (see the
+    # `service` block below): with externalTrafficPolicy Cluster, a public caller of a NodePort
+    # can be SNATed to a node IP, which is inside the trusted VPC range.
     forwardedHeaders:
       trustedIPs: []
       insecure: false
@@ -104,19 +107,44 @@ tlsOptions:
     minVersion: VersionTLS12
     sniStrict: false
 
+# Forwarded-header trust boundary = the VPC. On DOKS the cloud-controller-manager opens every
+# NodePort Service's ports to 0.0.0.0/0 on the cluster's `k8s-public-access-<cluster-id>`
+# firewall (that is how 30080/30443 are public today). `firewall-managed: "false"` opts this
+# Service out, so 31080/31443 get NO public inbound rule and are reachable only over the VPC.
+# The DO LB still reaches them: it connects to the nodes from its private VPC address (the
+# ingress-nginx health-check log shows a 10.124.0.x client), and the DOKS-managed
+# `k8s-<cluster-id>-worker` firewall allows all TCP from RFC 1918 sources.
+#
+# externalTrafficPolicy stays Cluster (explicit). With the public path closed, every caller that
+# can reach the NodePort is already inside the trusted range, so Local would not narrow the
+# trust; it would only make a single-replica Traefik drop LB traffic on nodes without the pod
+# and open a gap on every rollout. deploy.yml verifies the annotation and the firewall after
+# the install. Residual: other droplets in the same VPC are trusted (narrowing to the LB's own
+# private address isn't possible: the DO API doesn't expose it).
 service:
+  annotations:
+    kubernetes.digitalocean.com/firewall-managed: "false"
   spec:
     type: NodePort
+    externalTrafficPolicy: Cluster
 
 # Structured logs to stdout (repo logging standard). Access logs carry ClientHost, which is how
 # Phase A verifies the source addresses Traefik sees before the LB is flipped. Headers are not
-# logged (chart/Traefik default drops them).
+# logged (headers.defaultMode drop, also the chart default: no Authorization/Cookie in logs).
+# Query strings are dropped from RequestPath: they carry secrets such as the OAuth `code` on
+# the web and Logto /callback redirects (web/app/callback/route.ts never logs it either).
+# Requires Traefik >= v3.7.3; the chart fails the render on an older image.
 log:
   format: json
   level: INFO
 accessLog:
   enabled: true
   format: json
+  fields:
+    headers:
+      defaultMode: drop
+    queryParameters:
+      defaultMode: drop
 
 resources:
   requests:

@@ -5,15 +5,28 @@ These tests pin the security-relevant settings so a later edit can't quietly wid
 forwarded-header trust, drop the body-size limits, or make Traefik the default IngressClass.
 """
 
+import importlib.util
+import json
 import re
+import subprocess
+import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 VALUES = ROOT / "infra/helm/traefik-values.yaml"
 DEPLOY = ROOT / ".github/workflows/deploy.yml"
 INGRESS = ROOT / "infra/k8s/ingress.yaml"
+GUARDS = ROOT / "scripts/ci/traefik_guards.py"
+
+
+def _guards():
+    spec = importlib.util.spec_from_file_location("traefik_guards", GUARDS)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _values() -> dict:
@@ -62,17 +75,141 @@ def test_forwarded_header_trust_is_injected_not_hardcoded():
         assert f'--set "ports.{name}.forwardedHeaders.trustedIPs={{$VPC_CIDR}}"' in workflow
 
 
-def test_vpc_cidr_guard_accepts_only_private_ipv4_ranges():
+@pytest.mark.parametrize(
+    "cidr",
+    [
+        "10.124.0.0/20",
+        "10.10.0.0/16",
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "172.31.255.0/24",
+        "192.168.32.0/20",
+        "192.168.0.0/16",
+        "10.124.0.9/32",
+    ],
+)
+def test_private_cidr_guard_accepts_rfc1918_networks(cidr):
+    assert _guards().validate_private_cidr(cidr) == cidr
+
+
+@pytest.mark.parametrize(
+    "cidr",
+    [
+        "",
+        " ",
+        "10.124.0.0/20 ",
+        " 10.124.0.0/20",
+        "10.124.0.0/20\n",
+        "10.0.0.0",
+        "10.124.0.1/20",  # no prefix / host bits set
+        "0.0.0.0/0",
+        "10.0.0.0/0",
+        "10.0.0.0/7",  # wider than any RFC 1918 block
+        "192.168.0.0/8",
+        "172.16.0.0/8",
+        "172.16.0.0/11",  # prefix escapes the block
+        "10.999.0.0/16",
+        "10.124.0.0/33",
+        "10.124.0.0/-1",
+        "010.124.0.0/20",  # malformed
+        "172.32.0.0/16",
+        "172.15.0.0/16",
+        "192.169.0.0/16",  # just outside the blocks
+        "100.64.0.0/10",
+        "8.8.8.0/24",
+        "127.0.0.0/8",
+        "169.254.0.0/16",  # non-RFC 1918
+        "::/0",
+        "fd00::/8",
+        "10.124.0.0/255.255.240.0x",
+    ],
+)
+def test_private_cidr_guard_rejects_everything_else(cidr):
+    with pytest.raises(ValueError):
+        _guards().validate_private_cidr(cidr)
+
+
+def test_private_cidr_guard_cli_fails_closed():
+    run = [sys.executable, str(GUARDS), "private-cidr"]
+    ok = subprocess.run([*run, "10.124.0.0/20"], capture_output=True, text=True)
+    assert ok.returncode == 0 and ok.stdout.strip() == "10.124.0.0/20"
+    for bad in ("", "192.168.0.0/8"):
+        res = subprocess.run([*run, bad], capture_output=True, text=True)
+        assert res.returncode == 1 and res.stdout == ""
+
+
+def test_deploy_validates_the_vpc_range_with_the_guard():
     workflow = DEPLOY.read_text()
-    match = re.search(
-        r"grep -Eq '([^']+)'; then\n\s+echo \"::error::unexpected VPC range", workflow
+    assert 'vpc_cidr="$(python3 scripts/ci/traefik_guards.py private-cidr "$vpc_cidr")"' in workflow
+    assert "grep -Eq '^(10|" not in workflow  # the old regex guard is gone
+
+
+def _firewall(*rules):
+    return [
+        {
+            "name": "k8s-public-access-other",
+            "inbound_rules": [{"protocol": "tcp", "ports": "31443"}],
+        },
+        {"name": "k8s-public-access-abc", "inbound_rules": list(rules)},
+    ]
+
+
+@pytest.mark.parametrize(
+    ("rules", "exposed"),
+    [
+        ([], []),
+        ([{"protocol": "tcp", "ports": "30080"}, {"protocol": "tcp", "ports": "30443"}], []),
+        ([{"protocol": "udp", "ports": "31443"}], []),
+        ([{"protocol": "tcp", "ports": "31443"}], [31443]),
+        ([{"protocol": "tcp", "ports": "31000-31100"}], [31080]),
+        ([{"protocol": "tcp", "ports": "0"}], [31080, 31443]),
+        ([{"protocol": "tcp", "ports": "all"}], [31080, 31443]),
+        ([{"protocol": "all", "ports": "31080"}], [31080]),
+    ],
+)
+def test_nodeport_firewall_guard(rules, exposed):
+    firewalls = _firewall(*rules)
+    assert _guards().open_ports(firewalls, "k8s-public-access-abc", [31080, 31443]) == exposed
+
+
+def test_nodeport_firewall_guard_cli():
+    run = [sys.executable, str(GUARDS), "nodeports-not-public", "k8s-public-access-abc"]
+    run += ["31080", "31443"]
+    clean = subprocess.run(run, input=json.dumps(_firewall()), capture_output=True, text=True)
+    assert clean.returncode == 0
+    missing = subprocess.run(run, input="[]", capture_output=True, text=True)
+    assert missing.returncode == 0
+    for bad_input in (json.dumps(_firewall({"protocol": "tcp", "ports": "31080"})), "{}"):
+        res = subprocess.run(run, input=bad_input, capture_output=True, text=True)
+        assert res.returncode == 1
+
+
+def test_traefik_nodeports_are_not_publicly_exposed():
+    service = _values()["service"]
+    # DOKS opens a NodePort Service's ports to 0.0.0.0/0 unless it opts out. With
+    # externalTrafficPolicy Cluster a public caller can be SNATed into the trusted VPC range.
+    assert service["annotations"]["kubernetes.digitalocean.com/firewall-managed"] == "false"
+    assert service["spec"]["externalTrafficPolicy"] == "Cluster"
+    workflow = DEPLOY.read_text()
+    verify = workflow[workflow.index("- name: Verify Traefik NodePorts are VPC-only") :]
+    verify = verify[: verify.index("- name: Render + apply namespace first")]
+    assert r"kubernetes\.digitalocean\.com/firewall-managed" in verify
+    assert '[ "$managed" != "false" ]' in verify
+    assert "traefik_guards.py nodeports-not-public" in verify
+    assert '"k8s-public-access-$CLUSTER_ID" 31080 31443' in verify
+    # The check runs after the install, in the same job.
+    assert workflow.index("helm upgrade --install traefik") < workflow.index(
+        "- name: Verify Traefik NodePorts are VPC-only"
     )
-    assert match, "VPC CIDR guard not found in deploy.yml"
-    guard = re.compile(match.group(1))
-    for ok in ("10.124.0.0/20", "10.10.0.0/16", "172.16.0.0/12", "192.168.32.0/20"):
-        assert guard.search(ok), ok
-    for bad in ("", "0.0.0.0/0", "100.64.0.0/10", "8.8.8.0/24", "10.0.0.0", "10.0.0.0/0", "::/0"):
-        assert not guard.search(bad), bad
+
+
+def test_access_logs_drop_query_strings_and_headers():
+    # Query strings carry the OAuth `code` on /callback (web/app/callback/route.ts never logs it).
+    access_log = _values()["accessLog"]
+    assert access_log["enabled"] is True
+    assert access_log["fields"]["queryParameters"]["defaultMode"] == "drop"
+    assert access_log["fields"]["headers"]["defaultMode"] == "drop"
+    assert not access_log["fields"]["headers"].get("names")
 
 
 def test_nodeports_and_tls():
