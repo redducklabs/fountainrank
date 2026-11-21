@@ -39,7 +39,8 @@ Terraform and deployed via GitHub Actions. See spec §15 for the full design.
   registry. State is stored in DO Spaces (S3 backend).
 - `infra/k8s/` — raw YAML templated with `envsubst` (substituted in CI): the
   backend, the web app, **Logto** (its own Deployment + Service + Ingress route),
-  `ingress-nginx`, ingress routes, and secrets created at deploy time from GitHub
+  ingress routes (`nginx`-class Ingresses served by **Traefik**, Helm-installed from
+  `infra/helm/traefik-values.yaml`), and secrets created at deploy time from GitHub
   Environment secrets.
 
 ## Deploy flow (CI)

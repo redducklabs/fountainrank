@@ -1,0 +1,18 @@
+# The `nginx` IngressClass, now owned by this repo instead of the (removed) ingress-nginx Helm
+# release. Every Ingress here uses `ingressClassName: nginx`, and Traefik's Kubernetes Ingress
+# NGINX provider (infra/helm/traefik-values.yaml) serves an Ingress only when its class names an
+# IngressClass whose controller is `k8s.io/ingress-nginx`. Deleting this object drops every route.
+#
+# Applied by .github/workflows/deploy.yml ("Remove ingress-nginx, keep the nginx IngressClass for
+# Traefik"). `spec.controller` is immutable. The keep policy stops any future Helm release that
+# adopts this object from deleting it on uninstall.
+apiVersion: networking.k8s.io/v1
+kind: IngressClass
+metadata:
+  name: nginx
+  annotations:
+    helm.sh/resource-policy: keep
+  labels:
+    app.kubernetes.io/part-of: fountainrank
+spec:
+  controller: k8s.io/ingress-nginx

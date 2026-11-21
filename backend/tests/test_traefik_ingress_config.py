@@ -126,7 +126,7 @@ def test_pod_is_hardened_and_bounded():
 
 def test_deploy_runs_the_install_script_and_pins_the_chart():
     workflow = DEPLOY.read_text()
-    step = "- name: Install/upgrade Traefik (NodePort 31080/31443, alongside ingress-nginx)\n"
+    step = "- name: Install/upgrade Traefik (NodePort 31080/31443)\n"
     assert step + "        run: bash scripts/ci/install-traefik.sh\n" in workflow
     assert workflow.index(step) < workflow.index("- name: Render + apply namespace first")
     assert "helm upgrade --install traefik" not in workflow  # only via the script
@@ -922,3 +922,160 @@ def test_load_balancer_health_check_uses_the_hostless_healthz_over_https():
     assert health == ("https", str(websecure), "/healthz")
     ingress = INGRESS.read_text()
     assert "- path: /healthz" in ingress
+
+
+INGRESS_CLASS = ROOT / "infra/k8s/ingressclass-nginx.yaml"
+
+
+def test_ingress_nginx_is_no_longer_installed():
+    workflow = DEPLOY.read_text()
+    assert "helm upgrade --install ingress-nginx" not in workflow
+    assert "use-http2" not in workflow
+    assert not (ROOT / "infra/k8s/ingress-nginx.yaml").exists()
+
+
+def test_nginx_ingress_class_is_repo_owned_and_handed_over_without_a_gap():
+    ic = yaml.safe_load(INGRESS_CLASS.read_text())
+    assert ic["kind"] == "IngressClass"
+    assert ic["metadata"]["name"] == "nginx"
+    # What Traefik's Ingress NGINX provider keys on (providers.kubernetesIngressNGINX).
+    assert (
+        ic["spec"]["controller"]
+        == _values()["providers"]["kubernetesIngressNGINX"]["controllerClass"]
+    )
+    assert ic["metadata"]["annotations"]["helm.sh/resource-policy"] == "keep"
+    assert "is-default-class" not in str(ic["metadata"])
+
+    workflow = DEPLOY.read_text()
+    traefik = workflow.index("run: bash scripts/ci/install-traefik.sh")
+    keep = workflow.index("kubectl annotate ingressclass nginx helm.sh/resource-policy=keep")
+    drop = workflow.index("--set controller.ingressClassResource.enabled=false")
+    adopt = workflow.index("kubectl apply -f infra/k8s/ingressclass-nginx.yaml")
+    uninstall = workflow.index("helm uninstall ingress-nginx --namespace ingress-nginx")
+    apps = workflow.index("envsubst < infra/k8s/namespace.yaml")
+    # Traefik is up before ingress-nginx goes; the class is kept, released, and adopted before
+    # the uninstall; all of it before the app manifests apply.
+    assert traefik < keep < drop < adopt < uninstall < apps
+
+
+def _lb(**overrides) -> dict:
+    """The shape `doctl compute load-balancer list --output json` prints, after phase B."""
+    lb = {
+        "name": "fountainrank-production-lb",
+        "ip": "146.190.0.127",
+        "status": "active",
+        "tag": "k8s:abc",
+        "forwarding_rules": [
+            {
+                "entry_protocol": "http",
+                "entry_port": 80,
+                "target_protocol": "http",
+                "target_port": 31080,
+            },
+            {
+                "entry_protocol": "https",
+                "entry_port": 443,
+                "target_protocol": "http",
+                "target_port": 31080,
+                "certificate_id": "x",
+            },
+        ],
+        "health_check": {"protocol": "https", "port": 31443, "path": "/healthz"},
+    }
+    lb.update(overrides)
+    return lb
+
+
+def _lb_rule(entry_protocol, entry_port, target_protocol, target_port) -> dict:
+    return {
+        "entry_protocol": entry_protocol,
+        "entry_port": entry_port,
+        "target_protocol": target_protocol,
+        "target_port": target_port,
+    }
+
+
+# The LB as it is before phase B: ingress-nginx's NodePorts, re-encrypted 443.
+INGRESS_NGINX_LB = _lb(
+    forwarding_rules=[_lb_rule("http", 80, "http", 30080), _lb_rule("https", 443, "https", 30443)],
+    health_check={"protocol": "https", "port": 30443, "path": "/healthz"},
+)
+
+
+def test_lb_guard_nodeports_match_the_traefik_values():
+    guards = _guards()
+    ports = _values()["ports"]
+    assert guards.TRAEFIK_WEB_NODEPORT == ports["web"]["nodePort"]
+    assert guards.TRAEFIK_WEBSECURE_NODEPORT == ports["websecure"]["nodePort"]
+
+
+def test_lb_guard_passes_the_phase_b_load_balancer(capsys):
+    other = _lb(name="other", tag="k8s:zzz", status="new")
+    assert (
+        _guards().main(["lb-targets-traefik", "abc"], fetch_load_balancers=lambda: [other, _lb()])
+        == 0
+    )
+    assert capsys.readouterr().out.strip() == "146.190.0.127"
+
+
+@pytest.mark.parametrize(
+    "balancers",
+    [
+        [INGRESS_NGINX_LB],
+        # Half flipped, or still re-encrypting to websecure (the 421 risk).
+        [
+            _lb(
+                forwarding_rules=[
+                    _lb_rule("http", 80, "http", 31080),
+                    _lb_rule("https", 443, "https", 30443),
+                ]
+            )
+        ],
+        [
+            _lb(
+                forwarding_rules=[
+                    _lb_rule("http", 80, "http", 31080),
+                    _lb_rule("https", 443, "https", 31443),
+                ]
+            )
+        ],
+        [_lb(forwarding_rules=[_lb_rule("http", 80, "http", 31080)])],
+        [_lb(forwarding_rules=[*_lb()["forwarding_rules"], _lb_rule("tcp", 8443, "tcp", 30443)])],
+        [_lb(forwarding_rules=[*_lb()["forwarding_rules"], _lb_rule("http", 80, "http", 31080)])],
+        [_lb(health_check={"protocol": "https", "port": 30443, "path": "/healthz"})],
+        [_lb(health_check={"protocol": "http", "port": 31080, "path": "/healthz"})],
+        [_lb(status="errored")],
+        [_lb(ip="")],
+        [],  # no LB for this cluster
+        [_lb(), _lb(name="twin")],  # ambiguous
+        [_lb(forwarding_rules=[{"entry_port": 80}])],
+        [_lb(forwarding_rules=None)],
+    ],
+)
+def test_lb_guard_refuses_anything_short_of_the_phase_b_load_balancer(balancers):
+    assert (
+        _guards().main(["lb-targets-traefik", "abc"], fetch_load_balancers=lambda: balancers) == 1
+    )
+
+
+def test_lb_guard_fails_closed_on_doctl_errors_and_a_missing_cluster_id():
+    def broken():
+        raise subprocess.CalledProcessError(1, "doctl")
+
+    assert _guards().main(["lb-targets-traefik", "abc"], fetch_load_balancers=broken) == 1
+    assert _guards().main(["lb-targets-traefik", ""], fetch_load_balancers=lambda: [_lb()]) == 1
+
+
+def test_ingress_nginx_is_removed_only_after_the_lb_guard():
+    workflow = DEPLOY.read_text()
+    status = workflow.index("if helm status ingress-nginx --namespace ingress-nginx")
+    guard = workflow.index('traefik_guards.py lb-targets-traefik "$cluster_id"')
+    probe = workflow.index("-H 'Host: traefik-cutover-probe.invalid'")
+    refuse = workflow.index('if [ "$probe" != "404 page not found" ]; then')
+    keep = workflow.index("kubectl annotate ingressclass nginx helm.sh/resource-policy=keep")
+    uninstall = workflow.index("helm uninstall ingress-nginx --namespace ingress-nginx")
+    assert status < guard < probe < refuse < keep < uninstall
+    step = workflow[workflow.index("- name: Remove ingress-nginx") :]
+    step = step[: step.index("\n      - name:", 1)]
+    assert "set -euo pipefail" in step
+    assert "continue-on-error" not in step and "|| true" not in step
