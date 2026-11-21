@@ -4,8 +4,10 @@ metadata:
   name: fountainrank-ingress
   namespace: ${NAMESPACE}
   annotations:
-    # TLS is terminated at the DO Load Balancer; force https via X-Forwarded-Proto.
-    nginx.ingress.kubernetes.io/use-forwarded-headers: "true"
+    # TLS is terminated at the DO Load Balancer. Plain-HTTP requests arrive on Traefik's `web`
+    # entryPoint and get a 308 to https. Forwarded-header trust is set on the Traefik entryPoints
+    # (infra/helm/traefik-values.yaml); the old use-forwarded-headers annotation has no
+    # Traefik equivalent.
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
     nginx.ingress.kubernetes.io/proxy-body-size: "25m"
@@ -16,7 +18,7 @@ spec:
   # No TLS section — the DO Load Balancer holds the Let's Encrypt cert.
   rules:
     # Hostless rule — matches any Host NOT matched by the host rules below. The DO LB
-    # health-checks https NodePort 30443 path /healthz with a Host that is NOT one of our
+    # health-checks https NodePort 31443 (Traefik) path /healthz with a Host that is NOT one of our
     # app hostnames (it uses the node/LB target), so /healthz must resolve host-independently
     # to a 200, or the LB marks every node unhealthy before any app traffic works.
     - http:
@@ -69,7 +71,6 @@ metadata:
   name: fountainrank-backend-ingress
   namespace: ${NAMESPACE}
   annotations:
-    nginx.ingress.kubernetes.io/use-forwarded-headers: "true"
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
     nginx.ingress.kubernetes.io/proxy-body-size: "12m"
@@ -90,7 +91,7 @@ spec:
                   number: 80
 ---
 # Tiny always-200 /healthz target for the LB health check (host-independent;
-# the LB probes https NodePort 30443 path /healthz regardless of Host header).
+# the LB probes https NodePort 31443 (Traefik) path /healthz regardless of Host header).
 apiVersion: v1
 kind: Service
 metadata:

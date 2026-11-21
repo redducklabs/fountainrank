@@ -163,22 +163,68 @@ jobs:
       - uses: azure/setup-helm@v5
         with:
           version: v3.21.1
-      - name: Install/upgrade ingress-nginx (NodePort 30080/30443)
+      # Traefik is the ingress controller (it replaced the retired ingress-nginx; see
+      # docs/plans/2026-11-20-ingress-nginx-to-traefik.md). The DO LB forwards to its NodePorts
+      # 31080/31443, and it reads the `nginx`-class Ingresses via its Ingress NGINX provider.
+      # Traefik trusts X-Forwarded-* only from the cluster's VPC range (the DO LB + nodes), resolved
+      # here rather than hardcoded. Fail closed: no range, or anything but a private IPv4 CIDR,
+      # stops the deploy instead of installing Traefik with a wider (or empty) trust list.
+      - name: Resolve cluster VPC range (Traefik forwarded-header trust)
+        id: vpc
         run: |
-          # use-http2=false: CVE-2026-123633 / CVE-2026-123007 (NGINX HTTP/2 RCE). ingress-nginx
-          # is retired and ships no patched NGINX; keep HTTP/2 off until the controller is replaced.
-          helm upgrade --install ingress-nginx ingress-nginx \
-            --repo https://kubernetes.github.io/ingress-nginx \
-            --version 4.15.1 \
-            --namespace ingress-nginx --create-namespace \
-            --set controller.service.type=NodePort \
-            --set controller.service.nodePorts.http=30080 \
-            --set controller.service.nodePorts.https=30443 \
-            --set controller.config.use-forwarded-headers="true" \
-            --set controller.config.compute-full-forwarded-for="true" \
-            --set controller.config.use-proxy-protocol="false" \
-            --set-string controller.config.use-http2=false \
+          set -euo pipefail
+          vpc_uuid="$(doctl kubernetes cluster get "$CLUSTER_NAME" --output json \
+            | jq -r 'if type == "array" then .[0] else . end | .vpc_uuid // empty')"
+          if [ -z "$vpc_uuid" ]; then
+            echo "::error::could not resolve the VPC of $CLUSTER_NAME"; exit 1
+          fi
+          vpc_cidr="$(doctl vpcs get "$vpc_uuid" --output json \
+            | jq -r 'if type == "array" then .[0] else . end | .ip_range // empty')"
+          if ! printf '%s' "$vpc_cidr" | grep -Eq '^(10|172\.(1[6-9]|2[0-9]|3[01])|192\.168)\.[0-9.]+/(8|9|[12][0-9]|3[0-2])$'; then
+            echo "::error::unexpected VPC range '$vpc_cidr' for $CLUSTER_NAME (want a private IPv4 CIDR)"; exit 1
+          fi
+          echo "Cluster VPC $vpc_uuid range $vpc_cidr"
+          echo "cidr=$vpc_cidr" >> "$GITHUB_OUTPUT"
+      - name: Install/upgrade Traefik (NodePort 31080/31443)
+        env:
+          VPC_CIDR: ${{ steps.vpc.outputs.cidr }}
+        run: |
+          helm upgrade --install traefik traefik \
+            --repo https://traefik.github.io/charts \
+            --version 42.4.1 \
+            --namespace traefik --create-namespace \
+            --values infra/helm/traefik-values.yaml \
+            --set "ports.web.forwardedHeaders.trustedIPs={$VPC_CIDR}" \
+            --set "ports.websecure.forwardedHeaders.trustedIPs={$VPC_CIDR}" \
             --wait
+      # Phase C of the migration: remove the ingress-nginx release, keeping the `nginx`
+      # IngressClass. Traefik's provider serves only Ingresses whose class matches an IngressClass
+      # with controller k8s.io/ingress-nginx, and that object belongs to the ingress-nginx
+      # release, so a plain `helm uninstall` would delete it and Traefik would drop every route.
+      # Hand it over with no gap:
+      #   1. mark the live object helm.sh/resource-policy=keep,
+      #   2. upgrade the release without its IngressClass (Helm skips deleting a live object
+      #      marked keep),
+      #   3. apply the repo-owned infra/k8s/ingressclass-nginx.yaml,
+      #   4. uninstall the release (the IngressClass is no longer in its manifest).
+      # After the first run this is a no-op apart from the idempotent IngressClass apply.
+      - name: Remove ingress-nginx, keep the nginx IngressClass for Traefik
+        run: |
+          set -euo pipefail
+          if helm status ingress-nginx --namespace ingress-nginx >/dev/null 2>&1; then
+            kubectl annotate ingressclass nginx helm.sh/resource-policy=keep --overwrite
+            helm upgrade ingress-nginx ingress-nginx \
+              --repo https://kubernetes.github.io/ingress-nginx \
+              --version 4.15.1 \
+              --namespace ingress-nginx \
+              --reuse-values \
+              --set controller.ingressClassResource.enabled=false \
+              --wait
+            kubectl apply -f infra/k8s/ingressclass-nginx.yaml
+            helm uninstall ingress-nginx --namespace ingress-nginx --wait
+          fi
+          kubectl apply -f infra/k8s/ingressclass-nginx.yaml
+          kubectl delete namespace ingress-nginx --ignore-not-found
       - name: Render + apply namespace first
         run: |
           export NAMESPACE ENVIRONMENT IMAGE_TAG REGISTRY DOMAIN

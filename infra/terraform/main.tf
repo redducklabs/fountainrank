@@ -399,7 +399,9 @@ resource "digitalocean_certificate" "main" {
 }
 
 # ---------------------------------------------------------------------------
-# Load Balancer — targets DOKS nodes; ingress-nginx listens on NodePorts 30080/30443
+# Load Balancer — targets DOKS nodes; Traefik listens on NodePorts 31080/31443
+# (infra/helm/traefik-values.yaml), which replaced the retired ingress-nginx (formerly on
+# 30080/30443; docs/plans/2026-11-20-ingress-nginx-to-traefik.md).
 # ---------------------------------------------------------------------------
 resource "digitalocean_loadbalancer" "main" {
   name   = "${var.project_name}-${var.environment}-lb"
@@ -410,20 +412,20 @@ resource "digitalocean_loadbalancer" "main" {
     entry_protocol  = "http"
     entry_port      = 80
     target_protocol = "http"
-    target_port     = 30080 # ingress-nginx HTTP NodePort
+    target_port     = 31080 # Traefik `web` NodePort
   }
 
   forwarding_rule {
     entry_protocol   = "https"
     entry_port       = 443
     target_protocol  = "https"
-    target_port      = 30443 # ingress-nginx HTTPS NodePort
+    target_port      = 31443 # Traefik `websecure` NodePort (self-signed; LB doesn't verify)
     certificate_name = digitalocean_certificate.main.name
   }
 
   healthcheck {
     protocol                 = "https"
-    port                     = 30443
+    port                     = 31443 # hostless /healthz rule in infra/k8s/ingress.yaml
     path                     = "/healthz"
     check_interval_seconds   = 10
     response_timeout_seconds = 5
