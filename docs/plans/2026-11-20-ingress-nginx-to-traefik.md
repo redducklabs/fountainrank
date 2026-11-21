@@ -54,10 +54,12 @@ script runs it:
 
 **Any** failure in the script (chart fetch, VPC lookup, either check, the Helm install itself)
 withdraws the trust from whatever Traefik is running, then fails the deploy. It judges the
-result by what actually runs: contained only when no existing Traefik pod (old, new or
-terminating) carries a `forwardedHeaders.trustedIPs`/`insecure` flag and the Deployment won't
-create one (clean template, or scaled to 0). An unreadable API counts as still trusted. It
-escalates until that holds, polling for terminating pods to go:
+result on every layer that runs or can recreate a Traefik pod: contained only when the
+Deployment's controller has observed its latest spec and that spec won't create a trusted pod
+(clean template, or scaled to 0), no ReplicaSet that still wants replicas has a trusted template,
+and no existing pod (old, new or terminating) carries a `forwardedHeaders.trustedIPs`/`insecure`
+flag. An unreadable API counts as still trusted. It escalates until that holds, polling after
+each step:
 
 1. `helm upgrade --reuse-values` with both `trustedIPs` set to `[]`, from the chart the script
    already pulled (no chart-repo round trip). Traefik then overwrites `X-Forwarded-*` itself; only

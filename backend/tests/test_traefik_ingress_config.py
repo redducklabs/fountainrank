@@ -420,21 +420,40 @@ def test_nodeport_firewall_guard_cli_fails_closed(get_cluster, fetch, args, code
 
 # --- install-traefik.sh, end to end against fake doctl/helm/kubectl --------------------------
 #
-# The fakes keep the cluster's state in files, with the Deployment and its pods modelled
-# separately: deploy.json is the traefik Deployment (template args carry the trust flags exactly
-# as the chart renders them) and pods.json the pods actually running. A rollout replaces the pods
-# from the template unless the `stall` marker is set (an unschedulable replacement: old pods keep
-# serving, `rollout status` / `helm --wait` fail). Every test asserts the END STATE of the trust in
-# the running pods, not just which commands ran.
+# The fakes keep the cluster's state in files, modelling each layer separately: deploy.json is
+# the traefik Deployment (generation / observedGeneration, and template args carrying the trust
+# flags exactly as the chart renders them), rs.json its ReplicaSets and pods.json the pods actually
+# running. A rollout (the fake Deployment controller) observes the new generation and replaces the
+# ReplicaSets and pods, unless `stall` is set (the new pod never becomes ready: old ReplicaSets and
+# pods keep serving, `rollout status` / `helm --wait` fail) or `lagging` is set (the controller
+# never observes the new generation). Every test asserts the END STATE of the trust across all
+# layers, not just which commands ran.
 
 FAKE_LIB = r"""
-write_deploy() {  # $1: template args (JSON array), $2: replicas
-  jq -n --argjson args "$1" --argjson n "$2" \
-    '{spec: {replicas: $n, template: {spec: {containers: [{args: $args}]}}}}' \
+write_deploy() {  # $1: template args (JSON array), $2: replicas. Bumps metadata.generation.
+  local gen=0 observed=0
+  if [ -e "$FAKE/deploy.json" ]; then
+    gen="$(jq '.metadata.generation // 0' "$FAKE/deploy.json")"
+    observed="$(jq '.status.observedGeneration // 0' "$FAKE/deploy.json")"
+  fi
+  jq -n --argjson args "$1" --argjson n "$2" --argjson g "$((gen + 1))" --argjson o "$observed" \
+    '{metadata: {generation: $g}, status: {observedGeneration: $o},
+      spec: {replicas: $n, template: {spec: {containers: [{args: $args}]}}}}' \
     > "$FAKE/deploy.json"
 }
-rollout() {  # pods follow the template unless the rollout stalls
-  [ -e "$FAKE/stall" ] && return 1
+rollout() {  # the Deployment controller: observe the spec, roll ReplicaSets + pods
+  [ -e "$FAKE/lagging" ] && return 1  # controller hasn't observed the new generation
+  jq '.status.observedGeneration = .metadata.generation' "$FAKE/deploy.json" > "$FAKE/d.tmp"
+  mv "$FAKE/d.tmp" "$FAKE/deploy.json"
+  local new
+  new="$(jq -c '{spec: {replicas: .spec.replicas, template: .spec.template}}' "$FAKE/deploy.json")"
+  if [ -e "$FAKE/stall" ] && [ "$(jq '.spec.replicas' "$FAKE/deploy.json")" -gt 0 ]; then
+    # The new ReplicaSet's pod never becomes ready: old ReplicaSets and pods keep serving.
+    jq --argjson new "$new" '.items += [$new]' "$FAKE/rs.json" > "$FAKE/r.tmp"
+    mv "$FAKE/r.tmp" "$FAKE/rs.json"
+    return 1
+  fi
+  jq -n --argjson new "$new" '{items: [$new]}' > "$FAKE/rs.json"
   jq '{items: [range(.spec.replicas) as $_
                 | {spec: .spec.template.spec, status: {phase: "Running"}}]}' \
     "$FAKE/deploy.json" > "$FAKE/pods.json"
@@ -474,6 +493,7 @@ case "$1" in
       cidr="$(sed -n 's/.*ports\.web\.forwardedHeaders\.trustedIPs={\([^}]*\)}.*/\1/p' <<<"$*")"
       write_deploy "[\"--x\", \"--entryPoints.web.forwardedHeaders.trustedIPs=$cidr\",
                      \"--entryPoints.websecure.forwardedHeaders.trustedIPs=$cidr\"]" 1
+      [ -e "$FAKE/rs.json" ] || echo '{"items": []}' > "$FAKE/rs.json"
       rollout || exit 1
       [ ! -e "$FAKE/helm-fails" ]
     else
@@ -500,16 +520,18 @@ case "$*" in
   *"get deployment traefik"*) [ -e "$FAKE/deploy.json" ] && cat "$FAKE/deploy.json" ;;
   *"get pods -l app.kubernetes.io/name=traefik,app.kubernetes.io/instance=traefik-traefik "*)
     if [ -e "$FAKE/pods.json" ]; then cat "$FAKE/pods.json"; else echo '{"items": []}'; fi ;;
+  *"get replicasets -l app.kubernetes.io/name=traefik,app.kubernetes.io/instance=traefik-traefik "*)
+    if [ -e "$FAKE/rs.json" ]; then cat "$FAKE/rs.json"; else echo '{"items": []}'; fi ;;
   "replace -f -")
     [ -e "$FAKE/replace-fails" ] && exit 1
-    cat > "$FAKE/deploy.json"
+    jq '.metadata.generation += 1' > "$FAKE/deploy.json"
     rollout || true ;;
-  *"rollout status"*) [ ! -e "$FAKE/stall" ] ;;
+  *"rollout status"*) [ ! -e "$FAKE/stall" ] && [ ! -e "$FAKE/lagging" ] ;;
   *"scale deployment traefik --replicas=0"*)
     [ -e "$FAKE/scale-fails" ] && exit 1
-    jq '.spec.replicas = 0' "$FAKE/deploy.json" > "$FAKE/d.tmp"
+    jq '.spec.replicas = 0 | .metadata.generation += 1' "$FAKE/deploy.json" > "$FAKE/d.tmp"
     mv "$FAKE/d.tmp" "$FAKE/deploy.json"
-    echo '{"items": []}' > "$FAKE/pods.json" ;;  # scaling down removes even stalled pods
+    rollout || true ;;  # scaling to 0 removes every ReplicaSet's pods, even stalled ones
   *) echo "unexpected kubectl $*" >&2; exit 2 ;;
 esac
 """
@@ -525,6 +547,12 @@ TRUSTED = [
 
 def _pod(args, phase="Running"):
     return {"spec": {"containers": [{"args": list(args)}]}, "status": {"phase": phase}}
+
+
+def _rs(args, replicas=1):
+    return {
+        "spec": {"replicas": replicas, "template": {"spec": {"containers": [{"args": list(args)}]}}}
+    }
 
 
 class _Fake:
@@ -554,29 +582,47 @@ class _Fake:
     def touch(self, name):
         (self.state / name).touch()
 
-    def running(self, template_args=TRUSTED, pod_args=TRUSTED, replicas=1):
-        """A previously deployed Traefik: its Deployment template and its running pods."""
+    def running(self, template_args=TRUSTED, pod_args=TRUSTED, replicas=1, rs=None):
+        """A previously deployed Traefik: Deployment (fully observed), ReplicaSets, pods."""
         self.write(
             "deploy.json",
             {
+                "metadata": {"generation": 1},
+                "status": {"observedGeneration": 1},
                 "spec": {
                     "replicas": replicas,
                     "template": {"spec": {"containers": [{"args": list(template_args)}]}},
-                }
+                },
             },
         )
+        if rs is None:
+            rs = [_rs(template_args, replicas)]
+        self.write("rs.json", {"items": rs})
         self.write("pods.json", {"items": [_pod(pod_args)] if pod_args is not None else []})
 
     def trust_live(self):
-        """Does any running pod carry a trust flag (or will the Deployment create one)?"""
-        pods = self.read("pods.json")["items"] if (self.state / "pods.json").exists() else []
-        if any("forwardedHeaders." in a for p in pods for a in p["spec"]["containers"][0]["args"]):
+        """Does anything run, or stand ready to (re)create, a pod with a trust flag?"""
+
+        def trusting(spec):
+            return any("forwardedHeaders." in a for a in spec["containers"][0]["args"])
+
+        def items(name):
+            path = self.state / name
+            return self.read(name)["items"] if path.exists() else []
+
+        if any(trusting(p["spec"]) for p in items("pods.json")):
+            return True
+        if any(
+            r["spec"]["replicas"] > 0 and trusting(r["spec"]["template"]["spec"])
+            for r in items("rs.json")
+        ):
             return True
         if not (self.state / "deploy.json").exists():
             return False
         deploy = self.read("deploy.json")
-        args = deploy["spec"]["template"]["spec"]["containers"][0]["args"]
-        return deploy["spec"]["replicas"] > 0 and any("forwardedHeaders." in a for a in args)
+        if deploy["status"]["observedGeneration"] < deploy["metadata"]["generation"]:
+            return True  # unreconciled: can't tell what it will do
+        return deploy["spec"]["replicas"] > 0 and trusting(deploy["spec"]["template"]["spec"])
 
     def run(self):
         env = {
@@ -755,6 +801,7 @@ def test_install_script_ignores_finished_pods_and_scaled_down_templates(fake):
     # Trust flags only on a Failed pod and on a template scaled to 0: nothing runs with trust.
     fake.running(pod_args=None, replicas=0)
     fake.write("pods.json", {"items": [_pod(TRUSTED, phase="Failed")]})
+    fake.write("rs.json", {"items": [_rs(TRUSTED, replicas=0)]})
     fake.write("firewalls.json", _cluster_firewalls(_rule("31443")))
     res = fake.run()
     assert res.returncode == 1
@@ -770,3 +817,50 @@ def test_install_script_treats_a_trusted_template_with_replicas_as_trusted(fake)
     assert res.returncode == 1
     assert "state: trusted" in res.stdout
     assert not fake.trust_live()
+
+
+def test_install_script_sees_an_old_replicaset_that_can_recreate_a_trusted_pod(fake):
+    # Interrupted withdrawal: clean template, no trusted pod right now (it just failed), but the
+    # OLD ReplicaSet still wants a replica with the trusted template and would recreate it.
+    fake.running(
+        template_args=["--x"],
+        pod_args=None,
+        rs=[_rs(TRUSTED, replicas=1), _rs(["--x"], replicas=1)],
+    )
+    fake.write("pods.json", {"items": [_pod(TRUSTED, phase="Failed")]})
+    fake.touch("stall")
+    fake.write("firewalls.json", _cluster_firewalls(_rule("31443")))
+    res = fake.run()
+    assert res.returncode == 1
+    assert "state: trusted" in res.stdout
+    assert any("scale deployment traefik --replicas=0" in line for line in fake.log)
+    assert not fake.trust_live()
+    assert all(r["spec"]["replicas"] == 0 for r in fake.read("rs.json")["items"])
+
+
+def test_install_script_does_not_trust_an_unobserved_deployment(fake):
+    # The controller hasn't observed the latest spec (generation 2, observed 1): even with a clean
+    # template and nothing running, containment can't be confirmed. If the controller never
+    # catches up, every step's verification fails and the script says so.
+    fake.running(template_args=["--x"], pod_args=None, rs=[])
+    deploy = fake.read("deploy.json")
+    deploy["metadata"]["generation"] = 2
+    fake.write("deploy.json", deploy)
+    fake.touch("lagging")
+    fake.write("firewalls.json", _cluster_firewalls(_rule("31443")))
+    res = fake.run()
+    assert res.returncode == 1
+    assert "state: trusted" in res.stdout
+    assert "COULD NOT CONTAIN" in res.stdout
+
+
+def test_install_script_scale_to_zero_must_be_observed(fake):
+    # Scaling to 0 only counts once the controller has observed it and no ReplicaSet wants pods.
+    fake.running()
+    fake.write("firewalls.json", _cluster_firewalls(_rule("31443")))
+    for marker in ("withdraw-helm-fails", "replace-fails", "lagging"):
+        fake.touch(marker)
+    res = fake.run()
+    assert res.returncode == 1
+    assert any("scale deployment traefik --replicas=0" in line for line in fake.log)
+    assert "COULD NOT CONTAIN" in res.stdout

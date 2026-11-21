@@ -11,7 +11,7 @@
 #   4. helm upgrade --install with that trust,
 #   5. check the live Service opted out of the DOKS-managed public firewall, and re-check (3).
 # ANY failure withdraws the trust from whatever Traefik is running before exiting non-zero, and
-# verifies it against the live pods (not just the template), escalating until it holds:
+# verifies it against the Deployment, its ReplicaSets and its pods, escalating until it holds:
 #   a. helm upgrade --reuse-values with both trustedIPs = [] (the chart then renders no trust
 #      flags; Traefik overwrites X-Forwarded-* itself, only the client IP degrades),
 #   b. if that fails or doesn't take: strip the trust flags from the live Deployment directly,
@@ -36,24 +36,37 @@ CONTAIN_ATTEMPTS="${TRAEFIK_CONTAIN_ATTEMPTS:-24}"
 CONTAIN_POLL="${TRAEFIK_CONTAIN_POLL:-5}"
 
 # Prints `contained`, `trusted`, or `unknown` (the API couldn't be read or parsed). Judged on
-# what actually runs, not on the desired template: it is `contained` only when NO existing
-# Traefik pod (old, new or terminating; anything not Succeeded/Failed) carries a trust flag
-# AND the Deployment won't create one (its template has no trust flag, or it's scaled to 0).
+# every layer that runs or can (re)create a Traefik pod, not on the desired template alone.
+# `contained` only when ALL hold:
+#   - the Deployment is absent, or its controller has observed its latest spec
+#     (status.observedGeneration >= metadata.generation) and it won't create a trusted pod
+#     (template without trust flags, or replicas 0);
+#   - no ReplicaSet of it (old or new) that wants replicas (spec.replicas > 0) has a trusted
+#     template;
+#   - no existing pod (old, new or terminating; anything not Succeeded/Failed) carries a flag.
 trust_state() {
-  local deploy pods
+  local deploy rs pods
   deploy="$(kubectl --namespace "$NAMESPACE" get deployment traefik --ignore-not-found -o json)" \
+    || { echo unknown; return 0; }
+  rs="$(kubectl --namespace "$NAMESPACE" get replicasets -l "$POD_SELECTOR" -o json)" \
     || { echo unknown; return 0; }
   pods="$(kubectl --namespace "$NAMESPACE" get pods -l "$POD_SELECTOR" -o json)" \
     || { echo unknown; return 0; }
-  jq -rn --arg re "$TRUST_FLAGS" --argjson pods "$pods" --argjson deploy "${deploy:-null}" '
+  jq -rn --arg re "$TRUST_FLAGS" --argjson deploy "${deploy:-null}" \
+    --argjson rs "$rs" --argjson pods "$pods" '
     def trusting: [.containers[]?.args[]? | select(test($re))] | length > 0;
-    ([$pods.items[]
-      | select(.status.phase != "Succeeded" and .status.phase != "Failed")
-      | select(.spec | trusting)] | length) as $live
-    | (if $deploy == null then false
-       else ($deploy.spec.template.spec | trusting) and (($deploy.spec.replicas // 1) > 0)
-       end) as $will_create
-    | if $live == 0 and ($will_create | not) then "contained" else "trusted" end' \
+    (if $deploy == null then true
+     else (($deploy.status.observedGeneration // -1) >= ($deploy.metadata.generation // 0))
+          and ((($deploy.spec.template.spec | trusting) and (($deploy.spec.replicas // 1) > 0))
+               | not)
+     end) as $deploy_ok
+    | ([$rs.items[] | select((.spec.replicas // 0) > 0 and (.spec.template.spec | trusting))]
+       | length) as $rs_trusted
+    | ([$pods.items[]
+        | select(.status.phase != "Succeeded" and .status.phase != "Failed")
+        | select(.spec | trusting)] | length) as $pods_trusted
+    | if $deploy_ok and $rs_trusted == 0 and $pods_trusted == 0 then "contained"
+      else "trusted" end' \
     || echo unknown
 }
 
