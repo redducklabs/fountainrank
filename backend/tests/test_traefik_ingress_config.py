@@ -6,7 +6,6 @@ forwarded-header trust, drop the body-size limits, or make Traefik the default I
 """
 
 import importlib.util
-import json
 import re
 import subprocess
 import sys
@@ -144,44 +143,134 @@ def test_deploy_validates_the_vpc_range_with_the_guard():
     assert "grep -Eq '^(10|" not in workflow  # the old regex guard is gone
 
 
-def _firewall(*rules):
+TAG = "k8s:abc"
+NODES = ["111", "222"]
+PORTS = [31080, 31443]
+PUBLIC = {"addresses": ["0.0.0.0/0", "::/0"]}
+VPC = {"addresses": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]}
+
+
+def _fw(name, rules, tags=(TAG,), droplets=(), status="succeeded", pending=()):
+    return {
+        "name": name,
+        "status": status,
+        "pending_changes": list(pending),
+        "tags": list(tags),
+        "droplet_ids": list(droplets),
+        "inbound_rules": list(rules),
+    }
+
+
+def _cluster_firewalls(*public_rules, **public_kw):
+    """The two DOKS-managed firewalls plus another cluster's (ignored) public firewall."""
+    worker = [{"protocol": p, "ports": "0", "sources": VPC} for p in ("tcp", "udp", "icmp")]
     return [
-        {
-            "name": "k8s-public-access-other",
-            "inbound_rules": [{"protocol": "tcp", "ports": "31443"}],
-        },
-        {"name": "k8s-public-access-abc", "inbound_rules": list(rules)},
+        _fw("k8s-abc-worker", worker),
+        _fw("k8s-public-access-abc", public_rules, **public_kw),
+        _fw(
+            "k8s-public-access-other",
+            [{"protocol": "tcp", "ports": "31443", "sources": PUBLIC}],
+            tags=("k8s:other",),
+        ),
     ]
 
 
+def _rule(ports, protocol="tcp", sources=PUBLIC):
+    return {"protocol": protocol, "ports": ports, "sources": sources}
+
+
 @pytest.mark.parametrize(
-    ("rules", "exposed"),
+    ("firewalls", "verdict"),
     [
-        ([], []),
-        ([{"protocol": "tcp", "ports": "30080"}, {"protocol": "tcp", "ports": "30443"}], []),
-        ([{"protocol": "udp", "ports": "31443"}], []),
-        ([{"protocol": "tcp", "ports": "31443"}], [31443]),
-        ([{"protocol": "tcp", "ports": "31000-31100"}], [31080]),
-        ([{"protocol": "tcp", "ports": "0"}], [31080, 31443]),
-        ([{"protocol": "tcp", "ports": "all"}], [31080, 31443]),
-        ([{"protocol": "all", "ports": "31080"}], [31080]),
+        (_cluster_firewalls(), "ok"),
+        (_cluster_firewalls(_rule("30080"), _rule("30443")), "ok"),  # ingress-nginx today
+        (_cluster_firewalls(_rule("31443", protocol="udp")), "ok"),
+        (_cluster_firewalls(_rule("31443", sources={"addresses": ["10.124.0.0/20"]})), "ok"),
+        (_cluster_firewalls(_rule("31443", sources={"tags": ["k8s:abc"]})), "ok"),
+        (_cluster_firewalls(_rule("31443")), "exposed"),
+        (_cluster_firewalls(_rule("31000-31100")), "exposed"),
+        (_cluster_firewalls(_rule("0")), "exposed"),
+        (_cluster_firewalls(_rule("all")), "exposed"),
+        (_cluster_firewalls(_rule("31080", protocol="all")), "exposed"),
+        (_cluster_firewalls(_rule("31443", sources={"addresses": ["203.0.113.0/24"]})), "exposed"),
+        (_cluster_firewalls(_rule("31443", sources={"addresses": ["fd00::/8"]})), "exposed"),
+        (_cluster_firewalls(_rule("31443", sources={"addresses": ["bogus"]})), "exposed"),
+        (
+            _cluster_firewalls(_rule("31443", sources={"addresses": ["10.0.0.0/8", "0.0.0.0/0"]})),
+            "exposed",
+        ),
+        # Applied by droplet ID instead of the cluster tag.
+        (
+            [*_cluster_firewalls(), _fw("hand-made", [_rule("31080")], tags=(), droplets=("222",))],
+            "exposed",
+        ),
+        ([_fw("unrelated", [_rule("31080")], tags=("x",), droplets=("999",))], "exposed"),
+        ([], "exposed"),  # no firewall on the nodes at all: every port is open
+        (_cluster_firewalls(status="failed"), "exposed"),
+        (_cluster_firewalls(status="waiting"), "pending"),
+        (_cluster_firewalls(pending=[{"droplet_id": 111, "removing": False}]), "pending"),
     ],
 )
-def test_nodeport_firewall_guard(rules, exposed):
-    firewalls = _firewall(*rules)
-    assert _guards().open_ports(firewalls, "k8s-public-access-abc", [31080, 31443]) == exposed
+def test_nodeport_firewall_guard(firewalls, verdict):
+    assert _guards().check_firewalls(firewalls, TAG, NODES, PORTS)[0] == verdict
 
 
-def test_nodeport_firewall_guard_cli():
-    run = [sys.executable, str(GUARDS), "nodeports-not-public", "k8s-public-access-abc"]
-    run += ["31080", "31443"]
-    clean = subprocess.run(run, input=json.dumps(_firewall()), capture_output=True, text=True)
-    assert clean.returncode == 0
-    missing = subprocess.run(run, input="[]", capture_output=True, text=True)
-    assert missing.returncode == 0
-    for bad_input in (json.dumps(_firewall({"protocol": "tcp", "ports": "31080"})), "{}"):
-        res = subprocess.run(run, input=bad_input, capture_output=True, text=True)
-        assert res.returncode == 1
+def test_nodeport_firewall_guard_waits_for_reconciliation_then_decides():
+    guards = _guards()
+    reads = iter(
+        [
+            _cluster_firewalls(status="waiting"),
+            _cluster_firewalls(pending=[{"droplet_id": 111}]),
+            _cluster_firewalls(),
+        ]
+    )
+    sleeps = []
+    verdict, _ = guards.poll_firewalls(lambda: next(reads), TAG, NODES, PORTS, sleep=sleeps.append)
+    assert verdict == "ok"
+    assert len(sleeps) == 2
+
+    later = iter([_cluster_firewalls(status="waiting"), _cluster_firewalls(_rule("31443"))])
+    verdict, _ = guards.poll_firewalls(lambda: next(later), TAG, NODES, PORTS, sleep=lambda _: None)
+    assert verdict == "exposed"
+
+
+def test_nodeport_firewall_guard_gives_up_if_never_settled():
+    sleeps = []
+    verdict, detail = _guards().poll_firewalls(
+        lambda: _cluster_firewalls(status="waiting"),
+        TAG,
+        NODES,
+        PORTS,
+        attempts=4,
+        sleep=sleeps.append,
+    )
+    assert verdict == "exposed" and "never settled" in detail
+    assert len(sleeps) == 3
+
+
+@pytest.mark.parametrize(
+    ("fetch_result", "args", "code"),
+    [
+        (_cluster_firewalls(), [TAG, "111,222", "31080", "31443"], 0),
+        (_cluster_firewalls(_rule("31080")), [TAG, "111,222", "31080", "31443"], 1),
+        (_cluster_firewalls(status="failed"), [TAG, "111", "31080"], 1),
+        (_cluster_firewalls(), [TAG, "", "31080"], 1),  # no node IDs: fail closed
+        (_cluster_firewalls(), [TAG, "111", "port"], 1),
+        (None, [TAG, "111", "31080"], 1),  # doctl output wasn't a list
+    ],
+)
+def test_nodeport_firewall_guard_cli_fails_closed(fetch_result, args, code):
+    def fetch():
+        if fetch_result is None:
+            raise ValueError("doctl returned something other than a JSON list of firewalls")
+        return fetch_result
+
+    assert _guards().main(["nodeports-not-public", *args], fetch=fetch) == code
+
+
+def _step(workflow: str, name: str) -> str:
+    body = workflow[workflow.index(f"- name: {name}") :]
+    return body[: body.index("\n      - name:", 1)]
 
 
 def test_traefik_nodeports_are_not_publicly_exposed():
@@ -190,17 +279,38 @@ def test_traefik_nodeports_are_not_publicly_exposed():
     # externalTrafficPolicy Cluster a public caller can be SNATed into the trusted VPC range.
     assert service["annotations"]["kubernetes.digitalocean.com/firewall-managed"] == "false"
     assert service["spec"]["externalTrafficPolicy"] == "Cluster"
+
     workflow = DEPLOY.read_text()
-    verify = workflow[workflow.index("- name: Verify Traefik NodePorts are VPC-only") :]
-    verify = verify[: verify.index("- name: Render + apply namespace first")]
-    assert r"kubernetes\.digitalocean\.com/firewall-managed" in verify
-    assert '[ "$managed" != "false" ]' in verify
-    assert "traefik_guards.py nodeports-not-public" in verify
-    assert '"k8s-public-access-$CLUSTER_ID" 31080 31443' in verify
-    # The check runs after the install, in the same job.
-    assert workflow.index("helm upgrade --install traefik") < workflow.index(
-        "- name: Verify Traefik NodePorts are VPC-only"
+    guard = (
+        "traefik_guards.py nodeports-not-public \\\n"
+        '            "k8s:$CLUSTER_ID" "$NODE_DROPLETS" 31080 31443'
     )
+    before = _step(workflow, "Check Traefik NodePorts are VPC-only (before install)")
+    after = _step(workflow, "Verify Traefik NodePorts are VPC-only (after install)")
+    assert guard in before and guard in after
+    assert r"kubernetes\.digitalocean\.com/firewall-managed" in after
+    assert '[ "$managed" != "false" ]' in after
+    assert '|| managed="<unreadable>"' in after
+    # Every failure path withdraws the forwarded-header trust before failing the deploy.
+    assert after.count('revoke_trust "') == 2
+    assert '|| revoke_trust "' in after
+    revoke = after[after.index("revoke_trust() {") : after.index("\n          }\n")]
+    assert revoke.count("'      trustedIPs: []'") == 2
+    assert "--reuse-values" in revoke and "--version 42.4.1" in revoke
+    assert revoke.rstrip().endswith("exit 1")
+    # Order: resolve -> check -> install (with trust) -> verify, all before the app manifests.
+    order = [
+        "- name: Resolve cluster VPC range",
+        "- name: Check Traefik NodePorts are VPC-only (before install)",
+        "helm upgrade --install traefik traefik",
+        "- name: Verify Traefik NodePorts are VPC-only (after install)",
+        "- name: Render + apply namespace first",
+    ]
+    positions = [workflow.index(s) for s in order]
+    assert positions == sorted(positions)
+    resolve = _step(workflow, "Resolve cluster VPC range (Traefik forwarded-header trust)")
+    assert 'echo "node_droplets=$node_droplets" >> "$GITHUB_OUTPUT"' in resolve
+    assert 'if [ -z "$node_droplets" ]; then' in resolve
 
 
 def test_access_logs_drop_query_strings_and_headers():
