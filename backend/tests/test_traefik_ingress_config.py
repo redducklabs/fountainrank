@@ -1068,13 +1068,22 @@ def test_lb_guard_fails_closed_on_doctl_errors_and_a_missing_cluster_id():
 
 def test_ingress_nginx_is_removed_only_after_the_lb_guard():
     workflow = DEPLOY.read_text()
-    status = workflow.index("if helm status ingress-nginx --namespace ingress-nginx")
+    # Presence is read so that a Helm/API error fails the step instead of reading as absent
+    # (`helm status ... || ...` would skip the guard and still delete the namespace).
+    assert "helm status" not in workflow
+    listing = workflow.index(
+        "helm list --namespace ingress-nginx --filter '^ingress-nginx$' --output json"
+        " | jq -r 'length'"
+    )
+    namespace = workflow.index("kubectl get namespace ingress-nginx --ignore-not-found")
+    gate = workflow.index('if [ "$releases" = 1 ] || [ -n "$namespace" ]; then')
     guard = workflow.index('traefik_guards.py lb-targets-traefik "$cluster_id"')
     probe = workflow.index("-H 'Host: traefik-cutover-probe.invalid'")
     refuse = workflow.index('if [ "$probe" != "404 page not found" ]; then')
     keep = workflow.index("kubectl annotate ingressclass nginx helm.sh/resource-policy=keep")
     uninstall = workflow.index("helm uninstall ingress-nginx --namespace ingress-nginx")
-    assert status < guard < probe < refuse < keep < uninstall
+    delete = workflow.index("kubectl delete namespace ingress-nginx")
+    assert listing < namespace < gate < guard < probe < refuse < keep < uninstall < delete
     step = workflow[workflow.index("- name: Remove ingress-nginx") :]
     step = step[: step.index("\n      - name:", 1)]
     assert "set -euo pipefail" in step
