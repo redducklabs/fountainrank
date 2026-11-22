@@ -4,7 +4,8 @@ metadata:
   name: fountainrank-ingress
   namespace: ${NAMESPACE}
   annotations:
-    # TLS is terminated at the DO Load Balancer; force https via X-Forwarded-Proto.
+    # TLS is terminated at the DO Load Balancer, which forwards both 80 and 443 to the controller
+    # over plain HTTP; force https via the LB's X-Forwarded-Proto.
     nginx.ingress.kubernetes.io/use-forwarded-headers: "true"
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     nginx.ingress.kubernetes.io/force-ssl-redirect: "true"

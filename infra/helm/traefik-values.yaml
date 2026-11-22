@@ -76,6 +76,11 @@ providers:
 ports:
   web:
     nodePort: 31080
+    # Once the LB targets Traefik (migration phase B), ALL app traffic arrives here as plain HTTP
+    # from the LB, which terminates public TLS: 80 with X-Forwarded-Proto http (308 to https) and
+    # 443 with X-Forwarded-Proto https (the ssl-redirect RedirectScheme reads that header and
+    # passes the request on). Not re-encrypted to `websecure`: the provider's per-host TLS options
+    # make Traefik answer 421 when the LB's backend SNI doesn't match the Host.
     # Today ingress-nginx runs with use-forwarded-headers=true behind the DO LB and no
     # proxy-real-ip-cidr, i.e. it trusts X-Forwarded-* from ANY source. Traefik trusts them only
     # from the cluster's VPC range (where the DO LB and the nodes live). CI fills this in at
@@ -89,9 +94,10 @@ ports:
       insecure: false
   websecure:
     nodePort: 31443
-    # The DO LB terminates public TLS with the Let's Encrypt cert and re-encrypts to this
-    # NodePort. Like ingress-nginx's "Kubernetes Ingress Controller Fake Certificate", Traefik
-    # presents its self-signed default certificate here; the DO LB does not verify backend certs.
+    # Only the DO LB health check (https /healthz, the hostless rule) uses this NodePort once the
+    # LB targets Traefik. Like ingress-nginx's "Kubernetes Ingress Controller Fake Certificate",
+    # Traefik presents its self-signed default certificate here; the DO LB does not verify
+    # backend certs.
     http:
       tls:
         enabled: true
@@ -99,8 +105,8 @@ ports:
       trustedIPs: []
       insecure: false
 
-# TLS 1.2+ on the LB -> Traefik hop. The LB connects by node IP without a matching SNI, so the
-# handshake uses this `default` option. (Per-host options the NGINX provider generates also
+# TLS 1.2+ on `websecure` (the LB health check). The LB connects by node IP without a matching
+# SNI, so the handshake uses this `default` option. (Per-host options the NGINX provider generates also
 # default to TLS 1.2+.)
 tlsOptions:
   default:

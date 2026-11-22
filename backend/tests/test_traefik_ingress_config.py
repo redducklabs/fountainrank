@@ -9,6 +9,7 @@ log secrets, drop the body-size limits, or make Traefik the default IngressClass
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -23,6 +24,7 @@ DEPLOY = ROOT / ".github/workflows/deploy.yml"
 INGRESS = ROOT / "infra/k8s/ingress.yaml"
 GUARDS = ROOT / "scripts/ci/traefik_guards.py"
 INSTALL = ROOT / "scripts/ci/install-traefik.sh"
+TERRAFORM = ROOT / "infra/terraform/main.tf"
 
 
 def _guards():
@@ -864,3 +866,59 @@ def test_install_script_scale_to_zero_must_be_observed(fake):
     assert res.returncode == 1
     assert any("scale deployment traefik --replicas=0" in line for line in fake.log)
     assert "COULD NOT CONTAIN" in res.stdout
+
+
+def _load_balancer_block() -> str:
+    text = TERRAFORM.read_text()
+    start = text.index('resource "digitalocean_loadbalancer" "main" {')
+    depth = 0
+    for index in range(start, len(text)):
+        if text[index] == "{":
+            depth += 1
+        elif text[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1]
+    raise AssertionError("unterminated digitalocean_loadbalancer.main block")
+
+
+def _hcl_blocks(body: str, name: str) -> list[dict[str, str]]:
+    blocks = []
+    for match in re.finditer(rf"^\s*{name}\s*{{(.*?)^\s*}}", body, re.M | re.S):
+        fields = {}
+        for line in match.group(1).splitlines():
+            line = line.split("#", 1)[0].strip()
+            if "=" in line:
+                key, value = (part.strip() for part in line.split("=", 1))
+                fields[key] = value.strip('"')
+        blocks.append(fields)
+    return blocks
+
+
+def test_load_balancer_forwards_all_app_traffic_to_traefik_web_over_http():
+    # Phase B. Traefik's Ingress NGINX provider gives every Ingress host its own TLS option and
+    # answers 421 when the TLS connection's SNI selects a different one than the Host, so the LB
+    # must not re-encrypt app traffic to `websecure` (nothing proves its backend SNI matches the
+    # Host). Both entry ports go to `web` over plain HTTP; the LB's X-Forwarded-Proto is trusted
+    # there, so the ssl-redirect only fires for port 80.
+    web = _values()["ports"]["web"]["nodePort"]
+    rules = {
+        (rule["entry_protocol"], rule["entry_port"]): (rule["target_protocol"], rule["target_port"])
+        for rule in _hcl_blocks(_load_balancer_block(), "forwarding_rule")
+    }
+    assert rules == {
+        ("http", "80"): ("http", str(web)),
+        ("https", "443"): ("http", str(web)),
+    }
+
+
+def test_load_balancer_health_check_uses_the_hostless_healthz_over_https():
+    # Over plain HTTP the hostless /healthz rule inherits force-ssl-redirect (the probe sends no
+    # X-Forwarded-Proto) and answers 308; over https on `websecure` its router uses the `default`
+    # TLS option, so the SNI check passes whatever SNI the LB sends.
+    websecure = _values()["ports"]["websecure"]["nodePort"]
+    (check,) = _hcl_blocks(_load_balancer_block(), "healthcheck")
+    health = (check["protocol"], check["port"], check["path"])
+    assert health == ("https", str(websecure), "/healthz")
+    ingress = INGRESS.read_text()
+    assert "- path: /healthz" in ingress

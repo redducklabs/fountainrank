@@ -399,10 +399,13 @@ resource "digitalocean_certificate" "main" {
 }
 
 # ---------------------------------------------------------------------------
-# Load Balancer — targets DOKS nodes; Traefik listens on NodePorts 31080/31443
-# (infra/helm/traefik-values.yaml). Before the ingress-nginx -> Traefik migration these were
-# ingress-nginx's 30080/30443; ingress-nginx stays installed until migration phase C, so
-# reverting these three ports is the rollback (docs/plans/2026-11-20-ingress-nginx-to-traefik.md).
+# Load Balancer — targets DOKS nodes; Traefik listens on NodePorts 31080 (web, plain HTTP) and
+# 31443 (websecure, self-signed TLS) (infra/helm/traefik-values.yaml). The LB terminates public
+# TLS with the Let's Encrypt cert and forwards BOTH entry ports to `web` over plain HTTP inside
+# the VPC; only the health check uses 31443. Before the ingress-nginx -> Traefik migration the LB
+# re-encrypted 443 to ingress-nginx's 30443 and sent 80 to 30080; ingress-nginx stays installed
+# until migration phase C, so restoring those values is the rollback
+# (docs/plans/2026-11-20-ingress-nginx-to-traefik.md).
 # ---------------------------------------------------------------------------
 resource "digitalocean_loadbalancer" "main" {
   name   = "${var.project_name}-${var.environment}-lb"
@@ -416,14 +419,27 @@ resource "digitalocean_loadbalancer" "main" {
     target_port     = 31080 # Traefik `web` NodePort
   }
 
+  # Not re-encrypted to `websecure`: Traefik's Ingress NGINX provider gives every Ingress host its
+  # own TLS option, and Traefik answers 421 Misdirected Request when the TLS connection's SNI maps
+  # to a different option than the Host. Nothing shows the LB sends an SNI matching the Host on
+  # its backend connection (ingress-nginx never checked), so a re-encrypted hop could 421 every
+  # app route. Plain HTTP to `web` has no SNI to check. The LB's X-Forwarded-Proto: https is
+  # trusted there (forwardedHeaders.trustedIPs = the VPC, set by scripts/ci/install-traefik.sh),
+  # so the ssl-redirect RedirectScheme sees https and passes the request on, and the apps see
+  # https as before.
   forwarding_rule {
     entry_protocol   = "https"
     entry_port       = 443
-    target_protocol  = "https"
-    target_port      = 31443 # Traefik `websecure` NodePort (self-signed; LB doesn't verify)
+    target_protocol  = "http"
+    target_port      = 31080 # Traefik `web` NodePort
     certificate_name = digitalocean_certificate.main.name
   }
 
+  # https on `websecure`, as the health check was on ingress-nginx's 30443: over plain HTTP the
+  # hostless /healthz rule gets the Ingress's force-ssl-redirect (the probe sends no
+  # X-Forwarded-Proto), so it would answer 308. The probe's Host is a node address that matches
+  # no app host, so the hostless rule's router uses the `default` TLS option and the SNI check
+  # passes whatever SNI the LB sends.
   healthcheck {
     protocol                 = "https"
     port                     = 31443 # hostless /healthz rule in infra/k8s/ingress.yaml
