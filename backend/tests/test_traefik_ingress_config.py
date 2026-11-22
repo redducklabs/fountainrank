@@ -1072,8 +1072,7 @@ def test_ingress_nginx_is_removed_only_after_the_lb_guard():
     # (`helm status ... || ...` would skip the guard and still delete the namespace).
     assert "helm status" not in workflow
     listing = workflow.index(
-        "helm list --namespace ingress-nginx --filter '^ingress-nginx$' --output json"
-        " | jq -r 'length'"
+        "helm list --all --namespace ingress-nginx --filter '^ingress-nginx$' --output json"
     )
     namespace = workflow.index("kubectl get namespace ingress-nginx --ignore-not-found")
     gate = workflow.index('if [ "$releases" = 1 ] || [ -n "$namespace" ]; then')
@@ -1088,3 +1087,152 @@ def test_ingress_nginx_is_removed_only_after_the_lb_guard():
     step = step[: step.index("\n      - name:", 1)]
     assert "set -euo pipefail" in step
     assert "continue-on-error" not in step and "|| true" not in step
+
+
+# --- The "Remove ingress-nginx" deploy step, executed against fakes -----------------------
+
+_REMOVE_FAKES = {
+    "helm": """#!/usr/bin/env bash
+echo "helm $*" >> "$FAKE/log"
+case "$1" in
+  list) [ -e "$FAKE/helm_fail" ] && { echo "Error: cluster unreachable" >&2; exit 1; }
+        cat "$FAKE/releases.json" ;;
+  uninstall) rm -f "$FAKE/webhook" ;;
+esac
+""",
+    "kubectl": """#!/usr/bin/env bash
+echo "kubectl $*" >> "$FAKE/log"
+case "$1 $2" in
+  "get namespace") [ -e "$FAKE/namespace" ] && echo namespace/ingress-nginx ;;
+  "get validatingwebhookconfiguration")
+    [ -e "$FAKE/webhook" ] && echo validatingwebhookconfiguration/ingress-nginx-admission ;;
+  "delete namespace") rm -f "$FAKE/namespace" ;;
+esac
+exit 0
+""",
+    "doctl": '#!/usr/bin/env bash\necho "doctl $*" >> "$FAKE/log"\necho abc\n',
+    "python3": """#!/usr/bin/env bash
+echo "python3 $*" >> "$FAKE/log"
+[ -e "$FAKE/lb_bad" ] && exit 1
+echo 203.0.113.10
+""",
+    "curl": '#!/usr/bin/env bash\necho "curl $*" >> "$FAKE/log"\ncat "$FAKE/probe"\n',
+}
+
+
+def _remove_step() -> str:
+    for job in yaml.safe_load(DEPLOY.read_text())["jobs"].values():
+        for step in job.get("steps", []):
+            if step.get("name", "").startswith("Remove ingress-nginx"):
+                return step["run"]
+    raise AssertionError("no Remove ingress-nginx step")
+
+
+@pytest.fixture
+def remove_step(tmp_path):
+    if not _BASH or not shutil.which("jq"):
+        pytest.skip("needs a POSIX bash + jq (set TRAEFIK_TEST_BASH on Windows)")
+    bin_dir, state = tmp_path / "bin", tmp_path / "state"
+    bin_dir.mkdir()
+    state.mkdir()
+    for name, body in _REMOVE_FAKES.items():
+        (bin_dir / name).write_text(body, newline="\n")
+        (bin_dir / name).chmod(0o755)
+    script = tmp_path / "step.sh"
+    script.write_text(_remove_step(), newline="\n")
+
+    def run(release=None, namespace=True, webhook=True, lb_ok=True, probe="404 page not found"):
+        releases = [] if release is None else [{"name": "ingress-nginx", "status": release}]
+        (state / "releases.json").write_text(json.dumps(releases))
+        (state / "probe").write_text(probe)
+        for flag, on in (("namespace", namespace), ("webhook", webhook), ("lb_bad", not lb_ok)):
+            if on:
+                (state / flag).touch()
+        env = {
+            **os.environ,
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+            "FAKE": str(state),
+            "CLUSTER_NAME": "c",
+        }
+        res = subprocess.run(
+            [_BASH, str(script)], cwd=ROOT, env=env, capture_output=True, text=True
+        )
+        log = (state / "log").read_text().splitlines() if (state / "log").exists() else []
+        return res, log
+
+    run.state = state
+    return run
+
+
+_MUTATIONS = ("kubectl annotate", "helm upgrade", "helm uninstall", "kubectl delete")
+
+
+def _mutated(log):
+    return [line for line in log if line.startswith(_MUTATIONS)]
+
+
+def test_remove_step_hands_over_a_deployed_release_after_the_lb_guard(remove_step):
+    res, log = remove_step(release="deployed")
+    assert res.returncode == 0, res.stderr
+    assert log[0].startswith("helm list --all ")
+    guard = next(i for i, line in enumerate(log) if "lb-targets-traefik" in line)
+    first_mutation = log.index(_mutated(log)[0])
+    assert guard < first_mutation
+    assert [line.split(" ")[0:2] for line in _mutated(log)] == [
+        ["kubectl", "annotate"],
+        ["helm", "upgrade"],
+        ["helm", "uninstall"],
+        ["kubectl", "delete"],
+    ]
+
+
+@pytest.mark.parametrize("status", ["pending-upgrade", "pending-install", "uninstalling"])
+def test_remove_step_stops_on_an_interrupted_helm_operation(remove_step, status):
+    res, log = remove_step(release=status)
+    assert res.returncode != 0
+    assert status in res.stderr
+    assert not _mutated(log)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"release": "deployed", "lb_ok": False},
+        {"release": "deployed", "probe": "<html><center>nginx</center></html>"},
+        {"release": None, "lb_ok": False},  # a leftover namespace alone is still guarded
+    ],
+)
+def test_remove_step_removes_nothing_unless_the_lb_targets_traefik(remove_step, kwargs):
+    res, log = remove_step(**kwargs)
+    assert res.returncode != 0
+    assert not _mutated(log)
+
+
+def test_remove_step_fails_closed_when_helm_cannot_list(remove_step):
+    (remove_step.state / "helm_fail").touch()
+    res, log = remove_step(release="deployed")
+    assert res.returncode != 0
+    assert not _mutated(log)
+
+
+def test_remove_step_keeps_the_namespace_while_the_admission_webhook_is_left(remove_step):
+    res, log = remove_step(release=None, namespace=True, webhook=True)
+    assert res.returncode != 0
+    assert "ingress-nginx-admission" in res.stderr
+    assert not _mutated(log)
+
+
+def test_remove_step_deletes_a_leftover_namespace_once_the_webhook_is_gone(remove_step):
+    res, log = remove_step(release=None, namespace=True, webhook=False)
+    assert res.returncode == 0, res.stderr
+    assert [line for line in _mutated(log)] == [
+        "kubectl delete namespace ingress-nginx --ignore-not-found"
+    ]
+
+
+def test_remove_step_is_a_no_op_once_ingress_nginx_is_gone(remove_step):
+    res, log = remove_step(release=None, namespace=False, webhook=False)
+    assert res.returncode == 0, res.stderr
+    assert not _mutated(log)
+    assert not any("lb-targets-traefik" in line for line in log)
+    assert "kubectl apply -f infra/k8s/ingressclass-nginx.yaml" in log
