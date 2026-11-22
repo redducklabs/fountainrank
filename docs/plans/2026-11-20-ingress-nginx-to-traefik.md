@@ -192,11 +192,14 @@ Merge only after Phase B has carried production traffic cleanly.
   time out (while `:30443` still answers, until Phase C).
 - Access logs: after a request to `/callback?code=x&state=y` (or any query), Traefik's
   `RequestPath` shows `/callback` with no query string.
-- From a pod in the cluster: `curl -sk https://traefik.traefik.svc/healthz` returns 200, and
-  `curl -sk -H 'Host: fountainrank.com' https://traefik.traefik.svc/` returns 200.
-  `curl -s -H 'Host: api.fountainrank.com' http://traefik.traefik.svc/` returns a 308 to https.
-  `curl -sk -H 'Host: fountainrank.com' https://traefik.traefik.svc/tiles/planet.json` returns
-  200. A 13 MB POST to `api.` returns 413.
+- From a pod in the cluster: `curl -sk https://traefik.traefik.svc/healthz` returns 200 (the
+  hostless rule uses the `default` TLS option, so no SNI is needed). Host routes need an SNI that
+  matches the Host, or Traefik answers 421 (see *Topology*), so connect with `--connect-to`:
+  `curl -sk --connect-to fountainrank.com:443:traefik.traefik.svc:443 https://fountainrank.com/`
+  returns 200, and the same for `https://fountainrank.com/tiles/planet.json`.
+  `curl -s -H 'Host: api.fountainrank.com' http://traefik.traefik.svc/` returns a 308 to https (a
+  pod address is outside the trusted VPC range, so no `X-Forwarded-Proto` is honoured). A 13 MB
+  POST to `https://api.fountainrank.com/` through `--connect-to` returns 413.
 
 **After Phase B apply** (the exact commands are in the Phase B PR description):
 
