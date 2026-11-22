@@ -163,32 +163,78 @@ jobs:
       - uses: azure/setup-helm@v5
         with:
           version: v3.21.1
-      - name: Install/upgrade ingress-nginx (NodePort 30080/30443)
-        run: |
-          # use-http2=false: CVE-2026-123633 / CVE-2026-123007 (NGINX HTTP/2 RCE). ingress-nginx
-          # is retired and ships no patched NGINX; keep HTTP/2 off until the controller is replaced.
-          helm upgrade --install ingress-nginx ingress-nginx \
-            --repo https://kubernetes.github.io/ingress-nginx \
-            --version 4.15.1 \
-            --namespace ingress-nginx --create-namespace \
-            --set controller.service.type=NodePort \
-            --set controller.service.nodePorts.http=30080 \
-            --set controller.service.nodePorts.https=30443 \
-            --set controller.config.use-forwarded-headers="true" \
-            --set controller.config.compute-full-forwarded-for="true" \
-            --set controller.config.use-proxy-protocol="false" \
-            --set-string controller.config.use-http2=false \
-            --wait
-      # ingress-nginx -> Traefik migration, Phase A (docs/plans/2026-11-20-ingress-nginx-to-traefik.md):
-      # Traefik runs ALONGSIDE ingress-nginx on NodePorts 31080/31443 and reads the same Ingress
-      # objects. The DO LB still forwards to ingress-nginx (30080/30443), so no live traffic moves.
+      # Traefik is the ingress controller (it replaced the retired ingress-nginx; see
+      # docs/plans/2026-11-20-ingress-nginx-to-traefik.md). The DO LB forwards to its NodePorts
+      # 31080/31443, and it reads the `nginx`-class Ingresses via its Ingress NGINX provider.
       # Traefik trusts X-Forwarded-* only from the cluster's VPC range (the DO LB + nodes), which is
       # only sound while those NodePorts are VPC-only. One script, so every failure path is covered:
       # it resolves + validates the VPC range, checks the node firewalls BEFORE the install, installs,
-      # re-checks the live Service + firewalls AFTER, and on ANY failure withdraws the trust from an
-      # existing release before failing the deploy.
-      - name: Install/upgrade Traefik (NodePort 31080/31443, alongside ingress-nginx)
+      # re-checks the live Service + firewalls AFTER, and on ANY failure withdraws the trust from
+      # the running Traefik before failing the deploy.
+      - name: Install/upgrade Traefik (NodePort 31080/31443)
         run: bash scripts/ci/install-traefik.sh
+      # Phase C of the migration: remove the ingress-nginx release, keeping the `nginx`
+      # IngressClass. Traefik's provider serves only Ingresses whose class matches an IngressClass
+      # with controller k8s.io/ingress-nginx, and that object belongs to the ingress-nginx
+      # release, so a plain `helm uninstall` would delete it and Traefik would drop every route.
+      # Hand it over with no gap:
+      #   1. mark the live object helm.sh/resource-policy=keep,
+      #   2. upgrade the release without its IngressClass (Helm skips deleting a live object
+      #      marked keep),
+      #   3. apply the repo-owned infra/k8s/ingressclass-nginx.yaml,
+      #   4. uninstall the release (the IngressClass is no longer in its manifest).
+      # After the first run this is a no-op apart from the idempotent IngressClass apply.
+      # Whether anything of ingress-nginx is left (the release in ANY state, or its namespace) is
+      # read explicitly: a Helm or API error fails the step instead of reading as "absent", and a
+      # release mid-operation (pending-*, uninstalling) stops it for diagnosis. The namespace is
+      # deleted only once the release and its admission webhook are gone: a webhook left pointing
+      # at a deleted Service (failurePolicy Fail) would refuse every Ingress write. While
+      # anything is left, and before removing any of it, the live LB must already target Traefik
+      # (phase B applied, not just merged): its rules and health check are read from the DO API,
+      # and a request for an unknown Host through it must get Traefik's plain-text 404
+      # (ingress-nginx answers an HTML page). Removing ingress-nginx while the LB still targets
+      # it would be an outage.
+      - name: Remove ingress-nginx, keep the nginx IngressClass for Traefik
+        run: |
+          set -euo pipefail
+          listing="$(helm list --all --namespace ingress-nginx --filter '^ingress-nginx$' --output json)"
+          releases="$(jq -r 'length' <<<"$listing")"
+          case "$releases" in
+            0 | 1) ;;
+            *) echo "::error::unexpected helm list result: ${releases:0:200}" >&2; exit 1 ;;
+          esac
+          if [ "$releases" = 1 ]; then
+            status="$(jq -r '.[0].status' <<<"$listing")"
+            case "$status" in
+              deployed | failed) ;;
+              *) echo "::error::the ingress-nginx release is '${status:0:50}' (an interrupted Helm operation); diagnose it before removing ingress-nginx" >&2; exit 1 ;;
+            esac
+          fi
+          namespace="$(kubectl get namespace ingress-nginx --ignore-not-found --output name)"
+          if [ "$releases" = 1 ] || [ -n "$namespace" ]; then
+            cluster_id="$(doctl kubernetes cluster get "$CLUSTER_NAME" --format ID --no-header)"
+            lb_ip="$(python3 scripts/ci/traefik_guards.py lb-targets-traefik "$cluster_id")"
+            probe="$(curl -sS --max-time 10 -H 'Host: traefik-cutover-probe.invalid' "http://${lb_ip}/")"
+            if [ "$probe" != "404 page not found" ]; then
+              echo "::error::the load balancer ${lb_ip} does not reach Traefik (unknown-Host probe answered: ${probe:0:200})" >&2
+              exit 1
+            fi
+          fi
+          if [ "$releases" = 1 ]; then
+            kubectl annotate ingressclass nginx helm.sh/resource-policy=keep --overwrite
+            helm upgrade ingress-nginx ingress-nginx               --repo https://kubernetes.github.io/ingress-nginx               --version 4.15.1               --namespace ingress-nginx               --reuse-values               --set controller.ingressClassResource.enabled=false               --wait
+            kubectl apply -f infra/k8s/ingressclass-nginx.yaml
+            helm uninstall ingress-nginx --namespace ingress-nginx --wait
+          fi
+          kubectl apply -f infra/k8s/ingressclass-nginx.yaml
+          if [ -n "$namespace" ]; then
+            webhook="$(kubectl get validatingwebhookconfiguration ingress-nginx-admission --ignore-not-found --output name)"
+            if [ -n "$webhook" ]; then
+              echo "::error::${webhook} still exists with no ingress-nginx release; remove it through a reviewed change before the namespace (deleting its Service would make it refuse every Ingress write)" >&2
+              exit 1
+            fi
+            kubectl delete namespace ingress-nginx --ignore-not-found
+          fi
       - name: Render + apply namespace first
         run: |
           export NAMESPACE ENVIRONMENT IMAGE_TAG REGISTRY DOMAIN

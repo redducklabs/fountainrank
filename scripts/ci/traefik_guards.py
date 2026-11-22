@@ -23,6 +23,15 @@ Stdlib-only so they run on a bare GitHub runner.
           still applying it is re-read for a bounded time; "failed", or never settling, fails.
       Any doctl/parse error fails closed. Exits 0 only when every node passes.
 
+  lb-targets-traefik <cluster-id>
+      Check with doctl that the cluster's load balancer (the one whose droplet tag is
+      k8s:<cluster-id>; exactly one must exist) is active and already targets Traefik as
+      infra/terraform/main.tf declares it after migration phase B: exactly http 80 -> http 31080
+      and https 443 -> http 31080, health check https 31443 /healthz. Prints the load balancer's
+      IP on success; exits 1 otherwise, and on any doctl/parse error. The deploy runs it before
+      removing ingress-nginx: doing that while the LB still targets ingress-nginx (phase B merged
+      but not applied, or reverted) would be an outage.
+
 The forwarded-header trust in infra/helm/traefik-values.yaml is only sound while the Traefik
 NodePorts are reachable from the VPC alone, so this backs up the Service's
 `kubernetes.digitalocean.com/firewall-managed: "false"` annotation.
@@ -170,6 +179,55 @@ def doctl_firewalls() -> list[dict]:
     return _as_list(_doctl_json("compute", "firewall", "list"), "firewalls")
 
 
+def doctl_load_balancers() -> list[dict]:
+    return _as_list(_doctl_json("compute", "load-balancer", "list"), "load balancers")
+
+
+# Traefik's NodePorts (ports.web/websecure.nodePort in infra/helm/traefik-values.yaml; a test
+# asserts they agree) and the LB that phase B points at them.
+TRAEFIK_WEB_NODEPORT = 31080
+TRAEFIK_WEBSECURE_NODEPORT = 31443
+LB_FORWARDING = frozenset(
+    {
+        ("http", 80, "http", TRAEFIK_WEB_NODEPORT),
+        ("https", 443, "http", TRAEFIK_WEB_NODEPORT),
+    }
+)
+LB_HEALTH_CHECK = ("https", TRAEFIK_WEBSECURE_NODEPORT, "/healthz")
+
+
+def check_load_balancer(balancers: list[dict], cluster_id: str) -> str:
+    """Return the IP of the cluster's LB if it targets Traefik; raise ValueError otherwise."""
+    if not cluster_id:
+        raise ValueError("cluster id is required")
+    tag = f"k8s:{cluster_id}"
+    matches = [lb for lb in balancers if isinstance(lb, dict) and lb.get("tag") == tag]
+    if len(matches) != 1:
+        raise ValueError(f"expected one load balancer tagged {tag}, found {len(matches)}")
+    lb = matches[0]
+    label = f"load balancer {lb.get('name')!r}"
+    problems = []
+    if lb.get("status") != "active":
+        problems.append(f"status is {lb.get('status')!r}, not 'active'")
+    rules = _as_list(lb.get("forwarding_rules"), "forwarding rules")
+    forwarding = {
+        (r["entry_protocol"], r["entry_port"], r["target_protocol"], r["target_port"])
+        for r in rules
+    }
+    if len(rules) != len(LB_FORWARDING) or forwarding != LB_FORWARDING:
+        problems.append(f"forwards {sorted(forwarding)}, not {sorted(LB_FORWARDING)}")
+    check = lb.get("health_check") or {}
+    health = (check.get("protocol"), check.get("port"), check.get("path"))
+    if health != LB_HEALTH_CHECK:
+        problems.append(f"health-checks {health}, not {LB_HEALTH_CHECK}")
+    ip = lb.get("ip")
+    if not isinstance(ip, str) or not ip:
+        problems.append("has no IP")
+    if problems:
+        raise ValueError(f"{label} does not target Traefik: " + "; ".join(problems))
+    return ip
+
+
 def poll_firewalls(
     fetch: Callable[[], list[dict]],
     cluster: Cluster,
@@ -194,7 +252,19 @@ def main(
     get_cluster: Callable[[str, str], Cluster] = doctl_cluster,
     fetch: Callable[[], list[dict]] = doctl_firewalls,
     sleep: Callable[[float], None] = time.sleep,
+    fetch_load_balancers: Callable[[], list[dict]] = doctl_load_balancers,
 ) -> int:
+    if len(argv) == 2 and argv[0] == "lb-targets-traefik":
+        try:
+            print(check_load_balancer(fetch_load_balancers(), argv[1]))
+        except (subprocess.CalledProcessError, OSError, ValueError, TypeError, KeyError) as exc:
+            print(
+                f"::error::refusing to remove ingress-nginx: {exc}. Apply migration phase B "
+                "(terraform.yml) and verify it first.",
+                file=sys.stderr,
+            )
+            return 1
+        return 0
     if len(argv) == 2 and argv[0] == "private-cidr":
         try:
             print(validate_private_cidr(argv[1]))

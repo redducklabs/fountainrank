@@ -114,8 +114,15 @@ no IngressClass, and has the standard Ingress provider turned off.
 **Phase C: remove ingress-nginx.** The Traefik provider serves an Ingress only when its class
 names an IngressClass object whose controller is `k8s.io/ingress-nginx`. That `nginx`
 IngressClass belongs to the ingress-nginx release, so a plain `helm uninstall` would delete it
-and Traefik would drop every route. `deploy.yml` hands the object over with no gap:
+and Traefik would drop every route. `deploy.yml` hands the object over with no gap, and only
+once the LB is proven to target Traefik:
 
+0. `scripts/ci/traefik_guards.py lb-targets-traefik <cluster-id>` reads the cluster's LB from the
+   DO API and requires it active, forwarding exactly 80/http and 443/https to http 31080, and
+   health-checking https 31443 `/healthz` (the Phase B state). Then an unknown-Host request
+   through the LB must get Traefik's plain-text `404 page not found`. Either failing stops the
+   deploy before anything is removed: merging C before B is applied (or after B is reverted)
+   would otherwise remove the controller serving all traffic.
 1. Annotate the live object `helm.sh/resource-policy=keep`.
 2. `helm upgrade` the release with `controller.ingressClassResource.enabled=false`. Helm skips
    deleting a live object marked keep.

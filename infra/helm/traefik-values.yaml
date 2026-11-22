@@ -3,20 +3,18 @@
 # into its own `traefik` namespace. NOT a Kubernetes manifest: it lives outside infra/k8s/ so
 # the envsubst + kubeconform loop there doesn't pick it up.
 #
-# Traefik reads the EXISTING Ingress objects (ingressClassName: nginx) through its Kubernetes
-# Ingress NGINX provider, which translates the nginx.ingress.kubernetes.io/* annotations we use
-# (ssl-redirect, force-ssl-redirect, proxy-body-size, use-regex, rewrite-target). The one
-# annotation with no provider equivalent, use-forwarded-headers, is reproduced with the
-# entryPoint forwardedHeaders.trustedIPs below.
+# Traefik reads the Ingress objects (ingressClassName: nginx; the IngressClass is
+# infra/k8s/ingressclass-nginx.yaml) through its Kubernetes Ingress NGINX provider, which
+# translates the nginx.ingress.kubernetes.io/* annotations we use (ssl-redirect, force-ssl-redirect,
+# proxy-body-size, use-regex, rewrite-target). ingress-nginx's use-forwarded-headers has no
+# provider equivalent; the entryPoint forwardedHeaders.trustedIPs below replace it.
 #
-# Rollout (docs/plans/2026-11-20-ingress-nginx-to-traefik.md):
-#   Phase A: Traefik runs ALONGSIDE ingress-nginx on its own NodePorts (31080/31443); the DO LB
-#            still forwards to ingress-nginx (30080/30443), so no traffic reaches Traefik yet.
-#   Phase B: Terraform flips the LB forwarding rules + health check to 31080/31443.
-#   Phase C: ingress-nginx is uninstalled.
+# The DO LB forwards 80 and 443 to 31080 (web, plain HTTP) and health-checks https 31443
+# (infra/terraform/main.tf). Migration history:
+# docs/plans/2026-11-20-ingress-nginx-to-traefik.md.
 
 deployment:
-  # Same as the ingress-nginx controller today (single replica on a small autoscaled pool).
+  # Same as the former ingress-nginx controller (single replica on a small autoscaled pool).
   # updateStrategy (chart default maxUnavailable 0 / maxSurge 1) keeps a pod serving during
   # rollouts; the fixed NodePort is a Service property, so a surge pod doesn't conflict.
   replicas: 1
@@ -56,11 +54,11 @@ providers:
     controllerClass: "k8s.io/ingress-nginx"
     ingressClass: "nginx"
     watchIngressWithoutClass: false
-    # While ingress-nginx is still installed it owns the Ingress status (load-balancer address).
-    # Traefik must not write it too, or the two controllers would fight over it.
+    # Kept off from the side-by-side phase, when ingress-nginx owned the Ingress status. Nothing
+    # consumes Ingress status here (no external-dns), so the stale address it left is harmless.
     publishService:
       enabled: false
-    # ingress-nginx buffers request bodies by default (proxy_request_buffering on) and enforces
+    # ingress-nginx buffered request bodies by default (proxy_request_buffering on) and enforced
     # proxy-body-size (25m web/auth, 12m api, 1m default). In the Traefik provider, proxy-body-size
     # is ONLY enforced through the Buffering middleware, which it only adds when request buffering
     # is on. Without this, the body-size limits in infra/k8s/ingress.yaml would silently stop
@@ -76,13 +74,13 @@ providers:
 ports:
   web:
     nodePort: 31080
-    # Once the LB targets Traefik (migration phase B), ALL app traffic arrives here as plain HTTP
-    # from the LB, which terminates public TLS: 80 with X-Forwarded-Proto http (308 to https) and
-    # 443 with X-Forwarded-Proto https (the ssl-redirect RedirectScheme reads that header and
-    # passes the request on). Not re-encrypted to `websecure`: the provider's per-host TLS options
-    # make Traefik answer 421 when the LB's backend SNI doesn't match the Host.
-    # Today ingress-nginx runs with use-forwarded-headers=true behind the DO LB and no
-    # proxy-real-ip-cidr, i.e. it trusts X-Forwarded-* from ANY source. Traefik trusts them only
+    # The DO LB terminates public TLS and sends ALL app traffic here as plain HTTP: 80 with
+    # X-Forwarded-Proto http (308 to https) and 443 with X-Forwarded-Proto https (the ssl-redirect
+    # RedirectScheme reads that header and passes the request on). Not re-encrypted to
+    # `websecure`: the provider's per-host TLS options make Traefik answer 421 when the LB's
+    # backend SNI doesn't match the Host.
+    # ingress-nginx ran with use-forwarded-headers=true and no proxy-real-ip-cidr, so it trusted
+    # X-Forwarded-* from ANY source. Traefik trusts them only
     # from the cluster's VPC range (where the DO LB and the nodes live). CI fills this in at
     # deploy time from the cluster's VPC (doctl), so the CIDR isn't hardcoded here and the
     # deploy fails closed if it can't be resolved. Never 0.0.0.0/0, never `insecure: true`.
@@ -94,10 +92,9 @@ ports:
       insecure: false
   websecure:
     nodePort: 31443
-    # Only the DO LB health check (https /healthz, the hostless rule) uses this NodePort once the
-    # LB targets Traefik. Like ingress-nginx's "Kubernetes Ingress Controller Fake Certificate",
-    # Traefik presents its self-signed default certificate here; the DO LB does not verify
-    # backend certs.
+    # Only the DO LB health check (https /healthz, the hostless rule) uses this NodePort. Like
+    # ingress-nginx's "Kubernetes Ingress Controller Fake Certificate" did, Traefik presents its
+    # self-signed default certificate here; the DO LB does not verify backend certs.
     http:
       tls:
         enabled: true
@@ -115,10 +112,10 @@ tlsOptions:
 
 # Forwarded-header trust boundary = the VPC. On DOKS the cloud-controller-manager opens every
 # NodePort Service's ports to 0.0.0.0/0 on the cluster's `k8s-public-access-<cluster-id>`
-# firewall (that is how 30080/30443 are public today). `firewall-managed: "false"` opts this
-# Service out, so 31080/31443 get NO public inbound rule and are reachable only over the VPC.
-# The DO LB still reaches them: it connects to the nodes from its private VPC address (the
-# ingress-nginx health-check log shows a 10.124.0.x client), and the DOKS-managed
+# firewall (that is how ingress-nginx's 30080/30443 were public). `firewall-managed: "false"`
+# opts this Service out, so 31080/31443 get NO public inbound rule and are reachable only over
+# the VPC. The DO LB still reaches them: it connects to the nodes from its private VPC address
+# (ingress-nginx logged the LB health check from a 10.124.0.x client), and the DOKS-managed
 # `k8s-<cluster-id>-worker` firewall allows all TCP from RFC 1918 sources.
 #
 # externalTrafficPolicy stays Cluster (explicit). With the public path closed, every caller that
@@ -135,12 +132,12 @@ service:
     type: NodePort
     externalTrafficPolicy: Cluster
 
-# Structured logs to stdout (repo logging standard). Access logs carry ClientHost, which is how
-# Phase A verifies the source addresses Traefik sees before the LB is flipped. Headers are not
-# logged (headers.defaultMode drop, also the chart default: no Authorization/Cookie in logs).
-# Query strings are dropped from RequestPath: they carry secrets such as the OAuth `code` on
-# the web and Logto /callback redirects (web/app/callback/route.ts never logs it either).
-# Requires Traefik >= v3.7.3; the chart fails the render on an older image.
+# Structured logs to stdout (repo logging standard). Access logs carry ClientHost (the source
+# address Traefik sees). Headers are not logged (headers.defaultMode drop, also the chart
+# default: no Authorization/Cookie in logs). Query strings are dropped from RequestPath: they
+# carry secrets such as the OAuth `code` on the web and Logto /callback redirects
+# (web/app/callback/route.ts never logs it either). Requires Traefik >= v3.7.3; the chart fails
+# the render on an older image.
 log:
   format: json
   level: INFO

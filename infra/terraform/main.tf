@@ -402,10 +402,8 @@ resource "digitalocean_certificate" "main" {
 # Load Balancer — targets DOKS nodes; Traefik listens on NodePorts 31080 (web, plain HTTP) and
 # 31443 (websecure, self-signed TLS) (infra/helm/traefik-values.yaml). The LB terminates public
 # TLS with the Let's Encrypt cert and forwards BOTH entry ports to `web` over plain HTTP inside
-# the VPC; only the health check uses 31443. Before the ingress-nginx -> Traefik migration the LB
-# re-encrypted 443 to ingress-nginx's 30443 and sent 80 to 30080; ingress-nginx stays installed
-# until migration phase C, so restoring those values is the rollback
-# (docs/plans/2026-11-20-ingress-nginx-to-traefik.md).
+# the VPC; only the health check uses 31443. Traefik replaced the retired ingress-nginx (formerly
+# on 30080/30443; docs/plans/2026-11-20-ingress-nginx-to-traefik.md).
 # ---------------------------------------------------------------------------
 resource "digitalocean_loadbalancer" "main" {
   name   = "${var.project_name}-${var.environment}-lb"
