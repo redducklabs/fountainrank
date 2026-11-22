@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Built from the REPO ROOT context (pnpm workspace). CI runs `pnpm run generate`
 # first so packages/api-client/{openapi.json,src/schema.d.ts} exist in the context.
-FROM node:22-bookworm-slim AS base
+FROM node:26-bookworm-slim AS base
 ENV PNPM_HOME=/pnpm \
     PATH=/pnpm:$PATH \
     NEXT_TELEMETRY_DISABLED=1
