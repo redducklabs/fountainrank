@@ -37,7 +37,7 @@ spec:
                 path: database-ca.crt
       containers:
         - name: logto
-          image: svhd/logto:1.40.1
+          image: svhd/logto:1.46.0
           command: ["sh", "-c", "npm run cli db seed -- --swe && npm start"]
           ports:
             - containerPort: 3001 # app/OIDC
