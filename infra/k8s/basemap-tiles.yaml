@@ -44,7 +44,7 @@ spec:
       containers:
         - name: go-pmtiles
           # Public image (Docker Hub) → no imagePullSecrets. Pinned.
-          image: protomaps/go-pmtiles:v1.30.3
+          image: protomaps/go-pmtiles:v1.31.2
           # ENTRYPOINT is /go-pmtiles; args form the `serve` command. The HTTP bucket form reads
           # the already-public object over server-side range requests — NO credentials/secret.
           args:
